@@ -47,7 +47,9 @@ fn retained_geometry_validates_once_and_rebuilds_after_projection_mutations() {
 #[test]
 fn owned_geometry_validation_preserves_projection_and_recycles_storage_when_clipped() {
     let (rope, mut geometry, mut buffer) = geometry_fixture();
-    geometry.scope_rows.extend([(0, 0, 0), (1, 0, 1), (40, 0, 80)]);
+    geometry
+        .scope_rows
+        .extend([(0, 0, 0), (1, 0, 1), (40, 0, 80)]);
     geometry.overlay(2, 2, 5);
     geometry.obstacle(3, 3, 5);
     let offsets = geometry.source_offsets(&rope);
@@ -59,7 +61,13 @@ fn owned_geometry_validation_preserves_projection_and_recycles_storage_when_clip
     let anchors = geometry.anchors.as_ptr();
     let rows = geometry.scope_rows.as_ptr();
     geometry.retain_validated(&buffer);
-    let summarize = |geometry: &Geometry| geometry.anchors.iter().map(|a| (a.line, a.col, a.ch, a.x, a.y, a.width)).collect::<Vec<_>>();
+    let summarize = |geometry: &Geometry| {
+        geometry
+            .anchors
+            .iter()
+            .map(|a| (a.line, a.col, a.ch, a.x, a.y, a.width))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(summarize(&geometry), summarize(&expected));
     assert_eq!(geometry.scope_rows, expected.scope_rows);
     assert_eq!(geometry.overlays, expected.overlays);
@@ -99,8 +107,13 @@ fn benchmark_clipped_geometry_validation() {
             times[index].push(elapsed / 500);
         }
     }
-    for times in &mut times { times.sort_unstable(); }
-    eprintln!("clipped animation geometry: reference={:?}, in-place={:?}", times[0][4], times[1][4]);
+    for times in &mut times {
+        times.sort_unstable();
+    }
+    eprintln!(
+        "clipped animation geometry: reference={:?}, in-place={:?}",
+        times[0][4], times[1][4]
+    );
 }
 
 #[test]
@@ -133,8 +146,14 @@ fn dense_layers_and_cached_masks_match_sparse_painting_with_clipping_and_selecti
             let mut expected = Buffer::empty(clip);
             let mut actual = expected.clone();
             for (buffer, optimized) in [(&mut expected, false), (&mut actual, true)] {
-                let mut painter = Painter::new(buffer, geometry.area, colors,
-                    protected.clone(), carets.clone(), geometry.unsafe_rows.clone());
+                let mut painter = Painter::new(
+                    buffer,
+                    geometry.area,
+                    colors,
+                    protected.clone(),
+                    carets.clone(),
+                    geometry.unsafe_rows.clone(),
+                );
                 painter.overlays = Cow::Borrowed(&geometry.overlays);
                 if optimized {
                     painter.mask = protection.mask.as_ref();
@@ -151,7 +170,9 @@ fn dense_layers_and_cached_masks_match_sparse_painting_with_clipping_and_selecti
                     }
                 }
                 painter.finish();
-                if optimized { painter.recycle(&mut scratch); }
+                if optimized {
+                    painter.recycle(&mut scratch);
+                }
             }
             assert_eq!(actual, expected, "selection={selection:?}, clip={clip:?}");
         }
@@ -165,11 +186,22 @@ fn dense_layers_preserve_paint_budget_and_allow_updates_to_existing_cells() {
     let mut expected = Buffer::empty(area);
     let mut actual = expected.clone();
     for (buffer, optimized) in [(&mut expected, false), (&mut actual, true)] {
-        let mut painter = Painter::new(buffer, area, colors, HashSet::new(), HashSet::new(), HashSet::new());
+        let mut painter = Painter::new(
+            buffer,
+            area,
+            colors,
+            HashSet::new(),
+            HashSet::new(),
+            HashSet::new(),
+        );
         let mut scratch = PaintScratch::default();
-        if optimized { painter.take_scratch(&mut scratch); }
+        if optimized {
+            painter.take_scratch(&mut scratch);
+        }
         for y in 0..area.height {
-            for x in 0..area.width { painter.tint(x, y, 0.1); }
+            for x in 0..area.width {
+                painter.tint(x, y, 0.1);
+            }
         }
         assert_eq!(painter.layers.len(), MAX_ANCHORS);
         painter.tint(0, 0, 0.4);
@@ -186,7 +218,10 @@ fn adding_an_overlay_invalidates_cached_animation_exclusions() {
     geometry.overlay(3, 4, 2);
     let after = geometry.protection(None, None, &[], &[]);
     assert!(!Rc::ptr_eq(&before, &after));
-    assert_eq!(after.mask.as_ref().unwrap().flags((4, 3)), animation_layers::EXCLUDED);
+    assert_eq!(
+        after.mask.as_ref().unwrap().flags((4, 3)),
+        animation_layers::EXCLUDED
+    );
 }
 
 fn fill(
@@ -279,24 +314,47 @@ fn repeated_color_runs_preserve_individual_symbols_and_mixed_effect_layers() {
         let mut base = Buffer::empty(area);
         for y in area.y..area.bottom() {
             for x in area.x..area.right() {
-                base[(x, y)].set_fg(if (x / 5) % 2 == 0 { colors.fg_text } else { Color::Reset })
-                    .set_bg(if y % 2 == 0 { colors.bg_editor } else { Color::Rgb(70, 80, 90) });
+                base[(x, y)]
+                    .set_fg(if (x / 5) % 2 == 0 {
+                        colors.fg_text
+                    } else {
+                        Color::Reset
+                    })
+                    .set_bg(if y % 2 == 0 {
+                        colors.bg_editor
+                    } else {
+                        Color::Rgb(70, 80, 90)
+                    });
             }
         }
         let mut expected = base.clone();
         let mut actual = base;
         for (buffer, reference) in [(&mut expected, true), (&mut actual, false)] {
             REFERENCE_PAINT.set(reference);
-            let mut painter = Painter::new(buffer, area, colors,
-                HashSet::new(), HashSet::new(), HashSet::new());
+            let mut painter = Painter::new(
+                buffer,
+                area,
+                colors,
+                HashSet::new(),
+                HashSet::new(),
+                HashSet::new(),
+            );
             let mut scratch = PaintScratch::default();
             painter.take_scratch(&mut scratch);
             for y in area.y..area.bottom() {
                 for x in area.x..area.right() {
                     let amount = 0.05 + (x / 5) as f32 * 0.04;
-                    if y % 3 != 0 { painter.tint_to(x, y, colors.fg_accent, amount); }
+                    if y % 3 != 0 {
+                        painter.tint_to(x, y, colors.fg_accent, amount);
+                    }
                     if y % 3 != 1 {
-                        painter.symbol_to(x, y, if x % 2 == 0 { "┌" } else { "─" }, colors.fg_accent, amount);
+                        painter.symbol_to(
+                            x,
+                            y,
+                            if x % 2 == 0 { "┌" } else { "─" },
+                            colors.fg_accent,
+                            amount,
+                        );
                     }
                 }
             }
@@ -369,9 +427,16 @@ fn recycling_geometry_retains_capacity_but_no_source_or_paint_state() {
     assert!(geometry.offsets.borrow().is_none() && geometry.protection.borrow().is_none());
     assert!(geometry.primary_cursor.is_none());
     assert!(geometry.scope_rows.is_empty() && geometry.omitted_lines.is_empty());
-    assert!(geometry.protected.is_empty() && geometry.obstacles.is_empty() && geometry.overlays.is_empty());
+    assert!(
+        geometry.protected.is_empty()
+            && geometry.obstacles.is_empty()
+            && geometry.overlays.is_empty()
+    );
     geometry.push(0, 0, 'z', 0, 0, 1);
-    assert_eq!(geometry.at((0, 0)).map(|a| (a.x, a.y, a.ch)), Some((3, 5, 'z')));
+    assert_eq!(
+        geometry.at((0, 0)).map(|a| (a.x, a.y, a.ch)),
+        Some((3, 5, 'z'))
+    );
 }
 
 #[test]
@@ -392,7 +457,10 @@ fn projection_reuse_requires_exact_source_geometry_and_keeps_current_protection(
     assert!(current.reuse_projection(&mut old));
     assert_eq!(current.projection_id, old.projection_id);
     assert!(Rc::ptr_eq(&current.source_offsets(&rope), &offsets));
-    assert!(current.protection.borrow().is_none(), "previous selection/caret mask was reused");
+    assert!(
+        current.protection.borrow().is_none(),
+        "previous selection/caret mask was reused"
+    );
     let mask = current.protection(None, None, &[], &[]);
     assert!(mask.protected_cells().contains(&(4, 4)));
     assert!(mask.caret_cells().contains(&(8, 8)));
@@ -407,8 +475,12 @@ fn projection_reuse_requires_exact_source_geometry_and_keeps_current_protection(
             2 => changed.anchors[0].col += 1,
             3 => changed.scope_rows.push((5, 0, 5)),
             4 => changed.omitted_lines.push((5, 7, 5)),
-            5 => { changed.unsafe_rows.insert(8); }
-            6 => { changed.obstacles.insert((8, 8)); }
+            5 => {
+                changed.unsafe_rows.insert(8);
+            }
+            6 => {
+                changed.obstacles.insert((8, 8));
+            }
             7 => changed.wrap_width = Some(44),
             8 => changed.bounded_source = !changed.bounded_source,
             9 => changed.color_preview = Some(true),
@@ -423,13 +495,21 @@ fn projection_reuse_requires_exact_source_geometry_and_keeps_current_protection(
 #[test]
 fn repeated_ambiguous_scalars_only_retire_their_own_row() {
     let (_, mut geometry, _) = geometry_fixture();
-    let expected: Vec<_> = geometry.anchors.iter().filter(|a| a.y != 40).copied().collect();
+    let expected: Vec<_> = geometry
+        .anchors
+        .iter()
+        .filter(|a| a.y != 40)
+        .copied()
+        .collect();
     for col in 0..4096 {
         geometry.push(40, col, '\u{301}', 40, 0, 0);
     }
     assert_eq!(geometry.anchors.len(), expected.len());
     for (a, b) in geometry.anchors.iter().zip(expected) {
-        assert_eq!((a.line, a.col, a.x, a.y, a.ch), (b.line, b.col, b.x, b.y, b.ch));
+        assert_eq!(
+            (a.line, a.col, a.x, a.y, a.ch),
+            (b.line, b.col, b.x, b.y, b.ch)
+        );
     }
 }
 
@@ -442,8 +522,9 @@ fn benchmark_ambiguous_animation_row() {
             let (_, mut geometry, _) = geometry_fixture();
             let start = Instant::now();
             for col in 0..4096 {
-                if optimized { geometry.push(40, col, '\u{301}', 40, 0, 0); }
-                else {
+                if optimized {
+                    geometry.push(40, col, '\u{301}', 40, 0, 0);
+                } else {
                     geometry.unsafe_rows.insert(40);
                     geometry.invalidate_rows();
                     geometry.anchors.retain(|a| a.y != 40);
@@ -453,6 +534,11 @@ fn benchmark_ambiguous_animation_row() {
             black_box(geometry);
         }
     }
-    for samples in &mut times { samples.sort_unstable(); }
-    eprintln!("4096 ambiguous animation scalars: before={:?}, after={:?}", times[0][3], times[1][3]);
+    for samples in &mut times {
+        samples.sort_unstable();
+    }
+    eprintln!(
+        "4096 ambiguous animation scalars: before={:?}, after={:?}",
+        times[0][3], times[1][3]
+    );
 }

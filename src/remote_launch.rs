@@ -76,19 +76,42 @@ pub(crate) struct Recipe {
     pub(crate) diagnostics: super::diagnostics::Log,
 }
 impl Recipe {
-    pub(crate) fn matches(&self, launch: &Launch) -> bool { self.launch == *launch }
+    pub(crate) fn matches(&self, launch: &Launch) -> bool {
+        self.launch == *launch
+    }
     pub(crate) fn target(&self) -> Option<crate::remote_targets::Target> {
         let split = self.launch.args.len().checked_sub(2)?;
         let host = self.launch.args[split].to_str()?.to_string();
         let remote = self.launch.args[split + 1].to_str()?;
         let prefix: Vec<_> = std::iter::once(self.launch.program.to_str()?)
-            .chain(self.launch.args[..split].iter().map(|arg| arg.to_str()).collect::<Option<Vec<_>>>()?).collect();
-        let ssh_command = if prefix == ["ssh", "-e", "none", "-tt"] { String::new() } else { shell_words::join(prefix) };
-        Some(crate::remote_targets::Target { name: host.clone(), host, folder: String::new(),
-            remote_command: if remote == "vtcode --headless" { String::new() } else { remote.into() }, ssh_command })
+            .chain(
+                self.launch.args[..split]
+                    .iter()
+                    .map(|arg| arg.to_str())
+                    .collect::<Option<Vec<_>>>()?,
+            )
+            .collect();
+        let ssh_command = if prefix == ["ssh", "-e", "none", "-tt"] {
+            String::new()
+        } else {
+            shell_words::join(prefix)
+        };
+        Some(crate::remote_targets::Target {
+            name: host.clone(),
+            host,
+            folder: String::new(),
+            remote_command: if remote == "vtcode --headless" {
+                String::new()
+            } else {
+                remote.into()
+            },
+            ssh_command,
+        })
     }
     pub(crate) fn start(&self, size: ratatui::layout::Size, wake: UiWake) -> io::Result<Setup> {
-        self.launch.clone().start_with_log(size, wake, &self.cwd, self.diagnostics.clone())
+        self.launch
+            .clone()
+            .start_with_log(size, wake, &self.cwd, self.diagnostics.clone())
     }
 }
 impl Launch {
@@ -115,15 +138,33 @@ impl Launch {
     ) -> io::Result<Setup> {
         self.start_with_log(size, wake, cwd, Default::default())
     }
-    fn start_with_log(self, size: ratatui::layout::Size, wake: UiWake, cwd: &Path, log: super::diagnostics::Log) -> io::Result<Setup> {
+    fn start_with_log(
+        self,
+        size: ratatui::layout::Size,
+        wake: UiWake,
+        cwd: &Path,
+        log: super::diagnostics::Log,
+    ) -> io::Result<Setup> {
         let trace = log.begin(&self.program);
         let result = self.start_attempt(size, wake, cwd, trace.clone());
-        if let Err(error) = &result { trace.event("Launch failed", &error.to_string()); }
+        if let Err(error) = &result {
+            trace.event("Launch failed", &error.to_string());
+        }
         result
     }
-    fn start_attempt(self, size: ratatui::layout::Size, wake: UiWake, cwd: &Path, trace: super::diagnostics::Attempt) -> io::Result<Setup> {
+    fn start_attempt(
+        self,
+        size: ratatui::layout::Size,
+        wake: UiWake,
+        cwd: &Path,
+        trace: super::diagnostics::Attempt,
+    ) -> io::Result<Setup> {
         trace.event("Local directory", &cwd.to_string_lossy());
-        let recipe = Arc::new(Recipe { launch: self.clone(), cwd: cwd.to_owned(), diagnostics: trace.log.clone() });
+        let recipe = Arc::new(Recipe {
+            launch: self.clone(),
+            cwd: cwd.to_owned(),
+            diagnostics: trace.log.clone(),
+        });
         let mut identity = Vec::new();
         for arg in std::iter::once(&self.program).chain(&self.args) {
             let bytes = arg.as_encoded_bytes();
@@ -246,8 +287,17 @@ impl Launch {
         std::thread::Builder::new()
             .name("remote-login-output".into())
             .spawn(move || {
-                let result = discover(reader, writer, output, &output_wake, attached, &output_trace);
-                if let Err(error) = &result { output_trace.event("Setup failed", &error.to_string()); }
+                let result = discover(
+                    reader,
+                    writer,
+                    output,
+                    &output_wake,
+                    attached,
+                    &output_trace,
+                );
+                if let Err(error) = &result {
+                    output_trace.event("Setup failed", &error.to_string());
+                }
                 let _ = ready.send(result);
                 output_wake.notify();
             })?;
@@ -256,15 +306,22 @@ impl Launch {
             .name("remote-login-exit".into())
             .spawn(move || {
                 let status = child.wait();
-                let origin = if termination.load(Ordering::Acquire) { " (local cleanup requested)" } else { "" };
+                let origin = if termination.load(Ordering::Acquire) {
+                    " (local cleanup requested)"
+                } else {
+                    ""
+                };
                 #[cfg(windows)]
                 let source = "Local helper exit";
                 #[cfg(not(windows))]
                 let source = "Transport exit";
-                trace.event(source, &match status {
-                    Ok(status) => format!("{status}; exit code {}{origin}", status.exit_code()),
-                    Err(error) => format!("Could not wait for transport: {error}{origin}"),
-                });
+                trace.event(
+                    source,
+                    &match status {
+                        Ok(status) => format!("{status}; exit code {}{origin}", status.exit_code()),
+                        Err(error) => format!("Could not wait for transport: {error}{origin}"),
+                    },
+                );
                 #[cfg(windows)]
                 if let Some(job) = waiting_job {
                     console::terminate_job(&job);
@@ -293,16 +350,25 @@ pub(crate) struct Process {
 }
 impl Process {
     pub(crate) fn terminate(&self) {
-        if !self.termination.swap(true, Ordering::AcqRel) { self.trace.event("Local cleanup", "Stopping the owned SSH/job transport"); }
+        if !self.termination.swap(true, Ordering::AcqRel) {
+            self.trace
+                .event("Local cleanup", "Stopping the owned SSH/job transport");
+        }
         #[cfg(windows)]
-        if let Some(job) = &self.job { console::terminate_job(job); }
+        if let Some(job) = &self.job {
+            console::terminate_job(job);
+        }
         // No wait for SSH, its PTY writer, or an acknowledgement on a dead link.
-        if let Ok(mut killer) = self.killer.try_lock() { let _ = killer.kill(); }
+        if let Ok(mut killer) = self.killer.try_lock() {
+            let _ = killer.kill();
+        }
     }
 }
 impl Drop for Process {
     fn drop(&mut self) {
-        if !self.termination.swap(true, Ordering::AcqRel) { self.trace.event("Local cleanup", "Transport owner closed"); }
+        if !self.termination.swap(true, Ordering::AcqRel) {
+            self.trace.event("Local cleanup", "Transport owner closed");
+        }
         #[cfg(windows)]
         if let Some(job) = &self.job {
             console::terminate_job(job);
@@ -338,7 +404,10 @@ fn discover(
     loop {
         let len = match reader.read(&mut buffer) {
             Ok(len) => len,
-            Err(error) => { trace.output("Transport output", &line); return Err(error); }
+            Err(error) => {
+                trace.output("Transport output", &line);
+                return Err(error);
+            }
         };
         if len == 0 {
             trace.output("Transport output", &line);
@@ -357,12 +426,25 @@ fn discover(
             }
             if byte == b'\n' {
                 if !oversized && let Some(hello) = client::Client::parse_hello(&line)? {
-                    trace.event("Handshake", &format!("Headless {} (protocol {}), workspace {}", hello.app_version, hello.version, hello.root_uri));
+                    trace.event(
+                        "Handshake",
+                        &format!(
+                            "Headless {} (protocol {}), workspace {}",
+                            hello.app_version, hello.version, hello.root_uri
+                        ),
+                    );
                     attached.store(true, Ordering::Release);
                     let remainder = io::Cursor::new(buffer[index + 1..len].to_vec()).chain(reader);
-                    return client::Client::attach_with_diagnostics(BufReader::new(remainder), writer, hello, Some(trace.clone()));
+                    return client::Client::attach_with_diagnostics(
+                        BufReader::new(remainder),
+                        writer,
+                        hello,
+                        Some(trace.clone()),
+                    );
                 }
-                if !oversized { trace.output("Transport output", &line); }
+                if !oversized {
+                    trace.output("Transport output", &line);
+                }
                 line.clear();
                 oversized = false;
             }
@@ -384,28 +466,60 @@ pub(crate) struct Setup {
     recipe: Option<Arc<Recipe>>,
 }
 impl Setup {
-    pub(crate) fn diagnostics(&self) -> super::diagnostics::Log { self.owned.trace.log.clone() }
+    pub(crate) fn diagnostics(&self) -> super::diagnostics::Log {
+        self.owned.trace.log.clone()
+    }
     pub(crate) fn poll_client(&self) -> Option<io::Result<client::Client>> {
         match self.endpoint.try_recv() {
             Ok(client) => Some(client.map_err(|error| self.owned.trace.error(error))),
-            Err(mpsc::TryRecvError::Disconnected) => Some(Err(io::Error::other("Remote setup worker stopped"))),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Some(Err(io::Error::other("Remote setup worker stopped")))
+            }
             Err(mpsc::TryRecvError::Empty) => None,
         }
     }
-    pub(crate) fn take_output(&self) -> Option<Vec<u8>> { self.incoming.try_recv().ok() }
-    pub(crate) fn resize(&self, cols: u16, rows: u16) -> io::Result<()> {
-        self.owned.master.lock().unwrap().resize(portable_pty::PtySize {
-            cols: cols.max(2), rows: rows.max(2), pixel_width: 0, pixel_height: 0,
-        }).map_err(io::Error::other)
+    pub(crate) fn take_output(&self) -> Option<Vec<u8>> {
+        self.incoming.try_recv().ok()
     }
-    pub(crate) fn send_key(&self, key: crossterm::event::KeyEvent, grid: &crate::terminal::TermGrid) -> io::Result<()> {
-        self.keys.try_send(Input::Key(key, grid.application_cursor_keys, grid.win32_input_mode)).map_err(io::Error::other)
+    pub(crate) fn resize(&self, cols: u16, rows: u16) -> io::Result<()> {
+        self.owned
+            .master
+            .lock()
+            .unwrap()
+            .resize(portable_pty::PtySize {
+                cols: cols.max(2),
+                rows: rows.max(2),
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(io::Error::other)
+    }
+    pub(crate) fn send_key(
+        &self,
+        key: crossterm::event::KeyEvent,
+        grid: &crate::terminal::TermGrid,
+    ) -> io::Result<()> {
+        self.keys
+            .try_send(Input::Key(
+                key,
+                grid.application_cursor_keys,
+                grid.win32_input_mode,
+            ))
+            .map_err(io::Error::other)
     }
     pub(crate) fn send_paste(&self, text: &str, bracketed: bool) -> io::Result<()> {
-        let bytes = if bracketed { format!("\x1b[200~{text}\x1b[201~").into_bytes() } else { text.as_bytes().to_vec() };
-        self.keys.try_send(Input::Text(bytes)).map_err(io::Error::other)
+        let bytes = if bracketed {
+            format!("\x1b[200~{text}\x1b[201~").into_bytes()
+        } else {
+            text.as_bytes().to_vec()
+        };
+        self.keys
+            .try_send(Input::Text(bytes))
+            .map_err(io::Error::other)
     }
-    pub(crate) fn terminate(&self) { self.owned.terminate(); }
+    pub(crate) fn terminate(&self) {
+        self.owned.terminate();
+    }
     pub(crate) fn into_workspace(self, client: client::Client) -> workspace::Workspace {
         let mut workspace = workspace::Workspace::with_connection_identity(client, &self.identity);
         workspace.connection = Some(self.owned);
@@ -417,8 +531,12 @@ impl Setup {
         let start = std::time::Instant::now();
         loop {
             for _ in self.incoming.try_iter() {}
-            if let Some(client) = self.poll_client() { return Ok(self.into_workspace(client?)); }
-            if start.elapsed() > std::time::Duration::from_secs(60) { return Err(io::Error::other("Setup timed out")); }
+            if let Some(client) = self.poll_client() {
+                return Ok(self.into_workspace(client?));
+            }
+            if start.elapsed() > std::time::Duration::from_secs(60) {
+                return Err(io::Error::other("Setup timed out"));
+            }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }
@@ -498,7 +616,10 @@ impl Setup {
                     return Ok(Some(self.into_workspace(client)));
                 }
                 Some(Err(error)) => {
-                    return Err(io::Error::new(error.kind(), format!("{error}\n\n{}", self.owned.trace.log.report())));
+                    return Err(io::Error::new(
+                        error.kind(),
+                        format!("{error}\n\n{}", self.owned.trace.log.report()),
+                    ));
                 }
                 None => {}
             }
@@ -528,11 +649,21 @@ impl Setup {
                 if let Some(size) = crate::terminal_output::apply_resize(terminal, &event)
                     .map_err(|error| io::Error::other(error.to_string()))?
                 {
-                    grid.resize(size.width.max(2) as usize, size.height.saturating_sub(2).max(2) as usize);
-                    self.owned.master.lock().unwrap().resize(portable_pty::PtySize {
-                        cols: size.width.max(2), rows: size.height.saturating_sub(2).max(2),
-                        pixel_width: 0, pixel_height: 0,
-                    }).map_err(io::Error::other)?;
+                    grid.resize(
+                        size.width.max(2) as usize,
+                        size.height.saturating_sub(2).max(2) as usize,
+                    );
+                    self.owned
+                        .master
+                        .lock()
+                        .unwrap()
+                        .resize(portable_pty::PtySize {
+                            cols: size.width.max(2),
+                            rows: size.height.saturating_sub(2).max(2),
+                            pixel_width: 0,
+                            pixel_height: 0,
+                        })
+                        .map_err(io::Error::other)?;
                     dirty = true;
                 }
                 input_count += 1;
@@ -583,24 +714,33 @@ fn draw_setup(
     colors: &crate::app_theme::ThemeColors,
     rows: &mut crate::ui_terminal_rows::RowCache,
 ) {
-    use ratatui::{
-        layout::Rect,
-        style::Style,
-        widgets::Paragraph,
-    };
+    use ratatui::{layout::Rect, style::Style, widgets::Paragraph};
     let area = frame.area();
-    frame.buffer_mut().set_style(area, Style::default().fg(colors.ui.fg_terminal).bg(colors.ui.bg_terminal));
+    frame.buffer_mut().set_style(
+        area,
+        Style::default()
+            .fg(colors.ui.fg_terminal)
+            .bg(colors.ui.bg_terminal),
+    );
     frame.render_widget(
-        Paragraph::new("Remote connection · Esc to cancel")
-            .style(Style::default().fg(colors.ui.fg_title).bg(colors.ui.bg_title)),
+        Paragraph::new("Remote connection · Esc to cancel").style(
+            Style::default()
+                .fg(colors.ui.fg_title)
+                .bg(colors.ui.bg_title),
+        ),
         Rect::new(area.x, area.y, area.width, 1),
     );
-    rows.paint(frame.buffer_mut(), grid, Rect::new(
+    rows.paint(
+        frame.buffer_mut(),
+        grid,
+        Rect::new(
             area.x,
             area.y.saturating_add(1),
             area.width,
             area.height.saturating_sub(2),
-        ), &colors.ui);
+        ),
+        &colors.ui,
+    );
     if !has_output && area.height > 3 {
         frame.render_widget(
             Paragraph::new(
@@ -618,7 +758,11 @@ fn draw_setup(
     }
     frame.render_widget(
         Paragraph::new("Use this window for SSH authentication · Waiting for remote workspace")
-            .style(Style::default().fg(colors.fg_statusbar).bg(colors.bg_statusbar)),
+            .style(
+                Style::default()
+                    .fg(colors.fg_statusbar)
+                    .bg(colors.bg_statusbar),
+            ),
         Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
     );
     if area.height > 2 && grid.cursor_visible {

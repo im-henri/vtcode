@@ -12,7 +12,6 @@ use crate::helpers::len_as_u16;
 use crate::ui_pickers::truncate_to_width;
 use crate::ui_widgets::{DropdownMenu, PopupDialog, Tooltip};
 
-
 /// Maximum visible items in call-hierarchy / references popups.
 const HIERARCHY_MAX_VISIBLE: usize = 12;
 /// Maximum visible items in the code-actions tooltip.
@@ -27,7 +26,9 @@ const SCREENCAST_MAX_WIDTH: usize = 50;
 
 pub(crate) fn tab_icon(tab: &crate::app::Tab) -> &'static str {
     match tab.kind {
-        crate::app::TabKind::File | crate::app::TabKind::GitRevision => crate::file_icons::for_editor(&tab.editor).0,
+        crate::app::TabKind::File | crate::app::TabKind::GitRevision => {
+            crate::file_icons::for_editor(&tab.editor).0
+        }
         crate::app::TabKind::Diff(_) => "↔ ",
         crate::app::TabKind::SourceControl => "⑂ ",
         crate::app::TabKind::CommitDetails | crate::app::TabKind::AmendCommit => "◈ ",
@@ -62,11 +63,16 @@ pub(crate) fn draw_exit_confirm(f: &mut Frame, app: &mut App) {
 
 pub(crate) fn draw_context_menu(f: &mut Frame, app: &mut App) {
     let (menu_x, menu_y) = app.context_menu_pos;
-    let items: Vec<crate::ui_widgets::DropdownItem> = app.context_menu_items.iter()
+    let items: Vec<crate::ui_widgets::DropdownItem> = app
+        .context_menu_items
+        .iter()
         .map(|ci| {
-            let mut item = crate::ui_widgets::DropdownItem::new(&ci.label).shortcut(&ci.shortcut)
+            let mut item = crate::ui_widgets::DropdownItem::new(&ci.label)
+                .shortcut(&ci.shortcut)
                 .disabled(app.source_control_menu_command_disabled(ci.id));
-            if ci.separator_after { item = item.separator(); }
+            if ci.separator_after {
+                item = item.separator();
+            }
             item
         })
         .collect();
@@ -94,15 +100,22 @@ pub(crate) fn draw_explorer_context_menu(f: &mut Frame, app: &mut App) {
     };
     for item in &mut items {
         // Reserve the same marker column on every row so labels stay aligned.
-        item.icon = if item.label == selected_sort { "✓ " } else { "  " };
+        item.icon = if item.label == selected_sort {
+            "✓ "
+        } else {
+            "  "
+        };
     }
     let (menu_x, menu_y) = app.explorer_context_pos;
-    let inner = DropdownMenu::new(&items, crate::ui_widgets::themed_dropdown_colors(&app.colors))
-        .anchor(menu_x, menu_y)
-        .min_width(22)
-        .selected(app.explorer_context_selected)
-        .mouse(app.mouse_row, app.mouse_col)
-        .render_scrolled(f, &mut scroll);
+    let inner = DropdownMenu::new(
+        &items,
+        crate::ui_widgets::themed_dropdown_colors(&app.colors),
+    )
+    .anchor(menu_x, menu_y)
+    .min_width(22)
+    .selected(app.explorer_context_selected)
+    .mouse(app.mouse_row, app.mouse_col)
+    .render_scrolled(f, &mut scroll);
     app.explorer_context_scroll = scroll;
     app.explorer_context_inner = (!inner.is_empty()).then_some(inner);
 }
@@ -111,12 +124,15 @@ pub(crate) fn draw_source_control_context_menu(f: &mut Frame, app: &mut App) {
     let str_items = app.source_control_context_menu_items();
     let items = crate::ui_widgets::items_from_str_slice(&str_items);
     let (menu_x, menu_y) = app.sc_context_pos;
-    let inner = DropdownMenu::new(&items, crate::ui_widgets::themed_dropdown_colors(&app.colors))
-        .anchor(menu_x, menu_y)
-        .min_width(20)
-        .selected(app.sc_context_selected)
-        .mouse(app.mouse_row, app.mouse_col)
-        .render(f);
+    let inner = DropdownMenu::new(
+        &items,
+        crate::ui_widgets::themed_dropdown_colors(&app.colors),
+    )
+    .anchor(menu_x, menu_y)
+    .min_width(20)
+    .selected(app.sc_context_selected)
+    .mouse(app.mouse_row, app.mouse_col)
+    .render(f);
     app.sc_context_inner = Some(inner);
 }
 
@@ -128,12 +144,15 @@ pub(crate) fn draw_hunk_popup(f: &mut Frame, app: &mut App) {
     let str_items = app.hunk_popup_items();
     let items = crate::ui_widgets::items_from_str_slice(&str_items);
     let (menu_x, menu_y) = app.hunk_popup_pos;
-    DropdownMenu::new(&items, crate::ui_widgets::themed_dropdown_colors(&app.colors))
-        .anchor(menu_x, menu_y)
-        .min_width(16)
-        .selected(app.hunk_popup_selected)
-        .mouse(app.mouse_row, app.mouse_col)
-        .render(f);
+    DropdownMenu::new(
+        &items,
+        crate::ui_widgets::themed_dropdown_colors(&app.colors),
+    )
+    .anchor(menu_x, menu_y)
+    .min_width(16)
+    .selected(app.hunk_popup_selected)
+    .mouse(app.mouse_row, app.mouse_col)
+    .render(f);
 }
 
 #[cfg(test)]
@@ -142,7 +161,6 @@ pub(crate) use crate::ui_commit_details::draw as draw_source_control_commit_deta
 pub(crate) fn draw_source_control_discard_confirm(f: &mut Frame, app: &mut App) {
     crate::ui_modal::draw(f, app, crate::ui_modal::Kind::Discard);
 }
-
 
 pub(crate) fn draw_save_as_dialog(f: &mut Frame, app: &mut App) {
     crate::ui_modal::draw(f, app, crate::ui_modal::Kind::SaveAs);
@@ -153,9 +171,15 @@ pub(crate) fn draw_rename_symbol_dialog(f: &mut Frame, app: &mut App) {
 }
 
 pub(crate) fn draw_lsp_hover(f: &mut Frame, app: &App) {
-    if !app.lsp_hover_active { return; }
-    let Some(content) = &app.lsp_manager.hover_content else { return };
-    let Some(code_area) = app.code_area else { return };
+    if !app.lsp_hover_active {
+        return;
+    }
+    let Some(content) = &app.lsp_manager.hover_content else {
+        return;
+    };
+    let Some(code_area) = app.code_area else {
+        return;
+    };
     let Some(editor) = app.editor() else { return };
 
     let hover_y = (app.lsp_hover_line.saturating_sub(editor.scroll_offset)) as u16 + code_area.y;
@@ -177,10 +201,18 @@ pub(crate) struct SignaturePresentation {
 }
 
 pub(crate) fn draw_lsp_signature_help(f: &mut Frame, app: &App) {
-    if !app.lsp_signature_active { return; }
-    let Some(sig_help) = &app.lsp_manager.signature_help else { return };
-    if sig_help.signatures.is_empty() { return; }
-    let Some(code_area) = app.code_area else { return };
+    if !app.lsp_signature_active {
+        return;
+    }
+    let Some(sig_help) = &app.lsp_manager.signature_help else {
+        return;
+    };
+    if sig_help.signatures.is_empty() {
+        return;
+    }
+    let Some(code_area) = app.code_area else {
+        return;
+    };
     let Some(editor) = app.editor() else { return };
 
     let sig_idx = sig_help.active_signature.min(sig_help.signatures.len() - 1);
@@ -188,10 +220,16 @@ pub(crate) fn draw_lsp_signature_help(f: &mut Frame, app: &App) {
     let active_param = sig_help.active_parameter;
 
     let cursor_y = (editor.cursor_line.saturating_sub(editor.scroll_offset)) as u16 + code_area.y;
-    let cursor_x = (editor.cursor_col.saturating_sub(editor.horizontal_scroll)) as u16 + code_area.x;
+    let cursor_x =
+        (editor.cursor_col.saturating_sub(editor.horizontal_scroll)) as u16 + code_area.x;
 
     let width = code_area.width.min(f.area().width).min(72);
-    let key = (app.lsp_manager.signature_revision, sig_idx, active_param, width);
+    let key = (
+        app.lsp_manager.signature_revision,
+        sig_idx,
+        active_param,
+        width,
+    );
     let mut cached = app.completion_ui.signature.borrow_mut();
     if cached.as_ref().is_none_or(|cached| cached.key != key) {
         let normal = Style::default();
@@ -203,8 +241,13 @@ pub(crate) fn draw_lsp_signature_help(f: &mut Frame, app: &App) {
             let start = start.min(sig.label.len());
             let end = end.min(sig.label.len());
             // Snap to nearest char boundary to avoid panicking on multi-byte UTF-8
-            let start = (0..=start).rev().find(|&i| sig.label.is_char_boundary(i)).unwrap_or(0);
-            let end = (end..=sig.label.len()).find(|&i| sig.label.is_char_boundary(i)).unwrap_or(sig.label.len());
+            let start = (0..=start)
+                .rev()
+                .find(|&i| sig.label.is_char_boundary(i))
+                .unwrap_or(0);
+            let end = (end..=sig.label.len())
+                .find(|&i| sig.label.is_char_boundary(i))
+                .unwrap_or(sig.label.len());
             if start < end {
                 spans.push(Span::styled(sig.label[..start].to_owned(), normal));
                 spans.push(Span::styled(sig.label[start..end].to_owned(), highlight));
@@ -223,79 +266,140 @@ pub(crate) fn draw_lsp_signature_help(f: &mut Frame, app: &App) {
             }
         }
 
-        let lines = crate::ui_markdown::wrap_help_lines(lines_to_render, width.saturating_sub(4) as usize);
-        let highlights = lines.iter().enumerate().flat_map(|(row, line)| line.spans.iter().enumerate()
-            .filter(|(_, span)| span.style.add_modifier.contains(Modifier::BOLD)).map(move |(span, _)| (row, span))).collect::<Vec<_>>();
-        *cached = Some(SignaturePresentation { key, lines, highlights });
+        let lines =
+            crate::ui_markdown::wrap_help_lines(lines_to_render, width.saturating_sub(4) as usize);
+        let highlights = lines
+            .iter()
+            .enumerate()
+            .flat_map(|(row, line)| {
+                line.spans
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, span)| span.style.add_modifier.contains(Modifier::BOLD))
+                    .map(move |(span, _)| (row, span))
+            })
+            .collect::<Vec<_>>();
+        *cached = Some(SignaturePresentation {
+            key,
+            lines,
+            highlights,
+        });
     }
     let cached = cached.as_ref().unwrap();
     let title = if sig_help.signatures.len() > 1 {
-        format!("Signature {}/{} · Alt+[ ]", sig_idx + 1, sig_help.signatures.len())
-    } else { "Signature".into() };
+        format!(
+            "Signature {}/{} · Alt+[ ]",
+            sig_idx + 1,
+            sig_help.signatures.len()
+        )
+    } else {
+        "Signature".into()
+    };
     let mut tooltip = Tooltip::hover(cached.lines.iter().take(10).cloned().collect(), &app.colors)
         .title(&title, Style::default())
         .max_width(width)
         .max_height(12)
         .avoid(crate::ui_lsp_completion::occupied_area(app));
-    for &(row, span) in &cached.highlights { tooltip = tooltip.span_foreground(row, span, app.colors.ui.hover_highlight); }
+    for &(row, span) in &cached.highlights {
+        tooltip = tooltip.span_foreground(row, span, app.colors.ui.hover_highlight);
+    }
     tooltip.render(f, cursor_x, cursor_y);
 }
 
 pub(crate) fn draw_lsp_code_actions(f: &mut Frame, app: &App) {
-    if !app.lsp_code_action_active || app.lsp_manager.code_actions.is_empty() { return; }
-    let Some(code_area) = app.code_area else { return; };
-    let Some(editor) = app.editor() else { return; };
+    if !app.lsp_code_action_active || app.lsp_manager.code_actions.is_empty() {
+        return;
+    }
+    let Some(code_area) = app.code_area else {
+        return;
+    };
+    let Some(editor) = app.editor() else {
+        return;
+    };
 
     let cursor_y = (editor.cursor_line.saturating_sub(editor.scroll_offset)) as u16 + code_area.y;
-    let cursor_x = (editor.cursor_col.saturating_sub(editor.horizontal_scroll)) as u16 + code_area.x;
+    let cursor_x =
+        (editor.cursor_col.saturating_sub(editor.horizontal_scroll)) as u16 + code_area.x;
 
     let actions = &app.lsp_manager.code_actions;
     let max_visible = CODE_ACTIONS_MAX_VISIBLE.min(actions.len());
-    let max_width = actions.iter().map(|a| a.title.len()).max().unwrap_or(20).min(50) + 6;
+    let max_width = actions
+        .iter()
+        .map(|a| a.title.len())
+        .max()
+        .unwrap_or(20)
+        .min(50)
+        + 6;
 
     let scroll = app.lsp_code_action_selected.saturating_sub(max_visible - 1);
-    let mut lines: Vec<Line> = actions.iter().skip(scroll).take(max_visible).map(|action| {
-        let kind_icon = match action.kind.as_deref() {
-            Some("quickfix") => "🔧 ",
-            Some("refactor") => "✏️ ",
-            Some(k) if k.starts_with("refactor") => "✏️ ",
-            _ => "💡 ",
-        };
-        let label: String = action.title.chars().take(max_width.saturating_sub(4)).collect();
-        Line::raw(format!("{kind_icon}{label}"))
-    }).collect();
+    let mut lines: Vec<Line> = actions
+        .iter()
+        .skip(scroll)
+        .take(max_visible)
+        .map(|action| {
+            let kind_icon = match action.kind.as_deref() {
+                Some("quickfix") => "🔧 ",
+                Some("refactor") => "✏️ ",
+                Some(k) if k.starts_with("refactor") => "✏️ ",
+                _ => "💡 ",
+            };
+            let label: String = action
+                .title
+                .chars()
+                .take(max_width.saturating_sub(4))
+                .collect();
+            Line::raw(format!("{kind_icon}{label}"))
+        })
+        .collect();
 
     // Paragraph only paints the spans, so include the trailing cells in every
     // row's style. Retain the tooltip's existing size when padding its content.
     let popup_width = (lines.iter().map(Line::width).max().unwrap_or(0) + 4)
-        .min(max_width).min(f.area().width as usize) as u16;
+        .min(max_width)
+        .min(f.area().width as usize) as u16;
     for line in &mut lines {
-        let padding = popup_width.saturating_sub(2).saturating_sub(line.width() as u16);
-        line.spans.push(Span::raw(crate::helpers::spaces(padding as usize)));
+        let padding = popup_width
+            .saturating_sub(2)
+            .saturating_sub(line.width() as u16);
+        line.spans
+            .push(Span::raw(crate::helpers::spaces(padding as usize)));
     }
 
-    let mut tooltip = Tooltip::themed(lines, crate::theme_workbench::ControlColors {
-        background: app.colors.ui.action_list_background,
-        foreground: app.colors.ui.action_list_foreground,
-        border: app.colors.ui.widget_border,
-    }, &app.colors)
-        .title("Code Actions", Style::default().add_modifier(Modifier::BOLD))
-        .max_width(popup_width)
-        .max_height(max_visible as u16 + 2);
+    let mut tooltip = Tooltip::themed(
+        lines,
+        crate::theme_workbench::ControlColors {
+            background: app.colors.ui.action_list_background,
+            foreground: app.colors.ui.action_list_foreground,
+            border: app.colors.ui.widget_border,
+        },
+        &app.colors,
+    )
+    .title(
+        "Code Actions",
+        Style::default().add_modifier(Modifier::BOLD),
+    )
+    .max_width(popup_width)
+    .max_height(max_visible as u16 + 2);
     for row in 0..max_visible {
         let selected = row + scroll == app.lsp_code_action_selected;
-        let colors = if selected { crate::theme_workbench::ControlColors {
-            background: app.colors.ui.action_list_focus_background,
-            foreground: app.colors.ui.action_list_focus_foreground,
-            border: app.colors.ui.list_focus_outline,
-        } } else { crate::theme_workbench::ControlColors::default() };
+        let colors = if selected {
+            crate::theme_workbench::ControlColors {
+                background: app.colors.ui.action_list_focus_background,
+                foreground: app.colors.ui.action_list_focus_foreground,
+                border: app.colors.ui.list_focus_outline,
+            }
+        } else {
+            crate::theme_workbench::ControlColors::default()
+        };
         tooltip = tooltip.line_colors(row, colors);
     }
     tooltip.render(f, cursor_x, cursor_y + 1);
 }
 
 pub(crate) fn draw_call_hierarchy(f: &mut Frame, app: &App) {
-    if !app.call_hierarchy_active { return; }
+    if !app.call_hierarchy_active {
+        return;
+    }
 
     let results = &app.call_hierarchy_results;
     let max_visible = HIERARCHY_MAX_VISIBLE.min(results.len().max(1));
@@ -316,7 +420,12 @@ pub(crate) fn draw_call_hierarchy(f: &mut Frame, app: &App) {
         .render(f);
 
     if results.is_empty() {
-        let msg = Line::from(Span::styled("  No results", Style::default().fg(app.colors.ui.description_color(bg)).bg(bg)));
+        let msg = Line::from(Span::styled(
+            "  No results",
+            Style::default()
+                .fg(app.colors.ui.description_color(bg))
+                .bg(bg),
+        ));
         f.render_widget(Paragraph::new(vec![msg]), inner);
         return;
     }
@@ -329,20 +438,36 @@ pub(crate) fn draw_call_hierarchy(f: &mut Frame, app: &App) {
         fmt_buf.clear();
         {
             use std::fmt::Write;
-            let _ = write!(fmt_buf, "  {} ({}:{})", entry.name, entry.detail, entry.line + 1);
+            let _ = write!(
+                fmt_buf,
+                "  {} ({}:{})",
+                entry.name,
+                entry.detail,
+                entry.line + 1
+            );
         }
         if UnicodeWidthStr::width(fmt_buf.as_str()) > inner.width as usize {
             fmt_buf = truncate_to_width(&fmt_buf, inner.width as usize);
         }
-        fmt_buf.push_str(&crate::helpers::spaces((inner.width as usize).saturating_sub(UnicodeWidthStr::width(fmt_buf.as_str()))));
-        let style = app.colors.ui.list_row_style(app.colors.ui.widget_foreground, bg, is_selected, true, false);
+        fmt_buf.push_str(&crate::helpers::spaces(
+            (inner.width as usize).saturating_sub(UnicodeWidthStr::width(fmt_buf.as_str())),
+        ));
+        let style = app.colors.ui.list_row_style(
+            app.colors.ui.widget_foreground,
+            bg,
+            is_selected,
+            true,
+            false,
+        );
         lines.push(Line::from(Span::styled(fmt_buf.clone(), style)));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
 
 pub(crate) fn draw_type_hierarchy(f: &mut Frame, app: &App) {
-    if !app.type_hierarchy_active { return; }
+    if !app.type_hierarchy_active {
+        return;
+    }
 
     let results = &app.type_hierarchy_results;
     let max_visible = HIERARCHY_MAX_VISIBLE.min(results.len().max(1));
@@ -363,7 +488,12 @@ pub(crate) fn draw_type_hierarchy(f: &mut Frame, app: &App) {
         .render(f);
 
     if results.is_empty() {
-        let msg = Line::from(Span::styled("  No results", Style::default().fg(app.colors.ui.description_color(bg)).bg(bg)));
+        let msg = Line::from(Span::styled(
+            "  No results",
+            Style::default()
+                .fg(app.colors.ui.description_color(bg))
+                .bg(bg),
+        ));
         f.render_widget(Paragraph::new(vec![msg]), inner);
         return;
     }
@@ -376,20 +506,36 @@ pub(crate) fn draw_type_hierarchy(f: &mut Frame, app: &App) {
         fmt_buf.clear();
         {
             use std::fmt::Write;
-            let _ = write!(fmt_buf, "  {} ({}:{})", entry.name, entry.detail, entry.line + 1);
+            let _ = write!(
+                fmt_buf,
+                "  {} ({}:{})",
+                entry.name,
+                entry.detail,
+                entry.line + 1
+            );
         }
         if UnicodeWidthStr::width(fmt_buf.as_str()) > inner.width as usize {
             fmt_buf = truncate_to_width(&fmt_buf, inner.width as usize);
         }
-        fmt_buf.push_str(&crate::helpers::spaces((inner.width as usize).saturating_sub(UnicodeWidthStr::width(fmt_buf.as_str()))));
-        let style = app.colors.ui.list_row_style(app.colors.ui.widget_foreground, bg, is_selected, true, false);
+        fmt_buf.push_str(&crate::helpers::spaces(
+            (inner.width as usize).saturating_sub(UnicodeWidthStr::width(fmt_buf.as_str())),
+        ));
+        let style = app.colors.ui.list_row_style(
+            app.colors.ui.widget_foreground,
+            bg,
+            is_selected,
+            true,
+            false,
+        );
         lines.push(Line::from(Span::styled(fmt_buf.clone(), style)));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
 
 pub(crate) fn draw_lsp_references(f: &mut Frame, app: &App) {
-    if !app.lsp_references_active || app.lsp_manager.reference_locations.is_empty() { return; }
+    if !app.lsp_references_active || app.lsp_manager.reference_locations.is_empty() {
+        return;
+    }
 
     let locations = &app.lsp_manager.reference_locations;
     let max_visible = 12.min(locations.len());
@@ -413,19 +559,45 @@ pub(crate) fn draw_lsp_references(f: &mut Frame, app: &App) {
         fmt_buf.clear();
         {
             use std::fmt::Write;
-            let file_name = loc.uri.to_file_path()
+            let file_name = loc
+                .uri
+                .to_file_path()
                 .ok()
                 .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
             match file_name {
-                Some(name) => { let _ = write!(fmt_buf, "  {}:{}:{}", name, loc.range.start.line + 1, loc.range.start.character + 1); }
-                None => { let _ = write!(fmt_buf, "  {}:{}:{}", loc.uri.path(), loc.range.start.line + 1, loc.range.start.character + 1); }
+                Some(name) => {
+                    let _ = write!(
+                        fmt_buf,
+                        "  {}:{}:{}",
+                        name,
+                        loc.range.start.line + 1,
+                        loc.range.start.character + 1
+                    );
+                }
+                None => {
+                    let _ = write!(
+                        fmt_buf,
+                        "  {}:{}:{}",
+                        loc.uri.path(),
+                        loc.range.start.line + 1,
+                        loc.range.start.character + 1
+                    );
+                }
             }
         }
         if UnicodeWidthStr::width(fmt_buf.as_str()) > inner.width as usize {
             fmt_buf = truncate_to_width(&fmt_buf, inner.width as usize);
         }
-        fmt_buf.push_str(&crate::helpers::spaces((inner.width as usize).saturating_sub(UnicodeWidthStr::width(fmt_buf.as_str()))));
-        let style = app.colors.ui.list_row_style(app.colors.ui.widget_foreground, bg, is_selected, true, false);
+        fmt_buf.push_str(&crate::helpers::spaces(
+            (inner.width as usize).saturating_sub(UnicodeWidthStr::width(fmt_buf.as_str())),
+        ));
+        let style = app.colors.ui.list_row_style(
+            app.colors.ui.widget_foreground,
+            bg,
+            is_selected,
+            true,
+            false,
+        );
         lines.push(Line::from(Span::styled(fmt_buf.clone(), style)));
     }
     f.render_widget(Paragraph::new(lines), inner);
@@ -441,63 +613,193 @@ pub(crate) fn draw_shortcuts(f: &mut Frame, app: &App) {
         .bg(bg)
         .render(f);
 
-    let key = app.colors.ui.keybinding_label_style(bg).add_modifier(Modifier::BOLD);
+    let key = app
+        .colors
+        .ui
+        .keybinding_label_style(bg)
+        .add_modifier(Modifier::BOLD);
     let desc = Style::default().fg(fg).bg(bg);
     let heading_bg = app.colors.ui.keybinding_table_header.over(bg).unwrap_or(bg);
-    let heading = Style::default().fg(app.colors.ui.widget_text_color(heading_bg)).bg(heading_bg).add_modifier(Modifier::BOLD);
-    let header = |label: &'static str| Line::from(Span::styled(
-        format!("{label:width$}", width = inner.width as usize), heading));
+    let heading = Style::default()
+        .fg(app.colors.ui.widget_text_color(heading_bg))
+        .bg(heading_bg)
+        .add_modifier(Modifier::BOLD);
+    let header = |label: &'static str| {
+        Line::from(Span::styled(
+            format!("{label:width$}", width = inner.width as usize),
+            heading,
+        ))
+    };
 
     let shortcuts = vec![
         header("── File ──"),
-        Line::from(vec![Span::styled("Ctrl+N          ", key), Span::styled("New File", desc)]),
-        Line::from(vec![Span::styled("Ctrl+S          ", key), Span::styled("Save", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+S    ", key), Span::styled("Save As", desc)]),
-        Line::from(vec![Span::styled("Ctrl+W          ", key), Span::styled("Close Tab", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+T    ", key), Span::styled("Reopen Closed Tab", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Q          ", key), Span::styled("Quit", desc)]),
+        Line::from(vec![
+            Span::styled("Ctrl+N          ", key),
+            Span::styled("New File", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+S          ", key),
+            Span::styled("Save", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+S    ", key),
+            Span::styled("Save As", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+W          ", key),
+            Span::styled("Close Tab", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+T    ", key),
+            Span::styled("Reopen Closed Tab", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Q          ", key),
+            Span::styled("Quit", desc),
+        ]),
         Line::from(""),
         header("── Edit ──"),
-        Line::from(vec![Span::styled("Ctrl+Z/Y        ", key), Span::styled("Undo / Redo", desc)]),
-        Line::from(vec![Span::styled("Ctrl+C/X/V      ", key), Span::styled("Copy / Cut / Paste", desc)]),
-        Line::from(vec![Span::styled("Ctrl+D          ", key), Span::styled("Select Next Occurrence", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+L    ", key), Span::styled("Select All Occurrences", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+D    ", key), Span::styled("Duplicate Line", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+K    ", key), Span::styled("Delete Line", desc)]),
-        Line::from(vec![Span::styled("Ctrl+J          ", key), Span::styled("Join Lines", desc)]),
-        Line::from(vec![Span::styled("Ctrl+/          ", key), Span::styled("Toggle Comment", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+U    ", key), Span::styled("Toggle Case", desc)]),
-        Line::from(vec![Span::styled("Alt+Up/Down     ", key), Span::styled("Move Line Up/Down", desc)]),
-        Line::from(vec![Span::styled("Tab / Shift+Tab ", key), Span::styled("Indent / Unindent", desc)]),
+        Line::from(vec![
+            Span::styled("Ctrl+Z/Y        ", key),
+            Span::styled("Undo / Redo", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+C/X/V      ", key),
+            Span::styled("Copy / Cut / Paste", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+D          ", key),
+            Span::styled("Select Next Occurrence", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+L    ", key),
+            Span::styled("Select All Occurrences", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+D    ", key),
+            Span::styled("Duplicate Line", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+K    ", key),
+            Span::styled("Delete Line", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+J          ", key),
+            Span::styled("Join Lines", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+/          ", key),
+            Span::styled("Toggle Comment", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+U    ", key),
+            Span::styled("Toggle Case", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Alt+Up/Down     ", key),
+            Span::styled("Move Line Up/Down", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Tab / Shift+Tab ", key),
+            Span::styled("Indent / Unindent", desc),
+        ]),
         Line::from(""),
         header("── Selection ──"),
-        Line::from(vec![Span::styled("Ctrl+A          ", key), Span::styled("Select All", desc)]),
-        Line::from(vec![Span::styled("Shift+Arrow     ", key), Span::styled("Extend Selection", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+K    ", key), Span::styled("Delete Line", desc)]),
-        Line::from(vec![Span::styled("Ctrl+L          ", key), Span::styled("Select Line", desc)]),
-        Line::from(vec![Span::styled("Alt+Click       ", key), Span::styled("Toggle Cursor", desc)]),
+        Line::from(vec![
+            Span::styled("Ctrl+A          ", key),
+            Span::styled("Select All", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Shift+Arrow     ", key),
+            Span::styled("Extend Selection", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+K    ", key),
+            Span::styled("Delete Line", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+L          ", key),
+            Span::styled("Select Line", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Alt+Click       ", key),
+            Span::styled("Toggle Cursor", desc),
+        ]),
         Line::from(""),
         header("── Navigate ──"),
-        Line::from(vec![Span::styled("Ctrl+P          ", key), Span::styled("Quick Open File", desc)]),
-        Line::from(vec![Span::styled("Ctrl+G          ", key), Span::styled("Go to Line:Column", desc)]),
-        Line::from(vec![Span::styled("Ctrl+F          ", key), Span::styled("Find", desc)]),
-        Line::from(vec![Span::styled("Ctrl+H          ", key), Span::styled("Find & Replace", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+F    ", key), Span::styled("Search Across Files", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+O    ", key), Span::styled("Go to Symbol", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+P    ", key), Span::styled("Command Palette", desc)]),
-        Line::from(vec![Span::styled("Ctrl+Shift+\\   ", key), Span::styled("Go to Matching Bracket", desc)]),
-        Line::from(vec![Span::styled("Alt+Left/Right  ", key), Span::styled("Navigate Back/Forward", desc)]),
-        Line::from(vec![Span::styled("Alt+1-9         ", key), Span::styled("Switch to Tab N", desc)]),
+        Line::from(vec![
+            Span::styled("Ctrl+P          ", key),
+            Span::styled("Quick Open File", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+G          ", key),
+            Span::styled("Go to Line:Column", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+F          ", key),
+            Span::styled("Find", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+H          ", key),
+            Span::styled("Find & Replace", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+F    ", key),
+            Span::styled("Search Across Files", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+O    ", key),
+            Span::styled("Go to Symbol", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+P    ", key),
+            Span::styled("Command Palette", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+Shift+\\   ", key),
+            Span::styled("Go to Matching Bracket", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Alt+Left/Right  ", key),
+            Span::styled("Navigate Back/Forward", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Alt+1-9         ", key),
+            Span::styled("Switch to Tab N", desc),
+        ]),
         Line::from(""),
         header("── View ──"),
-        Line::from(vec![Span::styled("Ctrl+B          ", key), Span::styled("Toggle Explorer", desc)]),
-        Line::from(vec![Span::styled("Ctrl+`          ", key), Span::styled("Toggle Right Terminal", desc)]),
-        Line::from(vec![Span::styled("Ctrl+K, Ctrl+\\  ", key), Span::styled("Split Editor Right", desc)]),
-        Line::from(vec![Span::styled("Ctrl+K Z        ", key), Span::styled("Zen Mode", desc)]),
-        Line::from(vec![Span::styled("Ctrl++/-        ", key), Span::styled("Zoom In/Out (minimap)", desc)]),
-        Line::from(vec![Span::styled("Ctrl+?          ", key), Span::styled("Show This Help", desc)]),
+        Line::from(vec![
+            Span::styled("Ctrl+B          ", key),
+            Span::styled("Toggle Explorer", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+`          ", key),
+            Span::styled("Toggle Right Terminal", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+K, Ctrl+\\  ", key),
+            Span::styled("Split Editor Right", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+K Z        ", key),
+            Span::styled("Zen Mode", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl++/-        ", key),
+            Span::styled("Zoom In/Out (minimap)", desc),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctrl+?          ", key),
+            Span::styled("Show This Help", desc),
+        ]),
         Line::from(""),
-        Line::from(Span::styled("Press Esc to close", Style::default().fg(app.colors.ui.description_color(bg)).bg(bg))),
+        Line::from(Span::styled(
+            "Press Esc to close",
+            Style::default()
+                .fg(app.colors.ui.description_color(bg))
+                .bg(bg),
+        )),
     ];
 
     let p = Paragraph::new(shortcuts).scroll((app.shortcuts_scroll as u16, 0));
@@ -507,16 +809,36 @@ pub(crate) fn draw_shortcuts(f: &mut Frame, app: &App) {
 /// Find scope-defining lines above scroll offset for sticky scroll display.
 /// Returns up to 3 lines with their line numbers and text.
 #[cfg(test)]
-pub(crate) fn find_sticky_scroll_lines(editor: &crate::editor::Editor, scroll: usize) -> Vec<(usize, String)> {
+pub(crate) fn find_sticky_scroll_lines(
+    editor: &crate::editor::Editor,
+    scroll: usize,
+) -> Vec<(usize, String)> {
     if scroll == 0 {
         return Vec::new();
     }
 
     let scope_keywords = [
-        "fn ", "pub(crate) fn ", "async fn ", "pub async fn ",
-        "impl ", "pub struct ", "struct ", "pub enum ", "enum ", "pub trait ", "trait ",
-        "mod ", "pub mod ",
-        "class ", "function ", "def ", "if ", "for ", "while ", "match ", "loop ",
+        "fn ",
+        "pub(crate) fn ",
+        "async fn ",
+        "pub async fn ",
+        "impl ",
+        "pub struct ",
+        "struct ",
+        "pub enum ",
+        "enum ",
+        "pub trait ",
+        "trait ",
+        "mod ",
+        "pub mod ",
+        "class ",
+        "function ",
+        "def ",
+        "if ",
+        "for ",
+        "while ",
+        "match ",
+        "loop ",
     ];
 
     let mut result = Vec::new();
@@ -538,8 +860,8 @@ pub(crate) fn find_sticky_scroll_lines(editor: &crate::editor::Editor, scroll: u
         }
 
         let stripped = trimmed.trim_start();
-        let is_scope = stripped.ends_with('{')
-            || scope_keywords.iter().any(|kw| stripped.starts_with(kw));
+        let is_scope =
+            stripped.ends_with('{') || scope_keywords.iter().any(|kw| stripped.starts_with(kw));
 
         if is_scope && !stripped.is_empty() {
             result.push((line_idx, trimmed.to_string()));
@@ -555,7 +877,9 @@ pub(crate) fn find_sticky_scroll_lines(editor: &crate::editor::Editor, scroll: u
 }
 
 pub(crate) fn draw_peek_definition(f: &mut Frame, app: &App) {
-    let Some(peek) = &app.peek_definition else { return; };
+    let Some(peek) = &app.peek_definition else {
+        return;
+    };
 
     // Position below the editor area or in center
     let area = app.code_area.unwrap_or_else(|| f.area());
@@ -566,14 +890,30 @@ pub(crate) fn draw_peek_definition(f: &mut Frame, app: &App) {
     let popup_area = Rect::new(x, y, width, height);
 
     f.render_widget(Clear, popup_area);
-    let bg = app.colors.ui.peek_editor_background.over(app.colors.bg_editor).unwrap_or(app.colors.bg_editor);
+    let bg = app
+        .colors
+        .ui
+        .peek_editor_background
+        .over(app.colors.bg_editor)
+        .unwrap_or(app.colors.bg_editor);
     let gutter_bg = app.colors.ui.peek_gutter_background.over(bg).unwrap_or(bg);
     let (title_bg, title_fg, _) = app.colors.ui.peek_title_colors(bg);
     let foreground = app.colors.ui.editor_text_color(bg);
-    let line_number = app.colors.ui.readable_foreground(app.colors.ui.line_number_foreground.over(gutter_bg).unwrap_or(foreground), gutter_bg, 4.5);
+    let line_number = app.colors.ui.readable_foreground(
+        app.colors
+            .ui
+            .line_number_foreground
+            .over(gutter_bg)
+            .unwrap_or(foreground),
+        gutter_bg,
+        4.5,
+    );
     let title = format!(" {} (line {}) ", peek.file_path, peek.start_line + 1);
     let block = Block::default()
-        .title(Span::styled(title, Style::default().fg(title_fg).bg(title_bg)))
+        .title(Span::styled(
+            title,
+            Style::default().fg(title_fg).bg(title_bg),
+        ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.colors.ui.peek_border.border(bg).unwrap_or(bg)))
         .style(Style::default().bg(bg));
@@ -582,22 +922,25 @@ pub(crate) fn draw_peek_definition(f: &mut Frame, app: &App) {
     f.render_widget(block, popup_area);
 
     for (i, line_text) in peek.lines.iter().enumerate() {
-        if i as u16 >= inner.height { break; }
+        if i as u16 >= inner.height {
+            break;
+        }
         let line_num = peek.start_line + i + 1;
         let num_span = Span::styled(
             format!("{line_num:>4} "),
             Style::default().fg(line_number).bg(gutter_bg),
         );
-        let text_span = Span::styled(
-            line_text.clone(),
-            Style::default().fg(foreground).bg(bg),
-        );
+        let text_span = Span::styled(line_text.clone(), Style::default().fg(foreground).bg(bg));
         let line = Paragraph::new(Line::from(vec![num_span, text_span]));
         f.render_widget(line, Rect::new(inner.x, inner.y + i as u16, inner.width, 1));
     }
 }
 
-pub(crate) fn get_cached_blame_line(app: &App, editor: &crate::editor::Editor, line: usize) -> Option<String> {
+pub(crate) fn get_cached_blame_line(
+    app: &App,
+    editor: &crate::editor::Editor,
+    line: usize,
+) -> Option<String> {
     if editor.bg_loading {
         return None;
     }
@@ -669,7 +1012,9 @@ pub(crate) fn draw_screencast_overlay(f: &mut Frame, app: &App) {
     let fade_duration = std::time::Duration::from_millis(SCREENCAST_FADE_MS);
 
     // Collect visible entries (not yet faded out)
-    let visible: Vec<_> = app.screencast_keys.iter()
+    let visible: Vec<_> = app
+        .screencast_keys
+        .iter()
         .filter(|(_, t)| now.duration_since(*t) < fade_duration)
         .collect();
 
@@ -692,13 +1037,16 @@ pub(crate) fn draw_screencast_overlay(f: &mut Frame, app: &App) {
     }
 
     // Build display strings
-    let display: Vec<String> = merged.iter().map(|(name, count, _)| {
-        if *count > 1 {
-            format!("{} ×{}", name, count)
-        } else {
-            name.clone()
-        }
-    }).collect();
+    let display: Vec<String> = merged
+        .iter()
+        .map(|(name, count, _)| {
+            if *count > 1 {
+                format!("{} ×{}", name, count)
+            } else {
+                name.clone()
+            }
+        })
+        .collect();
 
     // Calculate dimensions
     let max_text_w = display.iter().map(|s| s.width()).max().unwrap_or(10);
@@ -720,9 +1068,19 @@ pub(crate) fn draw_screencast_overlay(f: &mut Frame, app: &App) {
     f.render_widget(Clear, rect);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(app.colors.ui.widget_border.border(surface).unwrap_or(surface)))
+        .border_style(
+            Style::default().fg(app
+                .colors
+                .ui
+                .widget_border
+                .border(surface)
+                .unwrap_or(surface)),
+        )
         .style(Style::default().bg(surface).fg(foreground))
-        .title(Span::styled(" ⌨ Keys ", Style::default().fg(foreground).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(
+            " ⌨ Keys ",
+            Style::default().fg(foreground).add_modifier(Modifier::BOLD),
+        ));
 
     let inner = block.inner(rect);
     f.render_widget(block, rect);
@@ -736,9 +1094,15 @@ pub(crate) fn draw_screencast_overlay(f: &mut Frame, app: &App) {
         let fade = 1.0 - (age / fade_duration.as_millis() as f64).min(1.0);
         let key_style = app.colors.ui.keybinding_label_style(surface);
         let key_background = key_style.bg.unwrap_or(surface);
-        let color = crate::app_theme::lerp_color(app.colors.ui.description_color(key_background),
-            key_style.fg.unwrap_or(foreground), fade as f32);
-        let color = app.colors.ui.readable_foreground(color, key_background, 4.5);
+        let color = crate::app_theme::lerp_color(
+            app.colors.ui.description_color(key_background),
+            key_style.fg.unwrap_or(foreground),
+            fade as f32,
+        );
+        let color = app
+            .colors
+            .ui
+            .readable_foreground(color, key_background, 4.5);
 
         let display_text = if merged[i].1 > 1 {
             format!("{} ×{}", text, merged[i].1)
@@ -750,9 +1114,16 @@ pub(crate) fn draw_screencast_overlay(f: &mut Frame, app: &App) {
         let text_w = display_text.width();
         let pad = (inner.width as usize).saturating_sub(text_w) / 2;
         f.render_widget(
-            Span::styled(display_text, key_style.fg(color).add_modifier(Modifier::BOLD)),
-            Rect::new(inner.x + pad as u16, inner.y + i as u16,
-                inner.width.saturating_sub(pad as u16), 1),
+            Span::styled(
+                display_text,
+                key_style.fg(color).add_modifier(Modifier::BOLD),
+            ),
+            Rect::new(
+                inner.x + pad as u16,
+                inner.y + i as u16,
+                inner.width.saturating_sub(pad as u16),
+                1,
+            ),
         );
     }
 }
@@ -777,7 +1148,14 @@ pub(crate) fn draw_extension_overlays(f: &mut Frame, app: &App) {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(app.colors.ui.widget_border.border(surface).unwrap_or(surface)))
+            .border_style(
+                Style::default().fg(app
+                    .colors
+                    .ui
+                    .widget_border
+                    .border(surface)
+                    .unwrap_or(surface)),
+            )
             .style(Style::default().bg(surface).fg(foreground));
         f.render_widget(block, area);
 
@@ -791,7 +1169,8 @@ pub(crate) fn draw_extension_overlays(f: &mut Frame, app: &App) {
         let title_span = Span::styled(
             &title,
             Style::default()
-                .fg(foreground).bg(surface)
+                .fg(foreground)
+                .bg(surface)
                 .add_modifier(Modifier::BOLD),
         );
         f.render_widget(title_span, Rect::new(x + 1, y, title_width, 1));
@@ -799,13 +1178,15 @@ pub(crate) fn draw_extension_overlays(f: &mut Frame, app: &App) {
         let close_x = x + w.saturating_sub(close_width + 1);
         let hovered = Rect::new(close_x, y, close_width + 1, 1)
             .contains((app.mouse_col, app.mouse_row).into());
-        let close_style = app.colors.ui.toolbar_layer_style(app.colors.ui.widget_foreground,
-            surface, hovered, false, false);
-        let close_span = Span::styled(close_text, close_style);
-        f.render_widget(
-            close_span,
-            Rect::new(close_x, y, close_width, 1),
+        let close_style = app.colors.ui.toolbar_layer_style(
+            app.colors.ui.widget_foreground,
+            surface,
+            hovered,
+            false,
+            false,
         );
+        let close_span = Span::styled(close_text, close_style);
+        f.render_widget(close_span, Rect::new(close_x, y, close_width, 1));
 
         // Content area (inside border, below title)
         let content_area = Rect::new(x + 1, y + 1, w.saturating_sub(2), h.saturating_sub(2));
@@ -819,8 +1200,7 @@ pub(crate) fn draw_extension_overlays(f: &mut Frame, app: &App) {
             })
             .collect();
         let text = ratatui::text::Text::from(lines);
-        let paragraph = Paragraph::new(text)
-            .style(Style::default().fg(foreground).bg(surface));
+        let paragraph = Paragraph::new(text).style(Style::default().fg(foreground).bg(surface));
         f.render_widget(paragraph, content_area);
     }
 }
@@ -833,18 +1213,23 @@ mod tests {
     #[test]
     fn exit_dialog_counts_files_and_ignores_settings_buffers() {
         use crate::app::{App, EditorGroup, Tab};
-        use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+        use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 
         let mut app = App::test_new();
         app.open_settings_tab();
         app.editor_mut().unwrap().modified = true;
         let mut terminal = Terminal::new(TestBackend::new(100, 20)).unwrap();
         let render = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
-            terminal.draw(|frame| super::draw_exit_confirm(frame, app)).unwrap();
+            terminal
+                .draw(|frame| super::draw_exit_confirm(frame, app))
+                .unwrap();
             let buffer = terminal.backend().buffer();
-            Rect::new(0, 0, 100, 20).rows().flat_map(|row| {
-                (row.x..row.right()).map(move |x| buffer.cell((x, row.y)).unwrap().symbol())
-            }).collect::<String>()
+            Rect::new(0, 0, 100, 20)
+                .rows()
+                .flat_map(|row| {
+                    (row.x..row.right()).map(move |x| buffer.cell((x, row.y)).unwrap().symbol())
+                })
+                .collect::<String>()
         };
 
         let text = render(&mut terminal, &mut app);

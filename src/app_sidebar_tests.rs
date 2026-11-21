@@ -63,7 +63,9 @@ fn top_sidebar_toggle_beside_new_desk_reopens_the_same_view() {
         let mut terminal = Terminal::new(TestBackend::new(width, 24)).unwrap();
 
         for visible in [true, false, true] {
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             assert_eq!(app.explorer_area.is_some(), visible);
             assert_eq!(app.sidebar_view, SidebarView::Remote);
             let button = sidebar_toggle_area(&app).unwrap();
@@ -81,24 +83,34 @@ fn top_sidebar_toggle_beside_new_desk_reopens_the_same_view() {
             assert_eq!(buffer[(new_desk.x + 1, button.y)].symbol(), "+");
 
             hover(&mut app, x, button.y);
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             let tooltip: String = (0..width)
                 .map(|x| terminal.backend().buffer()[(x, button.bottom())].symbol())
                 .collect();
-            assert!(tooltip.contains(if visible { "Hide Sidebar" } else { "Show Sidebar" }));
+            assert!(tooltip.contains(if visible {
+                "Hide Sidebar"
+            } else {
+                "Show Sidebar"
+            }));
             click(&mut app, x, button.y);
             assert_eq!(app.sidebar_is_visible(), !visible);
             assert!(app.desks.popup.mode.is_none());
             assert_eq!(app.tabs.len(), 1);
         }
 
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
         let new_desk = controls(&app, app.tab_bar_area.unwrap(), app.desks.host).new_desk;
         click(&mut app, new_desk.x + 1, new_desk.y);
         assert_eq!(app.desks.popup.mode, Some(crate::ui_desks::Mode::New));
         app.desks.popup = Default::default();
         app.activity_bar_position = ActivityBarPosition::Left;
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
         assert!(sidebar_toggle_area(&app).is_none());
     }
 }
@@ -106,16 +118,22 @@ fn top_sidebar_toggle_beside_new_desk_reopens_the_same_view() {
 #[test]
 fn top_sidebar_toggle_stays_visible_in_the_active_compact_split() {
     let mut app = fixture();
-    app.tabs.push(Tab::new_file(Editor::test_with_text("second document\n")));
+    app.tabs
+        .push(Tab::new_file(Editor::test_with_text("second document\n")));
     app.create_split_group_dir(1, crate::app::SplitDirection::Horizontal);
     app.switch_group(0);
     let mut terminal = Terminal::new(TestBackend::new(64, 24)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     assert!(app.split_active());
     assert_eq!(app.desks.host, app.active_group);
     let toggle = crate::ui_desks::sidebar_toggle_area(&app).unwrap();
     assert_eq!(toggle.width, 1);
-    assert_eq!(terminal.backend().buffer()[(toggle.x, toggle.y)].symbol(), "◧");
+    assert_eq!(
+        terminal.backend().buffer()[(toggle.x, toggle.y)].symbol(),
+        "◧"
+    );
     click(&mut app, toggle.x, toggle.y);
     assert!(!app.show_explorer);
 }

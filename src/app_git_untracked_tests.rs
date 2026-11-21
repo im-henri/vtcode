@@ -224,11 +224,14 @@ fn completed_status(app: &App) -> crate::background::BackgroundResult {
             .receiver
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .unwrap();
-        if let crate::background::BackgroundResult::SourceControlRead { result: inner, .. } = &result
+        if let crate::background::BackgroundResult::SourceControlRead { result: inner, .. } =
+            &result
             && let crate::background::BackgroundResult::GitRepositories { complete, .. } = &**inner
         {
             if *complete {
-                for update in progress { app.background.sender.send(update).unwrap(); }
+                for update in progress {
+                    app.background.sender.send(update).unwrap();
+                }
                 return result;
             }
             progress.push(result);
@@ -271,11 +274,18 @@ fn enabling_untracked_during_startup_reloads_the_early_primary_snapshot() {
     app.refresh_source_control_async();
     let old = completed_status(&app);
     visibility(&mut app, true);
-    assert!(!app.bg_git_status_pending, "initial discovery has not been applied yet");
+    assert!(
+        !app.bg_git_status_pending,
+        "initial discovery has not been applied yet"
+    );
     app.background.sender.send(old).unwrap();
     settle(&mut app);
     assert_matches_full(&app, &root);
-    assert!(app.source_control_files.iter().any(|file| file.path == "new.txt"));
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "new.txt")
+    );
 }
 
 #[test]

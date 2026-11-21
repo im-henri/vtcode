@@ -4,7 +4,11 @@ use std::ffi::{CString, c_char, c_int, c_void};
 // The safe git2 API uses a different getter that propagates config errors.
 unsafe extern "C" {
     fn git_config_open_ondisk(out: *mut *mut c_void, path: *const c_char) -> c_int;
-    fn git_config__get_int_force(config: *const c_void, key: *const c_char, fallback: c_int) -> c_int;
+    fn git_config__get_int_force(
+        config: *const c_void,
+        key: *const c_char,
+        fallback: c_int,
+    ) -> c_int;
     fn git_config_free(config: *mut c_void);
 }
 
@@ -27,7 +31,10 @@ fn config_read_error_preserves_forced_integer_fallback_and_recovers() {
     let name = CString::new(path.to_str().unwrap()).unwrap();
     let mut raw = std::ptr::null_mut();
     // SAFETY: the path is NUL-terminated and raw is a valid output pointer.
-    assert_eq!(unsafe { git_config_open_ondisk(&mut raw, name.as_ptr()) }, 0);
+    assert_eq!(
+        unsafe { git_config_open_ondisk(&mut raw, name.as_ptr()) },
+        0
+    );
     let config = Config(raw);
     let value = || {
         // SAFETY: config remains alive and the key is NUL-terminated.

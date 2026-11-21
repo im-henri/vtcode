@@ -33,12 +33,24 @@ pub enum EndOfLine {
 impl EditorConfigSettings {
     /// Merge `other` into self; `other` values take priority where set.
     fn merge_from(&mut self, other: &EditorConfigSettings) {
-        if other.indent_style.is_some() { self.indent_style = other.indent_style; }
-        if other.indent_size.is_some() { self.indent_size = other.indent_size; }
-        if other.tab_width.is_some() { self.tab_width = other.tab_width; }
-        if other.end_of_line.is_some() { self.end_of_line = other.end_of_line; }
-        if other.trim_trailing_whitespace.is_some() { self.trim_trailing_whitespace = other.trim_trailing_whitespace; }
-        if other.insert_final_newline.is_some() { self.insert_final_newline = other.insert_final_newline; }
+        if other.indent_style.is_some() {
+            self.indent_style = other.indent_style;
+        }
+        if other.indent_size.is_some() {
+            self.indent_size = other.indent_size;
+        }
+        if other.tab_width.is_some() {
+            self.tab_width = other.tab_width;
+        }
+        if other.end_of_line.is_some() {
+            self.end_of_line = other.end_of_line;
+        }
+        if other.trim_trailing_whitespace.is_some() {
+            self.trim_trailing_whitespace = other.trim_trailing_whitespace;
+        }
+        if other.insert_final_newline.is_some() {
+            self.insert_final_newline = other.insert_final_newline;
+        }
     }
 
     /// Get effective tab width (tab_width if set, else indent_size, else None).
@@ -113,7 +125,7 @@ fn parse_editorconfig(content: &str) -> Vec<(String, EditorConfigSettings)> {
                 sections.push((pattern, current_settings));
                 current_settings = EditorConfigSettings::default();
             }
-            current_pattern = Some(line[1..line.len()-1].trim().to_string());
+            current_pattern = Some(line[1..line.len() - 1].trim().to_string());
             continue;
         }
 
@@ -185,8 +197,8 @@ fn glob_match(pattern: &str, filename: &str) -> bool {
         if let Some(end) = pattern[start..].find('}') {
             let end = start + end;
             let prefix = &pattern[..start];
-            let suffix = &pattern[end+1..];
-            let alternatives = &pattern[start+1..end];
+            let suffix = &pattern[end + 1..];
+            let alternatives = &pattern[start + 1..end];
             return alternatives.split(',').any(|alt| {
                 let expanded = format!("{prefix}{alt}{suffix}");
                 glob_match(&expanded, filename)
@@ -204,7 +216,9 @@ fn glob_match_simple(pattern: &[u8], text: &[u8]) -> bool {
     let mut star_text_idx = 0;
 
     while ti < text.len() {
-        if pi < pattern.len() && (pattern[pi] == b'?' || pattern[pi].eq_ignore_ascii_case(&text[ti])) {
+        if pi < pattern.len()
+            && (pattern[pi] == b'?' || pattern[pi].eq_ignore_ascii_case(&text[ti]))
+        {
             pi += 1;
             ti += 1;
         } else if pi < pattern.len() && pattern[pi] == b'*' {
@@ -250,7 +264,9 @@ fn match_char_class(pattern: &[u8], ch: u8) -> Option<(bool, usize)> {
     }
     let mut i = 1;
     let negated = i < pattern.len() && pattern[i] == b'!';
-    if negated { i += 1; }
+    if negated {
+        i += 1;
+    }
 
     let mut matched = false;
     while i < pattern.len() && pattern[i] != b']' {

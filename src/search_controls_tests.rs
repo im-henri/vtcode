@@ -28,13 +28,18 @@ fn search_bar_uses_editor_widget_and_input_colors() {
     app.search_query = "theme".into();
     app.search_input_focused = false;
     let mut theme = crate::ui_control_visibility_tests::theme_with_popup_and_control_roles();
-    for (key, value) in [("editorWidget.background", "#0d1016"),
-        ("input.background", "#1e2832"), ("input.foreground", "#b3b1ad"),
-        ("editorWidget.border", "#3c4650")] {
+    for (key, value) in [
+        ("editorWidget.background", "#0d1016"),
+        ("input.background", "#1e2832"),
+        ("input.foreground", "#b3b1ad"),
+        ("editorWidget.border", "#3c4650"),
+    ] {
         theme.workbench_colors.insert(key.into(), value.into());
     }
     app.colors = theme.to_theme_colors();
-    terminal.draw(|frame| crate::ui_search_dialog::draw_search_bar(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui_search_dialog::draw_search_bar(frame, &mut app))
+        .unwrap();
     let area = app.search_bar_area.unwrap();
     let position = label_position(&terminal, area, "theme");
     let cell = &terminal.backend().buffer()[position];
@@ -48,7 +53,10 @@ fn search_bar_uses_editor_widget_and_input_colors() {
 #[test]
 fn find_widget_layers_fill_text_inputs_and_controls_on_the_visible_editor_surface() {
     use crate::theme_workbench::ColorLayer;
-    use ratatui::{style::{Color, Modifier, Style}, widgets::Paragraph};
+    use ratatui::{
+        style::{Color, Modifier, Style},
+        widgets::Paragraph,
+    };
     let (_workspace, mut app, mut terminal) = fixture();
     app.search_query = "query".into();
     app.search_input_focused = false;
@@ -68,29 +76,62 @@ fn find_widget_layers_fill_text_inputs_and_controls_on_the_visible_editor_surfac
             ("input.background", "#6080a040"),
             ("toolbar.hoverBackground", "#80908060"),
             ("errorForeground", "#ffccbbee"),
-        ] { theme.workbench_colors.insert(id.into(), value.into()); }
+        ] {
+            theme.workbench_colors.insert(id.into(), value.into());
+        }
         app.colors = theme.to_theme_colors();
         // A gradient or highlighted editor row can differ from editor.background.
         // Underlying syntax and its modifiers must still be cleared by the widget.
-        terminal.draw(|frame| {
-            frame.render_widget(Paragraph::new("Editor text\nSyntax text")
-                .style(Style::default().bg(owner).add_modifier(Modifier::ITALIC)), frame.area());
-            crate::ui_search_dialog::draw_search_bar(frame, &mut app);
-        }).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    Paragraph::new("Editor text\nSyntax text")
+                        .style(Style::default().bg(owner).add_modifier(Modifier::ITALIC)),
+                    frame.area(),
+                );
+                crate::ui_search_dialog::draw_search_bar(frame, &mut app);
+            })
+            .unwrap();
         let area = app.search_bar_area.unwrap();
         let buffer = terminal.backend().buffer();
         let title = &buffer[label_position(&terminal, area, "Find")];
         assert_eq!(title.bg, expected_bg, "{fill}, owner={owner:?}");
-        assert_eq!(title.fg, ColorLayer::rgba(255, 238, 221, 224).over(expected_bg).unwrap());
+        assert_eq!(
+            title.fg,
+            ColorLayer::rgba(255, 238, 221, 224)
+                .over(expected_bg)
+                .unwrap()
+        );
         assert!(!title.modifier.contains(Modifier::ITALIC));
-        assert_eq!(buffer[(area.x, area.y)].fg, ColorLayer::rgba(170, 221, 255, 128).over(expected_bg).unwrap());
+        assert_eq!(
+            buffer[(area.x, area.y)].fg,
+            ColorLayer::rgba(170, 221, 255, 128)
+                .over(expected_bg)
+                .unwrap()
+        );
         let query = &buffer[label_position(&terminal, area, "query")];
-        assert_eq!(query.bg, ColorLayer::rgba(96, 128, 160, 64).over(expected_bg).unwrap());
+        assert_eq!(
+            query.bg,
+            ColorLayer::rgba(96, 128, 160, 64)
+                .over(expected_bg)
+                .unwrap()
+        );
         let close = &buffer[label_position(&terminal, area, "×")];
         assert_eq!((close.fg, close.bg), (title.fg, expected_bg));
         let error = &buffer[label_position(&terminal, area, "Invalid expression")];
-        assert_eq!((error.fg, error.bg), (ColorLayer::rgba(255, 204, 187, 238).over(expected_bg).unwrap(), expected_bg));
-        crate::ui_control_visibility_tests::snapshot(buffer, &format!("find widget {fill} on {owner:?}"));
+        assert_eq!(
+            (error.fg, error.bg),
+            (
+                ColorLayer::rgba(255, 204, 187, 238)
+                    .over(expected_bg)
+                    .unwrap(),
+                expected_bg
+            )
+        );
+        crate::ui_control_visibility_tests::snapshot(
+            buffer,
+            &format!("find widget {fill} on {owner:?}"),
+        );
     }
 }
 
@@ -131,8 +172,12 @@ fn label_position(terminal: &Terminal<TestBackend>, area: Rect, label: &str) -> 
 
 fn search_activity_position(app: &App) -> (u16, u16) {
     let (button, _) = crate::ui_chrome::activity_item_regions(
-        app.activity_bar_area.unwrap(), app.activity_bar_position,
-    ).into_iter().find(|(_, index)| *index == 1).unwrap();
+        app.activity_bar_area.unwrap(),
+        app.activity_bar_position,
+    )
+    .into_iter()
+    .find(|(_, index)| *index == 1)
+    .unwrap();
     (button.x, button.y)
 }
 
@@ -191,13 +236,19 @@ fn regex_search_controls_switch_modes_and_show_invalid_pattern_errors() {
     app.update_global_search();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
     draw(&mut app, &mut terminal);
-    assert!(app.global_search_error.is_none(), "VS Code accepts JavaScript lookarounds");
+    assert!(
+        app.global_search_error.is_none(),
+        "VS Code accepts JavaScript lookarounds"
+    );
     assert!(!app.global_search_results.is_empty());
     app.global_search_query = "(?s).*".into();
     app.update_global_search();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
     draw(&mut app, &mut terminal);
-    assert!(app.global_search_error.is_some(), "inline Rust regex flags are invalid JavaScript");
+    assert!(
+        app.global_search_error.is_some(),
+        "inline Rust regex flags are invalid JavaScript"
+    );
     assert!(has_text(&terminal, "Invalid regex:"));
     app.global_search_query = r"\*".into();
     app.update_global_search();
@@ -326,7 +377,11 @@ fn file_find_does_not_reopen_after_the_last_editor_closes() {
     for pane in [ActivePane::Editor, ActivePane::Explorer] {
         app.active_pane = pane;
         for fallback in [false, true] {
-            app.keybindings = if fallback { Default::default() } else { configured_keybindings.clone() };
+            app.keybindings = if fallback {
+                Default::default()
+            } else {
+                configured_keybindings.clone()
+            };
             for code in [KeyCode::Char('f'), KeyCode::Char('h')] {
                 key(&mut app, code, KeyModifiers::CONTROL);
                 draw(&mut app, &mut terminal);
@@ -343,7 +398,11 @@ fn file_find_does_not_reopen_after_the_last_editor_closes() {
     }
 
     // Workspace search remains available with no editor open.
-    key(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    key(
+        &mut app,
+        KeyCode::Char('f'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
     assert!(app.global_search_active);
     assert_eq!(app.sidebar_view, SidebarView::Search);
 }
@@ -362,37 +421,87 @@ fn find_bar_resizes_horizontally_and_keeps_inputs_and_controls_working() {
     draw(&mut app, &mut terminal);
     let original = app.search_bar_area.unwrap();
     assert!(!has_text(&terminal, &app.search_query));
-    crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), "find bar default width");
-    let editor_cursor = app.editor().map(|ed| (ed.cursor_line, ed.cursor_col, ed.selection_anchor));
+    crate::ui_control_visibility_tests::snapshot(
+        terminal.backend().buffer(),
+        "find bar default width",
+    );
+    let editor_cursor = app
+        .editor()
+        .map(|ed| (ed.cursor_line, ed.cursor_col, ed.selection_anchor));
 
-    mouse(&mut app, MouseEventKind::Moved, (original.x, original.y + 1));
+    mouse(
+        &mut app,
+        MouseEventKind::Moved,
+        (original.x, original.y + 1),
+    );
     draw(&mut app, &mut terminal);
     assert!(has_text(&terminal, "Drag left or right to resize"));
     app.mouse_hover_changed = false;
-    mouse(&mut app, MouseEventKind::Moved, (original.x - 1, original.y + 1));
-    assert!(app.mouse_hover_changed, "leaving the resize handle clears its highlight");
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), (original.x, original.y + 1));
+    mouse(
+        &mut app,
+        MouseEventKind::Moved,
+        (original.x - 1, original.y + 1),
+    );
+    assert!(
+        app.mouse_hover_changed,
+        "leaving the resize handle clears its highlight"
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        (original.x, original.y + 1),
+    );
     assert!(app.search_bar_layout.resizing);
     // Drag outside the widget's rows and across workbench panes.
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), (original.x - 35, 20));
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        (original.x - 35, 20),
+    );
     draw(&mut app, &mut terminal);
     let wider = app.search_bar_area.unwrap();
-    assert_eq!(wider.width, (original.width + 35).min(app.viewport.unwrap().width - 2));
+    assert_eq!(
+        wider.width,
+        (original.width + 35).min(app.viewport.unwrap().width - 2)
+    );
     assert_eq!(wider.right(), original.right());
     assert!(has_text(&terminal, &app.search_query));
     assert!(has_text(&terminal, &app.replace_query));
-    crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), "find bar expanded width");
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), (wider.x, 20));
+    crate::ui_control_visibility_tests::snapshot(
+        terminal.backend().buffer(),
+        "find bar expanded width",
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        (wider.x, 20),
+    );
     assert!(!app.search_bar_layout.resizing);
     assert_eq!(app.search_selection_anchor, Some(0));
-    assert_eq!(app.editor().map(|ed| (ed.cursor_line, ed.cursor_col, ed.selection_anchor)), editor_cursor);
+    assert_eq!(
+        app.editor()
+            .map(|ed| (ed.cursor_line, ed.cursor_col, ed.selection_anchor)),
+        editor_cursor
+    );
     assert!(!app.resizing_explorer && !app.resizing_panel);
     assert!(app.drag_start_pos.is_none());
 
     // Dragging right narrows the same edge, even over the existing input.
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), (wider.x, wider.y + 1));
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), (wider.x + 10, wider.y + 1));
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), (wider.x + 10, wider.y + 1));
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        (wider.x, wider.y + 1),
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        (wider.x + 10, wider.y + 1),
+    );
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        (wider.x + 10, wider.y + 1),
+    );
     draw(&mut app, &mut terminal);
     let width = app.search_bar_area.unwrap().width;
     assert_eq!(width, wider.width - 10);
@@ -419,7 +528,11 @@ fn find_bar_resize_limits_follow_the_viewport_and_keep_the_preferred_width() {
     let max_width = app.viewport.unwrap().width - 2;
     for (col, expected_width) in [(u16::MAX, 40.min(max_width)), (0, max_width)] {
         let bar = app.search_bar_area.unwrap();
-        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), (bar.x, bar.y + 1));
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            (bar.x, bar.y + 1),
+        );
         mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), (col, 20));
         mouse(&mut app, MouseEventKind::Up(MouseButton::Left), (col, 20));
         draw(&mut app, &mut terminal);
@@ -441,7 +554,11 @@ fn find_bar_resize_limits_follow_the_viewport_and_keep_the_preferred_width() {
     assert_eq!(app.search_bar_area.unwrap().width, max_width);
 
     let bar = app.search_bar_area.unwrap();
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), (bar.x, bar.y + 1));
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        (bar.x, bar.y + 1),
+    );
     key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
     assert!(!app.search_bar_layout.resizing);
     assert!(!app.search_active);
@@ -503,7 +620,8 @@ fn every_search_button_has_a_tooltip_at_its_rendered_position() {
             col_end: 3,
             context_before: None,
             context_after: None,
-        }].into();
+        }]
+        .into();
         if scope == SearchScope::File {
             app.search_active = true;
             app.replace_mode = true;
@@ -578,7 +696,8 @@ fn workspace_search_stop_button_keeps_partial_results_and_refresh_restarts_searc
                     col_end: 3,
                     context_before: None,
                     context_after: None,
-                }].into();
+                }]
+                .into();
             }
             let token = crate::background::CancellationToken::new();
             app.search_cancel_token = Some(token.clone());
@@ -595,9 +714,23 @@ fn workspace_search_stop_button_keeps_partial_results_and_refresh_restarts_searc
             assert!(!app.bg_global_search_running);
             assert!(app.global_search_active);
             assert_eq!(app.global_search_query, "foo");
-            assert_eq!(app.global_search_results.len(), usize::from(partial_results));
-            assert!(has_text(&terminal, if partial_results { "(stopped)" } else { "Search stopped" }));
-            assert!(!app.search_control_regions.iter().any(|button| button.control == SearchControl::Stop));
+            assert_eq!(
+                app.global_search_results.len(),
+                usize::from(partial_results)
+            );
+            assert!(has_text(
+                &terminal,
+                if partial_results {
+                    "(stopped)"
+                } else {
+                    "Search stopped"
+                }
+            ));
+            assert!(
+                !app.search_control_regions
+                    .iter()
+                    .any(|button| button.control == SearchControl::Stop)
+            );
 
             click_label(&mut app, &mut terminal, SearchScope::Workspace, "↻");
             assert!(app.bg_global_search_running);
@@ -715,7 +848,9 @@ fn absolute_search_scope_keeps_replace_all_out_of_case_distinct_open_siblings() 
     std::fs::write(&selected_file, "foo\n").unwrap();
     std::fs::write(&open_sibling, "foo\n").unwrap();
     app.open_file(&open_sibling);
-    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.editor().unwrap().bg_loading
+    });
 
     replace_in_absolute_folder(&mut app, &selected);
 
@@ -735,7 +870,9 @@ fn absolute_search_scope_excludes_an_open_parent_traversal_outside_the_folder() 
     std::fs::write(&included, "foo\n").unwrap();
     std::fs::write(&outside, "foo\n").unwrap();
     app.open_file(&outside);
-    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.editor().unwrap().bg_loading
+    });
 
     replace_in_absolute_folder(&mut app, &selected);
 
@@ -757,7 +894,9 @@ fn absolute_search_scope_replaces_the_open_model_once_through_a_case_alias() {
     let file = selected.join("file.txt");
     std::fs::write(&file, "foo\n").unwrap();
     app.open_file(&file);
-    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.editor().unwrap().bg_loading
+    });
     let editor = app.editor_mut().unwrap();
     editor.rope = ropey::Rope::from_str("draft\nfoo\n");
     editor.modified = true;
@@ -830,7 +969,8 @@ fn clicking_search_result_navigates_on_first_click_and_keeps_search_focus_until_
             col_end: 98,
             context_before: None,
             context_after: None,
-        }].into();
+        }]
+        .into();
         draw(&mut app, &mut terminal);
         let panel = app.explorer_area.unwrap();
         let result_y = crate::ui_search_panel::search_results_start_y(&app, panel) + 1;
@@ -851,13 +991,26 @@ fn clicking_search_result_navigates_on_first_click_and_keeps_search_focus_until_
         let editor = app.editor().unwrap();
         assert_eq!(editor.file_path.as_ref(), Some(&path));
         assert_eq!((editor.cursor_line, editor.cursor_col), (70, 92));
-        assert!(editor.scroll_offset > 0, "match must be revealed vertically");
-        assert!(editor.horizontal_scroll > 0, "match must be revealed horizontally");
+        assert!(
+            editor.scroll_offset > 0,
+            "match must be revealed vertically"
+        );
+        assert!(
+            editor.horizontal_scroll > 0,
+            "match must be revealed horizontally"
+        );
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(app.active_pane, ActivePane::Editor);
         key(&mut app, KeyCode::Char('!'), KeyModifiers::NONE);
         assert_eq!(app.global_search_query, "needle");
-        assert!(app.editor().unwrap().rope.line(70).to_string().contains("!needle"));
+        assert!(
+            app.editor()
+                .unwrap()
+                .rope
+                .line(70)
+                .to_string()
+                .contains("!needle")
+        );
     }
 }
 
@@ -872,7 +1025,11 @@ fn search_shortcut_and_command_focus_query_from_editor() {
         if command {
             app.execute_palette_command("global_search");
         } else {
-            key(&mut app, KeyCode::Char('F'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+            key(
+                &mut app,
+                KeyCode::Char('F'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            );
         }
         key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
         assert_eq!(app.active_pane, ActivePane::Explorer);
@@ -924,41 +1081,52 @@ fn latest_search_click_survives_loading_in_an_inactive_split() {
                 "scrollOffset": 0,
                 "horizontalScroll": 0,
                 "pinned": false
-            })).unwrap(),
+            }))
+            .unwrap(),
         });
         editor.pending_session_restore = session_restore.clone();
         app.tabs.push(Tab::new_file(editor));
         app.global_search_query = "needle".into();
-        app.global_search_results = [3, 50].into_iter().map(|line_num| GlobalSearchResult {
-            file_path: path.clone(),
-            line_num,
-            line_text: "prefix needle".into(),
-            col_start: 7,
-            col_end: 13,
-            context_before: None,
-            context_after: None,
-        }).collect();
+        app.global_search_results = [3, 50]
+            .into_iter()
+            .map(|line_num| GlobalSearchResult {
+                file_path: path.clone(),
+                line_num,
+                line_text: "prefix needle".into(),
+                col_start: 7,
+                col_end: 13,
+                context_before: None,
+                context_after: None,
+            })
+            .collect();
         for index in 0..2 {
             draw(&mut app, &mut terminal);
             let panel = app.explorer_area.unwrap();
             let result_y = crate::ui_search_panel::search_results_start_y(&app, panel) + 1 + index;
-            mouse(&mut app, MouseEventKind::Down(MouseButton::Left), (panel.x + 3, result_y));
+            mouse(
+                &mut app,
+                MouseEventKind::Down(MouseButton::Left),
+                (panel.x + 3, result_y),
+            );
             assert!(app.editor().unwrap().bg_loading);
         }
         app.create_split_group(app.active_tab);
         let loading_group = app.active_group;
         app.switch_group(0);
         let rope = ropey::Rope::from_str(&contents);
-        app.background.sender.send(crate::background::BackgroundResult::FileLoaded {
-            workspace_generation: 0,
-            path,
-            file_size: rope.len_bytes() as u64,
-            rope,
-            encoding: "UTF-8",
-            last_disk_modified: None,
-            session_restores: session_restore.into_iter().collect(),
-            skip_open_prompt: true,
-        }).unwrap();
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::FileLoaded {
+                workspace_generation: 0,
+                path,
+                file_size: rope.len_bytes() as u64,
+                rope,
+                encoding: "UTF-8",
+                last_disk_modified: None,
+                session_restores: session_restore.into_iter().collect(),
+                skip_open_prompt: true,
+            })
+            .unwrap();
         app.wait_for_background(Duration::from_secs(5), |app| {
             !app.background.has_active_jobs() && !app.background.has_pending_results()
         });
@@ -966,7 +1134,13 @@ fn latest_search_click_survives_loading_in_an_inactive_split() {
         assert_eq!(app.editor().unwrap().cursor_line, 0);
         app.switch_group(loading_group);
         assert!(!app.editor().unwrap().bg_loading);
-        assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (49, 7));
+        assert_eq!(
+            (
+                app.editor().unwrap().cursor_line,
+                app.editor().unwrap().cursor_col
+            ),
+            (49, 7)
+        );
         assert!(app.editor().unwrap().pending_cursor_position.is_none());
     }
 }
@@ -1090,7 +1264,11 @@ fn opening_file_find_from_workspace_search_focuses_all_field_shortcuts() {
             if command {
                 app.execute_palette_command(if replace { "find_replace" } else { "find" });
             } else {
-                key(&mut app, KeyCode::Char(if replace { 'h' } else { 'f' }), KeyModifiers::CONTROL);
+                key(
+                    &mut app,
+                    KeyCode::Char(if replace { 'h' } else { 'f' }),
+                    KeyModifiers::CONTROL,
+                );
             }
             assert_eq!(app.active_pane, ActivePane::Editor);
             assert_eq!(app.focused_text_input_id(), Some(TextInputId::SearchFind));
@@ -1113,10 +1291,18 @@ fn opening_file_find_from_workspace_search_focuses_all_field_shortcuts() {
 
 fn search_options(app: &App, scope: SearchScope) -> [bool; 4] {
     match scope {
-        SearchScope::File => [app.search_case_sensitive, app.search_whole_word,
-            app.search_regex, app.search_preserve_case],
-        SearchScope::Workspace => [app.global_search_case_sensitive, app.global_search_whole_word,
-            app.global_search_regex, app.global_search_preserve_case],
+        SearchScope::File => [
+            app.search_case_sensitive,
+            app.search_whole_word,
+            app.search_regex,
+            app.search_preserve_case,
+        ],
+        SearchScope::Workspace => [
+            app.global_search_case_sensitive,
+            app.global_search_whole_word,
+            app.global_search_regex,
+            app.global_search_preserve_case,
+        ],
     }
 }
 
@@ -1129,7 +1315,11 @@ fn option_buttons_keep_file_and_workspace_preferences_independent() {
         draw(&mut app, &mut terminal);
         for (index, label) in ["Aa", "ab", ".*", "AB"].into_iter().enumerate() {
             click_label(&mut app, &mut terminal, scope, label);
-            let other = if scope == SearchScope::File { SearchScope::Workspace } else { SearchScope::File };
+            let other = if scope == SearchScope::File {
+                SearchScope::Workspace
+            } else {
+                SearchScope::File
+            };
             assert_eq!(search_options(&app, other), [false; 4]);
             let expected = std::array::from_fn(|option| option <= index);
             assert_eq!(search_options(&app, scope), expected);
@@ -1176,7 +1366,9 @@ fn workspace_replacement_uses_its_own_matching_and_preserve_case_options() {
         std::fs::write(path, "foo FOO foobar").unwrap();
     }
     app.open_file(&open);
-    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.editor().unwrap().bg_loading
+    });
     app.search_case_sensitive = true;
     app.search_regex = true;
     app.global_search_whole_word = true;
@@ -1200,7 +1392,9 @@ fn settings_changes_only_refresh_the_corresponding_search() {
     let path = workspace.path().join("case.txt");
     std::fs::write(&path, "foo Foo foobar").unwrap();
     app.open_file(&path);
-    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.editor().unwrap().bg_loading
+    });
     app.search_active = true;
     app.search_query = "foo".into();
     app.global_search_query = "foo".into();
@@ -1230,24 +1424,36 @@ fn docked_terminal_focus_prevents_visible_find_from_claiming_text_shortcuts() {
 }
 
 fn scrolled_workspace_results(
-    sidebar_right: bool, replace_visible: bool, selected_file_expanded: bool,
+    sidebar_right: bool,
+    replace_visible: bool,
+    selected_file_expanded: bool,
 ) -> (tempfile::TempDir, App, Terminal<TestBackend>) {
     let (workspace, mut app, mut terminal) = fixture();
     app.sidebar_right = sidebar_right;
     app.global_search_replace_visible = replace_visible;
     app.global_search_query = "foo".into();
-    app.global_search_results = (0..600).flat_map(|file| {
-        let path = workspace.path().join(format!("file-{file:04}.rs"));
-        (0..4).map(move |line| GlobalSearchResult {
-            file_path: path.clone(), line_num: line + 1,
-            line_text: format!("foo match {line}").into(), col_start: 0, col_end: 3,
-            context_before: None, context_after: None,
+    app.global_search_results = (0..600)
+        .flat_map(|file| {
+            let path = workspace.path().join(format!("file-{file:04}.rs"));
+            (0..4).map(move |line| GlobalSearchResult {
+                file_path: path.clone(),
+                line_num: line + 1,
+                line_text: format!("foo match {line}").into(),
+                col_start: 0,
+                col_end: 3,
+                context_before: None,
+                context_after: None,
+            })
         })
-    }).collect();
+        .collect();
     app.global_search_results.set_all_collapsed(true);
     if selected_file_expanded {
         let path = app.global_search_results[0].file_path.clone();
-        std::fs::write(&path, "foo match 0\nfoo match 1\nfoo match 2\nfoo match 3\n").unwrap();
+        std::fs::write(
+            &path,
+            "foo match 0\nfoo match 1\nfoo match 2\nfoo match 3\n",
+        )
+        .unwrap();
         app.global_search_results.set_collapsed(&path, false);
     }
     app.global_search_selected = 0;
@@ -1259,7 +1465,10 @@ fn scrolled_workspace_results(
     mouse(&mut app, MouseEventKind::ScrollDown, (area.x + 4, row));
     draw(&mut app, &mut terminal);
     assert!(app.global_search_scroll > 320);
-    assert_eq!(app.global_search_selected, 0, "wheel scrolling must leave selection alone");
+    assert_eq!(
+        app.global_search_selected, 0,
+        "wheel scrolling must leave selection alone"
+    );
     (workspace, app, terminal)
 }
 
@@ -1268,18 +1477,28 @@ fn workspace_search_expansion_preserves_viewport_with_selection_above_it() {
     use crate::search_results::SearchRow;
     for sidebar_right in [false, true] {
         for replace_visible in [false, true] {
-            let (_workspace, mut app, mut terminal) = scrolled_workspace_results(sidebar_right, replace_visible, true);
+            let (_workspace, mut app, mut terminal) =
+                scrolled_workspace_results(sidebar_right, replace_visible, true);
             let scroll = app.global_search_scroll;
             let area = app.explorer_area.unwrap();
             let start_y = crate::ui_search_panel::search_results_start_y(&app, area);
             // Expand several different files while the selected match remains
             // hundreds of rows above the viewport.
             for _ in 0..3 {
-                let (row, index) = app.global_search_results.visible_rows(scroll + 3..scroll + 15)
+                let (row, index) = app
+                    .global_search_results
+                    .visible_rows(scroll + 3..scroll + 15)
                     .find_map(|(row, hit)| match hit {
-                        SearchRow::Header(index) if app.is_global_search_file_collapsed(&app.global_search_results[index].file_path) => Some((row, index)),
+                        SearchRow::Header(index)
+                            if app.is_global_search_file_collapsed(
+                                &app.global_search_results[index].file_path,
+                            ) =>
+                        {
+                            Some((row, index))
+                        }
                         _ => None,
-                    }).unwrap();
+                    })
+                    .unwrap();
                 let path = app.global_search_results[index].file_path.clone();
                 let screen_y = start_y + (row - scroll) as u16;
                 let point = (area.x + 4, screen_y);
@@ -1287,18 +1506,33 @@ fn workspace_search_expansion_preserves_viewport_with_selection_above_it() {
                 mouse(&mut app, MouseEventKind::Up(MouseButton::Left), point);
                 draw(&mut app, &mut terminal);
                 assert!(!app.is_global_search_file_collapsed(&path));
-                assert_eq!(app.global_search_scroll, scroll, "expanding {path:?} must not reveal the old selection");
+                assert_eq!(
+                    app.global_search_scroll, scroll,
+                    "expanding {path:?} must not reveal the old selection"
+                );
                 assert_eq!(app.global_search_selected, 0);
                 let label: String = (area.x..area.right())
-                    .map(|x| terminal.backend().buffer()[(x, screen_y)].symbol()).collect();
-                assert!(label.contains(path.file_name().unwrap().to_str().unwrap()), "the expanded header stays under the pointer: {label}");
+                    .map(|x| terminal.backend().buffer()[(x, screen_y)].symbol())
+                    .collect();
+                assert!(
+                    label.contains(path.file_name().unwrap().to_str().unwrap()),
+                    "the expanded header stays under the pointer: {label}"
+                );
             }
             app.global_search_active = true;
             key(&mut app, KeyCode::Down, KeyModifiers::CONTROL);
             draw(&mut app, &mut terminal);
-            assert_eq!(app.global_search_selected, 1, "keyboard navigation must still move selection");
-            assert!(app.global_search_scroll < scroll, "keyboard navigation still reveals the chosen match");
-            app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+            assert_eq!(
+                app.global_search_selected, 1,
+                "keyboard navigation must still move selection"
+            );
+            assert!(
+                app.global_search_scroll < scroll,
+                "keyboard navigation still reveals the chosen match"
+            );
+            app.wait_for_background(Duration::from_secs(5), |app| {
+                !app.editor().unwrap().bg_loading
+            });
         }
     }
 }
@@ -1308,12 +1542,15 @@ fn workspace_search_collapsing_the_only_expanded_file_preserves_viewport() {
     use crate::search_results::SearchRow;
     for sidebar_right in [false, true] {
         for replace_visible in [false, true] {
-            let (_workspace, mut app, mut terminal) = scrolled_workspace_results(sidebar_right, replace_visible, false);
+            let (_workspace, mut app, mut terminal) =
+                scrolled_workspace_results(sidebar_right, replace_visible, false);
             let scroll = app.global_search_scroll;
             let area = app.explorer_area.unwrap();
             let start_y = crate::ui_search_panel::search_results_start_y(&app, area);
             let row = scroll + 4;
-            let Some(SearchRow::Header(index)) = app.global_search_results.row_at(row) else { panic!("collapsed file header") };
+            let Some(SearchRow::Header(index)) = app.global_search_results.row_at(row) else {
+                panic!("collapsed file header")
+            };
             let path = app.global_search_results[index].file_path.clone();
             let point = (area.x + 4, start_y + 4);
             for collapsed in [false, true, false, true] {
@@ -1321,7 +1558,10 @@ fn workspace_search_collapsing_the_only_expanded_file_preserves_viewport() {
                 mouse(&mut app, MouseEventKind::Up(MouseButton::Left), point);
                 draw(&mut app, &mut terminal);
                 assert_eq!(app.is_global_search_file_collapsed(&path), collapsed);
-                assert_eq!(app.global_search_scroll, scroll, "toggling the last expanded file must not reset scrolling");
+                assert_eq!(
+                    app.global_search_scroll, scroll,
+                    "toggling the last expanded file must not reset scrolling"
+                );
             }
         }
     }

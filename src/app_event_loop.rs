@@ -6,9 +6,9 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     queue,
 };
-use ratatui::{backend::Backend, Terminal};
 #[cfg(test)]
 use ratatui::backend::CrosstermBackend;
+use ratatui::{Terminal, backend::Backend};
 
 use crate::app::{ActivePane, App, TabKind};
 use crate::input_keyboard;
@@ -86,9 +86,13 @@ thread_local! {
 
 fn reference_input_batches() -> bool {
     #[cfg(test)]
-    { return REFERENCE_INPUT_BATCHES.get(); }
+    {
+        return REFERENCE_INPUT_BATCHES.get();
+    }
     #[cfg(not(test))]
-    { false }
+    {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -111,17 +115,36 @@ const TAB_TOOLTIP_DELAY: Duration = Duration::from_millis(500);
 const SAVING_FLASH_LIFETIME: Duration = Duration::from_millis(1_500);
 
 fn background_chat_redraw(app: &App, was_running: bool, changed: bool) -> bool {
-    app.terminal_has_focus || was_running || changed
+    app.terminal_has_focus
+        || was_running
+        || changed
         || app.chat.any_agent_running()
         || app.chat.rollback.busy()
 }
 
-fn open_disk_sources(app: &App) -> impl Iterator<Item = (&std::path::Path, Option<&std::sync::Arc<crate::remote::Checkpoint>>)> {
+fn open_disk_sources(
+    app: &App,
+) -> impl Iterator<
+    Item = (
+        &std::path::Path,
+        Option<&std::sync::Arc<crate::remote::Checkpoint>>,
+    ),
+> {
     app.tabs
         .iter()
         .chain(app.groups.iter().flat_map(|group| group.tabs.iter()))
-        .filter(|tab| !matches!(tab.kind, TabKind::Diff(_) | TabKind::GitRevision | TabKind::CommitDetails))
-        .filter_map(|tab| Some((tab.editor.file_path.as_deref()?, tab.editor.remote_checkpoint.as_ref())))
+        .filter(|tab| {
+            !matches!(
+                tab.kind,
+                TabKind::Diff(_) | TabKind::GitRevision | TabKind::CommitDetails
+            )
+        })
+        .filter_map(|tab| {
+            Some((
+                tab.editor.file_path.as_deref()?,
+                tab.editor.remote_checkpoint.as_ref(),
+            ))
+        })
 }
 
 fn recheck_activated_remote_file(app: &mut App, previous_view: &mut Option<u64>) {
@@ -135,7 +158,9 @@ fn recheck_activated_remote_file(app: &mut App, previous_view: &mut Option<u64>)
 
 fn recheck_open_files_on_focus(app: &mut App) {
     let remote_file = app.active_remote_file_path().map(Path::to_owned);
-    let paths: rustc_hash::FxHashSet<_> = app.tabs.iter()
+    let paths: rustc_hash::FxHashSet<_> = app
+        .tabs
+        .iter()
         .chain(app.groups.iter().flat_map(|group| &group.tabs))
         .filter_map(|tab| tab.editor.file_path.as_deref())
         .filter(|path| Some(*path) != remote_file.as_deref())
@@ -169,21 +194,40 @@ impl PeriodicDiskPaths {
             || self.watcher_active != app.workspace_watcher_active
             || self.remote != app.remote_workspace.is_some()
             || !open_disk_sources(app)
-                .map(|(path, checkpoint)| (path.as_os_str(), checkpoint.filter(|_| self.remote).map(std::sync::Arc::as_ptr)))
-                .eq(self.sources.iter().map(|(path, checkpoint)| (path.as_os_str(), checkpoint.as_ref().map(std::sync::Arc::as_ptr))))
+                .map(|(path, checkpoint)| {
+                    (
+                        path.as_os_str(),
+                        checkpoint
+                            .filter(|_| self.remote)
+                            .map(std::sync::Arc::as_ptr),
+                    )
+                })
+                .eq(self.sources.iter().map(|(path, checkpoint)| {
+                    (
+                        path.as_os_str(),
+                        checkpoint.as_ref().map(std::sync::Arc::as_ptr),
+                    )
+                }))
         {
             self.root = Some(app.explorer.root.clone());
             self.watcher_active = app.workspace_watcher_active;
             self.remote = app.remote_workspace.is_some();
-            self.sources = open_disk_sources(app).map(|(path, checkpoint)| (path.to_owned(), checkpoint.filter(|_| self.remote).cloned())).collect();
+            self.sources = open_disk_sources(app)
+                .map(|(path, checkpoint)| {
+                    (path.to_owned(), checkpoint.filter(|_| self.remote).cloned())
+                })
+                .collect();
             self.paths.clear();
             let mut seen = rustc_hash::FxHashSet::default();
             for (path, checkpoint) in &self.sources {
-                if !seen.insert(path) { continue; }
-                let watched = self.watcher_active && app.remote_workspace.as_ref().map_or_else(
-                    || crate::background::workspace_path_is_watched(&app.explorer.root, path),
-                    |remote| remote.save_is_watched(path, checkpoint.as_deref()),
-                );
+                if !seen.insert(path) {
+                    continue;
+                }
+                let watched = self.watcher_active
+                    && app.remote_workspace.as_ref().map_or_else(
+                        || crate::background::workspace_path_is_watched(&app.explorer.root, path),
+                        |remote| remote.save_is_watched(path, checkpoint.as_deref()),
+                    );
                 if !watched {
                     self.paths.push(path.clone());
                 }
@@ -286,7 +330,9 @@ impl TerminalEventPump {
             })
             .map_err(io::Error::other)?;
         Ok(Self {
-            receiver, pending: None, startup_input: Default::default(),
+            receiver,
+            pending: None,
+            startup_input: Default::default(),
             #[cfg(windows)]
             windows_mouse,
         })
@@ -296,7 +342,9 @@ impl TerminalEventPump {
         #[cfg(windows)]
         let receiver = receiver.into();
         Self {
-            receiver, pending: None, startup_input: Default::default(),
+            receiver,
+            pending: None,
+            startup_input: Default::default(),
             #[cfg(windows)]
             windows_mouse: None,
         }
@@ -312,7 +360,9 @@ impl TerminalEventPump {
 
     #[cfg(windows)]
     pub(crate) fn desktop_tracker(&self) -> Option<&crate::tab_windows::DesktopTracker> {
-        self.windows_mouse.as_ref().map(|input| &input.focus.tab_drag)
+        self.windows_mouse
+            .as_ref()
+            .map(|input| &input.focus.tab_drag)
     }
 
     /// Deliver keys typed during startup before input received afterward.
@@ -324,7 +374,9 @@ impl TerminalEventPump {
     /// A cosmetic deadline yields to already queued input. Keep the event in
     /// the same slot used by batching, preserving order and input errors.
     pub(crate) fn has_pending_event(&mut self) -> bool {
-        if !self.startup_input.is_empty() { return true; }
+        if !self.startup_input.is_empty() {
+            return true;
+        }
         if self.pending.is_none() {
             self.pending = self.receiver.try_recv().ok();
         }
@@ -363,7 +415,10 @@ impl TerminalEventPump {
             for _ in 1..Self::MAX_MOVE_BATCH {
                 match self.receiver.try_recv() {
                     Ok(Ok(next @ Event::Resize(..))) => event = next,
-                    Ok(next) => { self.pending = Some(next); break; }
+                    Ok(next) => {
+                        self.pending = Some(next);
+                        break;
+                    }
                     Err(_) => break,
                 }
             }
@@ -372,7 +427,9 @@ impl TerminalEventPump {
     }
 
     fn take_next(&mut self) -> io::Result<Option<Event>> {
-        if let Some(event) = self.startup_input.pop_front() { return Ok(Some(event)); }
+        if let Some(event) = self.startup_input.pop_front() {
+            return Ok(Some(event));
+        }
         if let Some(event) = self.pending.take() {
             return event.map(Some);
         }
@@ -389,7 +446,10 @@ impl TerminalEventPump {
     /// Consume only an already queued, identical wheel event. Keep every other
     /// event (including errors) in order for the next event-loop iteration.
     fn next_matching_scroll(&mut self, mouse: crossterm::event::MouseEvent) -> bool {
-        let next = self.pending.take().or_else(|| self.receiver.try_recv().ok());
+        let next = self
+            .pending
+            .take()
+            .or_else(|| self.receiver.try_recv().ok());
         match next {
             Some(Ok(Event::Mouse(next))) if next == mouse => true,
             other => {
@@ -403,7 +463,9 @@ impl TerminalEventPump {
         &mut self,
         mouse: crossterm::event::MouseEvent,
     ) -> Option<crossterm::event::MouseEvent> {
-        self.next_matching_mouse(|next| next.kind == mouse.kind && next.modifiers == mouse.modifiers)
+        self.next_matching_mouse(|next| {
+            next.kind == mouse.kind && next.modifiers == mouse.modifiers
+        })
     }
 
     fn next_matching_mouse(
@@ -413,13 +475,20 @@ impl TerminalEventPump {
         // Startup replay precedes both a previously inspected event and new
         // terminal input. Peek at its boundary instead of moving it past either.
         if let Some(event) = self.startup_input.front() {
-            let Event::Mouse(mouse) = event else { return None; };
+            let Event::Mouse(mouse) = event else {
+                return None;
+            };
             let mouse = *mouse;
-            if !matches(mouse) { return None; }
+            if !matches(mouse) {
+                return None;
+            }
             self.startup_input.pop_front();
             return Some(mouse);
         }
-        let next = self.pending.take().or_else(|| self.receiver.try_recv().ok());
+        let next = self
+            .pending
+            .take()
+            .or_else(|| self.receiver.try_recv().ok());
         match next {
             Some(Ok(Event::Mouse(next))) if matches(next) => Some(next),
             other => {
@@ -442,10 +511,11 @@ impl TerminalEventPump {
             return (mouse, consumed);
         }
         while consumed < limit {
-            let Some(next) = self.next_matching_mouse(|next|
-                next.kind == mouse.kind && next.modifiers == mouse.modifiers
-                    && can_coalesce(next))
-            else { break; };
+            let Some(next) = self.next_matching_mouse(|next| {
+                next.kind == mouse.kind && next.modifiers == mouse.modifiers && can_coalesce(next)
+            }) else {
+                break;
+            };
             mouse = next;
             consumed += 1;
         }
@@ -453,7 +523,10 @@ impl TerminalEventPump {
     }
 
     fn next_matching_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
-        let next = self.pending.take().or_else(|| self.receiver.try_recv().ok());
+        let next = self
+            .pending
+            .take()
+            .or_else(|| self.receiver.try_recv().ok());
         match next {
             Some(Ok(Event::Key(next))) if next == key => true,
             other => {
@@ -467,13 +540,22 @@ impl TerminalEventPump {
         &mut self,
         key: crossterm::event::KeyEvent,
     ) -> Option<crossterm::event::KeyEvent> {
-        let next = self.pending.take().or_else(|| self.receiver.try_recv().ok());
+        let next = self
+            .pending
+            .take()
+            .or_else(|| self.receiver.try_recv().ok());
         match next {
             Some(Ok(Event::Key(next)))
                 if is_navigation_key(next)
                     && next.modifiers == key.modifiers
-                    && next.state == key.state => Some(next),
-            other => { self.pending = other; None }
+                    && next.state == key.state =>
+            {
+                Some(next)
+            }
+            other => {
+                self.pending = other;
+                None
+            }
         }
     }
 
@@ -482,12 +564,22 @@ impl TerminalEventPump {
         mouse: crossterm::event::MouseEvent,
         area: ratatui::layout::Rect,
     ) -> Option<crossterm::event::MouseEvent> {
-        let next = self.pending.take().or_else(|| self.receiver.try_recv().ok());
+        let next = self
+            .pending
+            .take()
+            .or_else(|| self.receiver.try_recv().ok());
         match next {
             Some(Ok(Event::Mouse(next)))
-                if next.kind == mouse.kind && next.modifiers == mouse.modifiers
-                    && area.contains((next.column, next.row).into()) => Some(next),
-            other => { self.pending = other; None }
+                if next.kind == mouse.kind
+                    && next.modifiers == mouse.modifiers
+                    && area.contains((next.column, next.row).into()) =>
+            {
+                Some(next)
+            }
+            other => {
+                self.pending = other;
+                None
+            }
         }
     }
 
@@ -517,15 +609,23 @@ impl TerminalEventPump {
 
     /// Layout dragging needs the newest already queued position, not a frame
     /// for every historical pointer sample. Keep gesture and input boundaries.
-    fn latest_split_drag(&mut self, mut mouse: crossterm::event::MouseEvent) -> crossterm::event::MouseEvent {
+    fn latest_split_drag(
+        &mut self,
+        mut mouse: crossterm::event::MouseEvent,
+    ) -> crossterm::event::MouseEvent {
         use crossterm::event::{MouseButton, MouseEventKind};
         if mouse.kind != MouseEventKind::Drag(MouseButton::Left) {
             return mouse;
         }
         for _ in 1..Self::MAX_MOVE_BATCH {
-            let next = self.pending.take().or_else(|| self.receiver.try_recv().ok());
+            let next = self
+                .pending
+                .take()
+                .or_else(|| self.receiver.try_recv().ok());
             match next {
-                Some(Ok(Event::Mouse(next))) if next.kind == mouse.kind && next.modifiers == mouse.modifiers => {
+                Some(Ok(Event::Mouse(next)))
+                    if next.kind == mouse.kind && next.modifiers == mouse.modifiers =>
+                {
                     mouse = next;
                 }
                 other => {
@@ -544,9 +644,16 @@ const MAX_NAVIGATION_BATCH: usize = 64;
 const NAVIGATION_INPUT_BUDGET: Duration = Duration::from_millis(4);
 
 fn is_navigation_key(key: crossterm::event::KeyEvent) -> bool {
-    matches!(key.code,
-        KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
-            | KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown
+    matches!(
+        key.code,
+        KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::PageUp
+            | KeyCode::PageDown
     ) && key.kind != KeyEventKind::Release
         && !key.modifiers.intersects(
             KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META,
@@ -595,7 +702,9 @@ fn editor_batch_target(app: &App) -> Option<(usize, usize, u64)> {
         return None;
     }
     let tab = app.tabs.get(app.active_tab)?;
-    (tab.kind == crate::app::TabKind::File && tab.extension_view.is_none() && !tab.editor.bg_loading)
+    (tab.kind == crate::app::TabKind::File
+        && tab.extension_view.is_none()
+        && !tab.editor.bg_loading)
         .then_some((app.active_group, app.active_tab, tab.editor.navigation_id))
 }
 
@@ -619,31 +728,56 @@ fn handle_paste_input_value(app: &mut App, value: std::borrow::Cow<'_, str>) {
         return;
     }
     if app.workspaces.popup.open {
-        if app.accept_terminal_paste() { crate::ui_workspace_sets::paste(app, value.as_ref()); }
+        if app.accept_terminal_paste() {
+            crate::ui_workspace_sets::paste(app, value.as_ref());
+        }
         return;
     }
     let _foreground = app.vtcomplete_worker.activity().enter();
-    if !app.accept_terminal_paste() { return; }
+    if !app.accept_terminal_paste() {
+        return;
+    }
     let text = value.as_ref();
-    if app.paste_shortcut_text(text) { return; }
+    if app.paste_shortcut_text(text) {
+        return;
+    }
     if crate::ui_remote_targets::connection_has_focus(app)
         && app.tabs[app.active_tab].kind != crate::app::TabKind::RemoteConnection(0)
-        && app.paste_remote_target_login(text) { return; }
-    if crate::ui_remote_connection::handle_paste(app, text) { return; }
+        && app.paste_remote_target_login(text)
+    {
+        return;
+    }
+    if crate::ui_remote_connection::handle_paste(app, text) {
+        return;
+    }
     crate::clipboard::receive_terminal_paste(text);
-    if crate::ui_desks::paste(app, text) || crate::ui_logs::paste(app, text) { return; }
+    if crate::ui_desks::paste(app, text) || crate::ui_logs::paste(app, text) {
+        return;
+    }
     app.dismiss_lsp_hover();
     if crate::ui_commit_details::focused(app) {
         if app.commit_details.focus == crate::commit_details::Focus::Filter {
-            app.commit_details.edit_filter(crossterm::event::KeyCode::Null, crossterm::event::KeyModifiers::NONE, Some(text));
-        } else { crate::ui_commit_details::paste_context_count(app, text); }
+            app.commit_details.edit_filter(
+                crossterm::event::KeyCode::Null,
+                crossterm::event::KeyModifiers::NONE,
+                Some(text),
+            );
+        } else {
+            crate::ui_commit_details::paste_context_count(app, text);
+        }
         return;
     }
-    if app.change_dir_active || crate::ui_modal::active(app).is_some() || crate::ui_quick_picker::active(app).is_some() {
+    if app.change_dir_active
+        || crate::ui_modal::active(app).is_some()
+        || crate::ui_quick_picker::active(app).is_some()
+    {
         app.paste_into_focused_text_input(text);
         return;
     }
-    if matches!(app.focused_text_input_id(), Some(crate::text_input::TextInputId::TerminalFind(_))) {
+    if matches!(
+        app.focused_text_input_id(),
+        Some(crate::text_input::TextInputId::TerminalFind(_))
+    ) {
         app.paste_into_focused_text_input(text);
         return;
     }
@@ -652,9 +786,15 @@ fn handle_paste_input_value(app: &mut App, value: std::borrow::Cow<'_, str>) {
         return;
     }
     relight_cursor(app);
-    if app.paste_into_focused_text_input(text) || app.paste_explorer_clipboard_text(text)
-        || app.active_pane != crate::app::ActivePane::Editor { return; }
-    if app.paste_into_extension_editor(text) || app.diff_selection_owns_cursor() { return; }
+    if app.paste_into_focused_text_input(text)
+        || app.paste_explorer_clipboard_text(text)
+        || app.active_pane != crate::app::ActivePane::Editor
+    {
+        return;
+    }
+    if app.paste_into_extension_editor(text) || app.diff_selection_owns_cursor() {
+        return;
+    }
     app.paste_editor_text(value.into_owned(), true);
 }
 
@@ -674,12 +814,15 @@ pub(crate) fn handle_keyboard_input(
     );
     let batchable = is_navigation_key(key);
     let navigation_target = (batchable && !reference_input_batches())
-        .then(|| navigation_batch_target(app)).flatten();
+        .then(|| navigation_batch_target(app))
+        .flatten();
     let editing_target = is_plain_editing_key(key)
         .then(|| editing_batch_target(app))
         .flatten();
     let started = std::time::Instant::now();
-    if !reference_input_batches() { app.begin_vtcomplete_batch(); }
+    if !reference_input_batches() {
+        app.begin_vtcomplete_batch();
+    }
     app.begin_inline_key();
     let mut quit = false;
     for processed in 1..=MAX_NAVIGATION_BATCH {
@@ -689,7 +832,12 @@ pub(crate) fn handle_keyboard_input(
         let private_input = crate::ui_remote_targets::connection_has_focus(app)
             && if app.tabs[app.active_tab].kind == crate::app::TabKind::RemoteConnection(0) {
                 app.remote_connection.phase == crate::app_remote_connection::Phase::Connecting
-            } else { app.remote_targets.attempt.as_ref().is_some_and(|attempt| attempt.error.is_none()) };
+            } else {
+                app.remote_targets
+                    .attempt
+                    .as_ref()
+                    .is_some_and(|attempt| attempt.error.is_none())
+            };
         if app.macro_recording && !private_input {
             let is_macro_toggle = key.modifiers.contains(KeyModifiers::CONTROL)
                 && key.modifiers.contains(KeyModifiers::SHIFT)
@@ -699,7 +847,8 @@ pub(crate) fn handle_keyboard_input(
             }
         }
         if app.screencast_mode && !private_input {
-            app.screencast_keys.push_back((key, std::time::Instant::now()));
+            app.screencast_keys
+                .push_back((key, std::time::Instant::now()));
             while app.screencast_keys.len() > 5 {
                 app.screencast_keys.pop_front();
             }
@@ -718,7 +867,9 @@ pub(crate) fn handle_keyboard_input(
             if navigation_target != navigation_batch_target(app) {
                 break;
             }
-            let Some(next) = pump.next_navigation_key(key) else { break; };
+            let Some(next) = pump.next_navigation_key(key) else {
+                break;
+            };
             key = next;
         } else if batchable {
             if !pump.next_matching_key(key) {
@@ -733,7 +884,9 @@ pub(crate) fn handle_keyboard_input(
             break;
         }
     }
-    if !reference_input_batches() { app.finish_vtcomplete_batch(); }
+    if !reference_input_batches() {
+        app.finish_vtcomplete_batch();
+    }
     app.finish_inline_key(!quit && crate::app_vtcomplete_inline::trigger_key(key));
     quit
 }
@@ -752,10 +905,19 @@ pub(crate) fn handle_mouse_input(
     let _input_priority = crate::worker_priority::InputPriority::new(
         app.terminal_has_focus && mouse.kind != MouseEventKind::Moved,
     );
-    let resizing_layout = app.resizing_split || app.resizing_explorer || app.resizing_panel
-        || app.resizing_diff_split || app.resizing_sc_graph || app.chat.resizing
-        || app.terminal_sidebar.dragging() || app.minimap_resize.dragging();
-    let mut mouse = if resizing_layout { pump.latest_split_drag(mouse) } else { mouse };
+    let resizing_layout = app.resizing_split
+        || app.resizing_explorer
+        || app.resizing_panel
+        || app.resizing_diff_split
+        || app.resizing_sc_graph
+        || app.chat.resizing
+        || app.terminal_sidebar.dragging()
+        || app.minimap_resize.dragging();
+    let mut mouse = if resizing_layout {
+        pump.latest_split_drag(mouse)
+    } else {
+        mouse
+    };
     let is_move = mouse.kind == MouseEventKind::Moved;
     let sidebar_visible_before = app.sidebar_is_visible();
     let is_scroll = matches!(
@@ -767,8 +929,10 @@ pub(crate) fn handle_mouse_input(
     );
     if matches!(
         mouse.kind,
-        MouseEventKind::Down(_) | MouseEventKind::Drag(_)
-            | MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight
+        MouseEventKind::Down(_)
+            | MouseEventKind::Drag(_)
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight
     ) {
         app.cancel_wheel_scroll();
     }
@@ -776,13 +940,14 @@ pub(crate) fn handle_mouse_input(
     // across position jitter within one ordinary editor; never cross chrome,
     // popup, terminal, extension, direction or modifier boundaries.
     let scroll_area = (is_scroll && !reference_input_batches())
-        .then(|| editor_scroll_batch_area(app, mouse)).flatten();
+        .then(|| editor_scroll_batch_area(app, mouse))
+        .flatten();
     // Out-of-viewport samples each contribute an auto-scroll step, and column,
     // word and line selections have gesture state that must survive direction
     // changes. Their samples, extension streams and terminal streams stay intact.
     let is_editor_drag = (mouse.kind == MouseEventKind::Drag(crossterm::event::MouseButton::Left)
-            || (mouse.kind == MouseEventKind::Drag(crossterm::event::MouseButton::Middle)
-                && app.middle_drag_start.is_some()))
+        || (mouse.kind == MouseEventKind::Drag(crossterm::event::MouseButton::Middle)
+            && app.middle_drag_start.is_some()))
         && app.active_pane == ActivePane::Editor
         && !app.resizing_split
         && !app.resizing_diff_split
@@ -803,13 +968,15 @@ pub(crate) fn handle_mouse_input(
         });
     let batch_selection = is_editor_drag && !reference_input_batches();
     let selection_before = batch_selection
-        .then(|| editor_selection_drag_state(app, mouse)).flatten();
+        .then(|| editor_selection_drag_state(app, mouse))
+        .flatten();
     let mut selection_area = selection_before.as_ref().map(|state| state.area);
     let mut selection_budget = TerminalEventPump::MAX_MOVE_BATCH;
     let pos_changed = mouse.column != app.mouse_col || mouse.row != app.mouse_row;
     let modifiers_changed = app.lsp_link_hover.modifiers != mouse.modifiers;
-    let layout_before = (resizing_layout && mouse.kind == MouseEventKind::Drag(crossterm::event::MouseButton::Left))
-        .then(|| layout_drag_state(app));
+    let layout_before = (resizing_layout
+        && mouse.kind == MouseEventKind::Drag(crossterm::event::MouseButton::Left))
+    .then(|| layout_drag_state(app));
     if app.active_pane == ActivePane::Editor && !is_move {
         relight_cursor(app);
     }
@@ -850,14 +1017,20 @@ pub(crate) fn handle_mouse_input(
         } else {
             mouse::handle_mouse(app, mouse);
         }
-        if processed == MAX_SCROLL_BATCH || selection_budget == 0
-            || started.elapsed() >= SCROLL_INPUT_BUDGET {
+        if processed == MAX_SCROLL_BATCH
+            || selection_budget == 0
+            || started.elapsed() >= SCROLL_INPUT_BUDGET
+        {
             break;
         }
         if is_scroll {
             if let Some(area) = scroll_area {
-                if editor_scroll_batch_area(app, mouse) != Some(area) { break; }
-                let Some(next) = pump.next_editor_scroll(mouse, area) else { break; };
+                if editor_scroll_batch_area(app, mouse) != Some(area) {
+                    break;
+                }
+                let Some(next) = pump.next_editor_scroll(mouse, area) else {
+                    break;
+                };
                 mouse = next;
             } else if !pump.next_matching_scroll(mouse) {
                 break;
@@ -866,7 +1039,9 @@ pub(crate) fn handle_mouse_input(
             if let Some(next) = pump.next_matching_drag(mouse) {
                 mouse = next;
                 selection_area = batch_selection
-                    .then(|| editor_selection_drag_state(app, mouse)).flatten().map(|state| state.area);
+                    .then(|| editor_selection_drag_state(app, mouse))
+                    .flatten()
+                    .map(|state| state.area);
             } else {
                 break;
             }
@@ -874,12 +1049,14 @@ pub(crate) fn handle_mouse_input(
             break;
         }
     }
-    if !modifiers_changed && let Some(before) = layout_before
+    if !modifiers_changed
+        && let Some(before) = layout_before
         && layout_drag_state(app) == before
     {
         return false;
     }
-    if !modifiers_changed && let Some(before) = selection_before
+    if !modifiers_changed
+        && let Some(before) = selection_before
         && editor_selection_drag_state(app, mouse) == Some(before)
     {
         // Terminal reports can repeat within one cell. The normal route still
@@ -887,7 +1064,9 @@ pub(crate) fn handle_mouse_input(
         // repaint only when its visible result (including caret blink) changed.
         return false;
     }
-    !is_move || modifiers_changed || sidebar_visible_before != app.sidebar_is_visible()
+    !is_move
+        || modifiers_changed
+        || sidebar_visible_before != app.sidebar_is_visible()
         || (pos_changed && app.mouse_hover_changed)
 }
 
@@ -942,29 +1121,48 @@ fn editor_selection_drag_state(
     mouse: crossterm::event::MouseEvent,
 ) -> Option<SelectionDragState> {
     use crossterm::event::{MouseButton, MouseEventKind};
-    if mouse.kind != MouseEventKind::Drag(MouseButton::Left) || !mouse.modifiers.is_empty()
-        || app.multi_click_anchor.is_some() || app.middle_drag_start.is_some()
-        || app.dragging_gutter || app.dragging_v_scrollbar || app.dragging_h_scrollbar
-        || app.dragging_diff_left_h_scrollbar || app.dragging_minimap
-        || app.alt_cursor_mouse_down_active || app.desks.popup.mode.is_some() || app.workspaces.popup.open
-        || app.hunk_peek.is_some() || app.hunk_popup_active
-        || app.side_notice.visible() || app.inline_blame_hover.is_some()
-        || app.background.activity.details_open || app.file_deletion.is_some()
-        || app.terminal_mouse_capture.is_some() || app.terminal_selection_drag.is_some()
-        || app.extension_pointer_capture.is_some() || app.explorer_scrollbar_drag.is_some()
+    if mouse.kind != MouseEventKind::Drag(MouseButton::Left)
+        || !mouse.modifiers.is_empty()
+        || app.multi_click_anchor.is_some()
+        || app.middle_drag_start.is_some()
+        || app.dragging_gutter
+        || app.dragging_v_scrollbar
+        || app.dragging_h_scrollbar
+        || app.dragging_diff_left_h_scrollbar
+        || app.dragging_minimap
+        || app.alt_cursor_mouse_down_active
+        || app.desks.popup.mode.is_some()
+        || app.workspaces.popup.open
+        || app.hunk_peek.is_some()
+        || app.hunk_popup_active
+        || app.side_notice.visible()
+        || app.inline_blame_hover.is_some()
+        || app.background.activity.details_open
+        || app.file_deletion.is_some()
+        || app.terminal_mouse_capture.is_some()
+        || app.terminal_selection_drag.is_some()
+        || app.extension_pointer_capture.is_some()
+        || app.explorer_scrollbar_drag.is_some()
         || app.explorer_context_active
-        || app.settings_scrollbar_drag.is_some() || app.dragging_settings_categories
+        || app.settings_scrollbar_drag.is_some()
+        || app.dragging_settings_categories
     {
         return None;
     }
     navigation_batch_target(app)?;
-    if app.lsp_hover_active || app.should_render_diff_for_active_editor() { return None; }
+    if app.lsp_hover_active || app.should_render_diff_for_active_editor() {
+        return None;
+    }
     let mut area = app.code_area?;
     let press = app.drag_start_pos?;
-    if !area.contains(press.into()) { return None; }
+    if !area.contains(press.into()) {
+        return None;
+    }
     let editor = app.editor()?;
-    if editor.selection_anchor.is_none() || !editor.extra_cursors.is_empty()
-        || editor.ai_review.active || editor.diff_display_rows.is_some()
+    if editor.selection_anchor.is_none()
+        || !editor.extra_cursors.is_empty()
+        || editor.ai_review.active
+        || editor.diff_display_rows.is_some()
     {
         return None;
     }
@@ -975,14 +1173,20 @@ fn editor_selection_drag_state(
         area.x += left;
         area.width = area.width.saturating_sub(left + 1);
     }
-    if !area.contains((mouse.column, mouse.row).into()) { return None; }
+    if !area.contains((mouse.column, mouse.row).into()) {
+        return None;
+    }
     Some(SelectionDragState {
         area,
         target: (app.active_group, app.active_tab, editor.navigation_id),
         content_version: editor.content_version,
         cursor: (editor.cursor_line, editor.cursor_col),
         anchor: editor.selection_anchor,
-        scroll: (editor.scroll_offset, editor.wrap_scroll_offset, editor.horizontal_scroll),
+        scroll: (
+            editor.scroll_offset,
+            editor.wrap_scroll_offset,
+            editor.horizontal_scroll,
+        ),
         pointer: (app.mouse_col, app.mouse_row),
         cursor_visible: app.cursor_visible,
     })
@@ -996,29 +1200,40 @@ fn refresh_selection_before_paint(
     pump: &mut TerminalEventPump,
     drag: &mut Option<(crossterm::event::MouseEvent, SelectionDragState)>,
 ) -> bool {
-    let Some((mouse, state)) = drag.as_ref() else { return false; };
+    let Some((mouse, state)) = drag.as_ref() else {
+        return false;
+    };
     if editor_selection_drag_state(app, *mouse).as_ref() != Some(state) {
         *drag = None;
         return false;
     }
     let Some(next) = pump.next_matching_mouse(|next| {
-        next.kind == mouse.kind && next.modifiers == mouse.modifiers
+        next.kind == mouse.kind
+            && next.modifiers == mouse.modifiers
             && state.area.contains((next.column, next.row).into())
-    }) else { return false; };
+    }) else {
+        return false;
+    };
     let changed = handle_mouse_input(app, pump, next);
     let mouse = crossterm::event::MouseEvent {
-        column: app.mouse_col, row: app.mouse_row, ..next
+        column: app.mouse_col,
+        row: app.mouse_row,
+        ..next
     };
     *drag = editor_selection_drag_state(app, mouse).map(|state| (mouse, state));
     changed
 }
 
-fn editor_scroll_batch_area(app: &App, mouse: crossterm::event::MouseEvent) -> Option<ratatui::layout::Rect> {
+fn editor_scroll_batch_area(
+    app: &App,
+    mouse: crossterm::event::MouseEvent,
+) -> Option<ratatui::layout::Rect> {
     navigation_batch_target(app)?;
     if app.search_active || app.lsp_hover_active || app.should_render_diff_for_active_editor() {
         return None;
     }
-    app.code_area.filter(|area| area.contains((mouse.column, mouse.row).into()))
+    app.code_area
+        .filter(|area| area.contains((mouse.column, mouse.row).into()))
 }
 
 fn advance_editor_selection_scroll(
@@ -1027,9 +1242,14 @@ fn advance_editor_selection_scroll(
     now: std::time::Instant,
 ) -> bool {
     if !app.terminal_has_focus
-        || app.editor_selection_scroll_at.take_if(|deadline| *deadline <= now).is_none()
+        || app
+            .editor_selection_scroll_at
+            .take_if(|deadline| *deadline <= now)
+            .is_none()
         || app.active_pane != ActivePane::Editor
-        || app.editor().is_none_or(|editor| app.editor_selection_drag != Some(editor.navigation_id))
+        || app
+            .editor()
+            .is_none_or(|editor| app.editor_selection_drag != Some(editor.navigation_id))
     {
         return false;
     }
@@ -1249,7 +1469,13 @@ fn analyze_editor_content_until(
     if cancelled() || std::time::Instant::now() >= deadline {
         None
     } else {
-        Some((errors, warnings, max_line_width, word_count, sticky_scopes.into()))
+        Some((
+            errors,
+            warnings,
+            max_line_width,
+            word_count,
+            sticky_scopes.into(),
+        ))
     }
 }
 
@@ -1283,24 +1509,32 @@ fn analyze_viewport_brackets(
         return (0, Vec::new());
     }
     let scan_start = first_line.saturating_sub(200).min(rope.len_lines());
-    let scan_end = first_line.saturating_add(visible_lines).saturating_add(200).min(rope.len_lines());
+    let scan_end = first_line
+        .saturating_add(visible_lines)
+        .saturating_add(200)
+        .min(rope.len_lines());
     let mut depth = depth_index.line_starting_depth(scan_start).unwrap_or(0);
 
     let mut guides = Vec::with_capacity(64);
     let mut stack: Vec<(char, usize, usize, i32)> = Vec::with_capacity(32);
     let mut line_buffer = String::new();
-    for (offset, line) in rope.lines_at(scan_start).take(scan_end - scan_start).enumerate() {
+    for (offset, line) in rope
+        .lines_at(scan_start)
+        .take(scan_end - scan_start)
+        .enumerate()
+    {
         let line_idx = scan_start + offset;
         if line.len_chars() > MAX_BRACKET_LINE_CHARS {
             continue;
         }
         let text = line.as_str().unwrap_or_else(|| {
             line_buffer.clear();
-            for chunk in line.chunks() { line_buffer.push_str(chunk); }
+            for chunk in line.chunks() {
+                line_buffer.push_str(chunk);
+            }
             &line_buffer
         });
-        for (column, character) in text.chars().enumerate()
-        {
+        for (column, character) in text.chars().enumerate() {
             match character {
                 '(' | '[' | '{' => {
                     depth = depth.saturating_add(1);
@@ -1330,14 +1564,12 @@ fn analyze_viewport_brackets(
 #[cfg(test)]
 mod tests {
     use super::{
-        analyze_editor_content, analyze_viewport_brackets,
-        count_diagnostic_markers,
+        CURSOR_BLINK_INTERVAL, EDITOR_ANALYSIS_EDIT_QUIET_PERIOD, FOREGROUND_IDLE_QUIET_PERIOD,
+        analyze_editor_content, analyze_viewport_brackets, count_diagnostic_markers,
         count_word_occurrences, count_word_occurrences_in_rope,
         count_word_occurrences_in_rope_cancellable, deferred_editor_analysis_is_due,
         deferred_word_occurrence_is_due, has_delayed_auto_save_candidate, next_event_wait,
         reconcile_sticky_cache_document, refresh_caches, refresh_structural_scopes,
-        CURSOR_BLINK_INTERVAL, EDITOR_ANALYSIS_EDIT_QUIET_PERIOD,
-        FOREGROUND_IDLE_QUIET_PERIOD,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -1377,16 +1609,21 @@ mod tests {
         app.tabs.clear();
         app.explorer_area = Some(ratatui::layout::Rect::new(0, 0, 40, 50));
         app.explorer.visible_height = 45;
-        app.explorer.entries = (0..1000).map(|index| crate::explorer::FileEntry {
-            path: format!("file-{index}.rs").into(),
-            name: format!("file-{index}.rs"),
-            is_dir: false,
-            depth: 0,
-            expanded: false,
-            git_status: crate::explorer::GitStatus::Unmodified,
-            git_status_summary: Default::default(),
-        }).collect();
-        let mouse = crossterm::event::MouseEvent { column: 20, ..scroll_event() };
+        app.explorer.entries = (0..1000)
+            .map(|index| crate::explorer::FileEntry {
+                path: format!("file-{index}.rs").into(),
+                name: format!("file-{index}.rs"),
+                is_dir: false,
+                depth: 0,
+                expanded: false,
+                git_status: crate::explorer::GitStatus::Unmodified,
+                git_status_summary: Default::default(),
+            })
+            .collect();
+        let mouse = crossterm::event::MouseEvent {
+            column: 20,
+            ..scroll_event()
+        };
         let (sender, receiver) = std::sync::mpsc::channel();
         let mut pump = super::TerminalEventPump::from_receiver(receiver);
         for _ in 0..100 {
@@ -1467,7 +1704,10 @@ mod tests {
         let next = start + app.wheel_scroll.as_ref().unwrap().next_wait(start).unwrap();
         assert!(app.advance_wheel_scroll(next));
         let row = app.editor().unwrap().scroll_offset;
-        assert!((2..96).contains(&row), "the larger gap should move several rows in a frame");
+        assert!(
+            (2..96).contains(&row),
+            "the larger gap should move several rows in a frame"
+        );
         let settled = Instant::now() + Duration::from_millis(120);
         assert!(app.advance_wheel_scroll(settled));
         assert_eq!(app.editor().unwrap().scroll_offset, 96);
@@ -1476,10 +1716,14 @@ mod tests {
         // An opposite notch cancels an equal outstanding target without
         // drifting in the original direction for another frame.
         super::handle_mouse_input(&mut app, &mut pump, mouse);
-        super::handle_mouse_input(&mut app, &mut pump, MouseEvent {
-            kind: MouseEventKind::ScrollUp,
-            ..mouse
-        });
+        super::handle_mouse_input(
+            &mut app,
+            &mut pump,
+            MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                ..mouse
+            },
+        );
         assert_eq!(app.editor().unwrap().scroll_offset, 96);
         assert_eq!(app.wheel_scroll.as_ref().unwrap().next_wait(settled), None);
     }
@@ -1497,13 +1741,21 @@ mod tests {
         let mouse = scroll_event();
         super::handle_mouse_input(&mut app, &mut pump, mouse);
         assert_eq!(app.editor().unwrap().scroll_offset, max);
-        assert_eq!(app.wheel_scroll.as_ref().unwrap().next_wait(Instant::now()), None);
-        super::handle_mouse_input(&mut app, &mut pump, MouseEvent {
-            kind: MouseEventKind::ScrollUp,
-            ..mouse
-        });
+        assert_eq!(
+            app.wheel_scroll.as_ref().unwrap().next_wait(Instant::now()),
+            None
+        );
+        super::handle_mouse_input(
+            &mut app,
+            &mut pump,
+            MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                ..mouse
+            },
+        );
         assert_eq!(app.editor().unwrap().scroll_offset, max - 1);
-        app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
+        app.tabs
+            .push(crate::app::Tab::new_file(crate::editor::Editor::new()));
         app.active_tab = 1;
         let later = Instant::now() + Duration::from_millis(120);
         assert!(!app.advance_wheel_scroll(later));
@@ -1515,14 +1767,19 @@ mod tests {
     #[test]
     fn wheel_animation_completes_in_the_event_loop_without_more_input() {
         use crossterm::event::Event;
-        use ratatui::{Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect};
+        use ratatui::{
+            Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect,
+        };
         let mut app = animation_fixture();
         app.tabs[0].editor.rope = ropey::Rope::from_str(&"line\n".repeat(100));
         app.source_control_enabled = false;
         let mut terminal = Terminal::with_options(
             CrosstermBackend::new(Vec::<u8>::new()),
-            TerminalOptions { viewport: Viewport::Fixed(Rect::new(0, 0, 100, 24)) },
-        ).unwrap();
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 100, 24)),
+            },
+        )
+        .unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
         let (done, finished) = std::sync::mpsc::channel();
         let wake = app.background.wake_handle();
@@ -1553,7 +1810,10 @@ mod tests {
         result.unwrap();
         assert_eq!(app.editor().unwrap().scroll_offset, 3);
         assert_eq!(
-            app.wheel_scroll.as_ref().unwrap().next_wait(std::time::Instant::now()),
+            app.wheel_scroll
+                .as_ref()
+                .unwrap()
+                .next_wait(std::time::Instant::now()),
             None,
         );
     }
@@ -1563,10 +1823,19 @@ mod tests {
         use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
         let mouse = scroll_event();
         for boundary in [
-            Event::Mouse(crossterm::event::MouseEvent { column: 81, ..mouse }),
+            Event::Mouse(crossterm::event::MouseEvent {
+                column: 81,
+                ..mouse
+            }),
             Event::Mouse(crossterm::event::MouseEvent { row: 11, ..mouse }),
-            Event::Mouse(crossterm::event::MouseEvent { kind: MouseEventKind::ScrollUp, ..mouse }),
-            Event::Mouse(crossterm::event::MouseEvent { modifiers: KeyModifiers::SHIFT, ..mouse }),
+            Event::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                ..mouse
+            }),
+            Event::Mouse(crossterm::event::MouseEvent {
+                modifiers: KeyModifiers::SHIFT,
+                ..mouse
+            }),
             pointer_event(80),
             Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
             Event::Resize(80, 24),
@@ -1584,19 +1853,24 @@ mod tests {
         }
         let (sender, receiver) = std::sync::mpsc::channel();
         let mut pump = super::TerminalEventPump::from_receiver(receiver);
-        sender.send(Err(std::io::Error::other("wheel error"))).unwrap();
+        sender
+            .send(Err(std::io::Error::other("wheel error")))
+            .unwrap();
         assert!(!pump.next_matching_scroll(mouse));
         assert_eq!(pump.try_recv().unwrap_err().to_string(), "wheel error");
         drop(sender);
         assert!(!pump.next_matching_scroll(mouse));
-        assert_eq!(pump.try_recv().unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            pump.try_recv().unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
     }
 
     #[test]
     #[ignore = "manual release benchmark"]
     fn benchmark_scroll_backlog() {
         use crossterm::event::Event;
-        use ratatui::{backend::TestBackend, Terminal};
+        use ratatui::{Terminal, backend::TestBackend};
         let mut previous_samples = Vec::new();
         let mut batched_samples = Vec::new();
         for sample in 0..7 {
@@ -1625,14 +1899,21 @@ mod tests {
                 let elapsed = started.elapsed();
                 assert_eq!(app.editor().unwrap().scroll_offset, 360);
                 outputs.push(terminal.backend().buffer().clone());
-                if batched { batched_samples.push(elapsed); } else { previous_samples.push(elapsed); }
+                if batched {
+                    batched_samples.push(elapsed);
+                } else {
+                    previous_samples.push(elapsed);
+                }
                 eprintln!("scroll backlog batched={batched} frames={frames} elapsed={elapsed:?}");
             }
             assert_eq!(outputs[0], outputs[1]);
         }
         previous_samples.sort();
         batched_samples.sort();
-        eprintln!("scroll backlog median before={:?} after={:?}", previous_samples[3], batched_samples[3]);
+        eprintln!(
+            "scroll backlog median before={:?} after={:?}",
+            previous_samples[3], batched_samples[3]
+        );
     }
 
     #[test]
@@ -1674,10 +1955,17 @@ mod tests {
 
     #[test]
     fn input_pump_preserves_event_and_modifier_boundaries() {
-        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-        let mouse = |kind, modifiers| Event::Mouse(MouseEvent {
-            kind, column: 2, row: 4, modifiers,
-        });
+        use crossterm::event::{
+            Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        };
+        let mouse = |kind, modifiers| {
+            Event::Mouse(MouseEvent {
+                kind,
+                column: 2,
+                row: 4,
+                modifiers,
+            })
+        };
         let boundaries = [
             mouse(MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE),
             mouse(MouseEventKind::Up(MouseButton::Left), KeyModifiers::NONE),
@@ -1693,7 +1981,13 @@ mod tests {
         for boundary in boundaries {
             let (sender, receiver) = std::sync::mpsc::channel();
             let mut pump = super::TerminalEventPump::from_receiver(receiver);
-            for event in [pointer_event(0), pointer_event(1), boundary.clone(), pointer_event(3), pointer_event(4)] {
+            for event in [
+                pointer_event(0),
+                pointer_event(1),
+                boundary.clone(),
+                pointer_event(3),
+                pointer_event(4),
+            ] {
                 sender.send(Ok(event)).unwrap();
             }
             assert_eq!(pump.try_recv().unwrap(), Some(pointer_event(1)));
@@ -1708,13 +2002,18 @@ mod tests {
         let (sender, receiver) = std::sync::mpsc::channel();
         let mut pump = super::TerminalEventPump::from_receiver(receiver);
         sender.send(Ok(pointer_event(1))).unwrap();
-        sender.send(Err(std::io::Error::other("input failed"))).unwrap();
+        sender
+            .send(Err(std::io::Error::other("input failed")))
+            .unwrap();
         assert_eq!(pump.try_recv().unwrap(), Some(pointer_event(1)));
         assert_eq!(pump.try_recv().unwrap_err().to_string(), "input failed");
         sender.send(Ok(pointer_event(2))).unwrap();
         drop(sender);
         assert_eq!(pump.try_recv().unwrap(), Some(pointer_event(2)));
-        assert_eq!(pump.try_recv().unwrap_err().kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            pump.try_recv().unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
     }
 
     #[test]
@@ -1731,20 +2030,45 @@ mod tests {
 
     #[test]
     fn split_drag_coalesces_positions_but_keeps_release_modifiers_and_other_input_in_order() {
-        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-        let drag = |row| MouseEvent { kind: MouseEventKind::Drag(MouseButton::Left), column: 20, row, modifiers: KeyModifiers::NONE };
+        use crossterm::event::{
+            Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        };
+        let drag = |row| MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: 20,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
         let boundaries = [
-            Event::Mouse(MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), ..drag(4) }),
-            Event::Mouse(MouseEvent { modifiers: KeyModifiers::SHIFT, ..drag(4) }),
-            Event::Mouse(MouseEvent { kind: MouseEventKind::Drag(MouseButton::Right), ..drag(4) }),
-            Event::Mouse(MouseEvent { kind: MouseEventKind::ScrollDown, ..drag(4) }),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                ..drag(4)
+            }),
+            Event::Mouse(MouseEvent {
+                modifiers: KeyModifiers::SHIFT,
+                ..drag(4)
+            }),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Right),
+                ..drag(4)
+            }),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                ..drag(4)
+            }),
             Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
-            Event::Resize(180, 60), Event::FocusLost,
+            Event::Resize(180, 60),
+            Event::FocusLost,
         ];
         for boundary in boundaries {
             let (sender, receiver) = std::sync::mpsc::channel();
             let mut pump = super::TerminalEventPump::from_receiver(receiver);
-            for event in [Event::Mouse(drag(2)), Event::Mouse(drag(3)), boundary.clone(), Event::Mouse(drag(5))] {
+            for event in [
+                Event::Mouse(drag(2)),
+                Event::Mouse(drag(3)),
+                boundary.clone(),
+                Event::Mouse(drag(5)),
+            ] {
                 sender.send(Ok(event)).unwrap();
             }
             assert_eq!(pump.latest_split_drag(drag(1)), drag(3));
@@ -1756,9 +2080,18 @@ mod tests {
         for row in 1..=super::TerminalEventPump::MAX_MOVE_BATCH + 10 {
             sender.send(Ok(Event::Mouse(drag(row as u16)))).unwrap();
         }
-        assert_eq!(pump.latest_split_drag(drag(0)).row, super::TerminalEventPump::MAX_MOVE_BATCH as u16 - 1);
-        assert_eq!(pump.latest_split_drag(drag(super::TerminalEventPump::MAX_MOVE_BATCH as u16)).row, super::TerminalEventPump::MAX_MOVE_BATCH as u16 + 10);
-        sender.send(Err(std::io::Error::other("input failed"))).unwrap();
+        assert_eq!(
+            pump.latest_split_drag(drag(0)).row,
+            super::TerminalEventPump::MAX_MOVE_BATCH as u16 - 1
+        );
+        assert_eq!(
+            pump.latest_split_drag(drag(super::TerminalEventPump::MAX_MOVE_BATCH as u16))
+                .row,
+            super::TerminalEventPump::MAX_MOVE_BATCH as u16 + 10
+        );
+        sender
+            .send(Err(std::io::Error::other("input failed")))
+            .unwrap();
         assert_eq!(pump.latest_split_drag(drag(0)), drag(0));
         assert_eq!(pump.try_recv().unwrap_err().to_string(), "input failed");
     }
@@ -1862,16 +2195,27 @@ mod tests {
     fn switching_back_to_an_unchanged_tab_restores_its_analysis_without_a_worker_pass() {
         let mut app = crate::app::App::test_new();
         let long = format!("{}\n", "x".repeat(300));
-        let first = crate::editor::Editor::test_with_text(&format!("// FIXME one\n// TODO two\n{long}"));
+        let first =
+            crate::editor::Editor::test_with_text(&format!("// FIXME one\n// TODO two\n{long}"));
         let second = crate::editor::Editor::test_with_text("fn short() {}\n");
-        app.tabs = vec![crate::app::Tab::new_file(first), crate::app::Tab::new_file(second)];
+        app.tabs = vec![
+            crate::app::Tab::new_file(first),
+            crate::app::Tab::new_file(second),
+        ];
         app.active_tab = 0;
         let analyze = |app: &mut crate::app::App| {
             refresh_caches(app);
-            app.wait_for_background(Duration::from_secs(5), |app| !app.bg_editor_analysis_running);
+            app.wait_for_background(Duration::from_secs(5), |app| {
+                !app.bg_editor_analysis_running
+            });
         };
         analyze(&mut app);
-        let measured = (app.cached_error_count, app.cached_warning_count, app.cached_max_line_width, app.cached_editor_word_count);
+        let measured = (
+            app.cached_error_count,
+            app.cached_warning_count,
+            app.cached_max_line_width,
+            app.cached_editor_word_count,
+        );
         assert!(measured.2 >= 300);
         app.active_tab = 1;
         analyze(&mut app);
@@ -1880,7 +2224,15 @@ mod tests {
         refresh_caches(&mut app);
         // Restored at once; the unchanged text needs no new scan.
         assert!(!app.bg_editor_analysis_running);
-        assert_eq!((app.cached_error_count, app.cached_warning_count, app.cached_max_line_width, app.cached_editor_word_count), measured);
+        assert_eq!(
+            (
+                app.cached_error_count,
+                app.cached_warning_count,
+                app.cached_max_line_width,
+                app.cached_editor_word_count
+            ),
+            measured
+        );
         // An edit while away shows the last values and rescans.
         app.active_tab = 1;
         analyze(&mut app);
@@ -1917,7 +2269,9 @@ mod tests {
 
         // A current snapshot makes scrolling cheap even if an unrelated recent
         // edit timestamp remains. No document rebuild needs the quiet gate.
-        app.wait_for_background(Duration::from_secs(3), |app| !app.bg_bracket_analysis_running);
+        app.wait_for_background(Duration::from_secs(3), |app| {
+            !app.bg_bracket_analysis_running
+        });
         let source = app.editor().unwrap();
         app.cached_bracket_depth_index = Some(std::sync::Arc::new(
             crate::background::BracketDepthIndex::build(
@@ -2032,10 +2386,14 @@ mod tests {
         refresh_structural_scopes(&mut app);
         assert!(app.pending_structural_scope.is_some());
         let cancel = app.structural_scope_cancel.as_ref().unwrap().clone();
-        app.animation_settings.scope_disabled_languages.push("rust".into());
+        app.animation_settings
+            .scope_disabled_languages
+            .push("rust".into());
         refresh_structural_scopes(&mut app);
         assert!(cancel.is_cancelled());
-        app.wait_for_background(Duration::from_secs(5), |app| app.pending_structural_scope.is_none());
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            app.pending_structural_scope.is_none()
+        });
         assert!(app.cached_structural_scope_index.is_none());
         refresh_structural_scopes(&mut app);
         assert!(app.pending_structural_scope.is_none());
@@ -2086,12 +2444,20 @@ mod tests {
         app.idle_quiescent = true;
         let expires_at = std::time::Instant::now() + Duration::from_secs(3);
         app.commit_details.copy_feedback = Some(crate::commit_details::CopyFeedback {
-            action: 2, copied: true, expires_at,
+            action: 2,
+            copied: true,
+            expires_at,
         });
-        assert_eq!(next_event_wait(&app, false, false), None, "hidden feedback must not wake the UI");
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            None,
+            "hidden feedback must not wake the UI"
+        );
         app.commit_details.visible = true;
-        assert!(next_event_wait(&app, false, false)
-            .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_secs(3)));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_secs(3))
+        );
         app.terminal_has_focus = false;
         assert_eq!(next_event_wait(&app, false, false), None);
         app.terminal_has_focus = true;
@@ -2111,12 +2477,19 @@ mod tests {
         app.hunk_peek = Some(peek);
         assert_eq!(next_event_wait(&app, false, false), None);
         app.hunk_popup_active = true;
-        assert!(next_event_wait(&app, false, false)
-            .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_secs(3)));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_secs(3))
+        );
         app.terminal_has_focus = false;
         assert_eq!(next_event_wait(&app, false, false), None);
         app.terminal_has_focus = true;
-        assert!(app.hunk_peek.as_mut().unwrap().expire_copy_feedback(deadline));
+        assert!(
+            app.hunk_peek
+                .as_mut()
+                .unwrap()
+                .expire_copy_feedback(deadline)
+        );
         assert_eq!(next_event_wait(&app, false, false), None);
     }
 
@@ -2126,19 +2499,27 @@ mod tests {
         app.workspace_watcher_active = true;
         app.idle_quiescent = true;
         app.terminal_panel_focused = false;
-        app.animation_settings.set(crate::animation_config::AnimationEffect::TabSlide, true);
+        app.animation_settings
+            .set(crate::animation_config::AnimationEffect::TabSlide, true);
         let start = std::time::Instant::now();
         let mut commands = crate::terminal_completion::Commands::default();
         commands.osc(&[b"633", b"C"]);
         commands.osc(&[b"633", b"D", b"0"]);
         app.terminals[0].completion.update(commands, false, start);
-        assert!(next_event_wait(&app, false, false).is_some_and(|wait| wait <= Duration::from_millis(250)));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait <= Duration::from_millis(250))
+        );
         app.terminal_has_focus = false;
         assert_eq!(next_event_wait(&app, false, false), None);
         app.terminal_has_focus = true;
         app.advance_terminal_completions(start + Duration::from_secs(2));
         assert!(app.terminals[0].completion.unread);
-        assert_eq!(next_event_wait(&app, false, false), None, "the persistent dot must not keep a timer alive");
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            None,
+            "the persistent dot must not keep a timer alive"
+        );
     }
 
     #[test]
@@ -2151,8 +2532,10 @@ mod tests {
         app.idle_quiescent = true;
         app.snooze_inline_predictions(Duration::from_secs(60));
         let deadline = app.inline_snooze_deadline().unwrap();
-        assert!(next_event_wait(&app, false, false)
-            .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_secs(60)));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_secs(60))
+        );
         assert!(!app.expire_inline_snooze(deadline - Duration::from_millis(1)));
         assert!(app.expire_inline_snooze(deadline));
         assert_eq!(app.inline_availability(), Availability::Enabled);
@@ -2173,17 +2556,20 @@ mod tests {
 
         app.idle_quiescent = false;
         app.last_user_activity = std::time::Instant::now();
-        assert!(next_event_wait(&app, false, false)
-            .is_some_and(|wait| wait <= FOREGROUND_IDLE_QUIET_PERIOD));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait <= FOREGROUND_IDLE_QUIET_PERIOD)
+        );
 
         let mut editor = crate::editor::Editor::test_with_text("idle\n");
         editor.file_path = Some(std::path::PathBuf::from("idle.txt"));
         app.tabs.push(crate::app::Tab::new_file(editor));
         app.active_pane = crate::app::ActivePane::Editor;
         app.last_blink = std::time::Instant::now();
-        assert!(next_event_wait(&app, false, false).is_some_and(|wait| {
-            wait <= CURSOR_BLINK_INTERVAL
-        }));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| { wait <= CURSOR_BLINK_INTERVAL })
+        );
 
         app.terminal_has_focus = false;
         app.idle_quiescent = false;
@@ -2198,7 +2584,10 @@ mod tests {
         app.terminal_has_focus = true;
         app.disk_check_last = std::time::Instant::now();
         assert_eq!(next_event_wait(&app, false, false), None);
-        assert!(next_event_wait(&app, false, true).is_some_and(|wait| wait <= super::UNWATCHED_DISK_CHECK_INTERVAL));
+        assert!(
+            next_event_wait(&app, false, true)
+                .is_some_and(|wait| wait <= super::UNWATCHED_DISK_CHECK_INTERVAL)
+        );
         app.terminal_has_focus = false;
         assert_eq!(next_event_wait(&app, false, true), None);
     }
@@ -2213,11 +2602,18 @@ mod tests {
         assert_eq!(next_event_wait(&app, false, false), None);
         app.global_search_query = "needle".into();
         app.schedule_global_search();
-        assert!(next_event_wait(&app, false, false).is_some_and(|wait| wait <= Duration::from_millis(300)));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait <= Duration::from_millis(300))
+        );
         assert!(app.search_cancel_token.is_none());
         app.search_debounce_ms = 0;
         assert_eq!(next_event_wait(&app, false, false), Some(Duration::ZERO));
-        crate::input::handle_global_search_key(&mut app, crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        crate::input::handle_global_search_key(
+            &mut app,
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        );
         assert_eq!(next_event_wait(&app, false, false), None);
         assert!(!app.bg_global_search_running);
     }
@@ -2231,8 +2627,10 @@ mod tests {
         app.show_status_bar = false;
         app.bg_explorer_refresh_running = true;
         draw_animation_fixture(&mut app);
-        assert!(next_event_wait(&app, false, false).is_some_and(|wait|
-            wait <= Duration::from_millis(80)));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait <= Duration::from_millis(80))
+        );
         app.terminal_has_focus = false;
         assert_eq!(next_event_wait(&app, false, false), None);
         app.terminal_has_focus = true;
@@ -2287,20 +2685,34 @@ mod tests {
         draw_animation_fixture(&mut app);
         app.tabs[0].editor.cursor_col = 4;
         draw_animation_fixture(&mut app);
-        assert_eq!(next_event_wait(&app, false, false), None, "default-off editing stays idle");
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            None,
+            "default-off editing stays idle"
+        );
 
-        app.animation_settings.set(AnimationEffect::CursorSmear, true);
+        app.animation_settings
+            .set(AnimationEffect::CursorSmear, true);
         draw_animation_fixture(&mut app);
         app.tabs[0].editor.cursor_col = 1;
         draw_animation_fixture(&mut app);
-        assert!(next_event_wait(&app, false, false)
-            .is_some_and(|wait| wait <= Duration::from_millis(17)));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait <= Duration::from_millis(17))
+        );
 
         let after_effect = std::time::Instant::now() + Duration::from_secs(2);
-        assert!(app.animations.advance_frame(&app.animation_settings, after_effect),
-            "expiry requests a final frame to erase the overlay");
+        assert!(
+            app.animations
+                .advance_frame(&app.animation_settings, after_effect),
+            "expiry requests a final frame to erase the overlay"
+        );
         draw_animation_fixture(&mut app);
-        assert_eq!(next_event_wait(&app, false, false), None, "finished effects stop waking the UI");
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            None,
+            "finished effects stop waking the UI"
+        );
     }
 
     #[test]
@@ -2308,23 +2720,53 @@ mod tests {
         use crate::animation_config::AnimationEffect;
         let mut app = animation_fixture();
         app.animation_settings.fps = 60;
-        app.animation_settings.set(AnimationEffect::CursorSmear, true);
+        app.animation_settings
+            .set(AnimationEffect::CursorSmear, true);
         draw_animation_fixture(&mut app);
         app.tabs[0].editor.cursor_col = 4;
         draw_animation_fixture(&mut app);
         let now = std::time::Instant::now();
         app.animations.record_render(now, Duration::from_millis(40));
-        assert_eq!(app.animations.next_frame_wait(&app.animation_settings, now), Some(Duration::from_millis(40)));
-        assert!(!app.animations.advance_frame(&app.animation_settings, now + Duration::from_millis(20)));
-        assert_eq!(next_event_wait(&app, true, false), Some(Duration::ZERO), "input must never wait on cosmetic pacing");
-        app.background.sender.send(crate::background::BackgroundResult::GitBranch("main".into())).unwrap();
-        assert_eq!(next_event_wait(&app, false, false), Some(Duration::ZERO), "queued work remains ready");
+        assert_eq!(
+            app.animations.next_frame_wait(&app.animation_settings, now),
+            Some(Duration::from_millis(40))
+        );
+        assert!(
+            !app.animations
+                .advance_frame(&app.animation_settings, now + Duration::from_millis(20))
+        );
+        assert_eq!(
+            next_event_wait(&app, true, false),
+            Some(Duration::ZERO),
+            "input must never wait on cosmetic pacing"
+        );
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::GitBranch(
+                "main".into(),
+            ))
+            .unwrap();
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            Some(Duration::ZERO),
+            "queued work remains ready"
+        );
         app.poll_background_results();
         assert_eq!(app.cached_git_branch, "main");
-        assert!(app.animations.advance_frame(&app.animation_settings, now + Duration::from_secs(2)));
+        assert!(
+            app.animations
+                .advance_frame(&app.animation_settings, now + Duration::from_secs(2))
+        );
         draw_animation_fixture(&mut app);
-        assert_eq!(next_event_wait(&app, false, false), None, "adaptation must not manufacture idle frames");
-        assert_eq!(app.animation_settings.fps, 60, "keep the user's configured rate");
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            None,
+            "adaptation must not manufacture idle frames"
+        );
+        assert_eq!(
+            app.animation_settings.fps, 60,
+            "keep the user's configured rate"
+        );
     }
 
     #[test]
@@ -2332,7 +2774,8 @@ mod tests {
         use crate::animation_config::AnimationEffect;
         let mut app = animation_fixture();
         app.animation_settings.set(AnimationEffect::TabSlide, false);
-        app.animation_settings.set(AnimationEffect::CursorSmear, true);
+        app.animation_settings
+            .set(AnimationEffect::CursorSmear, true);
         draw_animation_fixture(&mut app);
         app.tabs[0].editor.cursor_col = 5;
         draw_animation_fixture(&mut app);
@@ -2343,17 +2786,31 @@ mod tests {
         app.terminal_has_focus = true;
         app.open_settings_tab();
         draw_animation_fixture(&mut app);
-        assert_eq!(next_event_wait(&app, false, false), None, "a hidden editor has no animation deadline");
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            None,
+            "a hidden editor has no animation deadline"
+        );
     }
 
     #[test]
     fn filesystem_git_refresh_has_one_deadline_and_waits_for_running_readers() {
         let mut app = animation_fixture();
         assert_eq!(next_event_wait(&app, false, false), None);
-        app.refresh_source_control_from_watcher(std::iter::once(app.explorer.root.join("build/output.o")).collect(), false);
-        assert!(next_event_wait(&app, false, false).is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_millis(600)));
+        app.refresh_source_control_from_watcher(
+            std::iter::once(app.explorer.root.join("build/output.o")).collect(),
+            false,
+        );
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_millis(600))
+        );
         app.bg_git_status_running = true;
-        assert_eq!(next_event_wait(&app, false, false), None, "the running reader wakes the workbench on completion");
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            None,
+            "the running reader wakes the workbench on completion"
+        );
         app.cancel_source_control_reads();
         assert_eq!(next_event_wait(&app, false, false), None);
     }
@@ -2366,21 +2823,47 @@ mod tests {
         // Disabled effects and multicursor cleanup may clear animation state
         // every frame; they must not erase the renderer's load measurement.
         app.animations.clear();
-        assert_eq!(app.animations.background_frame_wait(now), Duration::from_millis(80));
-        assert_eq!(super::next_event_wait_for_redraw(&app, true, true, false), Some(Duration::ZERO));
-        assert!(super::next_event_wait_for_redraw(&app, true, false, false)
-            .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_millis(80)));
-        app.background.sender.send(crate::background::BackgroundResult::GitBranch("main".into())).unwrap();
-        assert_eq!(super::next_event_wait_for_redraw(&app, true, false, false), Some(Duration::ZERO));
+        assert_eq!(
+            app.animations.background_frame_wait(now),
+            Duration::from_millis(80)
+        );
+        assert_eq!(
+            super::next_event_wait_for_redraw(&app, true, true, false),
+            Some(Duration::ZERO)
+        );
+        assert!(
+            super::next_event_wait_for_redraw(&app, true, false, false)
+                .is_some_and(|wait| wait > Duration::ZERO && wait <= Duration::from_millis(80))
+        );
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::GitBranch(
+                "main".into(),
+            ))
+            .unwrap();
+        assert_eq!(
+            super::next_event_wait_for_redraw(&app, true, false, false),
+            Some(Duration::ZERO)
+        );
         app.poll_background_results();
         app.editor_analysis_deferred = true;
         app.last_edit_time = now - Duration::from_secs(1);
-        assert!(super::next_event_wait_for_redraw(&app, true, false, false)
-            .is_some_and(|wait| wait > Duration::ZERO), "already-dirty timed work must not busy-spin while waiting to paint");
+        assert!(
+            super::next_event_wait_for_redraw(&app, true, false, false)
+                .is_some_and(|wait| wait > Duration::ZERO),
+            "already-dirty timed work must not busy-spin while waiting to paint"
+        );
         app.editor_analysis_deferred = false;
         app.terminal_has_focus = false;
-        assert!(super::next_event_wait_for_redraw(&app, true, false, false).is_some(), "final background frame retains a deadline after the last producer stops");
-        assert_eq!(super::next_event_wait_for_redraw(&app, false, false, false), None, "no redraw request means no pacing timer");
+        assert!(
+            super::next_event_wait_for_redraw(&app, true, false, false).is_some(),
+            "final background frame retains a deadline after the last producer stops"
+        );
+        assert_eq!(
+            super::next_event_wait_for_redraw(&app, false, false, false),
+            None,
+            "no redraw request means no pacing timer"
+        );
     }
 
     #[test]
@@ -2403,7 +2886,11 @@ mod tests {
 
             app.tabs[0].editor.extra_cursors.clear();
             draw_animation_fixture(&mut app);
-            assert_eq!(next_event_wait(&app, false, false), None, "old cursor motion must not resume");
+            assert_eq!(
+                next_event_wait(&app, false, false),
+                None,
+                "old cursor motion must not resume"
+            );
             app.tabs[0].editor.cursor_col = 4;
             draw_animation_fixture(&mut app);
             assert!(next_event_wait(&app, false, false).is_some());
@@ -2417,7 +2904,10 @@ mod tests {
         app.idle_quiescent = true;
         let ticket = app.background.activity.start("Opening", None);
         app.background.refresh_activity(std::time::Instant::now());
-        assert!(next_event_wait(&app, false, false).is_some_and(|wait| wait <= crate::performance::ACTIVITY_DELAY));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait <= crate::performance::ACTIVITY_DELAY)
+        );
         app.show_status_bar = false;
         assert_eq!(next_event_wait(&app, false, false), None);
         app.background.activity.details_open = true;
@@ -2440,14 +2930,21 @@ mod tests {
         app.terminal_has_focus = true;
         assert_eq!(next_event_wait(&app, false, false), None);
         crate::ui_performance_details::toggle(&mut app);
-        app.performance_view.resources.refresh_with(true, std::time::Instant::now(), || Counters {
-            cpu_time: Some(Duration::from_secs(1)),
-            resident_bytes: Some(64 * 1024 * 1024),
-        });
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 28)).unwrap();
-        terminal.draw(|frame| crate::ui_performance_details::draw(frame, &mut app)).unwrap();
-        assert!(next_event_wait(&app, false, false)
-            .is_some_and(|wait| wait > Duration::from_secs(9) && wait <= SAMPLE_INTERVAL));
+        app.performance_view
+            .resources
+            .refresh_with(true, std::time::Instant::now(), || Counters {
+                cpu_time: Some(Duration::from_secs(1)),
+                resident_bytes: Some(64 * 1024 * 1024),
+            });
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 28)).unwrap();
+        terminal
+            .draw(|frame| crate::ui_performance_details::draw(frame, &mut app))
+            .unwrap();
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait > Duration::from_secs(9) && wait <= SAMPLE_INTERVAL)
+        );
         app.terminal_has_focus = false;
         assert_eq!(next_event_wait(&app, false, false), None);
         app.terminal_has_focus = true;
@@ -2463,18 +2960,32 @@ mod tests {
         app.workspace_watcher_active = true;
         app.idle_quiescent = true;
         let now = std::time::Instant::now();
-        app.background.activity.ui.record(UiPhase::Preparation, Duration::from_millis(80), now);
+        app.background
+            .activity
+            .ui
+            .record(UiPhase::Preparation, Duration::from_millis(80), now);
         crate::ui_performance_details::toggle(&mut app);
         app.performance_view.section = crate::ui_performance_details::Section::Timings;
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 28)).unwrap();
-        terminal.draw(|frame| crate::ui_performance_details::draw(frame, &mut app)).unwrap();
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 28)).unwrap();
+        terminal
+            .draw(|frame| crate::ui_performance_details::draw(frame, &mut app))
+            .unwrap();
         assert_eq!(next_event_wait(&app, false, false), None);
-        app.background.activity.totals.record("Short task", Duration::from_millis(2), None, false);
+        app.background
+            .activity
+            .totals
+            .record("Short task", Duration::from_millis(2), None, false);
         assert_eq!(next_event_wait(&app, false, false), Some(Duration::ZERO));
-        terminal.draw(|frame| crate::ui_performance_details::draw(frame, &mut app)).unwrap();
+        terminal
+            .draw(|frame| crate::ui_performance_details::draw(frame, &mut app))
+            .unwrap();
         assert_eq!(next_event_wait(&app, false, false), None);
         app.performance_view.section = crate::ui_performance_details::Section::Workspace;
-        app.background.activity.totals.record("Short task", Duration::from_millis(2), None, false);
+        app.background
+            .activity
+            .totals
+            .record("Short task", Duration::from_millis(2), None, false);
         assert_eq!(next_event_wait(&app, false, false), None);
     }
 
@@ -2482,7 +2993,9 @@ mod tests {
     fn pinned_monitor_preserves_editor_input_batching_until_explicitly_focused() {
         use super::{editing_batch_target, navigation_batch_target};
         let mut app = crate::app::App::test_new();
-        app.tabs = vec![crate::app::Tab::new_file(crate::editor::Editor::test_with_text("hello\n"))];
+        app.tabs = vec![crate::app::Tab::new_file(
+            crate::editor::Editor::test_with_text("hello\n"),
+        )];
         app.active_tab = 0;
         app.active_pane = crate::app::ActivePane::Editor;
         let target = editing_batch_target(&app);
@@ -2500,9 +3013,9 @@ mod tests {
 
     #[test]
     fn acp_chat_activity_wakes_an_idle_workbench_only_while_visible() {
-        use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+        use ratatui::{Terminal, backend::TestBackend, layout::Rect};
         use std::time::Duration;
-        use vtcode::acp::{protocol as p, Session};
+        use vtcode::acp::{Session, protocol as p};
         let mut app = crate::app::App::test_new();
         app.idle_quiescent = true;
         app.focus_chat();
@@ -2515,13 +3028,18 @@ mod tests {
         terminal
             .draw(|f| crate::ui_chat::draw(f, &mut app, Rect::new(0, 0, 60, 24)))
             .unwrap();
-        assert!(next_event_wait(&app, false, false)
-            .is_some_and(|wait| wait <= Duration::from_millis(120)));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait <= Duration::from_millis(120))
+        );
         app.chat.visible = false;
         assert_eq!(next_event_wait(&app, false, false), None);
         app.chat.visible = true;
         app.terminal_has_focus = false;
-        assert!(next_event_wait(&app, false, false).is_some_and(|wait| wait <= Duration::from_millis(120)));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| wait <= Duration::from_millis(120))
+        );
         assert!(super::background_chat_redraw(&app, false, false));
         app.terminal_has_focus = true;
         app.chat
@@ -2537,7 +3055,11 @@ mod tests {
 
     #[test]
     fn inline_blame_adds_one_idle_deadline_only_while_waiting_on_the_annotation() {
-        use crate::{app::{App, Tab}, editor::Editor, git_blame};
+        use crate::{
+            app::{App, Tab},
+            editor::Editor,
+            git_blame,
+        };
         use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
         use ratatui::layout::Rect;
         use std::sync::Arc;
@@ -2549,20 +3071,36 @@ mod tests {
         editor.file_path = Some(app.explorer.root.join("hover.rs"));
         let anchor = Rect::new(10, 4, 20, 1);
         editor.blame.inline_annotation = Some((anchor, 0));
-        app.blame_documents.insert(editor.navigation_id, Arc::new(git_blame::Document {
-            path: editor.file_path.clone().unwrap(), revision: None, rope: editor.rope.clone(), key: None,
-            lines: vec![git_blame::Line::Uncommitted; editor.rope.len_lines()],
-            commit_lines: vec![None; editor.rope.len_lines()], notice: None,
-        }));
+        app.blame_documents.insert(
+            editor.navigation_id,
+            Arc::new(git_blame::Document {
+                path: editor.file_path.clone().unwrap(),
+                revision: None,
+                rope: editor.rope.clone(),
+                key: None,
+                lines: vec![git_blame::Line::Uncommitted; editor.rope.len_lines()],
+                commit_lines: vec![None; editor.rope.len_lines()],
+                notice: None,
+            }),
+        );
         app.tabs = vec![Tab::new_file(editor)];
         app.code_area = Some(Rect::new(0, 0, 90, 20));
         app.mouse_col = anchor.x;
         app.mouse_row = anchor.y;
         assert_eq!(next_event_wait(&app, false, false), None);
-        assert!(crate::ui_inline_blame::handle_mouse(&mut app, MouseEvent {
-            kind: MouseEventKind::Moved, column: anchor.x, row: anchor.y, modifiers: KeyModifiers::NONE,
-        }));
-        assert!(next_event_wait(&app, false, false).is_some_and(|wait| !wait.is_zero() && wait <= Duration::from_secs(2)));
+        assert!(crate::ui_inline_blame::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: anchor.x,
+                row: anchor.y,
+                modifiers: KeyModifiers::NONE,
+            }
+        ));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| !wait.is_zero() && wait <= Duration::from_secs(2))
+        );
         app.terminal_has_focus = false;
         assert_eq!(next_event_wait(&app, false, false), None);
         app.terminal_has_focus = true;
@@ -2596,32 +3134,65 @@ mod tests {
         client.install_capabilities(serde_json::from_value(json!({"hoverProvider":true})).unwrap());
         client.initialized = false;
         app.lsp_manager.clients.push(client);
-        app.lsp_manager.sync_document_owned(&path, 0, "items = {}\n".into());
+        app.lsp_manager
+            .sync_document_owned(&path, 0, "items = {}\n".into());
         let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
-        terminal.draw(|frame| crate::ui_editor::draw_editor(frame, &mut app, Rect::new(0, 0, 80, 12))).unwrap();
+        terminal
+            .draw(|frame| crate::ui_editor::draw_editor(frame, &mut app, Rect::new(0, 0, 80, 12)))
+            .unwrap();
         let code = app.code_area.unwrap();
         let (_sender, receiver) = std::sync::mpsc::channel();
         let mut pump = super::TerminalEventPump::from_receiver(receiver);
-        super::handle_mouse_input(&mut app, &mut pump, MouseEvent {
-            kind: MouseEventKind::Moved, column: code.x + 1, row: code.y,
-            modifiers: KeyModifiers::NONE,
+        super::handle_mouse_input(
+            &mut app,
+            &mut pump,
+            MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: code.x + 1,
+                row: code.y,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        crate::app_lsp_poll::poll_lsp(&mut app, &mut false);
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            None,
+            "initialization wakes us; do not poll for it"
+        );
+        server.queue_event(LspEvent::Initialized {
+            capabilities: Box::new(None),
         });
         crate::app_lsp_poll::poll_lsp(&mut app, &mut false);
-        assert_eq!(next_event_wait(&app, false, false), None, "initialization wakes us; do not poll for it");
-        server.queue_event(LspEvent::Initialized { capabilities: Box::new(None) });
-        crate::app_lsp_poll::poll_lsp(&mut app, &mut false);
-        assert!(next_event_wait(&app, false, false).is_some_and(|wait| !wait.is_zero() && wait <= Duration::from_millis(500)));
+        assert!(
+            next_event_wait(&app, false, false)
+                .is_some_and(|wait| !wait.is_zero() && wait <= Duration::from_millis(500))
+        );
         app.lsp_hover_request_time = Some(std::time::Instant::now() - Duration::from_millis(501));
         assert_eq!(next_event_wait(&app, false, false), Some(Duration::ZERO));
         crate::app_lsp_poll::poll_lsp(&mut app, &mut false);
-        let request = server.take_messages().into_iter().find(|m| m["method"] == "textDocument/hover").unwrap();
-        assert_eq!(next_event_wait(&app, false, false), None, "the server reply wakes us");
+        let request = server
+            .take_messages()
+            .into_iter()
+            .find(|m| m["method"] == "textDocument/hover")
+            .unwrap();
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            None,
+            "the server reply wakes us"
+        );
         server.respond(json!({"id":request["id"],"result":{"contents":"ready hover"}}));
         let mut redraw = false;
         crate::app_lsp_poll::poll_lsp(&mut app, &mut redraw);
         assert!(redraw);
-        assert_eq!(app.lsp_manager.hover_content.as_deref(), Some("ready hover"));
-        assert_eq!(next_event_wait(&app, false, false), None, "visible hover needs no periodic work");
+        assert_eq!(
+            app.lsp_manager.hover_content.as_deref(),
+            Some("ready hover")
+        );
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            None,
+            "visible hover needs no periodic work"
+        );
     }
 
     #[test]
@@ -2634,18 +3205,27 @@ mod tests {
         let path = directory.path().join("typing.py");
         let (client, _server) = crate::lsp::LspClient::test_pair("python", &["*.py"]);
         app.lsp_manager.clients.push(client);
-        app.lsp_manager.sync_document_owned(&path, 1, "digest = 1\n".into());
+        app.lsp_manager
+            .sync_document_owned(&path, 1, "digest = 1\n".into());
         assert_eq!(next_event_wait(&app, false, false), None);
         app.lsp_manager.diagnostic_publication.set_delay_ms(10_000);
         app.lsp_manager.invalidate_document_feedback(&path);
-        app.lsp_manager.sync_document_owned(&path, 2, "digest = 1\ndige\n".into());
-        app.lsp_manager.receive_diagnostics(path.clone(), Some(1), vec![lsp_types::Diagnostic {
-            message: "dige is not defined".into(),
-            ..Default::default()
-        }], std::time::Instant::now());
-        assert!(next_event_wait(&app, false, false).is_some_and(|wait| {
-            !wait.is_zero() && wait <= std::time::Duration::from_secs(10)
-        }));
+        app.lsp_manager
+            .sync_document_owned(&path, 2, "digest = 1\ndige\n".into());
+        app.lsp_manager.receive_diagnostics(
+            path.clone(),
+            Some(1),
+            vec![lsp_types::Diagnostic {
+                message: "dige is not defined".into(),
+                ..Default::default()
+            }],
+            std::time::Instant::now(),
+        );
+        assert!(
+            next_event_wait(&app, false, false).is_some_and(|wait| {
+                !wait.is_zero() && wait <= std::time::Duration::from_secs(10)
+            })
+        );
         let mut redraw = false;
         crate::app_lsp_poll::poll_lsp(&mut app, &mut redraw);
         assert!(!redraw);
@@ -2653,14 +3233,23 @@ mod tests {
 
         // Make the deadline due without sleeping or requiring another input event.
         app.lsp_manager.diagnostic_publication.set_delay_ms(0);
-        assert_eq!(next_event_wait(&app, false, false), Some(std::time::Duration::ZERO));
+        assert_eq!(
+            next_event_wait(&app, false, false),
+            Some(std::time::Duration::ZERO)
+        );
         crate::app_lsp_poll::poll_lsp(&mut app, &mut redraw);
         assert!(redraw);
-        assert_eq!(app.lsp_manager.get_diagnostics(&path).unwrap()[0].message, "dige is not defined");
+        assert_eq!(
+            app.lsp_manager.get_diagnostics(&path).unwrap()[0].message,
+            "dige is not defined"
+        );
         assert_eq!(next_event_wait(&app, false, false), None);
         redraw = false;
         crate::app_lsp_poll::poll_lsp(&mut app, &mut redraw);
-        assert!(!redraw, "completed publication must not keep waking or redrawing");
+        assert!(
+            !redraw,
+            "completed publication must not keep waking or redrawing"
+        );
     }
 
     #[test]
@@ -2685,7 +3274,8 @@ mod tests {
             Some(std::time::Duration::ZERO)
         );
 
-        app.pending_file_saves.insert(path, (app.workspace_generation, 7.into()));
+        app.pending_file_saves
+            .insert(path, (app.workspace_generation, 7.into()));
         assert!(!has_delayed_auto_save_candidate(&app));
         assert_eq!(next_event_wait(&app, false, false), None);
     }
@@ -2732,8 +3322,7 @@ mod tests {
         assert!(app.pending_word_occurrence.is_none());
         assert!(!deferred_word_occurrence_is_due(&app));
 
-        app.last_user_activity =
-            std::time::Instant::now() - super::WORD_OCCURRENCE_QUIET_PERIOD;
+        app.last_user_activity = std::time::Instant::now() - super::WORD_OCCURRENCE_QUIET_PERIOD;
         assert!(deferred_word_occurrence_is_due(&app));
         refresh_caches(&mut app);
         assert!(!app.word_occurrence_deferred);
@@ -2790,7 +3379,8 @@ mod tests {
         app.cached_sticky_scopes = vec![crate::background::StickyScopeLine {
             line: 2,
             parent: None,
-        }].into();
+        }]
+        .into();
         app.cached_sticky_lines = vec![(2, "def outer():".to_string())];
         app.cached_sticky_key = 42;
 
@@ -2823,7 +3413,8 @@ mod tests {
         app.cached_sticky_scopes = vec![crate::background::StickyScopeLine {
             line: 2,
             parent: None,
-        }].into();
+        }]
+        .into();
         app.cached_sticky_lines = vec![(2, "def outer():".to_string())];
         app.cached_sticky_key = 42;
 
@@ -2917,10 +3508,19 @@ impl AnalysisMemo {
     }
 
     /// The last summary for this editor, and whether it is for this exact text.
-    pub(crate) fn recall(&self, editor: &crate::editor::Editor) -> Option<(&AnalysisSummary, bool)> {
-        self.0.iter().find(|(id, ..)| *id == editor.navigation_id).map(|(_, version, len, summary)| {
-            (summary, *version == editor.content_version && *len == editor.rope.len_bytes())
-        })
+    pub(crate) fn recall(
+        &self,
+        editor: &crate::editor::Editor,
+    ) -> Option<(&AnalysisSummary, bool)> {
+        self.0
+            .iter()
+            .find(|(id, ..)| *id == editor.navigation_id)
+            .map(|(_, version, len, summary)| {
+                (
+                    summary,
+                    *version == editor.content_version && *len == editor.rope.len_bytes(),
+                )
+            })
     }
 }
 
@@ -2957,15 +3557,20 @@ fn remaining(start: std::time::Instant, duration: Duration) -> Duration {
 }
 
 fn editor_needs_delayed_auto_save(app: &App, editor: &crate::editor::Editor) -> bool {
-    if !editor.modified || app.pending_save_as.contains_key(&editor.save_identity)
-        || app.pending_paste_document() == Some(editor.save_identity) {
+    if !editor.modified
+        || app.pending_save_as.contains_key(&editor.save_identity)
+        || app.pending_paste_document() == Some(editor.save_identity)
+    {
         return false;
     }
     let Some(path) = editor.file_path.as_ref() else {
         return false;
     };
     if crate::remote::workspace::is_view_key(path)
-        && (app.remote_workspace.as_ref().is_none_or(|remote| !remote.client.connected())
+        && (app
+            .remote_workspace
+            .as_ref()
+            .is_none_or(|remote| !remote.client.connected())
             || app.remote_connection.checking.contains(path))
     {
         return false;
@@ -2981,14 +3586,17 @@ fn editor_needs_delayed_auto_save(app: &App, editor: &crate::editor::Editor) -> 
     if app
         .pending_file_saves
         .get(path)
-        .is_some_and(|(generation, pending)| *generation == app.workspace_generation && pending.version == version)
+        .is_some_and(|(generation, pending)| {
+            *generation == app.workspace_generation && pending.version == version
+        })
     {
         return false;
     }
-    !app
-        .deferred_file_saves
+    !app.deferred_file_saves
         .get(path)
-        .is_some_and(|(generation, pending)| *generation == app.workspace_generation && pending.source_content_version == version)
+        .is_some_and(|(generation, pending)| {
+            *generation == app.workspace_generation && pending.source_content_version == version
+        })
 }
 
 fn has_delayed_auto_save_candidate(app: &App) -> bool {
@@ -3002,7 +3610,13 @@ fn has_delayed_auto_save_candidate(app: &App) -> bool {
 /// request is pending (or has failed), the event loop can block until another
 /// edit or a worker result instead of repeatedly revisiting an expired timer.
 fn queue_due_delayed_auto_saves(app: &mut App) -> usize {
-    if app.exit_keep_unsaved_quit || app.exit_discard_quit || app.shutdown_anim_active || app.workspace_set_preserving() { return 0; }
+    if app.exit_keep_unsaved_quit
+        || app.exit_discard_quit
+        || app.shutdown_anim_active
+        || app.workspace_set_preserving()
+    {
+        return 0;
+    }
     let trim = app.trim_trailing_on_save;
     let newline = app.insert_final_newline;
     let mut newest_by_path = rustc_hash::FxHashMap::default();
@@ -3017,11 +3631,11 @@ fn queue_due_delayed_auto_saves(app: &mut App) -> usize {
         let Some(request) = tab.editor.background_save_request(trim, newline, false) else {
             continue;
         };
-        let replace = newest_by_path
-            .get(&request.path)
-            .is_none_or(|current: &crate::editor::BackgroundSaveRequest| {
+        let replace = newest_by_path.get(&request.path).is_none_or(
+            |current: &crate::editor::BackgroundSaveRequest| {
                 request.source_content_version > current.source_content_version
-            });
+            },
+        );
         if replace {
             newest_by_path.insert(request.path.clone(), request);
         }
@@ -3041,7 +3655,13 @@ pub(crate) fn next_visible_extension_tick_wait(app: &App) -> Option<Duration> {
 }
 
 pub(crate) fn queue_background_workspace_auto_saves(app: &mut App) {
-    if app.exit_keep_unsaved_quit || app.exit_discard_quit || app.shutdown_anim_active || app.workspace_set_preserving() { return; }
+    if app.exit_keep_unsaved_quit
+        || app.exit_discard_quit
+        || app.shutdown_anim_active
+        || app.workspace_set_preserving()
+    {
+        return;
+    }
     if matches!(app.auto_save, crate::app::AutoSaveMode::AfterDelay)
         && app.last_edit_time.elapsed() >= Duration::from_millis(app.auto_save_delay)
     {
@@ -3057,20 +3677,35 @@ pub(crate) fn background_workspace_wait(app: &App, closing_workspaces: bool) -> 
         app.remote_connection.next_wait(),
         app.formatting.next_wait(),
         app.lsp_workspace_edit_wait(),
-        app.chat.rollback.next_capture_deadline().map(|deadline| deadline.saturating_duration_since(now)),
+        app.chat
+            .rollback
+            .next_capture_deadline()
+            .map(|deadline| deadline.saturating_duration_since(now)),
         app.lsp_manager.diagnostic_publication.next_wait(now),
         crate::extension_scheduler::next_wait(app),
         app.git_watcher_refresh_wait(now),
     ];
-    if !closing_workspaces && !app.exit_keep_unsaved_quit && !app.exit_discard_quit && !app.shutdown_anim_active
-        && matches!(app.auto_save, crate::app::AutoSaveMode::AfterDelay) && has_delayed_auto_save_candidate(app) {
-        waits.push(Some(remaining(app.last_edit_time, Duration::from_millis(app.auto_save_delay))));
+    if !closing_workspaces
+        && !app.exit_keep_unsaved_quit
+        && !app.exit_discard_quit
+        && !app.shutdown_anim_active
+        && matches!(app.auto_save, crate::app::AutoSaveMode::AfterDelay)
+        && has_delayed_auto_save_candidate(app)
+    {
+        waits.push(Some(remaining(
+            app.last_edit_time,
+            Duration::from_millis(app.auto_save_delay),
+        )));
     }
     waits.into_iter().flatten().min()
 }
 
 #[cfg(test)]
-fn next_event_wait(app: &App, needs_redraw: bool, has_periodic_disk_paths: bool) -> Option<Duration> {
+fn next_event_wait(
+    app: &App,
+    needs_redraw: bool,
+    has_periodic_disk_paths: bool,
+) -> Option<Duration> {
     next_event_wait_with_output(app, needs_redraw, has_periodic_disk_paths, true)
 }
 
@@ -3094,7 +3729,9 @@ fn next_event_wait_with_output(
             include(wait.max(app.animations.background_frame_wait(now)));
         }
     }
-    if let Some(wait) = app.background_workspace_wait() { include(wait); }
+    if let Some(wait) = app.background_workspace_wait() {
+        include(wait);
+    }
     if let Some(wait) = app.inline_hold_wait() {
         include(wait);
     }
@@ -3107,7 +3744,9 @@ fn next_event_wait_with_output(
     if let Some(wait) = crate::app_source_control_hover::next_wait(app, std::time::Instant::now()) {
         include(wait);
     }
-    if output_ready && let Some(wait) = app.copy_animation_next_wait(std::time::Instant::now()) { include(wait); }
+    if output_ready && let Some(wait) = app.copy_animation_next_wait(std::time::Instant::now()) {
+        include(wait);
+    }
     // Vim mapping timeouts ('timeoutlen') and the yank highlight.
     if let Some(deadline) = crate::vim::feedback::next_deadline(app) {
         include(deadline.saturating_duration_since(std::time::Instant::now()));
@@ -3116,27 +3755,41 @@ fn next_event_wait_with_output(
         include(deadline.saturating_duration_since(std::time::Instant::now()));
     }
     if let Some((started, _, _)) = app.vim_yank_flash {
-        include((started + Duration::from_millis(180)).saturating_duration_since(std::time::Instant::now()));
+        include(
+            (started + Duration::from_millis(180))
+                .saturating_duration_since(std::time::Instant::now()),
+        );
     }
-    if let Some(reconnect_wait) = app.remote_connection.next_wait() { include(reconnect_wait); }
+    if let Some(reconnect_wait) = app.remote_connection.next_wait() {
+        include(reconnect_wait);
+    }
     if let Some(format_wait) = app.formatting.next_wait() {
         include(format_wait);
     }
     if let Some(wait) = app.lsp_workspace_edit_wait() {
         include(wait);
     }
-    if output_ready && let Some(wait) = app.loading.next_wait(app.terminal_has_focus, std::time::Instant::now()) {
+    if output_ready
+        && let Some(wait) = app
+            .loading
+            .next_wait(app.terminal_has_focus, std::time::Instant::now())
+    {
         include(wait);
     }
-    if app.terminal_has_focus && let Some(wait) = app.file_deletion.as_ref().and_then(|deletion| deletion.next_wait()) {
+    if app.terminal_has_focus
+        && let Some(wait) = app
+            .file_deletion
+            .as_ref()
+            .and_then(|deletion| deletion.next_wait())
+    {
         include(wait);
     }
 
-    if output_ready && app.terminal_has_focus
-        && let Some(animation_wait) = app.animations.next_frame_wait(
-            &app.animation_settings,
-            std::time::Instant::now(),
-        )
+    if output_ready
+        && app.terminal_has_focus
+        && let Some(animation_wait) = app
+            .animations
+            .next_frame_wait(&app.animation_settings, std::time::Instant::now())
     {
         include(animation_wait);
     }
@@ -3147,23 +3800,38 @@ fn next_event_wait_with_output(
     if output_ready && let Some(activity_wait) = crate::ui_chat::next_activity_frame(app) {
         include(activity_wait);
     }
-    if let Some(resource_wait) = crate::ui_performance_details::resource_next_wait(app, std::time::Instant::now()) {
+    if let Some(resource_wait) =
+        crate::ui_performance_details::resource_next_wait(app, std::time::Instant::now())
+    {
         include(resource_wait);
     }
-    if output_ready && app.terminal_has_focus && crate::ui_performance_details::timings_need_redraw(app) {
+    if output_ready
+        && app.terminal_has_focus
+        && crate::ui_performance_details::timings_need_redraw(app)
+    {
         include(Duration::ZERO);
     }
-    if app.terminal_has_focus && app.commit_details.visible
+    if app.terminal_has_focus
+        && app.commit_details.visible
         && let Some(feedback) = &app.commit_details.copy_feedback
     {
-        include(feedback.expires_at.saturating_duration_since(std::time::Instant::now()));
+        include(
+            feedback
+                .expires_at
+                .saturating_duration_since(std::time::Instant::now()),
+        );
     }
-    if app.terminal_has_focus && app.hunk_popup_active
-        && let Some(deadline) = app.hunk_peek.as_ref().and_then(|peek| peek.copy_feedback_deadline())
+    if app.terminal_has_focus
+        && app.hunk_popup_active
+        && let Some(deadline) = app
+            .hunk_peek
+            .as_ref()
+            .and_then(|peek| peek.copy_feedback_deadline())
     {
         include(deadline.saturating_duration_since(std::time::Instant::now()));
     }
-    if output_ready && app.terminal_has_focus
+    if output_ready
+        && app.terminal_has_focus
         && (app.background.activity.details_open || (app.show_status_bar && !app.zen_mode))
         && let Some(activity_wait) = app.background.activity.next_wait(std::time::Instant::now())
     {
@@ -3179,7 +3847,8 @@ fn next_event_wait_with_output(
             EDITOR_ANALYSIS_EDIT_QUIET_PERIOD,
         ));
     }
-    if output_ready && app.terminal_has_focus && !app.idle_quiescent && app.word_occurrence_deferred {
+    if output_ready && app.terminal_has_focus && !app.idle_quiescent && app.word_occurrence_deferred
+    {
         include(remaining(
             app.last_user_activity,
             WORD_OCCURRENCE_QUIET_PERIOD,
@@ -3211,11 +3880,18 @@ fn next_event_wait_with_output(
     if let Some(start) = app.lsp_hover_request_time {
         include(remaining(start, Duration::from_millis(500)));
     }
-    if let Some(diagnostic_wait) = app.lsp_manager.diagnostic_publication.next_wait(std::time::Instant::now()) {
+    if let Some(diagnostic_wait) = app
+        .lsp_manager
+        .diagnostic_publication
+        .next_wait(std::time::Instant::now())
+    {
         include(diagnostic_wait);
     }
 
-    if !app.workspace_set_preserving() && !app.exit_keep_unsaved_quit && !app.exit_discard_quit && !app.shutdown_anim_active
+    if !app.workspace_set_preserving()
+        && !app.exit_keep_unsaved_quit
+        && !app.exit_discard_quit
+        && !app.shutdown_anim_active
         && matches!(app.auto_save, crate::app::AutoSaveMode::AfterDelay)
         && has_delayed_auto_save_candidate(app)
     {
@@ -3225,15 +3901,20 @@ fn next_event_wait_with_output(
         ));
     }
 
-    if let Some(extension_wait) = next_visible_extension_tick_wait(app) { include(extension_wait); }
+    if let Some(extension_wait) = next_visible_extension_tick_wait(app) {
+        include(extension_wait);
+    }
     if app.terminal_has_focus {
         if output_ready && let Some(deadline) = app.editor_selection_scroll_at {
             include(deadline.saturating_duration_since(std::time::Instant::now()));
         }
-        if output_ready && let Some(wait) = app.next_terminal_completion_wait(std::time::Instant::now()) {
+        if output_ready
+            && let Some(wait) = app.next_terminal_completion_wait(std::time::Instant::now())
+        {
             include(wait);
         }
-        if output_ready && let Some(wait) = app.next_terminal_input_wait(std::time::Instant::now()) {
+        if output_ready && let Some(wait) = app.next_terminal_input_wait(std::time::Instant::now())
+        {
             include(wait);
         }
         if !app.idle_quiescent {
@@ -3242,7 +3923,9 @@ fn next_event_wait_with_output(
                 FOREGROUND_IDLE_QUIET_PERIOD,
             ));
         }
-        if !app.idle_quiescent && let Some(start) = app.cursor_blink_start() {
+        if !app.idle_quiescent
+            && let Some(start) = app.cursor_blink_start()
+        {
             include(remaining(start, CURSOR_BLINK_INTERVAL));
         }
         if app.chord_pending {
@@ -3255,16 +3938,20 @@ fn next_event_wait_with_output(
             ));
         }
         if output_ready && !app.tab_tooltip_shown {
-            if let (Some(_), Some(start)) =
-                (app.tab_tooltip_tab, app.tab_tooltip_hover_start)
-            {
+            if let (Some(_), Some(start)) = (app.tab_tooltip_tab, app.tab_tooltip_hover_start) {
                 include(remaining(start, TAB_TOOLTIP_DELAY));
             }
         }
-        if output_ready && !app.chrome_hover.shown && let Some(start) = app.chrome_hover.started {
+        if output_ready
+            && !app.chrome_hover.shown
+            && let Some(start) = app.chrome_hover.started
+        {
             include(remaining(start, crate::ui_status::HOVER_DELAY));
         }
-        if output_ready && let Some(blame_wait) = crate::ui_inline_blame::next_wait(app, std::time::Instant::now()) {
+        if output_ready
+            && let Some(blame_wait) =
+                crate::ui_inline_blame::next_wait(app, std::time::Instant::now())
+        {
             include(blame_wait);
         }
         if let Some(blame_wait) = crate::git_blame::next_wait(app, std::time::Instant::now()) {
@@ -3283,11 +3970,24 @@ fn next_event_wait_with_output(
     wait
 }
 
-fn next_event_wait_for_redraw(app: &App, needs_redraw: bool, input_redraw: bool, has_periodic_disk_paths: bool) -> Option<Duration> {
-    let redraw_wait = if input_redraw { Duration::ZERO } else {
-        app.animations.background_frame_wait(std::time::Instant::now())
+fn next_event_wait_for_redraw(
+    app: &App,
+    needs_redraw: bool,
+    input_redraw: bool,
+    has_periodic_disk_paths: bool,
+) -> Option<Duration> {
+    let redraw_wait = if input_redraw {
+        Duration::ZERO
+    } else {
+        app.animations
+            .background_frame_wait(std::time::Instant::now())
     };
-    let wait = next_event_wait_with_output(app, needs_redraw && redraw_wait.is_zero(), has_periodic_disk_paths, true);
+    let wait = next_event_wait_with_output(
+        app,
+        needs_redraw && redraw_wait.is_zero(),
+        has_periodic_disk_paths,
+        true,
+    );
     if needs_redraw {
         // A due visual/analysis timer may remain due until the dirty frame is
         // painted. Do not spin on its zero deadline while that frame is paced.
@@ -3390,14 +4090,22 @@ fn refresh_caches(app: &mut App) {
     let editor_target = app.editor_analysis_target();
     if let Some((pending, token)) = &app.pending_editor_analysis
         && editor_target.as_ref() != Some(pending)
-    { token.cancel(); }
+    {
+        token.cancel();
+    }
     if let Some(target) = editor_target {
         if app.cached_editor_analysis_target.as_ref() != Some(&target) {
             let same_document = reconcile_sticky_cache_document(app, &target);
             let current_line_width = app.editor().map_or(0, |editor| editor.current_line_len());
             let mut reused = false;
-            let recalled = (!same_document).then(|| app.editor()
-                .and_then(|editor| app.editor_analysis_memo.recall(editor).map(|(summary, exact)| (summary.clone(), exact))))
+            let recalled = (!same_document)
+                .then(|| {
+                    app.editor().and_then(|editor| {
+                        app.editor_analysis_memo
+                            .recall(editor)
+                            .map(|(summary, exact)| (summary.clone(), exact))
+                    })
+                })
                 .flatten();
             if same_document {
                 app.cached_max_line_width = app.cached_max_line_width.max(current_line_width);
@@ -3408,7 +4116,9 @@ fn refresh_caches(app: &mut App) {
                 app.cached_error_count = summary.errors;
                 app.cached_warning_count = summary.warnings;
                 app.cached_editor_word_count = summary.word_count;
-                let (chars, lines) = app.editor().map_or((0, 0), |editor| (editor.rope.len_chars(), editor.line_count()));
+                let (chars, lines) = app.editor().map_or((0, 0), |editor| {
+                    (editor.rope.len_chars(), editor.line_count())
+                });
                 app.cached_word_count = Some(format!("{}W {chars}C {lines}L", summary.word_count));
                 app.cached_sticky_scopes = summary.sticky_scopes;
                 app.cached_sticky_key = u64::MAX;
@@ -3430,7 +4140,13 @@ fn refresh_caches(app: &mut App) {
                 app.editor_analysis_deferred = false;
                 let (rope, saved_rope, insertion_anchors) = app.editor().map_or_else(
                     || (ropey::Rope::new(), None, None),
-                    |editor| (editor.rope.clone(), editor.saved_rope.clone(), editor.insertion_anchors.clone()),
+                    |editor| {
+                        (
+                            editor.rope.clone(),
+                            editor.saved_rope.clone(),
+                            editor.insertion_anchors.clone(),
+                        )
+                    },
                 );
                 let sender = app.background.sender.clone();
                 let pool_sender = app.background.pool_sender();
@@ -3442,37 +4158,62 @@ fn refresh_caches(app: &mut App) {
                 app.bg_editor_analysis_running = true;
                 let cancel = crate::background::CancellationToken::new();
                 app.pending_editor_analysis = Some((target.clone(), cancel.clone()));
-                let activity = app.background.activity.start("Analyzing", target.file_path.as_deref());
+                let activity = app
+                    .background
+                    .activity
+                    .start("Analyzing", target.file_path.as_deref());
                 let queued = pool_sender.send(Box::new(move || {
                     let _activity = activity.running();
                     let deadline = std::time::Instant::now() + timeout;
                     let analysis = (|| {
                         // Only this worker locks the cache. The UI transfers an
                         // Arc, never scans or clones the retained summaries.
-                        let metrics = content_cache.lock().unwrap_or_else(|error| error.into_inner())
+                        let metrics = content_cache
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
                             .analyze(document, &rope, deadline, &|| cancel.is_cancelled())?;
-                        let unsaved_diff = if request_target.modified && let Some(saved) = &saved_rope {
-                            let anchors = insertion_anchors.as_ref().map_or(&[][..], |anchors| anchors.rows(&rope));
+                        let unsaved_diff = if request_target.modified
+                            && let Some(saved) = &saved_rope
+                        {
+                            let anchors = insertion_anchors
+                                .as_ref()
+                                .map_or(&[][..], |anchors| anchors.rows(&rope));
                             crate::editor::compute_unsaved_diff_markers_cancellable(
-                                saved, &rope, anchors, Some(deadline), &|| cancel.is_cancelled(),
+                                saved,
+                                &rope,
+                                anchors,
+                                Some(deadline),
+                                &|| cancel.is_cancelled(),
                             )?
-                        } else { crate::editor::UnsavedDiff::default() };
+                        } else {
+                            crate::editor::UnsavedDiff::default()
+                        };
                         Some((metrics, unsaved_diff))
                     })();
                     let result = if cancel.is_cancelled() {
                         crate::background::BackgroundResult::EditorWorkCancelled {
-                            kind: crate::background::EditorWorkKind::Metrics, token: cancel,
+                            kind: crate::background::EditorWorkKind::Metrics,
+                            token: cancel,
                         }
-                    } else if let Some(((errors, warnings, max_line_width, word_count, sticky_scopes), unsaved_diff)) = analysis
+                    } else if let Some((
+                        (errors, warnings, max_line_width, word_count, sticky_scopes),
+                        unsaved_diff,
+                    )) = analysis
                         && std::time::Instant::now() < deadline
                     {
                         crate::background::BackgroundResult::EditorAnalysis {
-                            target: request_target, errors, warnings, max_line_width, word_count,
-                            unsaved_diff, sticky_scopes,
+                            target: request_target,
+                            errors,
+                            warnings,
+                            max_line_width,
+                            word_count,
+                            unsaved_diff,
+                            sticky_scopes,
                         }
                     } else {
                         crate::background::BackgroundResult::RichFeaturesTimedOut {
-                            target: request_target, feature: "whole-file analysis",
+                            target: request_target,
+                            feature: "whole-file analysis",
                         }
                     };
                     let _ = sender.send(result);
@@ -3484,8 +4225,7 @@ fn refresh_caches(app: &mut App) {
             } else {
                 // An in-flight analysis will trigger a redraw when it returns,
                 // so only arm the timer when quiet time is the sole blocker.
-                app.editor_analysis_deferred =
-                    !app.bg_editor_analysis_running && !edit_has_settled;
+                app.editor_analysis_deferred = !app.bg_editor_analysis_running && !edit_has_settled;
             }
         } else {
             app.editor_analysis_deferred = false;
@@ -3518,12 +4258,15 @@ fn refresh_caches(app: &mut App) {
         }
     });
     if let Some((pending, token)) = &app.pending_bracket_analysis
-        && (!app.bracket_pair_colorization || bracket_target.as_ref().is_none_or(|target| {
-            // Scrolling still needs the same document-wide index. Do not
-            // cancel it merely because a different viewport is requested.
-            target.editor != pending.editor || target.navigation_id != pending.navigation_id
-        }))
-    { token.cancel(); }
+        && (!app.bracket_pair_colorization
+            || bracket_target.as_ref().is_none_or(|target| {
+                // Scrolling still needs the same document-wide index. Do not
+                // cancel it merely because a different viewport is requested.
+                target.editor != pending.editor || target.navigation_id != pending.navigation_id
+            }))
+    {
+        token.cancel();
+    }
     if app.bracket_pair_colorization
         && let Some(target) = bracket_target
     {
@@ -3570,12 +4313,15 @@ fn refresh_caches(app: &mut App) {
                             wrap_revision,
                             std::time::Instant::now() + timeout,
                             &|| cancel.is_cancelled(),
-                        ).map(std::sync::Arc::new)
+                        )
+                        .map(std::sync::Arc::new)
                     });
                     let Some(depth_index) = depth_index.filter(|_| !cancel.is_cancelled()) else {
-                        let _ = sender.send(crate::background::BackgroundResult::EditorWorkCancelled {
-                            kind: crate::background::EditorWorkKind::Brackets, token: cancel,
-                        });
+                        let _ =
+                            sender.send(crate::background::BackgroundResult::EditorWorkCancelled {
+                                kind: crate::background::EditorWorkKind::Brackets,
+                                token: cancel,
+                            });
                         return;
                     };
                     let (starting_depth, guides) = analyze_viewport_brackets(
@@ -3585,9 +4331,11 @@ fn refresh_caches(app: &mut App) {
                         request_target.visible_lines,
                     );
                     if cancel.is_cancelled() {
-                        let _ = sender.send(crate::background::BackgroundResult::EditorWorkCancelled {
-                            kind: crate::background::EditorWorkKind::Brackets, token: cancel,
-                        });
+                        let _ =
+                            sender.send(crate::background::BackgroundResult::EditorWorkCancelled {
+                                kind: crate::background::EditorWorkKind::Brackets,
+                                token: cancel,
+                            });
                         return;
                     }
                     let _ = sender.send(crate::background::BackgroundResult::BracketAnalysis {
@@ -3616,7 +4364,9 @@ fn refresh_caches(app: &mut App) {
     let cursor_target = app.cursor_match_target();
     if let Some((pending, token)) = &app.pending_cursor_match
         && cursor_target.as_ref() != Some(pending)
-    { token.cancel(); }
+    {
+        token.cancel();
+    }
     match cursor_target {
         Some(target) if app.cached_cursor_match_target.as_ref() != Some(&target) => {
             // A content-version change must not make a matching pair blink out
@@ -3631,7 +4381,10 @@ fn refresh_caches(app: &mut App) {
                 app.cached_matching_bracket = None;
                 app.cached_matching_tag = None;
             }
-            if app.editor().is_none_or(|editor| !editor.may_have_cursor_pair()) {
+            if app
+                .editor()
+                .is_none_or(|editor| !editor.may_have_cursor_pair())
+            {
                 app.cached_cursor_match_target = Some(target);
                 app.cached_matching_bracket = None;
                 app.cached_matching_tag = None;
@@ -3650,12 +4403,16 @@ fn refresh_caches(app: &mut App) {
                         editor.cursor_col = request_target.cursor_col;
                         editor.file_path = request_target.editor.file_path.clone();
                         editor.language_override = Some(request_target.language_name.clone());
-                        let bracket = editor.find_matching_bracket_cancellable(&|| cancel.is_cancelled());
+                        let bracket =
+                            editor.find_matching_bracket_cancellable(&|| cancel.is_cancelled());
                         let tag = editor.find_matching_tag_cancellable(&|| cancel.is_cancelled());
                         if cancel.is_cancelled() {
-                            let _ = sender.send(crate::background::BackgroundResult::EditorWorkCancelled {
-                                kind: crate::background::EditorWorkKind::Cursor, token: cancel,
-                            });
+                            let _ = sender.send(
+                                crate::background::BackgroundResult::EditorWorkCancelled {
+                                    kind: crate::background::EditorWorkKind::Cursor,
+                                    token: cancel,
+                                },
+                            );
                             return;
                         }
                         let _ = sender.send(crate::background::BackgroundResult::CursorMatches {
@@ -3725,12 +4482,11 @@ fn refresh_caches(app: &mut App) {
                             return;
                         };
                         if !cancel.is_cancelled() {
-                            let _ = sender.send(
-                                crate::background::BackgroundResult::WordOccurrences {
+                            let _ =
+                                sender.send(crate::background::BackgroundResult::WordOccurrences {
                                     target: worker_target,
                                     count,
-                                },
-                            );
+                                });
                         }
                     });
                     app.pending_word_occurrence = Some((request_target, token));
@@ -3853,13 +4609,19 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             app.wheel_scroll.get_or_insert_with(Default::default);
         }
         if let Some(started) = input_started.take() {
-            app.background.activity.ui.input_handled(started, std::time::Instant::now(), needs_redraw && app.terminal_has_focus);
+            app.background.activity.ui.input_handled(
+                started,
+                std::time::Instant::now(),
+                needs_redraw && app.terminal_has_focus,
+            );
         }
         // Observe before polling *any* producer. A PTY/LSP notification can
         // arrive after its queue was polled but before we reach the wait below.
         // Taking a fresh snapshot there would forget that work and sleep until
         // an unrelated event or cosmetic timer wakes us again.
-        if (input_redraw && needs_redraw && windows.ready_to_draw()) || windows.has_foreground_input(&mut main_events) {
+        if (input_redraw && needs_redraw && windows.ready_to_draw())
+            || windows.has_foreground_input(&mut main_events)
+        {
             app.vtcomplete_worker.activity().note_input();
         }
         let current_caret_state = capture_caret_state(app);
@@ -3901,14 +4663,18 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         while let Some(service) = service_scheduler.next(
             &mut service_turn,
             std::time::Instant::now(),
-            (input_redraw && needs_redraw && windows.ready_to_draw()) || !app.macro_replay_queue.is_empty()
+            (input_redraw && needs_redraw && windows.ready_to_draw())
+                || !app.macro_replay_queue.is_empty()
                 || windows.has_foreground_input(&mut main_events),
         ) {
             use crate::ui_work::Service;
             let service_started = std::time::Instant::now();
-            let changed = app.service_workspaces_with_redraws(service, service_turn.deadline,
+            let changed = app.service_workspaces_with_redraws(
+                service,
+                service_turn.deadline,
                 || !windows.has_foreground_input(&mut main_events),
-                |workspace| changed_workspaces.push(workspace));
+                |workspace| changed_workspaces.push(workspace),
+            );
             if app.workspace_service_pending(service) {
                 service_scheduler.defer_last_service(&mut service_turn, observed_wake);
             }
@@ -3919,7 +4685,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             if matches!(service, Service::Terminals | Service::Agents) || !windows.is_main() {
                 unfocused_redraw_pending |= changed;
             }
-            if service == Service::Agents { agent_changed = changed; }
+            if service == Service::Agents {
+                agent_changed = changed;
+            }
             let finished = std::time::Instant::now();
             let phase = match service {
                 Service::LanguageServers => UiPhase::LanguageServers,
@@ -3928,18 +4696,27 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 Service::Agents => UiPhase::Agents,
                 Service::Extensions => UiPhase::Extensions,
             };
-            app.background.activity.ui.record(phase, finished.saturating_duration_since(service_started), finished);
+            app.background.activity.ui.record(
+                phase,
+                finished.saturating_duration_since(service_started),
+                finished,
+            );
         }
         needs_redraw |= app.poll_language_detection(std::time::Instant::now());
         if crate::ui_chat::advance_activity_frame(app) {
             needs_redraw = true;
         }
-        if app.commit_details.expire_copy_feedback(std::time::Instant::now())
+        if app
+            .commit_details
+            .expire_copy_feedback(std::time::Instant::now())
             && app.commit_details.visible
         {
             needs_redraw = true;
         }
-        if app.hunk_peek.as_mut().is_some_and(|peek| peek.expire_copy_feedback(std::time::Instant::now()))
+        if app
+            .hunk_peek
+            .as_mut()
+            .is_some_and(|peek| peek.expire_copy_feedback(std::time::Instant::now()))
             && app.hunk_popup_active
         {
             needs_redraw = true;
@@ -3964,18 +4741,25 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         let cosmetic_allowed = app.terminal_has_focus
             && (needs_redraw
                 || !app.animation_settings.any_enabled()
-                || (app.macro_replay_queue.is_empty() && !windows.active_pump(&mut main_events).has_pending_event()));
-        let animation_redraw = cosmetic_allowed && app
+                || (app.macro_replay_queue.is_empty()
+                    && !windows.active_pump(&mut main_events).has_pending_event()));
+        let animation_redraw = cosmetic_allowed
+            && app
                 .animations
                 .advance_frame(&app.animation_settings, std::time::Instant::now());
-        let loading_allowed = app.loading.active() && app.terminal_has_focus && (needs_redraw
-            || (app.macro_replay_queue.is_empty() && !windows.active_pump(&mut main_events).has_pending_event()));
-        let loading_redraw = loading_allowed && app.loading.advance(
-            app.terminal_has_focus, std::time::Instant::now(),
-        );
+        let loading_allowed = app.loading.active()
+            && app.terminal_has_focus
+            && (needs_redraw
+                || (app.macro_replay_queue.is_empty()
+                    && !windows.active_pump(&mut main_events).has_pending_event()));
+        let loading_redraw = loading_allowed
+            && app
+                .loading
+                .advance(app.terminal_has_focus, std::time::Instant::now());
         let copy_redraw = app.terminal_has_focus
-            && (needs_redraw || (app.macro_replay_queue.is_empty()
-                && !windows.active_pump(&mut main_events).has_pending_event()))
+            && (needs_redraw
+                || (app.macro_replay_queue.is_empty()
+                    && !windows.active_pump(&mut main_events).has_pending_event()))
             && app.advance_copy_animation(std::time::Instant::now());
         let animation_redraw = animation_redraw || loading_redraw || copy_redraw;
         if app.sync_markdown_preview_state() {
@@ -3985,8 +4769,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         // Whole-file metrics are intentionally delayed while typing. Queue
         // them when their timer expires without repainting an unchanged UI.
         if !needs_redraw
-            && (deferred_editor_analysis_is_due(app)
-                || deferred_word_occurrence_is_due(app))
+            && (deferred_editor_analysis_is_due(app) || deferred_word_occurrence_is_due(app))
         {
             // Long cosmetic effects must not postpone due analysis work.
             // A cache refresh can alter render inputs, so this one frame
@@ -4000,10 +4783,13 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
         // A resize invalidates the displayed frame even without focus. Keep
         // it and terminal/agent output pending until a frame is actually drawn.
-        if !unfocused_redraw_pending && !background_chat_redraw(app, agent_was_running, agent_changed) {
+        if !unfocused_redraw_pending
+            && !background_chat_redraw(app, agent_was_running, agent_changed)
+        {
             needs_redraw = false;
         }
-        let background_due = windows.background_draw_wait(app.terminal_has_focus, std::time::Instant::now())
+        let background_due = windows
+            .background_draw_wait(app.terminal_has_focus, std::time::Instant::now())
             == Some(Duration::ZERO);
         needs_redraw |= background_due;
 
@@ -4020,8 +4806,10 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         let now = std::time::Instant::now();
         let background_frame_wait = app.animations.background_frame_wait(now);
         let output_ready = windows.ready_to_draw();
-        let can_draw = output_ready && (input_redraw
-            || (!windows.has_foreground_input(&mut main_events) && background_frame_wait.is_zero()));
+        let can_draw = output_ready
+            && (input_redraw
+                || (!windows.has_foreground_input(&mut main_events)
+                    && background_frame_wait.is_zero()));
         // Advance the actual viewport only when it can be painted. Clicks
         // and selection hit tests must still see the last presented rows.
         if can_draw && app.terminal_has_focus {
@@ -4030,7 +4818,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         let draw_changed = needs_redraw && can_draw;
         if draw_changed || (output_ready && !needs_redraw && animation_redraw) {
             let _foreground = app.vtcomplete_worker.activity().present();
-            let render_priority = crate::worker_priority::InputPriority::new(input_redraw && app.terminal_has_focus);
+            let render_priority =
+                crate::worker_priority::InputPriority::new(input_redraw && app.terminal_has_focus);
             let frame_started = std::time::Instant::now();
             app.rendering_animation_frame = !needs_redraw;
             if needs_redraw {
@@ -4044,13 +4833,20 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             // Update terminal title with current file name (only when changed)
             if windows.is_main() {
                 let title_key = app
-                    .tabs.get(app.active_tab)
-                    .map_or((u64::MAX, false), |tab| (tab.editor.navigation_id, tab.has_unsaved_changes()));
+                    .tabs
+                    .get(app.active_tab)
+                    .map_or((u64::MAX, false), |tab| {
+                        (tab.editor.navigation_id, tab.has_unsaved_changes())
+                    });
                 if Some(title_key) != last_title_key {
                     last_title_key = Some(title_key);
                     let title = if let Some(tab) = app.tabs.get(app.active_tab) {
                         let name = tab.editor.file_name();
-                        let modified = if tab.has_unsaved_changes() { "● " } else { "" };
+                        let modified = if tab.has_unsaved_changes() {
+                            "● "
+                        } else {
+                            ""
+                        };
                         format!("{modified}{name} — vtcode")
                     } else {
                         "vtcode".to_string()
@@ -4066,9 +4862,14 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
 
             // Auto-reveal active file in explorer when tab changes
-            if windows.is_main() && app.show_explorer && app.sidebar_view == crate::app::SidebarView::Explorer {
+            if windows.is_main()
+                && app.show_explorer
+                && app.sidebar_view == crate::app::SidebarView::Explorer
+            {
                 let tab_changed = Some(app.active_tab) != last_revealed_tab;
-                let current_path = app.tabs.get(app.active_tab)
+                let current_path = app
+                    .tabs
+                    .get(app.active_tab)
                     .and_then(|tab| app.diff_tabs.explorer_auto_reveal_path(tab));
                 if tab_changed || current_path != last_revealed_path.as_deref() {
                     last_revealed_path = current_path.map(Path::to_owned);
@@ -4085,19 +4886,30 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             pointer_event_loop_latency_tests::before_paint(app);
             if input_redraw && selection_drag.is_some() && !reference_input_batches() {
                 let started = std::time::Instant::now();
-                if refresh_selection_before_paint(app, windows.active_pump(&mut main_events), &mut selection_drag) {
+                if refresh_selection_before_paint(
+                    app,
+                    windows.active_pump(&mut main_events),
+                    &mut selection_drag,
+                ) {
                     last_caret_state = capture_caret_state(app);
                     // Cursor-dependent analysis may have been queued for the
                     // old position. Reconcile it using the normal cache path.
                     refresh_caches(app);
                     let finished = std::time::Instant::now();
-                    app.background.activity.ui.input_handled(started, finished, true);
+                    app.background
+                        .activity
+                        .ui
+                        .input_handled(started, finished, true);
                     #[cfg(all(test, windows))]
                     pointer_event_loop_latency_tests::pointer_updated();
                 }
             }
             let render_started = std::time::Instant::now();
-            app.background.activity.ui.record(UiPhase::Preparation, render_started.saturating_duration_since(frame_started), render_started);
+            app.background.activity.ui.record(
+                UiPhase::Preparation,
+                render_started.saturating_duration_since(frame_started),
+                render_started,
+            );
             let mut painting_elapsed = Duration::ZERO;
             let active_window = windows.active();
             if draw_changed && background_due {
@@ -4121,7 +4933,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
             // Vim Insert/Replace mode: bar/underline cursor in the main terminal.
             if windows.is_main() && app.vim_cursor_shape != app.vim_cursor_shape_sent {
-                let shape = app.vim_cursor_shape.unwrap_or(crossterm::cursor::SetCursorStyle::DefaultUserShape);
+                let shape = app
+                    .vim_cursor_shape
+                    .unwrap_or(crossterm::cursor::SetCursorStyle::DefaultUserShape);
                 let _ = crossterm::queue!(terminal.backend_mut(), shape);
                 let _ = io::Write::flush(terminal.backend_mut());
                 app.vim_cursor_shape_sent = app.vim_cursor_shape;
@@ -4134,24 +4948,32 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
             let render_finished = std::time::Instant::now();
             #[cfg(test)]
-            if pointer_event_loop_latency_tests::presented(app) { return Ok(()); }
+            if pointer_event_loop_latency_tests::presented(app) {
+                return Ok(());
+            }
             drop(render_priority);
             input_priority.take();
             let render_elapsed = render_finished.saturating_duration_since(render_started);
-            app.background.activity.ui.record(UiPhase::Painting, painting_elapsed, render_finished);
-            app.background.activity.ui.record(UiPhase::TerminalOutput,
-                render_elapsed.saturating_sub(painting_elapsed), render_finished);
+            app.background
+                .activity
+                .ui
+                .record(UiPhase::Painting, painting_elapsed, render_finished);
+            app.background.activity.ui.record(
+                UiPhase::TerminalOutput,
+                render_elapsed.saturating_sub(painting_elapsed),
+                render_finished,
+            );
             // Preparation competes with input too; include it in pacing, but
             // keep the render performance display measuring the draw itself.
             let frame_elapsed = render_finished.saturating_duration_since(frame_started);
             app.animations.record_render(render_finished, frame_elapsed);
             app.loading.record_render(render_finished, frame_elapsed);
             app.rendering_animation_frame = false;
+            app.background.activity.render.record(render_elapsed);
             app.background
                 .activity
-                .render
-                .record(render_elapsed);
-            app.background.activity.ui.draw_completed(render_elapsed, render_finished);
+                .ui
+                .draw_completed(render_elapsed, render_finished);
             app.background.activity.mark_drawn(render_started);
             if !startup_assets_requested {
                 if let Some(mut timings) = startup_timings.take() {
@@ -4160,7 +4982,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 }
                 // Only start optional services once the editor is visible and
                 // input is running. File/recovery loads use a separate I/O queue.
-                if app.has_open_folder() { app.initialize_extensions(); }
+                if app.has_open_folder() {
+                    app.initialize_extensions();
+                }
                 app.start_visible_workspace_services();
                 startup_assets_requested = true;
             }
@@ -4181,7 +5005,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         if (app.exit_save_and_quit || app.exit_keep_unsaved_quit) && !app.custom_exit_started {
             app.start_custom_exit(app.exit_keep_unsaved_quit);
         }
-        if app.exit_discard_quit && !app.custom_exit_started { app.start_custom_discard_exit(); }
+        if app.exit_discard_quit && !app.custom_exit_started {
+            app.start_custom_discard_exit();
+        }
         if app.custom_exit_started && app.custom_exit_remaining == 0 && app.custom_exit_failed {
             app.exit_save_and_quit = false;
             app.exit_keep_unsaved_quit = false;
@@ -4190,8 +5016,13 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             app.exit_confirm_active = true;
             app.notify_error("Could not save or preserve a custom document. Your edits remain open; resolve the error before quitting.");
         }
-        let text_saves_done = app.pending_file_saves.is_empty() && app.deferred_file_saves.is_empty();
-        if app.exit_save_and_quit && app.custom_exit_remaining == 0 && text_saves_done && !app.shutdown_anim_active {
+        let text_saves_done =
+            app.pending_file_saves.is_empty() && app.deferred_file_saves.is_empty();
+        if app.exit_save_and_quit
+            && app.custom_exit_remaining == 0
+            && text_saves_done
+            && !app.shutdown_anim_active
+        {
             match crate::input_dialogs::save_text_documents_before_exit(app) {
                 Ok(()) => {
                     app.shutdown_anim_active = true;
@@ -4205,16 +5036,26 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                     app.exit_save_and_quit = false;
                     app.custom_exit_started = false;
                     app.exit_confirm_active = true;
-                    if app.save_error.is_none() { app.show_save_error(error); }
+                    if app.save_error.is_none() {
+                        app.show_save_error(error);
+                    }
                     needs_redraw = true;
                 }
             }
         }
-        if app.exit_discard_quit && app.custom_exit_remaining == 0 && text_saves_done && !app.shutdown_anim_active {
+        if app.exit_discard_quit
+            && app.custom_exit_remaining == 0
+            && text_saves_done
+            && !app.shutdown_anim_active
+        {
             app.shutdown_anim_active = true;
             app.shutdown_anim_start = std::time::Instant::now();
         }
-        if app.exit_keep_unsaved_quit && app.custom_exit_remaining == 0 && text_saves_done && !app.shutdown_anim_active {
+        if app.exit_keep_unsaved_quit
+            && app.custom_exit_remaining == 0
+            && text_saves_done
+            && !app.shutdown_anim_active
+        {
             if app.exit_recovery.saved {
                 app.shutdown_anim_active = true;
                 app.shutdown_anim_start = std::time::Instant::now();
@@ -4346,7 +5187,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         // Cursor blink should be time-based and independent of mouse movement/events.
         // Only blink when a text input context is focused (editor file tab, palette, search, etc.)
         let blink_start = (app.terminal_has_focus && !app.idle_quiescent)
-            .then(|| app.cursor_blink_start()).flatten();
+            .then(|| app.cursor_blink_start())
+            .flatten();
         if blink_start.is_some_and(|start| start.elapsed() >= CURSOR_BLINK_INTERVAL) {
             app.cursor_visible = !app.cursor_visible;
             app.last_blink = std::time::Instant::now();
@@ -4384,12 +5226,20 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             // result, input, animation, or genuine deadline, this wait blocks
             // rather than periodically walking the application state.
             let output_ready = windows.ready_to_draw();
-            let background_wait = output_ready.then(|| {
-                windows.background_draw_wait(app.terminal_has_focus, std::time::Instant::now())
-            }).flatten();
-            let redraw_ready = output_ready && (needs_redraw || background_wait == Some(Duration::ZERO));
+            let background_wait = output_ready
+                .then(|| {
+                    windows.background_draw_wait(app.terminal_has_focus, std::time::Instant::now())
+                })
+                .flatten();
+            let redraw_ready =
+                output_ready && (needs_redraw || background_wait == Some(Duration::ZERO));
             let mut wait = if output_ready {
-                next_event_wait_for_redraw(app, redraw_ready, input_redraw, !periodic_disk_paths.is_empty())
+                next_event_wait_for_redraw(
+                    app,
+                    redraw_ready,
+                    input_redraw,
+                    !periodic_disk_paths.is_empty(),
+                )
             } else {
                 // A slow terminal's writer wakes us when it can present again.
                 // Keep real work deadlines and skip already due visual timers.
@@ -4399,13 +5249,22 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 wait = Some(wait.map_or(delay, |wait| wait.min(delay)));
             }
             let mut next_event = windows.next_event(&mut main_events)?;
-            if next_event.is_none() && !service_turn.deferred() && !app.workspaces_have_pending_results() {
+            if next_event.is_none()
+                && !service_turn.deferred()
+                && !app.workspaces_have_pending_results()
+            {
                 ui_wake.wait_for_change(observed_wake, wait);
                 next_event = windows.next_event(&mut main_events)?;
             }
             if next_event.is_none() {
-                if output_ready && !windows.input_waits_for_frame()
-                    && advance_editor_selection_scroll(app, windows.active_pump(&mut main_events), std::time::Instant::now()) {
+                if output_ready
+                    && !windows.input_waits_for_frame()
+                    && advance_editor_selection_scroll(
+                        app,
+                        windows.active_pump(&mut main_events),
+                        std::time::Instant::now(),
+                    )
+                {
                     needs_redraw = true;
                     input_redraw = true;
                 }
@@ -4437,7 +5296,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
 
             let (source, next_event) = next_event.expect("terminal event checked above");
             let old_window = windows.active();
-            if source == crate::tab_windows::MAIN_WINDOW && !windows.is_main()
+            if source == crate::tab_windows::MAIN_WINDOW
+                && !windows.is_main()
                 && let Event::Resize(width, height) = next_event
             {
                 windows.note_main_resize(width, height);
@@ -4486,7 +5346,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 || matches!(&next_event, Event::Mouse(_) | Event::Paste(_))
             {
                 input_started = Some(std::time::Instant::now());
-                if !matches!(&next_event, Event::Mouse(mouse) if mouse.kind == crossterm::event::MouseEventKind::Moved) {
+                if !matches!(&next_event, Event::Mouse(mouse) if mouse.kind == crossterm::event::MouseEventKind::Moved)
+                {
                     input_priority.get_or_insert_with(|| {
                         crate::worker_priority::InputPriority::new(app.terminal_has_focus)
                     });
@@ -4500,26 +5361,31 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 Event::Key(key) => {
                     windows.cancel_drag(app, key);
                     needs_redraw |= app.update_link_hover_key(key);
-                    if key.kind == KeyEventKind::Release || matches!(key.code, KeyCode::Modifier(_)) {
+                    if key.kind == KeyEventKind::Release || matches!(key.code, KeyCode::Modifier(_))
+                    {
                         continue;
                     }
                     Some(key)
                 }
                 Event::Mouse(mouse) => {
-                    if mouse.kind == crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left)
+                    if mouse.kind
+                        == crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left)
                         && windows.poll_drag(app, &main_events, true)
                     {
                         needs_redraw = true;
                         unfocused_redraw_pending = true;
                         continue;
                     }
-                    let changed = handle_mouse_input(app, windows.active_pump(&mut main_events), mouse);
+                    let changed =
+                        handle_mouse_input(app, windows.active_pump(&mut main_events), mouse);
                     windows.after_mouse(app, &main_events, mouse);
                     let mouse = crossterm::event::MouseEvent {
-                        column: app.mouse_col, row: app.mouse_row, ..mouse
+                        column: app.mouse_col,
+                        row: app.mouse_row,
+                        ..mouse
                     };
-                    selection_drag = editor_selection_drag_state(app, mouse)
-                        .map(|state| (mouse, state));
+                    selection_drag =
+                        editor_selection_drag_state(app, mouse).map(|state| (mouse, state));
                     #[cfg(all(test, windows))]
                     pointer_event_loop_latency_tests::pointer_updated();
                     needs_redraw |= changed;

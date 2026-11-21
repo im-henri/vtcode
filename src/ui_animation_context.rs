@@ -207,11 +207,19 @@ fn rail_symbol(symbol: &str) -> bool {
 
 fn route_cell(painter: &Painter<'_>, x: u16, y: u16) -> bool {
     if let Some(flags) = painter.mask.and_then(|mask| mask.get((x, y))) {
-        if flags & animation_layers::BLOCKED_ROW != 0 { return false; }
-        if flags & animation_layers::EXCLUDED != 0 { return true; }
+        if flags & animation_layers::BLOCKED_ROW != 0 {
+            return false;
+        }
+        if flags & animation_layers::EXCLUDED != 0 {
+            return true;
+        }
     } else {
-        if painter.blocked_rows.contains(&y) { return false; }
-        if painter.overlays.contains(&(x, y)) { return true; }
+        if painter.blocked_rows.contains(&y) {
+            return false;
+        }
+        if painter.overlays.contains(&(x, y)) {
+            return true;
+        }
     }
     route_symbol(painter, x, y)
 }
@@ -232,7 +240,9 @@ fn route_symbol(painter: &Painter<'_>, x: u16, y: u16) -> bool {
 
 fn free_cell(painter: &Painter<'_>, x: u16, y: u16) -> bool {
     if let Some(flags) = painter.mask.and_then(|mask| mask.get((x, y))) {
-        return flags & (animation_layers::EXCLUDED | animation_layers::PROTECTED | animation_layers::CARET) == 0
+        return flags
+            & (animation_layers::EXCLUDED | animation_layers::PROTECTED | animation_layers::CARET)
+            == 0
             && route_symbol(painter, x, y);
     }
     route_cell(painter, x, y)

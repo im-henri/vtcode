@@ -8,11 +8,11 @@ use std::{
 };
 
 #[cfg(test)]
-#[path = "remote_performance_tests.rs"]
-mod performance_tests;
-#[cfg(test)]
 #[path = "remote_service_cache_tests.rs"]
 mod cache_tests;
+#[cfg(test)]
+#[path = "remote_performance_tests.rs"]
+mod performance_tests;
 #[path = "remote_read_pool.rs"]
 mod read_pool;
 
@@ -36,13 +36,26 @@ impl Documents {
         self.entries.get(&(root.to_owned(), path.clone())).cloned()
     }
     fn insert(&mut self, root: &Path, path: RemotePath, document: Document) {
-        let bytes = document.rope.len_bytes().saturating_add(root.as_os_str().len()).saturating_add(path.0.len());
-        self.entries.insert((root.to_owned(), path), bytes, document);
+        let bytes = document
+            .rope
+            .len_bytes()
+            .saturating_add(root.as_os_str().len())
+            .saturating_add(path.0.len());
+        self.entries
+            .insert((root.to_owned(), path), bytes, document);
     }
     fn remove(&mut self, root: &Path, path: &RemotePath, subtree: bool) {
         if subtree {
-            self.entries.remove_matching(|(cached_root, key)| cached_root == root && (key == path
-                || (key.1 == path.1 && (path.0.is_empty() || key.0.strip_prefix(path.0.as_slice()).is_some_and(|tail| tail.starts_with(b"/"))))));
+            self.entries.remove_matching(|(cached_root, key)| {
+                cached_root == root
+                    && (key == path
+                        || (key.1 == path.1
+                            && (path.0.is_empty()
+                                || key
+                                    .0
+                                    .strip_prefix(path.0.as_slice())
+                                    .is_some_and(|tail| tail.starts_with(b"/")))))
+            });
         } else {
             self.entries.remove(&(root.to_owned(), path.clone()));
         }
@@ -127,10 +140,13 @@ impl Service {
         }
     }
     fn switch_root(&mut self, root: PathBuf) {
-        if self.root == root { return; }
+        if self.root == root {
+            return;
+        }
         let next = self.recent_indexes.take(&root);
         if let Some(index) = self.index.take() {
-            self.recent_indexes.insert(self.root.clone(), index.retained_bytes, index);
+            self.recent_indexes
+                .insert(self.root.clone(), index.retained_bytes, index);
         }
         self.index = next;
         self.root = root;
@@ -140,22 +156,34 @@ impl Service {
     }
     fn set_workspace_watch(&mut self, root: PathBuf, state: WatchState) -> io::Result<()> {
         if state == WatchState::Active {
-            if self.watchers.get(&root).is_some_and(watch::Watch::is_finished) {
+            if self
+                .watchers
+                .get(&root)
+                .is_some_and(watch::Watch::is_finished)
+            {
                 self.watchers.remove(&root);
             }
-            let output = self.output.clone().ok_or_else(|| io::Error::other("Watch transport unavailable"))?;
+            let output = self
+                .output
+                .clone()
+                .ok_or_else(|| io::Error::other("Watch transport unavailable"))?;
             if let Some(watcher) = self.watchers.get(&root) {
                 // Resume flushes only accumulated changes and acknowledges
                 // readiness. Coalesced controls never force a workspace scan.
                 return watcher.resume();
             }
             if !self.watchers.contains_key(&root) {
-                let watcher = watch::Watch::start(root.clone(), output, self.observations.get(&root))?;
+                let watcher =
+                    watch::Watch::start(root.clone(), output, self.observations.get(&root))?;
                 self.watchers.insert(root, watcher);
             }
         } else if state == WatchState::Paused {
-            if let Some(watcher) = self.watchers.get(&root) { watcher.pause(); }
-        } else { self.watchers.remove(&root); }
+            if let Some(watcher) = self.watchers.get(&root) {
+                watcher.pause();
+            }
+        } else {
+            self.watchers.remove(&root);
+        }
         Ok(())
     }
     fn observe_git_status(&mut self, reply: &Reply, parent_open: bool, closed: &[RemotePath]) {
@@ -217,42 +245,89 @@ impl Service {
     ) -> io::Result<Reply> {
         self.open_source(path, cancel, true)
     }
-    fn reload_source(&mut self, path: RemotePath, known: Option<Revision>, read_changed: bool,
-        cancel: &crate::background::CancellationToken) -> io::Result<Reply> {
-        if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+    fn reload_source(
+        &mut self,
+        path: RemotePath,
+        known: Option<Revision>,
+        read_changed: bool,
+        cancel: &crate::background::CancellationToken,
+    ) -> io::Result<Reply> {
+        if cancel.is_cancelled() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
         let native = path.resolve(&self.root)?.canonicalize()?;
         let identity = git::from_native(&native, &self.root)?;
         let cached = self.documents.lock().unwrap().get(&self.root, &path);
-        if let Some(doc) = cached && doc.encoding != "Binary" {
-            let baseline = crate::editor::DiskSaveBaseline { rope: doc.rope.clone(), encoding: doc.encoding };
+        if let Some(doc) = cached
+            && doc.encoding != "Binary"
+        {
+            let baseline = crate::editor::DiskSaveBaseline {
+                rope: doc.rope.clone(),
+                encoding: doc.encoding,
+            };
             match baseline.validate_cancellable(&native, cancel) {
                 Ok(metadata) => {
                     if known.as_ref() == Some(&doc.revision) {
-                        return Ok(Reply::Unchanged { identity, size: metadata.len(), modified: metadata.modified().ok() });
+                        return Ok(Reply::Unchanged {
+                            identity,
+                            size: metadata.len(),
+                            modified: metadata.modified().ok(),
+                        });
                     }
-                    return if read_changed { self.opened_reply(path, identity, doc, metadata.len(), metadata.modified().ok()) }
-                        else { Ok(Reply::Changed { size: metadata.len(), modified: metadata.modified().ok() }) };
+                    return if read_changed {
+                        self.opened_reply(
+                            path,
+                            identity,
+                            doc,
+                            metadata.len(),
+                            metadata.modified().ok(),
+                        )
+                    } else {
+                        Ok(Reply::Changed {
+                            size: metadata.len(),
+                            modified: metadata.modified().ok(),
+                        })
+                    };
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => return Err(error),
                 Err(_) if !read_changed && known.as_ref() == Some(&doc.revision) => {
                     let (_, metadata) = crate::fs_ops::open_document_source(&native, false)?;
-                    return Ok(Reply::Changed { size: metadata.len(), modified: metadata.modified().ok() });
+                    return Ok(Reply::Changed {
+                        size: metadata.len(),
+                        modified: metadata.modified().ok(),
+                    });
                 }
                 Err(_) => (), // Changed or unavailable: use the safe source reader below.
             }
         }
         let (file, metadata) = crate::fs_ops::open_document_source(&native, false)?;
         let loaded = crate::editor::decode_text_source(file, metadata, &native, Some(cancel))?;
-        let doc = Document { revision: revision_cancellable(&loaded.rope, loaded.encoding, cancel)?,
-            rope: loaded.rope, encoding: loaded.encoding };
+        let doc = Document {
+            revision: revision_cancellable(&loaded.rope, loaded.encoding, cancel)?,
+            rope: loaded.rope,
+            encoding: loaded.encoding,
+        };
         if known.as_ref() == Some(&doc.revision) {
             self.documents.lock().unwrap().insert(&self.root, path, doc);
-            Ok(Reply::Unchanged { identity, size: loaded.file_size, modified: loaded.last_disk_modified })
+            Ok(Reply::Unchanged {
+                identity,
+                size: loaded.file_size,
+                modified: loaded.last_disk_modified,
+            })
         } else if read_changed {
-            self.opened_reply(path, identity, doc, loaded.file_size, loaded.last_disk_modified)
+            self.opened_reply(
+                path,
+                identity,
+                doc,
+                loaded.file_size,
+                loaded.last_disk_modified,
+            )
         } else {
             self.documents.lock().unwrap().insert(&self.root, path, doc);
-            Ok(Reply::Changed { size: loaded.file_size, modified: loaded.last_disk_modified })
+            Ok(Reply::Changed {
+                size: loaded.file_size,
+                modified: loaded.last_disk_modified,
+            })
         }
     }
     fn open_source(
@@ -439,8 +514,11 @@ impl Service {
                 query,
                 &crate::background::CancellationToken::new(),
             ),
-            Command::SearchScope(query) => search::scope(&self.root, query,
-                &crate::background::CancellationToken::new()),
+            Command::SearchScope(query) => search::scope(
+                &self.root,
+                query,
+                &crate::background::CancellationToken::new(),
+            ),
             Command::Replace(query) => search::replace(
                 &self.root,
                 query,
@@ -480,17 +558,17 @@ impl Service {
             } => {
                 let excluded = closed.clone();
                 let reply = git::status(
-                &self.root,
-                known,
-                parent_open,
-                closed,
-                include_untracked,
-                (changed, revalidate),
-                &crate::background::CancellationToken::new(),
+                    &self.root,
+                    known,
+                    parent_open,
+                    closed,
+                    include_untracked,
+                    (changed, revalidate),
+                    &crate::background::CancellationToken::new(),
                 )?;
                 self.observe_git_status(&reply, parent_open, &excluded);
                 Ok(reply)
-            },
+            }
             Command::GitSources {
                 file,
                 repository,
@@ -498,15 +576,29 @@ impl Service {
                 known,
                 max_bytes,
             } => git::sources(&self.root, file, repository, staged, known, max_bytes),
-            Command::GitDiffSources { file, repository, staged, known } => {
+            Command::GitDiffSources {
+                file,
+                repository,
+                staged,
+                known,
+            } => {
                 let file = file.resolve(&self.root)?;
-                let repository = repository.as_ref().map(|path| path.resolve(&self.root)).transpose()?;
-                let repo = crate::git_repositories::open_file_repository(&file, repository.as_deref()).map_err(io::Error::other)?;
+                let repository = repository
+                    .as_ref()
+                    .map(|path| path.resolve(&self.root))
+                    .transpose()?;
+                let repo =
+                    crate::git_repositories::open_file_repository(&file, repository.as_deref())
+                        .map_err(io::Error::other)?;
                 let relative = crate::app_git::repository_relative_path(
-                    repo.workdir().ok_or_else(|| io::Error::other("Bare repository"))?, &file)
-                    .ok_or_else(|| io::Error::other("File is outside the repository"))?;
+                    repo.workdir()
+                        .ok_or_else(|| io::Error::other("Bare repository"))?,
+                    &file,
+                )
+                .ok_or_else(|| io::Error::other("File is outside the repository"))?;
                 crate::git_diff_sources::read(&repo, &relative, staged, known)
-                    .map(Reply::GitDiffSources).map_err(io::Error::other)
+                    .map(Reply::GitDiffSources)
+                    .map_err(io::Error::other)
             }
             Command::GitFileStats { repo, change } => {
                 let root = repo.resolve(&self.root)?;
@@ -638,12 +730,15 @@ impl Service {
                     .kill(process);
                 Ok(Reply::Done)
             }
-            Command::PerformanceSnapshot => Ok(Reply::PerformanceSnapshot(observability::snapshot())),
+            Command::PerformanceSnapshot => {
+                Ok(Reply::PerformanceSnapshot(observability::snapshot()))
+            }
             Command::Heartbeat { nonce } => Ok(Reply::Heartbeat { nonce }),
             Command::Ping => Ok(Reply::Done),
             Command::Shutdown => Ok(Reply::Done),
             Command::FilesystemRoots => {
-                let roots = crate::filesystem_roots::list()?.into_iter()
+                let roots = crate::filesystem_roots::list()?
+                    .into_iter()
                     .map(|(name, path)| Ok((name, git::from_native(&path, &self.root)?)))
                     .collect::<io::Result<_>>()?;
                 Ok(Reply::FilesystemRoots(roots))
@@ -688,7 +783,16 @@ impl Service {
             Command::OpenLocation { path } => {
                 self.open_location(path, &crate::background::CancellationToken::new())
             }
-            Command::Reload { path, known, read_changed } => self.reload_source(path, known, read_changed, &crate::background::CancellationToken::new()),
+            Command::Reload {
+                path,
+                known,
+                read_changed,
+            } => self.reload_source(
+                path,
+                known,
+                read_changed,
+                &crate::background::CancellationToken::new(),
+            ),
             Command::Save {
                 path,
                 base,
@@ -842,7 +946,8 @@ impl Service {
                 .index
                 .as_ref()
                 .is_some_and(|index| index.include_hidden);
-        let rules = excludes.map(|map| crate::search_paths::ExcludeRules::new(map, &Default::default()));
+        let rules =
+            excludes.map(|map| crate::search_paths::ExcludeRules::new(map, &Default::default()));
         let mut files = Vec::new();
         let mut bytes = 0;
         for entry in walkdir::WalkDir::new(&self.root)
@@ -853,9 +958,19 @@ impl Service {
                 !cancel.is_cancelled()
                     && !crate::editor::is_save_temporary_path(entry.path())
                     && !crate::fs_ops::is_copy_temporary_name(entry.file_name())
-                    && rules.as_ref().map_or_else(|| (include_hidden || !name.starts_with('.'))
-                        && (!entry.file_type().is_dir() || !crate::app_global_search::EXCLUDE_DIRS.contains(&name)),
-                        |rules| !rules.excludes(&crate::search_paths::Candidate::new(entry.path()), &self.root))
+                    && rules.as_ref().map_or_else(
+                        || {
+                            (include_hidden || !name.starts_with('.'))
+                                && (!entry.file_type().is_dir()
+                                    || !crate::app_global_search::EXCLUDE_DIRS.contains(&name))
+                        },
+                        |rules| {
+                            !rules.excludes(
+                                &crate::search_paths::Candidate::new(entry.path()),
+                                &self.root,
+                            )
+                        },
+                    )
             })
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_file())
@@ -881,7 +996,8 @@ impl Service {
         } else {
             Vec::new()
         };
-        let version = if let Some(index) = self.index.as_ref().filter(|index| index.files == files) {
+        let version = if let Some(index) = self.index.as_ref().filter(|index| index.files == files)
+        {
             index.version
         } else {
             // Never reuse a version after changing roots or evicting a cache:
@@ -889,8 +1005,10 @@ impl Service {
             self.index_version = self.index_version.wrapping_add(1).max(1);
             self.index_version
         };
-        let retained_bytes = files.capacity() * std::mem::size_of::<RemotePath>() + bytes
-            + labels.capacity() * std::mem::size_of::<String>() + labels.iter().map(String::capacity).sum::<usize>();
+        let retained_bytes = files.capacity() * std::mem::size_of::<RemotePath>()
+            + bytes
+            + labels.capacity() * std::mem::size_of::<String>()
+            + labels.iter().map(String::capacity).sum::<usize>();
         self.index = Some(FileIndex {
             generation,
             built: std::time::Instant::now(),
@@ -1061,8 +1179,8 @@ fn serve_service(
             let mut queue = wire::OutputQueue::default();
             let _ = (|| -> io::Result<()> {
                 loop {
-                    let prepare_deadline = std::time::Instant::now()
-                        + std::time::Duration::from_millis(1);
+                    let prepare_deadline =
+                        std::time::Instant::now() + std::time::Duration::from_millis(1);
                     queue.discard_obsolete_search(output_search.load(Ordering::Acquire))?;
                     if queue.is_empty() {
                         let Ok(message) = messages.recv() else {
@@ -1074,8 +1192,12 @@ fn serve_service(
                     // sixteen bulk chunks before the first write adds visible
                     // latency even when the output pipe is otherwise idle.
                     for _ in 0..16.min(queue.available_slots()) {
-                        if std::time::Instant::now() >= prepare_deadline { break; }
-                        let Ok(message) = messages.try_recv() else { break; };
+                        if std::time::Instant::now() >= prepare_deadline {
+                            break;
+                        }
+                        let Ok(message) = messages.try_recv() else {
+                            break;
+                        };
                         queue.push(message)?;
                     }
                     queue.discard_obsolete_search(output_search.load(Ordering::Acquire))?;
@@ -1132,9 +1254,8 @@ fn serve_service(
     git.histories = Some(history::Manager::new(output.clone()));
     let mut git = LazyActor::new("headless-git", git, output.clone(), cancels.clone());
     let mut git_status = GitStatusActors {
-        workers: ["headless-git-status", "headless-git-status-2"].map(|name| {
-            LazyActor::new(name, new_service(), output.clone(), cancels.clone())
-        }),
+        workers: ["headless-git-status", "headless-git-status-2"]
+            .map(|name| LazyActor::new(name, new_service(), output.clone(), cancels.clone())),
         pending: Default::default(),
         default_workspace: hello.root_uri,
     };
@@ -1245,11 +1366,16 @@ fn serve_service(
             // Answer only legacy peers that explicitly send this request.
             // Current clients have no idle timer or automatic probes.
             if id == 0 {
-                output.send(Response { id, result: Ok(Reply::Heartbeat { nonce: *nonce }) })
+                output
+                    .send(Response {
+                        id,
+                        result: Ok(Reply::Heartbeat { nonce: *nonce }),
+                    })
                     .map_err(|error| io::Error::new(io::ErrorKind::BrokenPipe, error))?;
             } else {
                 let response = wire::encode(&Response {
-                    id, result: Ok(Reply::Heartbeat { nonce: *nonce }),
+                    id,
+                    result: Ok(Reply::Heartbeat { nonce: *nonce }),
                 })?;
                 wire::write_message(&mut *writer.lock().unwrap(), 'S', session, id, &response)?;
             }
@@ -1316,7 +1442,8 @@ fn serve_service(
             break;
         }
         if let Command::Cancel { request: cancelled } = &request.command {
-            let _ = current_search.compare_exchange(*cancelled, 0, Ordering::AcqRel, Ordering::Acquire);
+            let _ =
+                current_search.compare_exchange(*cancelled, 0, Ordering::AcqRel, Ordering::Acquire);
             if let Some(cancel) = cancels.lock().unwrap().get(cancelled) {
                 cancel.cancel();
             } else if decoder.in_progress(*cancelled) {
@@ -1386,30 +1513,49 @@ fn serve_service(
             let cancel = crate::background::CancellationToken::new();
             if matches!(request.command, Command::Search(_)) {
                 current_search.store(id, Ordering::Release);
-                if let Some(old) = active_search.replace(cancel.clone()) { old.cancel(); }
+                if let Some(old) = active_search.replace(cancel.clone()) {
+                    old.cancel();
+                }
             }
             cancels.lock().unwrap().insert(id, cancel.clone());
             Some(cancel)
         } else {
             None
         };
-        if id == 0 && matches!(request.command, Command::Watch | Command::PauseWatch | Command::Unwatch) {
+        if id == 0
+            && matches!(
+                request.command,
+                Command::Watch | Command::PauseWatch | Command::Unwatch
+            )
+        {
             let root = match &request.workspace {
-                Some(root) => url::Url::parse(root).map_err(io::Error::other)?.to_file_path()
+                Some(root) => url::Url::parse(root)
+                    .map_err(io::Error::other)?
+                    .to_file_path()
                     .map_err(|_| io::Error::other("Invalid workspace context URI"))?,
                 None => canonical.clone(),
             };
-            observer.get()?.queue_control(ResourceClose::Watch(root, WatchState::from_command(&request.command)))?;
+            observer.get()?.queue_control(ResourceClose::Watch(
+                root,
+                WatchState::from_command(&request.command),
+            ))?;
             continue;
         }
         let queue = match request.command {
             Command::PerformanceSnapshot => {
                 if diagnostics.is_none() {
-                    diagnostics = Some(actor("headless-diagnostics", new_service(), output.clone(), cancels.clone())?);
+                    diagnostics = Some(actor(
+                        "headless-diagnostics",
+                        new_service(),
+                        output.clone(),
+                        cancels.clone(),
+                    )?);
                 }
                 diagnostics.as_ref().unwrap()
             }
-            Command::Open { .. } | Command::OpenLocation { .. } | Command::Reload { .. } => reads.get()?,
+            Command::Open { .. } | Command::OpenLocation { .. } | Command::Reload { .. } => {
+                reads.get()?
+            }
             Command::Context(context::Command::Suggest { .. }) => index.get()?,
             Command::Context(_) => {
                 if context_actor.is_none() {
@@ -1496,7 +1642,9 @@ fn serve_service(
             Command::GitNetwork { .. } => network.get()?,
             Command::Files { .. } => index.get()?,
             Command::Explorer(_) => explorer.get()?,
-            Command::FilesystemRoots | Command::Inspect { .. } | Command::SearchScope(_) => metadata.get()?,
+            Command::FilesystemRoots | Command::Inspect { .. } | Command::SearchScope(_) => {
+                metadata.get()?
+            }
             Command::Search(_) => search.get()?,
             Command::Filesystem(_) | Command::Replace(_) => filesystem.get()?,
             Command::Format { .. } | Command::FormatSource { .. } => formatter.get()?,
@@ -1542,17 +1690,27 @@ impl GitStatusActors {
         for pending in &mut self.pending {
             pending.retain(|(_, id)| cancels.contains_key(id));
         }
-        let workspace = request.workspace.as_deref().unwrap_or(&self.default_workspace);
-        let assigned = self.pending.iter().position(|pending| {
-            pending.iter().any(|(root, _)| root == workspace)
-        });
+        let workspace = request
+            .workspace
+            .as_deref()
+            .unwrap_or(&self.default_workspace);
+        let assigned = self
+            .pending
+            .iter()
+            .position(|pending| pending.iter().any(|(root, _)| root == workspace));
         let index = assigned.unwrap_or_else(|| {
-            self.pending.iter().enumerate().min_by_key(|(_, pending)| {
-                let abandoned = pending.first()
-                    .and_then(|(_, id)| cancels.get(id))
-                    .is_some_and(crate::background::CancellationToken::is_cancelled);
-                (abandoned, pending.len())
-            }).unwrap().0
+            self.pending
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, pending)| {
+                    let abandoned = pending
+                        .first()
+                        .and_then(|(_, id)| cancels.get(id))
+                        .is_some_and(crate::background::CancellationToken::is_cancelled);
+                    (abandoned, pending.len())
+                })
+                .unwrap()
+                .0
         });
         drop(cancels);
         self.pending[index].push((workspace.to_owned(), request.id));
@@ -1670,11 +1828,18 @@ impl ResourceCloses {
                 ResourceClose::Rollback(id) => service.rollback.close(id),
                 ResourceClose::Watch(root, state) => {
                     if service.set_workspace_watch(root.clone(), state).is_err()
-                        && let (Some(output), Ok(uri)) = (&service.output, url::Url::from_directory_path(root))
+                        && let (Some(output), Ok(uri)) =
+                            (&service.output, url::Url::from_directory_path(root))
                     {
-                        let _ = output.send(Response { id: 0, result: Ok(Reply::WorkspaceChanges(watch::Batch {
-                            root_uri: uri.into(), active: Some(false), rescan: true, ..Default::default()
-                        })) });
+                        let _ = output.send(Response {
+                            id: 0,
+                            result: Ok(Reply::WorkspaceChanges(watch::Batch {
+                                root_uri: uri.into(),
+                                active: Some(false),
+                                rescan: true,
+                                ..Default::default()
+                            })),
+                        });
                     }
                 }
             }
@@ -1705,11 +1870,18 @@ impl Actor {
             .get()
             .checked_add(1)
             .expect("remote work ticket overflow");
-        if let Some(load) = &self.read_load && !load.submitted(&request.command) {
-            return Err(std::sync::mpsc::TrySendError::Full(Some((ticket, (request, cancel)))));
+        if let Some(load) = &self.read_load
+            && !load.submitted(&request.command)
+        {
+            return Err(std::sync::mpsc::TrySendError::Full(Some((
+                ticket,
+                (request, cancel),
+            ))));
         }
         if let Err(error) = self.sender.try_send(Some((ticket, (request, cancel)))) {
-            if let Some(load) = &self.read_load { load.rejected(); }
+            if let Some(load) = &self.read_load {
+                load.rejected();
+            }
             return Err(error);
         }
         self.queued.set(ticket);
@@ -1775,7 +1947,15 @@ fn actor(
     let join = service.processes.is_some();
     let (sender, requests) =
         std::sync::mpsc::sync_channel::<ActorMessage>(if join { 128 } else { 8 });
-    actor_with_inbox(name, service, output, cancels, sender, requests.into_iter(), None)
+    actor_with_inbox(
+        name,
+        service,
+        output,
+        cancels,
+        sender,
+        requests.into_iter(),
+        None,
+    )
 }
 
 fn actor_with_inbox(
@@ -1809,7 +1989,10 @@ fn actor_with_inbox(
                     continue;
                 };
                 let _read = read_pool::ReadJob::new(worker_load.clone());
-                let source_read = matches!(request.command, Command::Open { .. } | Command::OpenLocation { .. } | Command::Reload { .. });
+                let source_read = matches!(
+                    request.command,
+                    Command::Open { .. } | Command::OpenLocation { .. } | Command::Reload { .. }
+                );
                 let root = request.workspace.as_ref().map_or_else(
                     || Ok(default_root.clone()),
                     |root| {
@@ -1834,7 +2017,9 @@ fn actor_with_inbox(
                         continue;
                     }
                 };
-                if let Command::Close { path } = &request.command && service.root != root {
+                if let Command::Close { path } = &request.command
+                    && service.root != root
+                {
                     // Closing an old folder's file must not switch the worker
                     // or evict a same-named checkpoint in the current folder.
                     service.documents.lock().unwrap().remove(&root, path, false);
@@ -1865,7 +2050,16 @@ fn actor_with_inbox(
                         Command::OpenLocation { path } => {
                             service.open_location(path, cancel.as_ref().unwrap())
                         }
-                        Command::Reload { path, known, read_changed } => service.reload_source(path, known, read_changed, cancel.as_ref().unwrap()),
+                        Command::Reload {
+                            path,
+                            known,
+                            read_changed,
+                        } => service.reload_source(
+                            path,
+                            known,
+                            read_changed,
+                            cancel.as_ref().unwrap(),
+                        ),
                         Command::Inspect { paths } => {
                             watch::inspect(&service.root, paths, cancel.as_ref().unwrap())
                         }
@@ -1898,27 +2092,61 @@ fn actor_with_inbox(
                             progress,
                         } => {
                             let excluded = closed.clone();
-                            git::status_reporting(&service.root, git::StatusQuery { known, parent_open, closed, include_untracked,
-                                changed, revalidate }, progress, cancel.as_ref().unwrap(), |progress| {
-                                    output.send(Response { id: 0, result: Ok(Reply::GitStatusProgress { request: request.id, progress }) })
+                            git::status_reporting(
+                                &service.root,
+                                git::StatusQuery {
+                                    known,
+                                    parent_open,
+                                    closed,
+                                    include_untracked,
+                                    changed,
+                                    revalidate,
+                                },
+                                progress,
+                                cancel.as_ref().unwrap(),
+                                |progress| {
+                                    output
+                                        .send(Response {
+                                            id: 0,
+                                            result: Ok(Reply::GitStatusProgress {
+                                                request: request.id,
+                                                progress,
+                                            }),
+                                        })
                                         .map_err(io::Error::other)
-                                }).inspect(|reply| {
-                                    // The cancellable transport path must publish
-                                    // dependencies just like direct execution.
-                                    service.observe_git_status(reply, parent_open, &excluded);
-                                })
-                        },
+                                },
+                            )
+                            .inspect(|reply| {
+                                // The cancellable transport path must publish
+                                // dependencies just like direct execution.
+                                service.observe_git_status(reply, parent_open, &excluded);
+                            })
+                        }
                         Command::Search(query) => {
                             if query.stream {
-                                search::execute_streaming(&service.root, query, cancel.as_ref().unwrap(), |hits| {
-                                    output.send(Response { id: 0, result: Ok(Reply::SearchProgress { request: request.id, hits }) })
-                                        .map_err(io::Error::other)
-                                })
+                                search::execute_streaming(
+                                    &service.root,
+                                    query,
+                                    cancel.as_ref().unwrap(),
+                                    |hits| {
+                                        output
+                                            .send(Response {
+                                                id: 0,
+                                                result: Ok(Reply::SearchProgress {
+                                                    request: request.id,
+                                                    hits,
+                                                }),
+                                            })
+                                            .map_err(io::Error::other)
+                                    },
+                                )
                             } else {
                                 search::execute(&service.root, query, cancel.as_ref().unwrap())
                             }
                         }
-                        Command::SearchScope(query) => search::scope(&service.root, query, cancel.as_ref().unwrap()),
+                        Command::SearchScope(query) => {
+                            search::scope(&service.root, query, cancel.as_ref().unwrap())
+                        }
                         Command::Replace(query) => search::replace(
                             &service.root,
                             query,

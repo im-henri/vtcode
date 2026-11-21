@@ -139,7 +139,9 @@ fn native_status_handles_unborn_repositories_and_intent_to_add() {
 fn many_untracked_directories_keep_standalone_files_unique() {
     let temp = fixture();
     for number in 0..128 {
-        let directory = temp.path().join(format!("new-{number}-{}", "long-name".repeat(8)));
+        let directory = temp
+            .path()
+            .join(format!("new-{number}-{}", "long-name".repeat(8)));
         std::fs::create_dir(&directory).unwrap();
         std::fs::write(directory.join("file.txt"), "new\n").unwrap();
     }
@@ -404,7 +406,9 @@ fn benchmark_source_control_repository() {
     for _ in 0..3 {
         let start = Instant::now();
         app.refresh_source_control_async();
-        app.wait_for_background(Duration::from_secs(30), |app| !app.bg_git_status_running && !app.bg_git_status_pending);
+        app.wait_for_background(Duration::from_secs(30), |app| {
+            !app.bg_git_status_running && !app.bg_git_status_pending
+        });
         full.push(start.elapsed());
     }
     full.sort();
@@ -416,7 +420,11 @@ fn benchmark_source_control_repository() {
         app.refresh_source_control_for_navigation();
         assert!(!app.bg_git_status_running && !app.bg_git_status_pending);
     }
-    eprintln!("navigation: previous_full_refresh={:?} cached_per_visit={:?}; status_workers_per_visit=1->0", full[1], start.elapsed()/1_000);
+    eprintln!(
+        "navigation: previous_full_refresh={:?} cached_per_visit={:?}; status_workers_per_visit=1->0",
+        full[1],
+        start.elapsed() / 1_000
+    );
 }
 
 #[test]
@@ -434,12 +442,19 @@ fn many_entries_without_stat_data_use_gits_scanner() {
     let base = repo.find_tree(index.write_tree().unwrap()).unwrap();
     for number in 0..300 {
         let name = format!("file-{number:03}.txt");
-        std::fs::write(root.join(&name), "changed contents
-").unwrap();
+        std::fs::write(
+            root.join(&name),
+            "changed contents
+",
+        )
+        .unwrap();
         index.add_path(Path::new(&name)).unwrap();
     }
     index.write().unwrap();
-    assert!(!prefer_native(&repo), "freshly staged entries carry stat data");
+    assert!(
+        !prefer_native(&repo),
+        "freshly staged entries carry stat data"
+    );
     // Unstaging changed paths rebuilds their entries without stat data.
     index.read_tree(&base).unwrap();
     index.write().unwrap();

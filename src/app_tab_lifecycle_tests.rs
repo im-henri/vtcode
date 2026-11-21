@@ -149,7 +149,8 @@ fn batch_closing_distinct_files_keeps_shared_pinned_documents_open() {
         let mut paths = vec![kept.clone()];
         for i in 0..8 {
             let path = dir.path().join(format!("closed-{i}.py"));
-            app.lsp_manager.sync_document_owned(&path, 1, "value = 1\n".into());
+            app.lsp_manager
+                .sync_document_owned(&path, 1, "value = 1\n".into());
             app.tabs.push(tab(&path));
             app.groups[0].tabs.push(tab(&path));
             paths.push(path);

@@ -66,7 +66,12 @@ impl Draft {
                         .map(|value| value.to_string())
                         .unwrap_or_default(),
                 ),
-                Field::new(config.settings.map(|value| value.to_string()).unwrap_or_default()),
+                Field::new(
+                    config
+                        .settings
+                        .map(|value| value.to_string())
+                        .unwrap_or_default(),
+                ),
             ],
             arguments: Vec::new(),
         };
@@ -136,10 +141,14 @@ impl Draft {
             )
         };
         let settings = self.fields[4].text.trim();
-        let settings = if settings.is_empty() { None } else {
+        let settings = if settings.is_empty() {
+            None
+        } else {
             let value: serde_json::Value = serde_json::from_str(settings)
                 .map_err(|error| format!("Server settings must be valid JSON: {error}"))?;
-            if !value.is_object() { return Err("Server settings must be a JSON object.".into()); }
+            if !value.is_object() {
+                return Err("Server settings must be a JSON object.".into());
+            }
             Some(value)
         };
         Ok(LspServerConfig {
@@ -274,7 +283,8 @@ pub(crate) fn activate(app: &mut App, action: Action) {
                     command: String::new(),
                     args: Vec::new(),
                     file_patterns: Vec::new(),
-                    settings: None, init_options: None,
+                    settings: None,
+                    init_options: None,
                 });
             clear_inputs(app);
             app.lsp_settings.draft = Some(Draft::new(index, config));
@@ -440,7 +450,11 @@ fn rows(state: &LspSettingsState, width: usize) -> Vec<Row> {
         ));
         rows.push(Row::Gap);
         rows.push(Row::Text("Server settings (optional JSON)".into(), true));
-        rows.push(Row::Field(4, r#"Example: {"python":{"analysis":{"typeCheckingMode":"basic"}}}"#, None));
+        rows.push(Row::Field(
+            4,
+            r#"Example: {"python":{"analysis":{"typeCheckingMode":"basic"}}}"#,
+            None,
+        ));
     } else {
         note(
             &mut rows,
@@ -993,7 +1007,11 @@ mod tests {
         fill(app, 1, "server with spaces.exe");
         fill(app, 2, "*.rs *.test.rs Cargo.toml");
         fill(app, 3, r#"{"check":{"command":"clippy"}}"#);
-        fill(app, 4, r#"{"rust-analyzer":{"check":{"command":"clippy"}}}"#);
+        fill(
+            app,
+            4,
+            r#"{"rust-analyzer":{"check":{"command":"clippy"}}}"#,
+        );
         click(app, Action::AddArgument);
         let id = *app
             .lsp_settings
@@ -1033,7 +1051,10 @@ mod tests {
             .lsp_servers
             .unwrap();
         assert_eq!(saved[0].args, ["an argument with spaces/世界"]);
-        assert_eq!(saved[0].settings.as_ref().unwrap()["rust-analyzer"]["check"]["command"], "clippy");
+        assert_eq!(
+            saved[0].settings.as_ref().unwrap()["rust-analyzer"]["check"]["command"],
+            "clippy"
+        );
         assert_eq!(saved[0].file_patterns, ["*.rs", "*.test.rs", "Cargo.toml"]);
         assert_eq!(app.lsp_manager.configs, saved);
         assert!(app.lsp_manager.clients.is_empty());
@@ -1079,7 +1100,13 @@ mod tests {
         fill(&mut app, 3, "{}");
         fill(&mut app, 4, "[]");
         click(&mut app, Action::Save);
-        assert!(app.lsp_settings.error.as_deref().unwrap().contains("JSON object"));
+        assert!(
+            app.lsp_settings
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("JSON object")
+        );
         fill(&mut app, 4, "{}");
         fill(&mut app, 2, "src/**/*.rs");
         click(&mut app, Action::Save);

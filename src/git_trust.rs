@@ -2,16 +2,27 @@
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RecoveryAction { Retry, Trust }
+pub(crate) enum RecoveryAction {
+    Retry,
+    Trust,
+}
 
 impl RecoveryAction {
     pub(crate) fn run(self, app: &mut crate::app::App) {
-        if app.bg_git_action_running || app.bg_git_remote_running || app.bg_git_status_running { return; }
+        if app.bg_git_action_running || app.bg_git_remote_running || app.bg_git_status_running {
+            return;
+        }
         match self {
             Self::Retry => app.refresh_source_control_async(),
             Self::Trust => {
-                let Some(root) = app.repositories.recovery_root.clone() else { return; };
-                if app.repositories.failure().is_some_and(|error| error.root == root) {
+                let Some(root) = app.repositories.recovery_root.clone() else {
+                    return;
+                };
+                if app
+                    .repositories
+                    .failure()
+                    .is_some_and(|error| error.root == root)
+                {
                     app.trust_source_control_repository();
                 }
             }
@@ -34,14 +45,24 @@ pub(crate) struct Failure<P = PathBuf> {
 }
 
 impl<P> Failure<P> {
-    pub(crate) fn try_map<Q, E>(self, convert: impl FnOnce(P) -> Result<Q, E>) -> Result<Failure<Q>, E> {
-        Ok(Failure { root: convert(self.root)?, message: self.message, kind: self.kind })
+    pub(crate) fn try_map<Q, E>(
+        self,
+        convert: impl FnOnce(P) -> Result<Q, E>,
+    ) -> Result<Failure<Q>, E> {
+        Ok(Failure {
+            root: convert(self.root)?,
+            message: self.message,
+            kind: self.kind,
+        })
     }
 }
 
 fn metadata_root(path: &Path) -> Option<PathBuf> {
-    let discover = |path: &Path| git2::Repository::discover_path(path, std::iter::empty::<&std::ffi::OsStr>())
-        .ok().map(|path| std::fs::canonicalize(&path).unwrap_or(path));
+    let discover = |path: &Path| {
+        git2::Repository::discover_path(path, std::iter::empty::<&std::ffi::OsStr>())
+            .ok()
+            .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
+    };
     if let Some(metadata) = discover(path) {
         for directory in path.ancestors() {
             let marker = directory.join(".git");
@@ -50,13 +71,16 @@ fn metadata_root(path: &Path) -> Option<PathBuf> {
             } else {
                 marker.is_file() && discover(directory).as_ref() == Some(&metadata)
             };
-            if matches { return Some(directory.to_owned()); }
+            if matches {
+                return Some(directory.to_owned());
+            }
         }
         return Some(metadata); // A bare repository has no worktree marker.
     }
     // An existing but damaged Git marker must be reported as a failure, not
     // offered initialization as though the user's Git data did not exist.
-    path.ancestors().find(|directory| directory.join(".git").try_exists().unwrap_or(false))
+    path.ancestors()
+        .find(|directory| directory.join(".git").try_exists().unwrap_or(false))
         .map(Path::to_path_buf)
 }
 
@@ -79,11 +103,19 @@ impl Failure {
     }
 
     pub(crate) fn reading(root: &Path, error: impl std::fmt::Display) -> Self {
-        Self { root: root.to_owned(), message: error.to_string(), kind: FailureKind::Repository }
+        Self {
+            root: root.to_owned(),
+            message: error.to_string(),
+            kind: FailureKind::Repository,
+        }
     }
 
     pub(crate) fn discovery(root: &Path, error: impl std::fmt::Display) -> Self {
-        Self { root: root.to_owned(), message: error.to_string(), kind: FailureKind::Discovery }
+        Self {
+            root: root.to_owned(),
+            message: error.to_string(),
+            kind: FailureKind::Discovery,
+        }
     }
 }
 
@@ -98,15 +130,25 @@ pub(crate) fn safe_directory_value(root: &Path) -> Result<std::ffi::OsString, St
     }
     #[cfg(windows)]
     {
-        let path = root.to_str().ok_or("The repository path cannot be represented in Git's configuration")?.replace('\\', "/");
-        let path = path.strip_prefix("//?/UNC/").map(|tail| format!("//{tail}"))
+        let path = root
+            .to_str()
+            .ok_or("The repository path cannot be represented in Git's configuration")?
+            .replace('\\', "/");
+        let path = path
+            .strip_prefix("//?/UNC/")
+            .map(|tail| format!("//{tail}"))
             .unwrap_or_else(|| path.strip_prefix("//?/").unwrap_or(&path).to_owned());
         Ok(if path.starts_with("//") {
             format!("%(prefix)/{}", path.trim_end_matches('/'))
-        } else { path }.into())
+        } else {
+            path
+        }
+        .into())
     }
     #[cfg(not(windows))]
-    { Ok(root.as_os_str().to_owned()) }
+    {
+        Ok(root.as_os_str().to_owned())
+    }
 }
 
 pub(crate) fn trust_repository(root: &Path) -> Result<(), String> {
@@ -123,12 +165,17 @@ pub(crate) fn trust_repository(root: &Path) -> Result<(), String> {
         .args(["config", "--global", "--add", "safe.directory"])
         .arg(safe_directory_value(&root)?)
         .current_dir(&root)
-        .output().map_err(|error| format!("Could not save repository trust: {error}"))?;
+        .output()
+        .map_err(|error| format!("Could not save repository trust: {error}"))?;
     if !output.status.success() {
-        return Err(format!("Could not save repository trust: {}", String::from_utf8_lossy(&output.stderr).trim()));
+        return Err(format!(
+            "Could not save repository trust: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
-    git2::Repository::open(&root)
-        .map_err(|error| format!("Git trust was saved, but the repository still cannot be opened: {error}"))?;
+    git2::Repository::open(&root).map_err(|error| {
+        format!("Git trust was saved, but the repository still cannot be opened: {error}")
+    })?;
     Ok(())
 }
 

@@ -111,7 +111,10 @@ mod tests {
             assert_eq!(first.len(), width);
             assert!(first.bytes().all(|byte| byte == b' '));
             assert_eq!(first, second);
-            assert_eq!(matches!(first, std::borrow::Cow::Borrowed(_)), width <= u16::MAX as usize);
+            assert_eq!(
+                matches!(first, std::borrow::Cow::Borrowed(_)),
+                width <= u16::MAX as usize
+            );
             if width <= u16::MAX as usize {
                 assert_eq!(first.as_ptr(), second.as_ptr());
             } else {

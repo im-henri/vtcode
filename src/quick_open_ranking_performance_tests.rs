@@ -21,83 +21,168 @@ fn entries(paths: &[&str]) -> Arc<Vec<QuickOpenEntry>> {
 
 #[test]
 fn repeated_filename_scores_match_full_ranking_past_cache_limit() {
-    let source = Arc::new((0..8_500).map(|index| {
-        let name = match index % 7 {
-            0 => "index.ts".to_owned(),
-            1 => "café_界.rs".to_owned(),
-            _ => format!("file-{index}.rs"),
-        };
-        let relative = if index % 11 == 0 { name.clone() }
-            else { format!("packages/package-{index}/{name}") };
-        QuickOpenEntry { path: PathBuf::from(&relative), name, relative }
-    }).collect::<Vec<_>>());
+    let source = Arc::new(
+        (0..8_500)
+            .map(|index| {
+                let name = match index % 7 {
+                    0 => "index.ts".to_owned(),
+                    1 => "café_界.rs".to_owned(),
+                    _ => format!("file-{index}.rs"),
+                };
+                let relative = if index % 11 == 0 {
+                    name.clone()
+                } else {
+                    format!("packages/package-{index}/{name}")
+                };
+                QuickOpenEntry {
+                    path: PathBuf::from(&relative),
+                    name,
+                    relative,
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
     let mut cache = QuickOpenRankingCache::default();
-    for query in ["i", "index", "rs", "café", "界", "absent", "f", "file", "file-8", "packages/p"] {
+    for query in [
+        "i",
+        "index",
+        "rs",
+        "café",
+        "界",
+        "absent",
+        "f",
+        "file",
+        "file-8",
+        "packages/p",
+    ] {
         verify(&mut cache, &source, query);
     }
 }
 
 #[test]
 fn adaptive_filename_scores_disable_unique_samples_and_bound_repeated_samples() {
-    let unique: Vec<_> = (0..QUICK_OPEN_NAME_SCORE_SAMPLE).map(|index| format!("unique-{index}.rs")).collect();
+    let unique: Vec<_> = (0..QUICK_OPEN_NAME_SCORE_SAMPLE)
+        .map(|index| format!("unique-{index}.rs"))
+        .collect();
     let calculated = Cell::new(0);
     let mut scores = QuickOpenNameScores::default();
     for name in &unique {
-        assert_eq!(scores.score(name, || { calculated.set(calculated.get() + 1); Some(7) }), Some(7));
+        assert_eq!(
+            scores.score(name, || {
+                calculated.set(calculated.get() + 1);
+                Some(7)
+            }),
+            Some(7)
+        );
     }
     assert_eq!(calculated.get(), QUICK_OPEN_NAME_SCORE_SAMPLE);
     assert!(!scores.enabled);
     assert!(scores.scores.is_empty());
     // Once the sample is unique, later duplicate names take the direct path.
     for _ in 0..20 {
-        assert_eq!(scores.score(&unique[0], || { calculated.set(calculated.get() + 1); None }), None);
+        assert_eq!(
+            scores.score(&unique[0], || {
+                calculated.set(calculated.get() + 1);
+                None
+            }),
+            None
+        );
     }
     assert_eq!(calculated.get(), QUICK_OPEN_NAME_SCORE_SAMPLE + 20);
 
     let repeated = ["index.ts", "package.json", "readme.md", "component.tsx"];
-    let distinct: Vec<_> = (0..QUICK_OPEN_NAME_SCORE_CACHE_LIMIT + 20).map(|index| format!("distinct-{index}.rs")).collect();
+    let distinct: Vec<_> = (0..QUICK_OPEN_NAME_SCORE_CACHE_LIMIT + 20)
+        .map(|index| format!("distinct-{index}.rs"))
+        .collect();
     let mut scores = QuickOpenNameScores::default();
     calculated.set(0);
     for index in 0..QUICK_OPEN_NAME_SCORE_SAMPLE {
         let expected = (index % 4 != 0).then_some(9);
-        assert_eq!(scores.score(repeated[index % 4], || {
-            calculated.set(calculated.get() + 1); expected
-        }), expected);
+        assert_eq!(
+            scores.score(repeated[index % 4], || {
+                calculated.set(calculated.get() + 1);
+                expected
+            }),
+            expected
+        );
     }
     assert!(scores.enabled);
-    assert_eq!(calculated.get(), repeated.len(), "completed nonmatches are reusable too");
-    for name in &distinct { scores.score(name, || Some(1)); }
+    assert_eq!(
+        calculated.get(),
+        repeated.len(),
+        "completed nonmatches are reusable too"
+    );
+    for name in &distinct {
+        scores.score(name, || Some(1));
+    }
     assert_eq!(scores.scores.len(), QUICK_OPEN_NAME_SCORE_CACHE_LIMIT);
-    assert_eq!(scores.score(repeated[0], || panic!("known nonmatch must remain cached")), None);
+    assert_eq!(
+        scores.score(repeated[0], || panic!("known nonmatch must remain cached")),
+        None
+    );
     let uncached = distinct.last().unwrap();
     for value in [2, 3] {
-        assert_eq!(scores.score(uncached, || Some(value)), Some(value), "uncached names are still scored after the limit");
+        assert_eq!(
+            scores.score(uncached, || Some(value)),
+            Some(value),
+            "uncached names are still scored after the limit"
+        );
     }
 }
 
 #[test]
 fn adaptive_filename_sampling_preserves_queries_sources_and_cancellation_boundaries() {
-    let sources: Vec<_> = [false, true].into_iter().map(|repeat_first| Arc::new((0..512).map(|index| {
-        let repeat = (index < QUICK_OPEN_NAME_SCORE_SAMPLE) == repeat_first;
-        let name = if repeat { ["index.ts", "input.rs", "other.txt", "界面.rs"][index % 4].to_owned() }
-            else { format!("index-{index:05}.rs") };
-        let relative = format!("src/package-{index}/{name}");
-        QuickOpenEntry { path: PathBuf::from(&relative), name, relative }
-    }).collect::<Vec<_>>())).collect();
+    let sources: Vec<_> = [false, true]
+        .into_iter()
+        .map(|repeat_first| {
+            Arc::new(
+                (0..512)
+                    .map(|index| {
+                        let repeat = (index < QUICK_OPEN_NAME_SCORE_SAMPLE) == repeat_first;
+                        let name = if repeat {
+                            ["index.ts", "input.rs", "other.txt", "界面.rs"][index % 4].to_owned()
+                        } else {
+                            format!("index-{index:05}.rs")
+                        };
+                        let relative = format!("src/package-{index}/{name}");
+                        QuickOpenEntry {
+                            path: PathBuf::from(&relative),
+                            name,
+                            relative,
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
     let mut cache = QuickOpenRankingCache::default();
     for source in &sources {
         for query in ["i", "in", "index", "other", "界", "src/p", "i"] {
             verify(&mut cache, source, query);
         }
-        let previous = cache.rank(source, "unmatched-before-cancellation", || false).unwrap();
+        let previous = cache
+            .rank(source, "unmatched-before-cancellation", || false)
+            .unwrap();
         for boundary in [1, 2, 128, 129, 130, source.len() + 2] {
             let probes = Cell::new(0);
-            assert!(cache.rank(source, "index", || {
-                probes.set(probes.get() + 1);
-                probes.get() == boundary
-            }).is_none(), "boundary={boundary}");
-            assert_eq!(probes.get(), boundary, "sampling must not add cancellation probes");
-            assert_eq!(cache.completed.as_ref().unwrap().query, "unmatched-before-cancellation");
+            assert!(
+                cache
+                    .rank(source, "index", || {
+                        probes.set(probes.get() + 1);
+                        probes.get() == boundary
+                    })
+                    .is_none(),
+                "boundary={boundary}"
+            );
+            assert_eq!(
+                probes.get(),
+                boundary,
+                "sampling must not add cancellation probes"
+            );
+            assert_eq!(
+                cache.completed.as_ref().unwrap().query,
+                "unmatched-before-cancellation"
+            );
             assert_eq!(cache.completed.as_ref().unwrap().results, previous);
         }
         assert_eq!(verify(&mut cache, source, "index"), source.len() + 2);
@@ -106,16 +191,33 @@ fn adaptive_filename_sampling_preserves_queries_sources_and_cancellation_boundar
 
 #[test]
 fn root_file_reused_score_preserves_fresh_matcher_results() {
-    for name in ["aaaa", "a_aa", "index.ts", "café_界.rs", "İnput.rs", "ΟΣ.rs"] {
+    for name in [
+        "aaaa",
+        "a_aa",
+        "index.ts",
+        "café_界.rs",
+        "İnput.rs",
+        "ΟΣ.rs",
+    ] {
         let entry = QuickOpenEntry {
-            path: PathBuf::from(name), name: name.into(), relative: name.into(),
+            path: PathBuf::from(name),
+            name: name.into(),
+            relative: name.into(),
         };
         for query in ["a", "aaa", "i", "in", "café", "界", "ΟΣ", ""] {
             let mut matcher = crate::fuzzy_score::PreparedFuzzyScore::new(query);
-            let expected = matcher.score(name).map(|score|
-                score + crate::fuzzy_score::PreparedFuzzyScore::new(query).score(name).unwrap_or(0) / 4);
-            assert_eq!(quick_open_score(&mut matcher, &entry, false), expected,
-                "name={name} query={query}");
+            let expected = matcher.score(name).map(|score| {
+                score
+                    + crate::fuzzy_score::PreparedFuzzyScore::new(query)
+                        .score(name)
+                        .unwrap_or(0)
+                        / 4
+            });
+            assert_eq!(
+                quick_open_score(&mut matcher, &entry, false),
+                expected,
+                "name={name} query={query}"
+            );
         }
     }
 }
@@ -128,17 +230,35 @@ fn benchmark_repeated_quick_open_filenames() {
     // fixture exposes memoization overhead when every filename needs scoring.
     let queries = ["index", "ijklmissing", "readme", "package"];
     for repeated in [true, false] {
-        let source = Arc::new((0..50_000).map(|index| {
-            let base = ["index.ts", "package.json", "readme.md", "component.tsx", "styles.css"][index % 5];
-            let name = if repeated { base.to_owned() } else {
-                let (stem, extension) = base.rsplit_once('.').unwrap();
-                format!("{stem}-{index:05}.{extension}")
-            };
-            let relative = format!("packages/package-{index:05}/src/{name}");
-            QuickOpenEntry { path: PathBuf::from(&relative), name, relative }
-        }).collect::<Vec<_>>());
-        let expected: Vec<_> = queries.iter().map(|query|
-            rank_quick_open_files(&source, query, &cancel)).collect();
+        let source = Arc::new(
+            (0..50_000)
+                .map(|index| {
+                    let base = [
+                        "index.ts",
+                        "package.json",
+                        "readme.md",
+                        "component.tsx",
+                        "styles.css",
+                    ][index % 5];
+                    let name = if repeated {
+                        base.to_owned()
+                    } else {
+                        let (stem, extension) = base.rsplit_once('.').unwrap();
+                        format!("{stem}-{index:05}.{extension}")
+                    };
+                    let relative = format!("packages/package-{index:05}/src/{name}");
+                    QuickOpenEntry {
+                        path: PathBuf::from(&relative),
+                        name,
+                        relative,
+                    }
+                })
+                .collect::<Vec<_>>(),
+        );
+        let expected: Vec<_> = queries
+            .iter()
+            .map(|query| rank_quick_open_files(&source, query, &cancel))
+            .collect();
         let mut samples = [Vec::new(), Vec::new()];
         for sample in 0..7 {
             for cached in [sample % 2 == 0, sample % 2 != 0] {
@@ -148,7 +268,9 @@ fn benchmark_repeated_quick_open_filenames() {
                 };
                 let started = std::time::Instant::now();
                 for (query, expected) in queries.iter().zip(&expected) {
-                    let result = cache.rank(&source, query, || cancel.is_cancelled()).unwrap();
+                    let result = cache
+                        .rank(&source, query, || cancel.is_cancelled())
+                        .unwrap();
                     assert_eq!(&std::hint::black_box(result), expected);
                 }
                 samples[usize::from(cached)].push(started.elapsed());
@@ -156,8 +278,10 @@ fn benchmark_repeated_quick_open_filenames() {
         }
         samples.iter_mut().for_each(|samples| samples.sort());
         let label = if repeated { "repeated" } else { "unique" };
-        eprintln!("Quick Open 50,000 files with {label} names / four independent queries: direct-name-scores={:?}, adaptive-name-scores={:?}",
-            samples[0][3], samples[1][3]);
+        eprintln!(
+            "Quick Open 50,000 files with {label} names / four independent queries: direct-name-scores={:?}, adaptive-name-scores={:?}",
+            samples[0][3], samples[1][3]
+        );
     }
 }
 

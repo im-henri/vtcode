@@ -175,7 +175,9 @@ fn geometry_layout(app: &App, original: bool, aligned: bool) -> Option<(Rect, us
         app.code_area?
     };
     if aligned && !original && !app.compare_diff_lines.is_empty() {
-        let inset = area.width.min(app.diff_render_cache.change_marker_width() as u16);
+        let inset = area
+            .width
+            .min(app.diff_render_cache.change_marker_width() as u16);
         area.x += inset;
         area.width -= inset;
     }
@@ -205,7 +207,11 @@ fn geometry(app: &App, original: bool, aligned: bool) -> Option<(Geometry, Rect)
     let cache = &app.diff_render_cache;
     let wrap = &app.diff_inline_scroll.wrap;
     if let Some(widths) = wrap.widths() {
-        geometry.set_wrapped(if original && aligned { widths.left } else { widths.right });
+        geometry.set_wrapped(if original && aligned {
+            widths.left
+        } else {
+            widths.right
+        });
     }
     for screen_row in 0..area.height as usize {
         let display = wrap.row_at(first.saturating_add(screen_row));
@@ -234,7 +240,9 @@ fn geometry(app: &App, original: bool, aligned: bool) -> Option<(Geometry, Rect)
             geometry.obstacle(screen_row, 0, area.width as usize);
             continue;
         }
-        let Some(line) = source_line(row, row_original).filter(|_| !display.padding(display_original)) else {
+        let Some(line) =
+            source_line(row, row_original).filter(|_| !display.padding(display_original))
+        else {
             // Alignment hatching belongs to the other revision, not source
             // indentation through which a rail may route.
             geometry.obstacle(screen_row, 0, area.width as usize);
@@ -252,7 +260,8 @@ fn geometry(app: &App, original: bool, aligned: bool) -> Option<(Geometry, Rect)
         } else {
             row.right_char_len()
         };
-        let (text, mut column, mut x) = display.window(row, display_original, aligned, pan, area.width as usize);
+        let (text, mut column, mut x) =
+            display.window(row, display_original, aligned, pan, area.width as usize);
         let selected = app.diff_scope_selection_columns(row_original, display.logical, line);
         let visible_start = column;
         let cursor_here = original == row_original && cursor.0 == line && cursor.1 >= visible_start;
@@ -330,9 +339,9 @@ pub(crate) fn draw(
         return;
     }
     let allow_cursor_effects = cursor_effects_allowed(app);
-    let scope_enabled = app.editor().is_some_and(|editor| {
-        app.animation_settings.scope_enabled_for(editor)
-    });
+    let scope_enabled = app
+        .editor()
+        .is_some_and(|editor| app.animation_settings.scope_enabled_for(editor));
     if !allow_cursor_effects && !scope_enabled {
         if let Some(id) = crate::diff_scope_source::animation_view_id(app) {
             app.animations.forget_view(id);
@@ -443,7 +452,11 @@ pub(crate) fn draw(
         })
     };
     let mut scoped_settings;
-    let settings = if !scope_enabled && app.animation_settings.enabled(AnimationEffect::ScopeConnector) {
+    let settings = if !scope_enabled
+        && app
+            .animation_settings
+            .enabled(AnimationEffect::ScopeConnector)
+    {
         scoped_settings = app.animation_settings.clone();
         scoped_settings.set(AnimationEffect::ScopeConnector, false);
         &scoped_settings

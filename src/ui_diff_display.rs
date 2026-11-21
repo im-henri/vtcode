@@ -1,11 +1,11 @@
 use std::{borrow::Cow, fmt::Write as FmtWrite};
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Clear, Paragraph},
-    Frame,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -14,8 +14,10 @@ use crate::app::{App, DiffMode, DiffRenderCache};
 use crate::diff_wrap::Widths;
 use crate::editor::Editor;
 use crate::ui_colors::DiffWordPaint;
-use crate::ui_editor_highlight::{draw_horizontal_scrollbar, draw_minimap_separator, HScrollbarParams};
 use crate::ui_editor::refresh_cached_editor_diagnostics;
+use crate::ui_editor_highlight::{
+    HScrollbarParams, draw_horizontal_scrollbar, draw_minimap_separator,
+};
 use crate::ui_editor_minimap::{
     MinimapDiffChanges, MinimapParams, ScrollbarParams, draw_mapped_scrollbar, draw_minimap,
 };
@@ -103,27 +105,37 @@ pub(crate) fn measure_wrap(
     let (left, right) = if mode == DiffMode::SideBySide {
         let panes = side_by_side_diff_layout(area, split_ratio);
         let gutter = crate::ui_editor::line_number_width(editor.line_count()) as u16
-            + 2 + u16::from(scope_rail);
+            + 2
+            + u16::from(scope_rail);
         let minimap = minimap.filter(|_| panes.right.width > 80).unwrap_or(0);
         let code = crate::ui_editor::editor_columns(panes.right, gutter, minimap)[1];
-        (original_text_width(cache, panes.left), (code.width as usize).saturating_sub(cache.change_marker_width()))
+        (
+            original_text_width(cache, panes.left),
+            (code.width as usize).saturating_sub(cache.change_marker_width()),
+        )
     } else {
         let layout = inline_diff_layout(area, minimap.is_some(), minimap.unwrap_or(0));
         let number_width = inline_number_width(cache, editor.line_count());
-        let width = usize::from(layout.code_area.width)
-            .saturating_sub(inline_gutter_width(number_width));
+        let width =
+            usize::from(layout.code_area.width).saturating_sub(inline_gutter_width(number_width));
         (width, width)
     };
     Widths::new(editor, left, right)
 }
 
 fn original_text_width(cache: &DiffRenderCache, pane: Rect) -> usize {
-    (pane.width as usize).saturating_sub(digit_count(cache.max_left_line).max(2) + 2 + cache.change_marker_width())
+    (pane.width as usize)
+        .saturating_sub(digit_count(cache.max_left_line).max(2) + 2 + cache.change_marker_width())
 }
 
 pub(crate) fn inline_number_width(cache: &DiffRenderCache, line_count: usize) -> usize {
-    let last_line = cache.max_left_line.max(cache.target_content_lines()).max(line_count);
-    digit_count(last_line).max(4).max(cache.change_marker_width() - 1)
+    let last_line = cache
+        .max_left_line
+        .max(cache.target_content_lines())
+        .max(line_count);
+    digit_count(last_line)
+        .max(4)
+        .max(cache.change_marker_width() - 1)
 }
 
 fn inline_gutter_width(number_width: usize) -> usize {
@@ -132,7 +144,8 @@ fn inline_gutter_width(number_width: usize) -> usize {
 
 fn diff_labels(app: &App) -> (Cow<'_, str>, Cow<'_, str>) {
     use crate::diff_algorithm::MissingFinalNewline::{Original, Target};
-    let (base, target) = app.diff_labels
+    let (base, target) = app
+        .diff_labels
         .as_ref()
         .map_or(("Original", "Modified"), |labels| {
             (labels.base.as_str(), labels.target.as_str())
@@ -180,13 +193,22 @@ pub(crate) fn draw_side_by_side_diff(f: &mut Frame, app: &mut App, area: Rect) {
     let word_wrap = app.editor().is_some_and(|editor| editor.word_wrap);
     app.show_minimap &= !compact;
     let widths = app.editor().and_then(|editor| {
-        has_overlay.then(|| measure_wrap(
-            &app.diff_render_cache, editor, DiffMode::SideBySide, area.width,
-            app.diff_split_ratio, app.show_minimap.then_some(app.minimap_render_width()),
-            app.animation_settings.scope_enabled_for(editor),
-        )).flatten()
+        has_overlay
+            .then(|| {
+                measure_wrap(
+                    &app.diff_render_cache,
+                    editor,
+                    DiffMode::SideBySide,
+                    area.width,
+                    app.diff_split_ratio,
+                    app.show_minimap.then_some(app.minimap_render_width()),
+                    app.animation_settings.scope_enabled_for(editor),
+                )
+            })
+            .flatten()
     });
-    app.diff_inline_scroll.prepare_wrap(&app.diff_render_cache, true, widths);
+    app.diff_inline_scroll
+        .prepare_wrap(&app.diff_render_cache, true, widths);
     if app.diff_selection_owns_cursor() {
         app.cursor_visible = false;
     }
@@ -250,7 +272,9 @@ fn layout_aligned_diff_scroll(app: &mut App, area: Rect) {
     // enough vertical travel to expose the last source row on the shorter side.
     let left_width = original_text_width(&app.diff_render_cache, layout.left);
     let left_height = layout.left.height.saturating_sub(u16::from(
-        !scroll.wrap.enabled() && app.diff_render_cache.max_left_text_width > left_width && layout.left.height > 1,
+        !scroll.wrap.enabled()
+            && app.diff_render_cache.max_left_text_width > left_width
+            && layout.left.height > 1,
     ));
     scroll.text_area.height = scroll.text_area.height.min(left_height);
     scroll.vertical_area = app.scrollbar_area.unwrap_or_default();
@@ -263,8 +287,11 @@ fn layout_aligned_diff_scroll(app: &mut App, area: Rect) {
     let cache = std::sync::Arc::clone(&app.diff_render_cache);
     let review_row = crate::commit_review::painting_row(app);
     if let Some(editor) = app.editor_mut() {
-        if let Some(row) = review_row { scroll.layout_review(cache, editor, row); }
-        else { scroll.layout(cache, editor); }
+        if let Some(row) = review_row {
+            scroll.layout_review(cache, editor, row);
+        } else {
+            scroll.layout(cache, editor);
+        }
     }
     app.diff_inline_scroll = scroll;
 }
@@ -309,7 +336,11 @@ fn draw_diff_cursor(
         return None;
     };
     let cache = &app.diff_render_cache;
-    let inset = if aligned { cache.change_marker_width() } else { 0 };
+    let inset = if aligned {
+        cache.change_marker_width()
+    } else {
+        0
+    };
     let width = (area.width as usize).saturating_sub(inset);
     if width == 0 {
         return None;
@@ -360,7 +391,11 @@ fn draw_diff_cursor(
         }
         return None;
     };
-    let pan = if aligned { editor.horizontal_scroll } else { app.diff_inline_scroll.column };
+    let pan = if aligned {
+        editor.horizontal_scroll
+    } else {
+        app.diff_inline_scroll.column
+    };
     if !aligned && pan > row.right_cell_len() {
         return None;
     }
@@ -647,11 +682,19 @@ fn render_diff_highlighted_spans(
         let skipped = horizontal_scroll.saturating_sub(span_start);
         let segment = index.segment_tail(span, segment, skipped);
         let fg = crate::ui_colors::syntax_color(style.foreground, bg);
-        let token_style = Style::default().fg(fg).bg(bg)
+        let token_style = Style::default()
+            .fg(fg)
+            .bg(bg)
             .add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style));
-        let highlighted_style = word_paint.filter(|_| char_highlights.is_some()).map_or(token_style, |paint| {
-            paint.apply(token_style.fg(crate::ui_colors::syntax_color(style.foreground, paint.background)))
-        });
+        let highlighted_style =
+            word_paint
+                .filter(|_| char_highlights.is_some())
+                .map_or(token_style, |paint| {
+                    paint.apply(token_style.fg(crate::ui_colors::syntax_color(
+                        style.foreground,
+                        paint.background,
+                    )))
+                });
         for ch in segment.chars() {
             if absolute_col >= horizontal_scroll {
                 let is_highlighted = char_highlights
@@ -711,17 +754,29 @@ fn render_diff_highlighted_spans_reference(
     let mut batch_style = Style::default();
     'outer: for (style, segment) in highlighted {
         let fg = crate::ui_colors::syntax_color(style.foreground, bg);
-        let token_style = Style::default().fg(fg).bg(bg)
+        let token_style = Style::default()
+            .fg(fg)
+            .bg(bg)
             .add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style));
-        let highlighted_style = word_paint.filter(|_| char_highlights.is_some()).map_or(token_style, |paint| {
-            paint.apply(token_style.fg(crate::ui_colors::syntax_color(style.foreground, paint.background)))
-        });
+        let highlighted_style =
+            word_paint
+                .filter(|_| char_highlights.is_some())
+                .map_or(token_style, |paint| {
+                    paint.apply(token_style.fg(crate::ui_colors::syntax_color(
+                        style.foreground,
+                        paint.background,
+                    )))
+                });
         for ch in segment.trim_end_matches('\n').chars() {
             if absolute_col >= horizontal_scroll {
                 let is_highlighted = char_highlights
                     .and_then(|h| h.get(absolute_col).copied())
                     .unwrap_or(false);
-                let char_style = if is_highlighted { highlighted_style } else { token_style };
+                let char_style = if is_highlighted {
+                    highlighted_style
+                } else {
+                    token_style
+                };
                 if char_style == batch_style && !batch_buf.is_empty() {
                     batch_buf.push(ch);
                 } else {
@@ -766,14 +821,20 @@ fn render_plain_diff_window(
     let mut spans = Vec::new();
     let mut batch = String::with_capacity(visible_width.min(128));
     let plain_style = Style::default().fg(fg).bg(bg);
-    let changed_style = word_paint.filter(|_| char_highlights.is_some()).map_or(plain_style, |paint| paint.apply(plain_style));
+    let changed_style = word_paint
+        .filter(|_| char_highlights.is_some())
+        .map_or(plain_style, |paint| paint.apply(plain_style));
     let mut batch_style = plain_style;
     let mut rendered = 0usize;
     for (offset, ch) in text.chars().take(visible_width).enumerate() {
         let highlighted = char_highlights
             .and_then(|flags| flags.get(absolute_start + offset).copied())
             .unwrap_or(false);
-        let style = if highlighted { changed_style } else { plain_style };
+        let style = if highlighted {
+            changed_style
+        } else {
+            plain_style
+        };
         if style != batch_style && !batch.is_empty() {
             spans.push(Span::styled(std::mem::take(&mut batch), batch_style));
         }
@@ -807,7 +868,11 @@ fn render_diff_line<'a>(
     #[cfg(test)]
     if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get)
         && let Some(highlighted) = cached
-        && highlighted.iter().map(|(_, text)| text.trim_end_matches('\n').chars().count()).sum::<usize>() >= char_len
+        && highlighted
+            .iter()
+            .map(|(_, text)| text.trim_end_matches('\n').chars().count())
+            .sum::<usize>()
+            >= char_len
     {
         return render_diff_highlighted_spans_reference(
             highlighted.as_ref(),
@@ -850,20 +915,54 @@ fn render_diff_line<'a>(
 #[cfg(test)]
 #[test]
 fn theme_coverage_plain_diff_preserves_named_and_indexed_foregrounds() {
-    for foreground in [Color::Indexed(23), Color::White, Color::Reset, Color::Rgb(12,34,56)] {
-        let spans = render_diff_line(None, 3, || "abc", 6, 0, Color::Rgb(1,2,3), None, None, foreground);
-        assert_eq!(spans.iter().map(|span| span.content.as_ref()).collect::<String>(), "abc   ");
-        assert!(spans.iter().all(|span| span.style.fg == Some(foreground)), "{foreground:?}");
+    for foreground in [
+        Color::Indexed(23),
+        Color::White,
+        Color::Reset,
+        Color::Rgb(12, 34, 56),
+    ] {
+        let spans = render_diff_line(
+            None,
+            3,
+            || "abc",
+            6,
+            0,
+            Color::Rgb(1, 2, 3),
+            None,
+            None,
+            foreground,
+        );
+        assert_eq!(
+            spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>(),
+            "abc   "
+        );
+        assert!(
+            spans.iter().all(|span| span.style.fg == Some(foreground)),
+            "{foreground:?}"
+        );
     }
 }
 
-pub(crate) fn move_color(colors: &crate::app_theme::ThemeColors, id: crate::diff_algorithm::MoveId) -> Color {
-    let accents = [colors.fg_accent_blue, colors.fg_hack, colors.fg_accent, colors.fg_bookmark];
+pub(crate) fn move_color(
+    colors: &crate::app_theme::ThemeColors,
+    id: crate::diff_algorithm::MoveId,
+) -> Color {
+    let accents = [
+        colors.fg_accent_blue,
+        colors.fg_hack,
+        colors.fg_accent,
+        colors.fg_bookmark,
+    ];
     accents[(id.get() as usize - 1) % accents.len()]
 }
 
 pub(crate) fn moved_background(
-    colors: &crate::app_theme::ThemeColors, base: Color, id: crate::diff_algorithm::MoveId,
+    colors: &crate::app_theme::ThemeColors,
+    base: Color,
+    id: crate::diff_algorithm::MoveId,
 ) -> Color {
     crate::app_theme::lerp_color(base, move_color(colors, id), 0.19)
 }
@@ -873,23 +972,47 @@ pub(crate) fn move_label(original: bool, id: crate::diff_algorithm::MoveId) -> S
 }
 
 pub(crate) fn draw_move_tooltip(f: &mut Frame, app: &App) {
-    if !app.mouse_position_known || app.palette.active || app.menu_active || app.context_menu_active
-        || app.change_dir_active || app.workspaces.popup.open || crate::ui_modal::active(app).is_some()
+    if !app.mouse_position_known
+        || app.palette.active
+        || app.menu_active
+        || app.context_menu_active
+        || app.change_dir_active
+        || app.workspaces.popup.open
+        || crate::ui_modal::active(app).is_some()
         || app.editor_selection_drag.is_some()
     {
         return;
     }
-    let Some((id, original)) = app.diff_move_at(app.mouse_col, app.mouse_row) else { return };
-    let Some(block) = app.diff_render_cache.move_block(id) else { return };
-    let (Some(old), Some(new)) = (block.end(true), block.end(false)) else { return };
-    let range = |start: usize| {
-        if block.len == 1 { (start + 1).to_string() } else { format!("{}–{}", start + 1, start + block.len) }
+    let Some((id, original)) = app.diff_move_at(app.mouse_col, app.mouse_row) else {
+        return;
     };
-    let header = format!("Move {id} · Original {} → Modified {}", range(old.line), range(new.line));
-    let (side, endpoint) = if original { ("modified", new) } else { ("original", old) };
+    let Some(block) = app.diff_render_cache.move_block(id) else {
+        return;
+    };
+    let (Some(old), Some(new)) = (block.end(true), block.end(false)) else {
+        return;
+    };
+    let range = |start: usize| {
+        if block.len == 1 {
+            (start + 1).to_string()
+        } else {
+            format!("{}–{}", start + 1, start + block.len)
+        }
+    };
+    let header = format!(
+        "Move {id} · Original {} → Modified {}",
+        range(old.line),
+        range(new.line)
+    );
+    let (side, endpoint) = if original {
+        ("modified", new)
+    } else {
+        ("original", old)
+    };
     let action = format!("Click to jump to {side} line {}", endpoint.line + 1);
     crate::ui_widgets::Tooltip::hover(vec![Line::raw(header), Line::raw(action)], &app.colors)
-        .prefer_below().render(f, app.mouse_col, app.mouse_row);
+        .prefer_below()
+        .render(f, app.mouse_col, app.mouse_row);
 }
 
 fn change_marker(
@@ -905,7 +1028,10 @@ fn change_marker(
         let label = move_label(kind == '-', id);
         return Span::styled(
             format!("{label:<width$}"),
-            Style::default().fg(accent).bg(badge_bg).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            Style::default()
+                .fg(accent)
+                .bg(badge_bg)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         );
     }
     let (label, fg): (Cow<'_, str>, _) = match kind {
@@ -918,30 +1044,32 @@ fn change_marker(
     Span::styled(label, Style::default().fg(fg).bg(bg))
 }
 
-fn style_diff_spans(spans: &mut [Span<'_>], colors: &crate::app_theme::ThemeColors, contrast: &mut crate::ui_colors::TextContrastCache) {
+fn style_diff_spans(
+    spans: &mut [Span<'_>],
+    colors: &crate::app_theme::ThemeColors,
+    contrast: &mut crate::ui_colors::TextContrastCache,
+) {
     for span in spans {
         let background = span.style.bg.unwrap_or(colors.bg_editor);
         let foreground = span.style.fg.unwrap_or(colors.fg_text);
-        span.style = span.style.fg(contrast.foreground(foreground, background))
+        span.style = span
+            .style
+            .fg(contrast.foreground(foreground, background))
             .remove_modifier(Modifier::DIM);
     }
 }
 
 pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
-    let (
-        editor_scroll_offset,
-        editor_cursor_line,
-        editor_file_path,
-        editor_syntax_language,
-    ) = match app.editor() {
-        Some(e) => (
-            e.scroll_offset,
-            e.cursor_line,
-            Some(e.highlight_path().to_path_buf()),
-            e.syntax_language_token().map(str::to_string),
-        ),
-        None => return,
-    };
+    let (editor_scroll_offset, editor_cursor_line, editor_file_path, editor_syntax_language) =
+        match app.editor() {
+            Some(e) => (
+                e.scroll_offset,
+                e.cursor_line,
+                Some(e.highlight_path().to_path_buf()),
+                e.syntax_language_token().map(str::to_string),
+            ),
+            None => return,
+        };
 
     if app.compare_base_content.is_none() {
         return;
@@ -953,7 +1081,8 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
     let marker_width = diff_cache.change_marker_width();
     let display_width = original_text_width(&diff_cache, area);
     let wrap = &app.diff_inline_scroll.wrap;
-    let show_h_scrollbar = !wrap.enabled() && diff_cache.max_left_text_width > display_width && area.height > 1;
+    let show_h_scrollbar =
+        !wrap.enabled() && diff_cache.max_left_text_width > display_width && area.height > 1;
     let content_area = Rect::new(
         area.x,
         area.y,
@@ -961,13 +1090,17 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
         area.height.saturating_sub(u16::from(show_h_scrollbar)),
     );
     let left_code_area = Rect::new(
-        area.x.saturating_add((gutter_width + 1 + marker_width) as u16).min(area.right()),
+        area.x
+            .saturating_add((gutter_width + 1 + marker_width) as u16)
+            .min(area.right()),
         content_area.y,
         display_width.min(u16::MAX as usize) as u16,
         content_area.height,
     );
     app.diff_left_code_area = Some(left_code_area);
-    let max_scroll = if wrap.enabled() { 0 } else {
+    let max_scroll = if wrap.enabled() {
+        0
+    } else {
         diff_cache.max_left_text_width.saturating_sub(display_width)
     };
     app.diff_left_horizontal_scroll = app.diff_left_horizontal_scroll.min(max_scroll);
@@ -996,7 +1129,8 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
         };
         if diff_row.hidden_lines > 0 {
             let style = Style::default()
-                .fg(app.colors.ui.description_color(app.colors.bg_dark)).bg(app.colors.bg_dark);
+                .fg(app.colors.ui.description_color(app.colors.bg_dark))
+                .bg(app.colors.bg_dark);
             lines_out.push(Line::styled(diff_row.left_text.as_str(), style));
             continue;
         }
@@ -1022,10 +1156,15 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
                     left_num_pad.as_str(),
                     Style::default().fg(app.colors.fg_dim).bg(spacer_bg),
                 ),
-                Span::styled(crate::helpers::spaces(marker_width), Style::default().fg(app.colors.fg_dim).bg(spacer_bg)),
+                Span::styled(
+                    crate::helpers::spaces(marker_width),
+                    Style::default().fg(app.colors.fg_dim).bg(spacer_bg),
+                ),
                 Span::styled(
                     diff_spacer_pattern(display_width, row_idx, starts_block, ends_block),
-                    Style::default().fg(app.colors.ui.fg_diff_diagonal).bg(spacer_bg),
+                    Style::default()
+                        .fg(app.colors.ui.fg_diff_diagonal)
+                        .bg(spacer_bg),
                 ),
             ]));
             continue;
@@ -1056,17 +1195,29 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
             )
         };
 
-        let (kind, id) = if display.continuation == 0 { (status, diff_row.left_move) } else { (' ', None) };
+        let (kind, id) = if display.continuation == 0 {
+            (status, diff_row.left_move)
+        } else {
+            (' ', None)
+        };
         let indicator = change_marker(&app.colors, marker_width, bg, kind, id);
         let word_paint = match status {
             '-' => Some(removed_word),
             '+' => Some(added_word),
             _ => None,
         };
-        let fg = app.colors.ui.editor_foreground.over(bg).unwrap_or(app.colors.fg_text);
+        let fg = app
+            .colors
+            .ui
+            .editor_foreground
+            .over(bg)
+            .unwrap_or(app.colors.fg_text);
         let mut row_spans = vec![line_num_span, indicator];
-        let (start, count) = display.columns(true)
-            .map_or((left_horizontal_scroll, display_width), |(start, end)| (start, end - start));
+        let (start, count) = display
+            .columns(true)
+            .map_or((left_horizontal_scroll, display_width), |(start, end)| {
+                (start, end - start)
+            });
         if diff_row.left_char_len() > crate::highlight::MAX_SYNTAX_LINE_CHARS {
             row_spans.extend(render_plain_diff_window(
                 diff_row.left_text_window(start, count),
@@ -1098,13 +1249,22 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
             ));
         }
         if display.columns(true).is_some() {
-            pad_wrapped_diff_row(&mut row_spans, gutter_width + 1 + marker_width + display_width, bg);
+            pad_wrapped_diff_row(
+                &mut row_spans,
+                gutter_width + 1 + marker_width + display_width,
+                bg,
+            );
         }
         style_diff_spans(&mut row_spans, &app.colors, &mut contrast);
         lines_out.push(Line::from(row_spans));
     }
 
-    paint_diff_rows(f, content_area, lines_out, Style::default().remove_modifier(Modifier::DIM));
+    paint_diff_rows(
+        f,
+        content_area,
+        lines_out,
+        Style::default().remove_modifier(Modifier::DIM),
+    );
 
     if show_h_scrollbar {
         let track_row = area.bottom().saturating_sub(1);
@@ -1236,11 +1396,18 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
                 ),
                 Span::styled(" ", Style::default().fg(app.colors.fg_dim).bg(gutter_bg)),
             ]));
-            let style = Style::default().fg(app.colors.ui.fg_diff_diagonal).bg(spacer_bg);
+            let style = Style::default()
+                .fg(app.colors.ui.fg_diff_diagonal)
+                .bg(spacer_bg);
             code_lines.push(Line::from(vec![
                 Span::styled(crate::helpers::spaces(marker_width), style),
                 Span::styled(
-                    diff_spacer_pattern(visible_width.saturating_sub(marker_width), row_idx, starts_block, ends_block),
+                    diff_spacer_pattern(
+                        visible_width.saturating_sub(marker_width),
+                        row_idx,
+                        starts_block,
+                        ends_block,
+                    ),
                     style,
                 ),
             ]));
@@ -1268,7 +1435,10 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
         let (diff_char, diff_style) = match (marker_kind, marker_id) {
             ('+', Some(id)) => (
                 "←",
-                Style::default().fg(move_color(&app.colors, id)).bg(row_bg).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(move_color(&app.colors, id))
+                    .bg(row_bg)
+                    .add_modifier(Modifier::BOLD),
             ),
             ('+', None) => (
                 "+",
@@ -1320,7 +1490,12 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             Span::styled(fold_char, Style::default().fg(app.colors.fg_dim).bg(row_bg)),
         ]));
 
-        let fg = app.colors.ui.editor_foreground.over(row_bg).unwrap_or(app.colors.fg_text);
+        let fg = app
+            .colors
+            .ui
+            .editor_foreground
+            .over(row_bg)
+            .unwrap_or(app.colors.fg_text);
         let marker = change_marker(&app.colors, marker_width, row_bg, marker_kind, marker_id);
         let word_paint = match diff_row.right_kind {
             '+' => Some(added_word),
@@ -1329,7 +1504,8 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
         };
         let text_width = visible_width.saturating_sub(marker_width);
         let mut row_spans = vec![marker];
-        let (start, count) = display.columns(false)
+        let (start, count) = display
+            .columns(false)
             .map_or((h_scroll, text_width), |(start, end)| (start, end - start));
         if diff_row.right_char_len() > crate::highlight::MAX_SYNTAX_LINE_CHARS {
             row_spans.extend(render_plain_diff_window(
@@ -1372,16 +1548,29 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
         f.render_widget(Clear, gutter_area);
         f.render_widget(Clear, code_area);
     }
-    paint_diff_rows(f, gutter_area, gutter_lines,
-        Style::default().bg(app.colors.bg_dark).remove_modifier(Modifier::DIM));
-    paint_diff_rows(f, code_area, code_lines,
-        Style::default().bg(app.colors.bg_editor).remove_modifier(Modifier::DIM));
+    paint_diff_rows(
+        f,
+        gutter_area,
+        gutter_lines,
+        Style::default()
+            .bg(app.colors.bg_dark)
+            .remove_modifier(Modifier::DIM),
+    );
+    paint_diff_rows(
+        f,
+        code_area,
+        code_lines,
+        Style::default()
+            .bg(app.colors.bg_editor)
+            .remove_modifier(Modifier::DIM),
+    );
 
     // The gutter, scope rail and code are separate regions. Hidden-context
     // separators span all three, independently of horizontal text scrolling.
     if has_hidden_rows {
         let style = Style::default()
-            .fg(app.colors.ui.description_color(app.colors.bg_dark)).bg(app.colors.bg_dark);
+            .fg(app.colors.ui.description_color(app.colors.bg_dark))
+            .bg(app.colors.bg_dark);
         for offset in 0..visible_rows {
             if let Some(row) = rows.get(wrap.row_at(row_scroll + offset).logical)
                 && row.hidden_lines > 0
@@ -1395,10 +1584,7 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
                 // The regular editor was painted underneath this overlay.
                 // A background style alone leaves its trailing text visible.
                 f.render_widget(Clear, area);
-                f.render_widget(
-                    Paragraph::new(row.right_text.as_str()).style(style),
-                    area,
-                );
+                f.render_widget(Paragraph::new(row.right_text.as_str()).style(style), area);
             }
         }
     }
@@ -1415,7 +1601,10 @@ fn paint_diff_rows(frame: &mut Frame, area: Rect, lines: Vec<Line<'_>>, style: S
 
 fn pad_wrapped_diff_row(spans: &mut Vec<Span<'_>>, width: usize, bg: Color) {
     let used: usize = spans.iter().map(Span::width).sum();
-    spans.push(Span::styled(crate::helpers::spaces(width.saturating_sub(used)), Style::default().bg(bg)));
+    spans.push(Span::styled(
+        crate::helpers::spaces(width.saturating_sub(used)),
+        Style::default().bg(bg),
+    ));
 }
 
 /// Inline diff view rendered from library-produced diff lines.
@@ -1515,16 +1704,27 @@ fn draw_inline_scrollbar(
         let matches: Vec<_> = params
             .search_matches
             .iter()
-            .map(|&(line, start, end)| (
-                cache.inline_text_row_for_target_line(line).unwrap_or_else(|| cache.inline_row_for_target_line(line)), start, end,
-            ))
+            .map(|&(line, start, end)| {
+                (
+                    cache
+                        .inline_text_row_for_target_line(line)
+                        .unwrap_or_else(|| cache.inline_row_for_target_line(line)),
+                    start,
+                    end,
+                )
+            })
             .collect();
         let diagnostics: Vec<_> = params
             .diagnostic_lines
             .iter()
-            .map(|&(line, severity)| (
-                cache.inline_text_row_for_target_line(line).unwrap_or_else(|| cache.inline_row_for_target_line(line)), severity,
-            ))
+            .map(|&(line, severity)| {
+                (
+                    cache
+                        .inline_text_row_for_target_line(line)
+                        .unwrap_or_else(|| cache.inline_row_for_target_line(line)),
+                    severity,
+                )
+            })
             .collect();
         crate::ui_editor_minimap::draw_scrollbar(
             f,
@@ -1537,7 +1737,13 @@ fn draw_inline_scrollbar(
         );
         return;
     }
-    draw_mapped_scrollbar(f, params, cache.inline_target_text_rows(), wrap, Some(editor));
+    draw_mapped_scrollbar(
+        f,
+        params,
+        cache.inline_target_text_rows(),
+        wrap,
+        Some(editor),
+    );
 }
 
 pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
@@ -1550,23 +1756,37 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
     app.gutter_width = 0;
     app.gutter_area = None;
     app.h_scrollbar_area = None;
-    if let Some(editor) = app.editor_mut() { editor.diff_display_rows = None; }
+    if let Some(editor) = app.editor_mut() {
+        editor.diff_display_rows = None;
+    }
 
     let diff_cache = std::sync::Arc::clone(&app.diff_render_cache);
     let review_row = crate::commit_review::painting_row(app);
-    let mut layout = inline_diff_layout(area, app.show_minimap && !app.context_diff_active() && review_row.is_none(), app.minimap_render_width());
+    let mut layout = inline_diff_layout(
+        area,
+        app.show_minimap && !app.context_diff_active() && review_row.is_none(),
+        app.minimap_render_width(),
+    );
     let number_width = inline_number_width(&diff_cache, app.editor().map_or(1, Editor::line_count));
     let full_gutter_width = inline_gutter_width(number_width);
     let gutter_width = full_gutter_width.min(usize::from(layout.code_area.width)) as u16;
     let text_width = layout.code_area.width - gutter_width;
-    let widths = app.editor().and_then(|editor| Widths::new(editor, text_width as usize, text_width as usize));
-    let horizontal_area = if widths.is_none() && diff_cache.max_inline_text_width > text_width as usize
-        && layout.code_area.height > 1 && text_width > 0
+    let widths = app
+        .editor()
+        .and_then(|editor| Widths::new(editor, text_width as usize, text_width as usize));
+    let horizontal_area = if widths.is_none()
+        && diff_cache.max_inline_text_width > text_width as usize
+        && layout.code_area.height > 1
+        && text_width > 0
     {
         layout.code_area.height -= 1;
         layout.scrollbar_area.height = layout.code_area.height;
-        if let Some(minimap) = &mut layout.minimap_area { minimap.height = layout.code_area.height; }
-        if let Some(separator) = &mut layout.minimap_sep_area { separator.height = layout.code_area.height; }
+        if let Some(minimap) = &mut layout.minimap_area {
+            minimap.height = layout.code_area.height;
+        }
+        if let Some(separator) = &mut layout.minimap_sep_area {
+            separator.height = layout.code_area.height;
+        }
         Some(Rect::new(
             layout.code_area.x + gutter_width,
             layout.code_area.bottom(),
@@ -1590,13 +1810,21 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
 
     let mut scroll = std::mem::take(&mut app.diff_inline_scroll);
     scroll.prepare_wrap(&diff_cache, false, widths);
-    scroll.area = Rect::new(area.x, layout.code_area.y, area.width, area.bottom().saturating_sub(layout.code_area.y));
+    scroll.area = Rect::new(
+        area.x,
+        layout.code_area.y,
+        area.width,
+        area.bottom().saturating_sub(layout.code_area.y),
+    );
     scroll.text_area = text_area;
     scroll.vertical_area = layout.scrollbar_area;
     scroll.horizontal_area = horizontal_area;
     if let Some(editor) = app.editor_mut() {
-        if let Some(row) = review_row { scroll.layout_review(diff_cache.clone(), editor, row); }
-        else { scroll.layout(std::sync::Arc::clone(&diff_cache), editor); }
+        if let Some(row) = review_row {
+            scroll.layout_review(diff_cache.clone(), editor, row);
+        } else {
+            scroll.layout(std::sync::Arc::clone(&diff_cache), editor);
+        }
     }
     app.diff_inline_scroll = scroll;
 
@@ -1640,7 +1868,8 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         let aligned_row = &diff_cache.rows[cached_row.aligned_row];
         if aligned_row.hidden_lines > 0 {
             let style = Style::default()
-                .fg(app.colors.ui.description_color(app.colors.bg_dark)).bg(app.colors.bg_dark);
+                .fg(app.colors.ui.description_color(app.colors.bg_dark))
+                .bg(app.colors.bg_dark);
             render_lines.push(Line::styled(aligned_row.right_text.as_str(), style));
             continue;
         }
@@ -1689,7 +1918,11 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             None
         };
         let original = cached_row.kind == '-';
-        let move_id = if original { aligned_row.left_move } else { aligned_row.right_move };
+        let move_id = if original {
+            aligned_row.left_move
+        } else {
+            aligned_row.right_move
+        };
         let (old_marker, new_marker, bg, word_paint, gutter_fg) = match (cached_row.kind, move_id) {
             (_, Some(id)) => {
                 let label = move_label(original, id);
@@ -1724,10 +1957,18 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             ),
         };
         let gutter_style = Style::default().fg(gutter_fg).bg(bg);
-        let fg = app.colors.ui.editor_foreground.over(bg).unwrap_or(app.colors.fg_text);
+        let fg = app
+            .colors
+            .ui
+            .editor_foreground
+            .over(bg)
+            .unwrap_or(app.colors.fg_text);
         let mut row_spans = Vec::new();
         if display.continuation != 0 {
-            row_spans.push(Span::styled(crate::helpers::spaces(full_gutter_width), gutter_style));
+            row_spans.push(Span::styled(
+                crate::helpers::spaces(full_gutter_width),
+                gutter_style,
+            ));
         } else if let Some(id) = move_id {
             for (line, marker) in [(old_ln, old_marker), (new_ln, new_marker)] {
                 let (label, style) = match line {
@@ -1735,7 +1976,10 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
                     None => {
                         let accent = move_color(&app.colors, id);
                         let badge_bg = crate::app_theme::lerp_color(bg, accent, 0.27);
-                        let style = gutter_style.fg(accent).bg(badge_bg).add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                        let style = gutter_style
+                            .fg(accent)
+                            .bg(badge_bg)
+                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
                         (format!("{marker:>number_width$} "), style)
                     }
                 };
@@ -1751,16 +1995,28 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             }
             row_spans.push(Span::styled(line_head, gutter_style));
         }
-        let window = || display.window(aligned_row, cached_row.kind == '-', false, horizontal_scroll, available);
-        #[cfg(test)]
-        let (text, char_start, padding) = if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get) && widths.is_none() {
-            inline_diff_text_window(_source_text, horizontal_scroll, available)
-        } else {
-            window()
+        let window = || {
+            display.window(
+                aligned_row,
+                cached_row.kind == '-',
+                false,
+                horizontal_scroll,
+                available,
+            )
         };
+        #[cfg(test)]
+        let (text, char_start, padding) =
+            if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get) && widths.is_none() {
+                inline_diff_text_window(_source_text, horizontal_scroll, available)
+            } else {
+                window()
+            };
         #[cfg(not(test))]
         let (text, char_start, padding) = window();
-        row_spans.push(Span::styled(crate::helpers::spaces(padding), Style::default().fg(fg).bg(bg)));
+        row_spans.push(Span::styled(
+            crate::helpers::spaces(padding),
+            Style::default().fg(fg).bg(bg),
+        ));
         if let Some((highlighted, index)) = &highlighted {
             // The window is clipped in terminal cells, while syntax spans and
             // character-diff flags use character offsets. Keep both aligned,
@@ -1801,7 +2057,13 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             row_spans.extend(spans);
         } else {
             row_spans.extend(render_plain_diff_window(
-                text, char_start, text.chars().count(), bg, word_paint, char_highlights, fg,
+                text,
+                char_start,
+                text.chars().count(),
+                bg,
+                word_paint,
+                char_highlights,
+                fg,
             ));
         }
         row_spans.push(Span::styled(
@@ -1812,8 +2074,14 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         render_lines.push(Line::from(row_spans));
     }
 
-    paint_diff_rows(f, layout.code_area, render_lines,
-        Style::default().bg(app.colors.bg_editor).remove_modifier(Modifier::DIM));
+    paint_diff_rows(
+        f,
+        layout.code_area,
+        render_lines,
+        Style::default()
+            .bg(app.colors.bg_editor)
+            .remove_modifier(Modifier::DIM),
+    );
 
     if app.context_diff_active() || widths.is_some() {
         crate::diff_context::map_visible_rows(app, false);
@@ -1825,7 +2093,9 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             Some(diff_cache.target_changes.as_slice()),
         );
     }
-    let Some(editor) = app.editor() else { return; };
+    let Some(editor) = app.editor() else {
+        return;
+    };
     let diag_lines = &app.cached_diag_lines;
     draw_inline_scrollbar(
         f,
@@ -1838,9 +2108,11 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             diagnostic_lines: diag_lines,
             diagnostic_index: Some(&app.cached_diagnostic_index),
             change_rows: &app.diff_inline_scroll.change_rows,
-            cursor_line: app
-                .diff_inline_scroll
-                .cursor_row(&diff_cache, editor.cursor_line, editor.cursor_col),
+            cursor_line: app.diff_inline_scroll.cursor_row(
+                &diff_cache,
+                editor.cursor_line,
+                editor.cursor_col,
+            ),
             colors: app.colors,
             hovered: app.hovered_scrollbar,
             active: app.dragging_v_scrollbar,
@@ -1861,20 +2133,26 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             Rect::new(layout.code_area.x, horizontal_area.y, gutter_width, 1),
             Style::default().bg(app.colors.bg_dark),
         );
-        draw_horizontal_scrollbar(f, HScrollbarParams {
-            area: horizontal_area,
-            total_width: diff_cache.max_inline_text_width,
-            visible_width: text_width as usize,
-            scroll: horizontal_scroll,
-            bg_editor: app.colors.bg_editor,
-            hovered: app.hovered_h_scrollbar,
-            active: app.dragging_h_scrollbar,
-            colors: &app.colors.ui,
-        });
+        draw_horizontal_scrollbar(
+            f,
+            HScrollbarParams {
+                area: horizontal_area,
+                total_width: diff_cache.max_inline_text_width,
+                visible_width: text_width as usize,
+                scroll: horizontal_scroll,
+                bg_editor: app.colors.bg_editor,
+                hovered: app.hovered_h_scrollbar,
+                active: app.dragging_h_scrollbar,
+                colors: &app.colors.ui,
+            },
+        );
     }
     if let Some(minimap_sep_area) = layout.minimap_sep_area {
         draw_minimap_separator(
-            f, minimap_sep_area, app.colors.ui.fg_overview_border, app.colors.bg_editor,
+            f,
+            minimap_sep_area,
+            app.colors.ui.fg_overview_border,
+            app.colors.bg_editor,
         );
     }
     if let Some(minimap_area) = layout.minimap_area {
@@ -1917,9 +2195,9 @@ mod tests {
 
     use crate::app::{App, DiffLabels, DiffMode, Tab};
     use crate::editor::Editor;
+    use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
-    use ratatui::Terminal;
     use std::path::PathBuf;
 
     #[test]
@@ -1966,26 +2244,65 @@ mod tests {
         for theme in crate::app_theme_loader::load_builtin_themes() {
             let colors = theme.to_theme_colors();
             for (added, line, layer) in [
-                (true, colors.bg_diff_added, colors.ui.diff_inserted_text_background),
-                (false, colors.bg_diff_removed, colors.ui.diff_removed_text_background),
+                (
+                    true,
+                    colors.bg_diff_added,
+                    colors.ui.diff_inserted_text_background,
+                ),
+                (
+                    false,
+                    colors.bg_diff_removed,
+                    colors.ui.diff_removed_text_background,
+                ),
             ] {
                 let paint = DiffWordPaint::themed(&colors, added);
-                assert_eq!(paint.background, layer.over(line).unwrap_or(line), "{}", theme.name);
+                assert_eq!(
+                    paint.background,
+                    layer.over(line).unwrap_or(line),
+                    "{}",
+                    theme.name
+                );
                 if matches!(theme.config_key.as_str(), "tokyo-night" | "rose-pine") {
                     let previous = layer.over(colors.bg_editor).unwrap();
-                    assert_eq!(previous, line, "the flattened colors collided in {}", theme.name);
+                    assert_eq!(
+                        previous, line,
+                        "the flattened colors collided in {}",
+                        theme.name
+                    );
                     assert_ne!(paint.background, line, "{}", theme.name);
                 }
                 let style = paint.apply(Style::default().fg(paint.background));
-                let ratio = crate::ui_colors::contrast_ratio(style.fg.unwrap(), paint.background).unwrap();
-                assert!(ratio >= 4.5, "{}: changed word contrast {ratio}", theme.name);
-                if crate::ui_colors::contrast_ratio(paint.background, line).is_some_and(|ratio| ratio < 1.3) {
-                    assert!(style.add_modifier.contains(Modifier::UNDERLINED), "{}", theme.name);
-                    let border_contrast = crate::ui_colors::contrast_ratio(style.underline_color.unwrap(), paint.background).unwrap();
-                    assert!(border_contrast >= 3.0, "{}: diff underline contrast {border_contrast}", theme.name);
+                let ratio =
+                    crate::ui_colors::contrast_ratio(style.fg.unwrap(), paint.background).unwrap();
+                assert!(
+                    ratio >= 4.5,
+                    "{}: changed word contrast {ratio}",
+                    theme.name
+                );
+                if crate::ui_colors::contrast_ratio(paint.background, line)
+                    .is_some_and(|ratio| ratio < 1.3)
+                {
+                    assert!(
+                        style.add_modifier.contains(Modifier::UNDERLINED),
+                        "{}",
+                        theme.name
+                    );
+                    let border_contrast = crate::ui_colors::contrast_ratio(
+                        style.underline_color.unwrap(),
+                        paint.background,
+                    )
+                    .unwrap();
+                    assert!(
+                        border_contrast >= 3.0,
+                        "{}: diff underline contrast {border_contrast}",
+                        theme.name
+                    );
                 }
                 let readable = style.fg.unwrap();
-                assert_eq!(paint.apply(Style::default().fg(readable)).fg, Some(readable));
+                assert_eq!(
+                    paint.apply(Style::default().fg(readable)).fg,
+                    Some(readable)
+                );
             }
         }
     }
@@ -2008,12 +2325,17 @@ mod tests {
         app.colors.ui.diff_inserted_text_border = layer;
         app.colors.ui.diff_removed_text_border = layer;
         for (mode, render) in [
-            (DiffMode::Inline, draw_inline_diff as fn(&mut Frame, &mut App, Rect)),
+            (
+                DiffMode::Inline,
+                draw_inline_diff as fn(&mut Frame, &mut App, Rect),
+            ),
             (DiffMode::SideBySide, draw_side_by_side_diff),
         ] {
             app.diff_mode = mode;
             let mut terminal = Terminal::new(TestBackend::new(100, 8)).unwrap();
-            terminal.draw(|frame| render(frame, &mut app, frame.area())).unwrap();
+            terminal
+                .draw(|frame| render(frame, &mut app, frame.area()))
+                .unwrap();
             let target_code = app.code_area.unwrap();
             let (source_code, source_row, target_x, target_row) = if mode == DiffMode::Inline {
                 (target_code, target_code.y, target_code.x, target_code.y + 1)
@@ -2022,17 +2344,30 @@ mod tests {
                 (source, source.y, target_code.x + 2, target_code.y)
             };
             let buffer = terminal.backend().buffer();
-            for (x, y, word) in [(source_code.x, source_row, "draft"), (target_x, target_row, "published")] {
+            for (x, y, word) in [
+                (source_code.x, source_row, "draft"),
+                (target_x, target_row, "published"),
+            ] {
                 let unmodified = &buffer[(x, y)];
                 assert_eq!(unmodified.symbol(), "l");
-                assert_eq!(unmodified.fg, app.colors.ui.editor_foreground.over(painted).unwrap_or(app.colors.fg_text));
+                assert_eq!(
+                    unmodified.fg,
+                    app.colors
+                        .ui
+                        .editor_foreground
+                        .over(painted)
+                        .unwrap_or(app.colors.fg_text)
+                );
                 assert!(!unmodified.modifier.contains(Modifier::UNDERLINED));
                 let changed = &buffer[(x + "let status = \"".len() as u16, y)];
                 assert_eq!(changed.symbol(), &word[..1]);
                 assert_eq!(changed.bg, painted);
                 assert!(changed.modifier.contains(Modifier::UNDERLINED));
                 assert!(crate::ui_colors::contrast_ratio(changed.fg, changed.bg).unwrap() >= 4.5);
-                assert!(crate::ui_colors::contrast_ratio(changed.underline_color, changed.bg).unwrap() >= 3.0);
+                assert!(
+                    crate::ui_colors::contrast_ratio(changed.underline_color, changed.bg).unwrap()
+                        >= 3.0
+                );
             }
         }
     }
@@ -2064,12 +2399,16 @@ mod tests {
             (0..buffer.area.height).find_map(|y| {
                 (0..buffer.area.width.saturating_sub(1)).find_map(|x| {
                     (buffer.cell((x, y))?.symbol() == arrow
-                        && buffer.cell((x + 1, y))?.symbol() == id).then_some((x, y))
+                        && buffer.cell((x + 1, y))?.symbol() == id)
+                        .then_some((x, y))
                 })
             })
         };
         for (mode, render) in [
-            (DiffMode::Inline, draw_inline_diff as fn(&mut Frame, &mut App, Rect)),
+            (
+                DiffMode::Inline,
+                draw_inline_diff as fn(&mut Frame, &mut App, Rect),
+            ),
             (DiffMode::SideBySide, draw_side_by_side_diff),
         ] {
             let mut app = app_with_diff(base, target);
@@ -2098,28 +2437,46 @@ mod tests {
                 let source = block.end(true).unwrap();
                 let destination = block.end(false).unwrap();
                 assert_eq!(compact.rows[source.aligned_row].left_move, Some(id));
-                assert_eq!(compact.rows[compact.inline_rows[destination.inline_row].aligned_row].right_move, Some(id));
+                assert_eq!(
+                    compact.rows[compact.inline_rows[destination.inline_row].aligned_row]
+                        .right_move,
+                    Some(id)
+                );
             }
             let (x, y) = badge_at(terminal.backend().buffer(), "→", "1").unwrap();
             app.mouse_col = x;
             app.mouse_row = y;
             app.mouse_position_known = true;
-            terminal.draw(|frame| {
-                draw(frame, &mut app);
-                draw_move_tooltip(frame, &app);
-            }).unwrap();
-            assert!((0..20).any(|y| buffer_row(terminal.backend().buffer(), y, 96)
-                .contains("Move 1 · Original 2 → Modified 11")));
+            terminal
+                .draw(|frame| {
+                    draw(frame, &mut app);
+                    draw_move_tooltip(frame, &app);
+                })
+                .unwrap();
+            assert!((0..20).any(|y| {
+                buffer_row(terminal.backend().buffer(), y, 96)
+                    .contains("Move 1 · Original 2 → Modified 11")
+            }));
 
             let mut terminal = Terminal::new(TestBackend::new(96, 7)).unwrap();
             terminal.draw(|frame| draw(frame, &mut app)).unwrap();
             assert!(badge_at(terminal.backend().buffer(), "←", "1").is_none());
             let (x, y) = badge_at(terminal.backend().buffer(), "→", "1").unwrap();
-            crate::mouse_selection::handle_editor_area_left_click(&mut app, x, y, crossterm::event::KeyModifiers::NONE);
+            crate::mouse_selection::handle_editor_area_left_click(
+                &mut app,
+                x,
+                y,
+                crossterm::event::KeyModifiers::NONE,
+            );
             assert_eq!(app.editor().unwrap().cursor_line, 10);
             terminal.draw(|frame| draw(frame, &mut app)).unwrap();
             let (x, y) = badge_at(terminal.backend().buffer(), "←", "1").unwrap();
-            crate::mouse_selection::handle_editor_area_left_click(&mut app, x, y, crossterm::event::KeyModifiers::NONE);
+            crate::mouse_selection::handle_editor_area_left_click(
+                &mut app,
+                x,
+                y,
+                crossterm::event::KeyModifiers::NONE,
+            );
             terminal.draw(|frame| draw(frame, &mut app)).unwrap();
             assert!(badge_at(terminal.backend().buffer(), "→", "1").is_some());
         }
@@ -2128,23 +2485,34 @@ mod tests {
     #[test]
     fn diff_view_labels_the_revision_missing_a_final_newline() {
         let mut app = App::test_new();
-        let diff = vtcode::acp::protocol::Diff::new(PathBuf::from("file.txt"), "same\n")
-            .old_text("same");
+        let diff =
+            vtcode::acp::protocol::Diff::new(PathBuf::from("file.txt"), "same\n").old_text("same");
         app.open_acp_diff(&diff);
-        assert_eq!(app.compare_diff_lines, [
-            ('-', "same".to_owned()),
-            ('+', "same".to_owned()),
-        ]);
+        assert_eq!(
+            app.compare_diff_lines,
+            [('-', "same".to_owned()), ('+', "same".to_owned()),]
+        );
         for (mode, render) in [
-            (DiffMode::Inline, draw_inline_diff as fn(&mut Frame, &mut App, Rect)),
+            (
+                DiffMode::Inline,
+                draw_inline_diff as fn(&mut Frame, &mut App, Rect),
+            ),
             (DiffMode::SideBySide, draw_side_by_side_diff),
         ] {
             app.diff_mode = mode;
             let mut terminal = Terminal::new(TestBackend::new(120, 12)).unwrap();
-            terminal.draw(|frame| render(frame, &mut app, frame.area())).unwrap();
+            terminal
+                .draw(|frame| render(frame, &mut app, frame.area()))
+                .unwrap();
             let title = buffer_row(terminal.backend().buffer(), 0, 120);
-            assert!(title.contains("Before agent edit (no final newline)"), "{title}");
-            assert!(!title.contains("Agent result (no final newline)"), "{title}");
+            assert!(
+                title.contains("Before agent edit (no final newline)"),
+                "{title}"
+            );
+            assert!(
+                !title.contains("Agent result (no final newline)"),
+                "{title}"
+            );
         }
     }
 
@@ -2170,9 +2538,11 @@ mod tests {
         assert!(buffer_row(buffer, 2, width).contains('╱'));
         for y in 1..=3 {
             assert!(!buffer_row(buffer, y, width).contains('+'));
-            assert!((0..width)
-                .filter_map(|x| buffer.cell((x, y)))
-                .all(|cell| cell.bg != added_bg));
+            assert!(
+                (0..width)
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .all(|cell| cell.bg != added_bg)
+            );
         }
     }
 
@@ -2205,9 +2575,11 @@ mod tests {
                 assert_eq!(buffer[(x, y)].symbol(), " ");
             }
             assert!(!buffer_row(buffer, y, width).contains('-'));
-            assert!((0..width)
-                .filter_map(|x| buffer.cell((x, y)))
-                .all(|cell| cell.bg != removed_bg));
+            assert!(
+                (0..width)
+                    .filter_map(|x| buffer.cell((x, y)))
+                    .all(|cell| cell.bg != removed_bg)
+            );
         }
     }
 
@@ -2260,9 +2632,18 @@ mod tests {
         assert!(gutter.width > 2, "diff target must reserve line numbers");
         let number_x = gutter.x + gutter.width - 2;
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer.cell((number_x, 0)).map(|cell| cell.symbol()), Some("1"));
-        assert_eq!(buffer.cell((number_x, 1)).map(|cell| cell.symbol()), Some("2"));
-        assert_eq!(buffer.cell((number_x, 2)).map(|cell| cell.symbol()), Some("3"));
+        assert_eq!(
+            buffer.cell((number_x, 0)).map(|cell| cell.symbol()),
+            Some("1")
+        );
+        assert_eq!(
+            buffer.cell((number_x, 1)).map(|cell| cell.symbol()),
+            Some("2")
+        );
+        assert_eq!(
+            buffer.cell((number_x, 2)).map(|cell| cell.symbol()),
+            Some("3")
+        );
     }
 
     #[test]
@@ -2272,7 +2653,10 @@ mod tests {
         let wide_left = side_by_side_diff_layout(area, 0.75);
 
         assert_eq!(narrow_left.divider.width, 1);
-        assert_eq!(narrow_left.left.width + 1 + narrow_left.right.width, area.width);
+        assert_eq!(
+            narrow_left.left.width + 1 + narrow_left.right.width,
+            area.width
+        );
         assert!(narrow_left.left.width < narrow_left.right.width);
         assert!(wide_left.left.width > wide_left.right.width);
         assert_eq!(narrow_left.right.right(), area.right());
@@ -2315,11 +2699,17 @@ mod tests {
                     let layout = side_by_side_diff_layout(area, app.diff_split_ratio);
                     let buffer = terminal.backend().buffer();
                     assert_eq!(
-                        buffer.cell((layout.left_header.x + 1, area.y)).unwrap().symbol(),
+                        buffer
+                            .cell((layout.left_header.x + 1, area.y))
+                            .unwrap()
+                            .symbol(),
                         "o"
                     );
                     assert_eq!(
-                        buffer.cell((layout.right_header.x + 1, area.y)).unwrap().symbol(),
+                        buffer
+                            .cell((layout.right_header.x + 1, area.y))
+                            .unwrap()
+                            .symbol(),
                         "n"
                     );
                     assert_eq!(app.diff_left_code_area.unwrap().y, code.y);
@@ -2350,12 +2740,15 @@ mod tests {
         };
         let move_to = |app: &mut App, column, row| {
             app.mouse_hover_changed = false;
-            crate::mouse::handle_mouse(app, MouseEvent {
-                kind: MouseEventKind::Moved,
-                column,
-                row,
-                modifiers: KeyModifiers::NONE,
-            });
+            crate::mouse::handle_mouse(
+                app,
+                MouseEvent {
+                    kind: MouseEventKind::Moved,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
             assert!(app.mouse_hover_changed);
         };
 
@@ -2392,8 +2785,8 @@ mod tests {
         let area = Rect::new(0, 0, 81, 4);
         let layout = side_by_side_diff_layout(area, app.diff_split_ratio);
         let added_bg = app.colors.bg_diff_added;
-        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
-            .expect("terminal");
+        let mut terminal =
+            Terminal::new(TestBackend::new(area.width, area.height)).expect("terminal");
 
         terminal
             .draw(|frame| draw_side_by_side_diff(frame, &mut app, area))
@@ -2429,8 +2822,8 @@ mod tests {
         let area = Rect::new(0, 0, 81, 4);
         let layout = side_by_side_diff_layout(area, app.diff_split_ratio);
         let removed_bg = app.colors.bg_diff_removed;
-        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
-            .expect("terminal");
+        let mut terminal =
+            Terminal::new(TestBackend::new(area.width, area.height)).expect("terminal");
 
         terminal
             .draw(|frame| draw_side_by_side_diff(frame, &mut app, area))
@@ -2463,16 +2856,14 @@ mod tests {
         app.diff_left_horizontal_scroll = 7;
         app.editor_mut().expect("editor").horizontal_scroll = 13;
         let area = Rect::new(0, 0, 81, 4);
-        let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
-            .expect("terminal");
+        let mut terminal =
+            Terminal::new(TestBackend::new(area.width, area.height)).expect("terminal");
 
         terminal
             .draw(|frame| draw_side_by_side_diff(frame, &mut app, area))
             .expect("draw side-by-side scrollbars");
 
-        let left = app
-            .diff_left_h_scrollbar_area
-            .expect("left diff scrollbar");
+        let left = app.diff_left_h_scrollbar_area.expect("left diff scrollbar");
         let right = app.h_scrollbar_area.expect("right diff scrollbar");
         assert!(left.right() < right.x);
         assert_eq!(app.diff_left_horizontal_scroll, 7);
@@ -2705,7 +3096,11 @@ mod tests {
     fn inline_diff_minimap_separator_paints_the_theme_background() {
         for background in [Color::Rgb(45, 42, 46), Color::Rgb(248, 246, 250)] {
             for wide_line in [false, true] {
-                let target = if wide_line { "x".repeat(300) } else { "short".into() };
+                let target = if wide_line {
+                    "x".repeat(300)
+                } else {
+                    "short".into()
+                };
                 let mut app = app_with_diff("original\n", &target);
                 app.diff_mode = DiffMode::Inline;
                 app.show_minimap = true;
@@ -2713,11 +3108,15 @@ mod tests {
                 app.colors.bg_editor = background;
                 let area = Rect::new(3, 2, 120, 12);
                 let mut terminal = Terminal::new(TestBackend::new(128, 16)).unwrap();
-                terminal.draw(|frame| {
-                    let screen = frame.area();
-                    frame.buffer_mut().set_style(screen, Style::default().bg(Color::Black));
-                    draw_inline_diff(frame, &mut app, area);
-                }).unwrap();
+                terminal
+                    .draw(|frame| {
+                        let screen = frame.area();
+                        frame
+                            .buffer_mut()
+                            .set_style(screen, Style::default().bg(Color::Black));
+                        draw_inline_diff(frame, &mut app, area);
+                    })
+                    .unwrap();
 
                 let minimap = app.minimap_area.expect("visible minimap");
                 assert_eq!(app.h_scrollbar_area.is_some(), wide_line);
@@ -2727,7 +3126,10 @@ mod tests {
                     assert_eq!(cell.bg, background, "separator at row {y}");
                     assert_eq!(cell.fg, app.colors.ui.fg_overview_border);
                 }
-                assert_eq!(terminal.backend().buffer()[(area.x - 1, area.y)].bg, Color::Black);
+                assert_eq!(
+                    terminal.backend().buffer()[(area.x - 1, area.y)].bg,
+                    Color::Black
+                );
             }
         }
     }
@@ -2746,9 +3148,11 @@ mod tests {
                 app.minimap_width = 10;
                 app.colors.bg_editor = background;
                 app.colors.bg_dark = gutter;
-                app.animation_settings.set(crate::animation_config::AnimationEffect::CursorSmear, true);
+                app.animation_settings
+                    .set(crate::animation_config::AnimationEffect::CursorSmear, true);
                 if compact {
-                    app.diff_render_cache = std::sync::Arc::new(app.diff_render_cache.with_context(2));
+                    app.diff_render_cache =
+                        std::sync::Arc::new(app.diff_render_cache.with_context(2));
                 }
                 // Reuse the view while resizing and toggling the minimap. The
                 // offset viewport also models an editor inside a split pane.
@@ -2759,18 +3163,32 @@ mod tests {
                     for cosmetic in [false, true] {
                         app.rendering_animation_frame = cosmetic;
                         let replays = app.animation_frame_cache.replays;
-                        terminal.draw(|frame| {
-                            let screen = frame.area();
-                            frame.buffer_mut().set_style(screen, Style::default().bg(Color::Black));
-                            draw_inline_diff(frame, &mut app, area);
-                        }).unwrap();
-                        let bar = app.h_scrollbar_area.expect("long lines need a horizontal scrollbar");
+                        terminal
+                            .draw(|frame| {
+                                let screen = frame.area();
+                                frame
+                                    .buffer_mut()
+                                    .set_style(screen, Style::default().bg(Color::Black));
+                                draw_inline_diff(frame, &mut app, area);
+                            })
+                            .unwrap();
+                        let bar = app
+                            .h_scrollbar_area
+                            .expect("long lines need a horizontal scrollbar");
                         let buffer = terminal.backend().buffer();
                         for x in area.x..bar.x {
-                            assert_eq!(buffer[(x, bar.y)].bg, gutter, "gutter cap {x}, cosmetic={cosmetic}");
+                            assert_eq!(
+                                buffer[(x, bar.y)].bg,
+                                gutter,
+                                "gutter cap {x}, cosmetic={cosmetic}"
+                            );
                         }
                         for x in bar.right()..area.right() {
-                            assert_eq!(buffer[(x, bar.y)].bg, background, "overview cap {x}, cosmetic={cosmetic}");
+                            assert_eq!(
+                                buffer[(x, bar.y)].bg,
+                                background,
+                                "overview cap {x}, cosmetic={cosmetic}"
+                            );
                         }
                         assert_eq!(buffer[(area.x - 1, bar.y)].bg, Color::Black);
                         assert_eq!(buffer[(area.right(), bar.y)].bg, Color::Black);
@@ -2784,14 +3202,18 @@ mod tests {
     }
 
     fn draw_inline(app: &mut App, terminal: &mut Terminal<TestBackend>) {
-        terminal.draw(|frame| draw_inline_diff(frame, app, frame.area())).unwrap();
+        terminal
+            .draw(|frame| draw_inline_diff(frame, app, frame.area()))
+            .unwrap();
     }
 
     fn wait_for_visible_inline_highlights(app: &mut App) {
         app.refresh_visible_highlights_async();
         app.wait_for_background(std::time::Duration::from_secs(5), |app| {
             let editor = app.editor().unwrap();
-            app.diff_render_cache.inline_rows.iter()
+            app.diff_render_cache
+                .inline_rows
+                .iter()
                 .skip(app.diff_inline_scroll.row)
                 .take(app.diff_inline_scroll.text_area.height as usize)
                 .all(|inline| {
@@ -2801,10 +3223,15 @@ mod tests {
                     } else {
                         (row.right_line.unwrap(), row.right_highlight_hash())
                     };
-                    app.highlighter.highlighted_fragment_by_hash_if_cached(
-                        hash, line, Some(editor.highlight_path()),
-                        editor.syntax_language_token(), &app.syntax_theme,
-                    ).is_some()
+                    app.highlighter
+                        .highlighted_fragment_by_hash_if_cached(
+                            hash,
+                            line,
+                            Some(editor.highlight_path()),
+                            editor.syntax_language_token(),
+                            &app.syntax_theme,
+                        )
+                        .is_some()
                 })
         });
     }
@@ -2832,7 +3259,9 @@ mod tests {
             wait_for_visible_inline_highlights(&mut app);
 
             app.diff_mode = DiffMode::SideBySide;
-            terminal.draw(|frame| draw_side_by_side_diff(frame, &mut app, frame.area())).unwrap();
+            terminal
+                .draw(|frame| draw_side_by_side_diff(frame, &mut app, frame.area()))
+                .unwrap();
             let left = app.diff_left_code_area.unwrap();
             let right = app.code_area.unwrap();
             let reference = terminal.backend().buffer().clone();
@@ -2850,22 +3279,35 @@ mod tests {
                     (&row.right_text, right.x + 2, right.y)
                 };
                 for (column, character) in source.chars().enumerate() {
-                    let actual = buffer.cell((code.x + column as u16, code.y + line as u16)).unwrap();
-                    let expected = reference.cell((x + column as u16, y + inline.aligned_row as u16)).unwrap();
+                    let actual = buffer
+                        .cell((code.x + column as u16, code.y + line as u16))
+                        .unwrap();
+                    let expected = reference
+                        .cell((x + column as u16, y + inline.aligned_row as u16))
+                        .unwrap();
                     assert_eq!(actual.symbol(), character.to_string());
                     assert_eq!(actual.fg, expected.fg, "{theme}: {source} at {column}");
                     if inline.kind != ' ' {
-                        assert_eq!(actual.bg, expected.bg, "character diff backgrounds must survive");
+                        assert_eq!(
+                            actual.bg, expected.bg,
+                            "character diff backgrounds must survive"
+                        );
                     }
                     if !character.is_whitespace() && !colors.contains(&actual.fg) {
                         colors.push(actual.fg);
                     }
                 }
             }
-            assert!(colors.len() >= 3, "keywords, strings and comments need syntax colors");
+            assert!(
+                colors.len() >= 3,
+                "keywords, strings and comments need syntax colors"
+            );
             keyword_colors.push(buffer.cell((code.x, code.y)).unwrap().fg);
         }
-        assert_ne!(keyword_colors[0], keyword_colors[1], "theme changes must recolor inline diffs");
+        assert_ne!(
+            keyword_colors[0], keyword_colors[1],
+            "theme changes must recolor inline diffs"
+        );
     }
 
     #[test]
@@ -2891,12 +3333,31 @@ mod tests {
             assert_eq!(app.diff_inline_scroll.column, column);
             for row in 0..2 {
                 for offset in 0..code.width {
-                    let actual = terminal.backend().buffer().cell((code.x + offset, code.y + row)).unwrap();
-                    let expected = reference.cell((reference_area.x + column as u16 + offset, reference_area.y + row)).unwrap();
-                    assert_eq!(actual.symbol(), expected.symbol(), "scroll {column}, row {row}, offset {offset}");
+                    let actual = terminal
+                        .backend()
+                        .buffer()
+                        .cell((code.x + offset, code.y + row))
+                        .unwrap();
+                    let expected = reference
+                        .cell((
+                            reference_area.x + column as u16 + offset,
+                            reference_area.y + row,
+                        ))
+                        .unwrap();
+                    assert_eq!(
+                        actual.symbol(),
+                        expected.symbol(),
+                        "scroll {column}, row {row}, offset {offset}"
+                    );
                     if !actual.symbol().trim().is_empty() {
-                        assert_eq!(actual.fg, expected.fg, "syntax colors must scroll with their graphemes");
-                        assert_eq!(actual.bg, expected.bg, "character diff offsets must scroll with their graphemes");
+                        assert_eq!(
+                            actual.fg, expected.fg,
+                            "syntax colors must scroll with their graphemes"
+                        );
+                        assert_eq!(
+                            actual.bg, expected.bg,
+                            "character diff offsets must scroll with their graphemes"
+                        );
                     }
                 }
             }
@@ -2944,8 +3405,12 @@ mod tests {
 
     #[test]
     fn inline_diff_highlights_both_blocks_across_the_replacement_boundary() {
-        let base: String = (0..250).map(|line| format!("let removed_{line} = {line};\n")).collect();
-        let target: String = (0..250).map(|line| format!("let added_{line} = {line};\n")).collect();
+        let base: String = (0..250)
+            .map(|line| format!("let removed_{line} = {line};\n"))
+            .collect();
+        let target: String = (0..250)
+            .map(|line| format!("let added_{line} = {line};\n"))
+            .collect();
         let mut app = app_with_diff(&base, &target);
         app.editor_mut().unwrap().file_path = Some("example.rs".into());
         app.diff_mode = DiffMode::Inline;
@@ -2970,14 +3435,19 @@ mod tests {
             let keyword = &buffer[(code.x, code.y + row)];
             let number = &buffer[(code.x + offset, code.y + row)];
             assert_eq!(keyword.symbol(), "l");
-            assert_ne!(keyword.fg, number.fg, "both sides of the boundary need syntax colors");
+            assert_ne!(
+                keyword.fg, number.fg,
+                "both sides of the boundary need syntax colors"
+            );
             assert_eq!(keyword.bg, background);
         }
     }
 
     #[test]
     fn inline_diff_highlights_deleted_viewports_when_target_scroll_stays_fixed() {
-        let base: String = (0..250).map(|line| format!("let removed_{line} = {line};\n")).collect();
+        let base: String = (0..250)
+            .map(|line| format!("let removed_{line} = {line};\n"))
+            .collect();
         let mut app = app_with_diff(&base, "");
         app.editor_mut().unwrap().file_path = Some("example.rs".into());
         app.diff_mode = DiffMode::Inline;
@@ -2999,7 +3469,10 @@ mod tests {
         let keyword = buffer.cell((code.x, code.y)).unwrap();
         let number = buffer.cell((code.x + 18, code.y)).unwrap();
         assert_eq!(keyword.symbol(), "l");
-        assert_ne!(keyword.fg, number.fg, "deleted code must keep syntax colors after scrolling");
+        assert_ne!(
+            keyword.fg, number.fg,
+            "deleted code must keep syntax colors after scrolling"
+        );
         assert_eq!(keyword.bg, app.colors.bg_diff_removed);
     }
 
@@ -3020,7 +3493,9 @@ mod tests {
             let code = app.code_area.unwrap();
             for (row, text) in expected.into_iter().enumerate() {
                 let line = buffer_row(
-                    terminal.backend().buffer(), code.y + row as u16, code.right(),
+                    terminal.backend().buffer(),
+                    code.y + row as u16,
+                    code.right(),
                 );
                 assert_eq!(line[usize::from(code.x)..].trim_end(), text);
             }
@@ -3063,7 +3538,10 @@ mod tests {
             ("          ", "r"),
             ("   + 1000 ", "a"),
             ("          ", "a"),
-        ].into_iter().enumerate() {
+        ]
+        .into_iter()
+        .enumerate()
+        {
             let y = code.y + row as u16;
             assert_eq!(buffer_row(buffer, y, code.x), gutter);
             assert_eq!(buffer[(code.x, y)].symbol(), source);

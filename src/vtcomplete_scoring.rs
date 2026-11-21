@@ -2,7 +2,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::fuzzy_score::{FuzzyScoreOutcome, FuzzyWorkBudget, FuzzyWorkLimits, PreparedFuzzyScore};
 
-use super::{VtCompleteCandidate, VtCompleteWorkOutcome, CompletionEvidence, CompletionResult};
+use super::{CompletionEvidence, CompletionResult, VtCompleteCandidate, VtCompleteWorkOutcome};
 
 pub(super) const MAX_COMPLETION_WORD_BYTES: usize = 4096;
 pub(super) const MAX_QUERY_BYTES: usize = 64 * 1024;
@@ -335,19 +335,17 @@ impl<'a> Scores<'a> {
                     rank += 75;
                 }
                 if statistical {
-                    let base =
-                        crate::completion_examples::candidate_weight(evidence.frequency)
-                            / vocabulary_mass.max(1.);
-                    let prior = (f64::from(evidence.file_frequency.min(16)) + 2. * base)
-                        / (file_mass + 2.);
+                    let base = crate::completion_examples::candidate_weight(evidence.frequency)
+                        / vocabulary_mass.max(1.);
+                    let prior =
+                        (f64::from(evidence.file_frequency.min(16)) + 2. * base) / (file_mass + 2.);
                     let mut probability =
                         generated.probability(&word, learned.probability(&word, prior));
                     if edit_candidates > 0 {
                         // Two independent committed changes supply temporal
                         // evidence; one unit of backoff preserves other sources.
                         let count = if evidence.edit_history { 2. } else { 0. };
-                        probability = (count + probability)
-                            / (2. * edit_candidates as f64 + 1.);
+                        probability = (count + probability) / (2. * edit_candidates as f64 + 1.);
                     }
                     // Conditional estimates replace contextual bonuses. The
                     // measured log scale retains spelling and deliberate UX.
@@ -366,7 +364,9 @@ impl<'a> Scores<'a> {
                         && evidence.local_matched_calls.saturating_mul(3)
                             >= evidence.local_matched_uses.saturating_mul(2)
                 } else {
-                    !context.member() && !evidence.example_reference && evidence.code_calls >= 2
+                    !context.member()
+                        && !evidence.example_reference
+                        && evidence.code_calls >= 2
                         && evidence.code_calls.saturating_mul(3)
                             >= evidence.code_uses.saturating_mul(2)
                 };
@@ -454,7 +454,9 @@ impl<'a> Scores<'a> {
             row.6 = class;
         }
         let focused = context.structural()
-            && sorted.iter().any(|row| row.5.semantic_score >= 200 || row.5.example_seen);
+            && sorted
+                .iter()
+                .any(|row| row.5.semantic_score >= 200 || row.5.example_seen);
         sorted.retain(|row| {
             if row.0 == prefix && !row.2 {
                 return false;
@@ -523,8 +525,8 @@ impl<'a> Scores<'a> {
                             count
                         };
                     let base = count / mass.max(1.);
-                    let prior = (f64::from(item.file_frequency.min(16)) + 2. * base)
-                        / (file_mass + 2.);
+                    let prior =
+                        (f64::from(item.file_frequency.min(16)) + 2. * base) / (file_mass + 2.);
                     105 + prefix.len() as i64 * 24
                         + (log_scale
                             * generated

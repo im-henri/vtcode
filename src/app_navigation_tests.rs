@@ -6,7 +6,8 @@ fn populated_history() -> App {
     let mut app = app();
     for index in 0..55 {
         app.editor_mut().unwrap().navigation_id = Editor::allocate_navigation_id();
-        app.editor_mut().unwrap().file_path = Some(format!("workspace/subdirectory/source/file_{index}.rs").into());
+        app.editor_mut().unwrap().file_path =
+            Some(format!("workspace/subdirectory/source/file_{index}.rs").into());
         app.editor_mut().unwrap().cursor_line = 50;
         app.finish_navigation();
     }
@@ -21,26 +22,73 @@ fn caret_history_fast_path_preserves_jumps_selections_forward_branch_and_path_ch
     expected.tabs[0].editor.navigation_id = actual.tabs[0].editor.navigation_id;
     expected.navigation.entries = actual.navigation.entries.clone();
     expected.navigation.reference_caret_recording = true;
-    let path_storage = actual.navigation.entries.last().unwrap().path.as_ref().unwrap().as_os_str().as_encoded_bytes().as_ptr();
+    let path_storage = actual
+        .navigation
+        .entries
+        .last()
+        .unwrap()
+        .path
+        .as_ref()
+        .unwrap()
+        .as_os_str()
+        .as_encoded_bytes()
+        .as_ptr();
     for step in 0..200 {
         for app in [&mut actual, &mut expected] {
-            if step >= 50 && step % 17 == 0 { app.push_nav_history(); }
+            if step >= 50 && step % 17 == 0 {
+                app.push_nav_history();
+            }
             let editor = app.editor_mut().unwrap();
             editor.cursor_line = if step < 50 { 50 } else { (step * 7) % 150 };
             editor.cursor_col = step % 20;
-            editor.selection_anchor = (step % 3 == 0).then_some((editor.cursor_line.saturating_sub(2), 1));
-            if step == 80 { editor.file_path = Some("workspace/renamed.rs".into()); }
-            if step == 90 { app.active_group += 1; }
-            if step == 100 { app.navigation.index = Some(app.navigation.entries.len() - 3); }
+            editor.selection_anchor =
+                (step % 3 == 0).then_some((editor.cursor_line.saturating_sub(2), 1));
+            if step == 80 {
+                editor.file_path = Some("workspace/renamed.rs".into());
+            }
+            if step == 90 {
+                app.active_group += 1;
+            }
+            if step == 100 {
+                app.navigation.index = Some(app.navigation.entries.len() - 3);
+            }
             app.finish_navigation();
         }
-        assert_eq!(actual.navigation.entries, expected.navigation.entries, "step={step}");
-        assert_eq!(actual.navigation.index, expected.navigation.index, "step={step}");
-        assert_eq!(actual.navigation.jump_pending, expected.navigation.jump_pending);
-        assert_eq!(actual.navigation.can_navigate(false), expected.navigation.can_navigate(false));
-        assert_eq!(actual.navigation.can_navigate(true), expected.navigation.can_navigate(true));
+        assert_eq!(
+            actual.navigation.entries, expected.navigation.entries,
+            "step={step}"
+        );
+        assert_eq!(
+            actual.navigation.index, expected.navigation.index,
+            "step={step}"
+        );
+        assert_eq!(
+            actual.navigation.jump_pending,
+            expected.navigation.jump_pending
+        );
+        assert_eq!(
+            actual.navigation.can_navigate(false),
+            expected.navigation.can_navigate(false)
+        );
+        assert_eq!(
+            actual.navigation.can_navigate(true),
+            expected.navigation.can_navigate(true)
+        );
         if step < 17 {
-            assert_eq!(actual.navigation.entries.last().unwrap().path.as_ref().unwrap().as_os_str().as_encoded_bytes().as_ptr(), path_storage);
+            assert_eq!(
+                actual
+                    .navigation
+                    .entries
+                    .last()
+                    .unwrap()
+                    .path
+                    .as_ref()
+                    .unwrap()
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .as_ptr(),
+                path_storage
+            );
         }
     }
 }
@@ -57,7 +105,10 @@ fn benchmark_low_end_keyboard_history() {
             let started = Instant::now();
             for _ in 0..1_000 {
                 for code in [KeyCode::Down, KeyCode::Right, KeyCode::Up, KeyCode::Left] {
-                    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, KeyModifiers::NONE));
+                    crate::input_keyboard::handle_keyboard_event(
+                        &mut app,
+                        KeyEvent::new(code, KeyModifiers::NONE),
+                    );
                 }
             }
             times[usize::from(reference)].push(started.elapsed() / 4_000);
@@ -65,8 +116,13 @@ fn benchmark_low_end_keyboard_history() {
             assert_eq!(app.navigation.entries.len(), 50);
         }
     }
-    for samples in &mut times { samples.sort(); }
-    eprintln!("keyboard input with 50 history stops: before={:?}, after={:?}", times[1][3], times[0][3]);
+    for samples in &mut times {
+        samples.sort();
+    }
+    eprintln!(
+        "keyboard input with 50 history stops: before={:?}, after={:?}",
+        times[1][3], times[0][3]
+    );
 }
 
 fn tab() -> Tab {
@@ -961,7 +1017,10 @@ fn closing_an_intervening_view_does_not_leave_a_noop_history_step() {
     assert!(app.navigation.can_navigate(true));
     app.navigate_forward();
     assert_eq!(cursor(&app), (30, 3));
-    assert!(!app.navigation.can_navigate(true), "identical remaining stops are disabled");
+    assert!(
+        !app.navigation.can_navigate(true),
+        "identical remaining stops are disabled"
+    );
 }
 
 #[test]
@@ -979,12 +1038,16 @@ fn back_skips_positions_that_collapse_after_the_document_shrinks() {
     app.background
         .sender
         .send(crate::background::BackgroundResult::FileReloaded {
-            targets: app.tabs.iter().chain(app.groups.iter().flat_map(|group| &group.tabs))
-                .map(|tab| (tab.editor.navigation_id, tab.editor.content_version)).collect(),
+            targets: app
+                .tabs
+                .iter()
+                .chain(app.groups.iter().flat_map(|group| &group.tabs))
+                .map(|tab| (tab.editor.navigation_id, tab.editor.content_version))
+                .collect(),
             workspace_generation: 0,
             path,
             result: Ok(crate::editor::LoadedTextFile {
-            remote_checkpoint: None,
+                remote_checkpoint: None,
                 file_size: rope.len_bytes() as u64,
                 rope,
                 encoding: "UTF-8",

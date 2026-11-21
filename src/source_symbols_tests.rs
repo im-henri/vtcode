@@ -12,7 +12,9 @@ fn app_with(text: &str) -> App {
 }
 
 fn finish(app: &mut App) {
-    app.wait_for_background(Duration::from_secs(10), |app| !app.source_symbol_work.picker_pending());
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        !app.source_symbol_work.picker_pending()
+    });
 }
 
 #[test]

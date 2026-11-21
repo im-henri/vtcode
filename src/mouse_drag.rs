@@ -1,9 +1,9 @@
 use std::time::{Duration, Instant};
 
-use crossterm::event::KeyModifiers;
 use crate::app::{ActivePane, App, TabKind, TerminalDock};
 use crate::explorer::FileExplorer;
 use crate::ui_chrome_tabs::TabBarHits;
+use crossterm::event::KeyModifiers;
 
 #[cfg(test)]
 #[path = "mouse_tab_columns_tests.rs"]
@@ -46,7 +46,8 @@ struct BlockDragTarget {
 
 impl BlockDragTarget {
     fn same_line_columns(&self, other: &Self) -> bool {
-        !self.wrapped && !other.wrapped
+        !self.wrapped
+            && !other.wrapped
             && self.editor_id == other.editor_id
             && self.content_version == other.content_version
             && self.wrap_revision == other.wrap_revision
@@ -103,10 +104,14 @@ impl BlockDragProjection {
         }
     }
 
-    fn update_line_endpoint(&mut self, editor: &crate::editor::Editor,
-        previous: &BlockDragTarget, target: &BlockDragTarget) -> bool
-    {
-        if !previous.same_line_columns(target) || self.main.is_none()
+    fn update_line_endpoint(
+        &mut self,
+        editor: &crate::editor::Editor,
+        previous: &BlockDragTarget,
+        target: &BlockDragTarget,
+    ) -> bool {
+        if !previous.same_line_columns(target)
+            || self.main.is_none()
             || target.start.0 >= editor.line_count()
         {
             return false;
@@ -131,8 +136,12 @@ impl BlockDragProjection {
             for line in old_last + 1..=last {
                 let len = editor.line_len(line);
                 let origin = target.horizontal_scroll;
-                let col = editor.source_column_at_cell(line, origin, len, end_col.saturating_sub(origin)).0;
-                let anchor = editor.source_column_at_cell(line, origin, len, target.start.2.saturating_sub(origin)).0;
+                let col = editor
+                    .source_column_at_cell(line, origin, len, end_col.saturating_sub(origin))
+                    .0;
+                let anchor = editor
+                    .source_column_at_cell(line, origin, len, target.start.2.saturating_sub(origin))
+                    .0;
                 self.push(line, col, (anchor != col).then_some((line, anchor)));
             }
         }
@@ -155,23 +164,22 @@ fn rect_contains(area: ratatui::layout::Rect, col: u16, row: u16) -> bool {
         && row < area.y.saturating_add(area.height)
 }
 
-fn editor_drop_target(
-    app: &App,
-    col: u16,
-    row: u16,
-) -> Option<(usize, ratatui::layout::Rect)> {
+fn editor_drop_target(app: &App, col: u16, row: u16) -> Option<(usize, ratatui::layout::Rect)> {
     if let Some(area) = app.editor_area {
         if rect_contains(area, col, row) {
             return Some((app.active_group, area));
         }
     }
-    app.groups.iter().enumerate().find_map(|(group_index, group)| {
-        if group_index == app.active_group {
-            return None;
-        }
-        let area = group.editor_area?;
-        rect_contains(area, col, row).then_some((group_index, area))
-    })
+    app.groups
+        .iter()
+        .enumerate()
+        .find_map(|(group_index, group)| {
+            if group_index == app.active_group {
+                return None;
+            }
+            let area = group.editor_area?;
+            rect_contains(area, col, row).then_some((group_index, area))
+        })
 }
 
 fn tab_drop_zone_at(
@@ -200,12 +208,17 @@ pub(crate) fn tab_drop_target_at(
     col: u16,
     row: u16,
 ) -> Option<(usize, Option<crate::app::TabDropZone>)> {
-    if app.tab_bar_area.is_some_and(|area| rect_contains(area, col, row)) {
+    if app
+        .tab_bar_area
+        .is_some_and(|area| rect_contains(area, col, row))
+    {
         return Some((app.active_group, None));
     }
     for (index, group) in app.groups.iter().enumerate() {
         if index != app.active_group
-            && group.tab_bar_area.is_some_and(|area| rect_contains(area, col, row))
+            && group
+                .tab_bar_area
+                .is_some_and(|area| rect_contains(area, col, row))
         {
             return Some((index, None));
         }
@@ -251,7 +264,9 @@ fn dragged_editor_terminal_index(app: &App) -> Option<usize> {
 }
 
 fn terminal_dock_target_at(app: &App, col: u16, row: u16) -> Option<TerminalDock> {
-    if app.detached_window_id().is_some() { return None; }
+    if app.detached_window_id().is_some() {
+        return None;
+    }
     let body = app.workbench_body_area?;
     if !rect_contains(body, col, row) {
         return None;
@@ -278,20 +293,54 @@ pub(crate) fn code_area_to_buffer_pos(
     let screen_row = row.saturating_sub(code_area.y) as usize;
     let screen_col = col.saturating_sub(code_area.x) as usize;
     if let Some(rows) = &ed.diff_display_rows {
-        let mapped = rows.get(screen_row).copied().flatten()
+        let mapped = rows
+            .get(screen_row)
+            .copied()
+            .flatten()
             .or_else(|| rows.iter().skip(screen_row).copied().flatten().next())
             .or_else(|| rows.iter().take(screen_row).rev().copied().flatten().next());
         return mapped.map_or((ed.cursor_line, ed.cursor_col), |row| {
-            (row.line_idx, ed.column_on_wrapped_row(&row, screen_col.saturating_sub(ed.diff_text_inset)))
+            (
+                row.line_idx,
+                ed.column_on_wrapped_row(&row, screen_col.saturating_sub(ed.diff_text_inset)),
+            )
         });
     }
     if ed.ai_review.active {
-        let mapped = ed.ai_review.source_rows.get(screen_row).copied().flatten()
-            .or_else(|| ed.ai_review.source_rows.iter().skip(screen_row).copied().flatten().next())
-            .or_else(|| ed.ai_review.source_rows.iter().take(screen_row).rev().copied().flatten().next());
+        let mapped = ed
+            .ai_review
+            .source_rows
+            .get(screen_row)
+            .copied()
+            .flatten()
+            .or_else(|| {
+                ed.ai_review
+                    .source_rows
+                    .iter()
+                    .skip(screen_row)
+                    .copied()
+                    .flatten()
+                    .next()
+            })
+            .or_else(|| {
+                ed.ai_review
+                    .source_rows
+                    .iter()
+                    .take(screen_row)
+                    .rev()
+                    .copied()
+                    .flatten()
+                    .next()
+            });
         if let Some(mapped) = mapped {
-            let offset = if ed.ai_review.wrapped { mapped.start_col } else { ed.horizontal_scroll };
-            let column = ed.source_column_at_cell(mapped.line_idx, offset, mapped.end_col, screen_col).0;
+            let offset = if ed.ai_review.wrapped {
+                mapped.start_col
+            } else {
+                ed.horizontal_scroll
+            };
+            let column = ed
+                .source_column_at_cell(mapped.line_idx, offset, mapped.end_col, screen_col)
+                .0;
             return (mapped.line_idx, column);
         }
         return (ed.cursor_line, ed.cursor_col);
@@ -305,7 +354,9 @@ pub(crate) fn code_area_to_buffer_pos(
         );
     }
     let line = unwrapped_pointer_line(ed, screen_row);
-    let col = ed.source_column_at_cell(line, ed.horizontal_scroll, ed.line_len(line), screen_col).0;
+    let col = ed
+        .source_column_at_cell(line, ed.horizontal_scroll, ed.line_len(line), screen_col)
+        .0;
     (line, col)
 }
 
@@ -356,12 +407,17 @@ pub(crate) fn handle_block_drag(app: &mut App, col: u16, row: u16) {
         wrapped: ed.word_wrap,
         layout_ready: ed.wrap_layout_ready(width),
     };
-    let valid_snapshot = previous.as_ref().is_some_and(|cache|
+    let valid_snapshot = previous.as_ref().is_some_and(|cache| {
         cache.rope.is_instance(&ed.rope)
-        && ed.folded_ranges.iter().map(|(&a, &b)| (a, b)).eq(cache.folds.iter().copied())
-    );
+            && ed
+                .folded_ranges
+                .iter()
+                .map(|(&a, &b)| (a, b))
+                .eq(cache.folds.iter().copied())
+    });
     if let Some(cache) = &previous
-        && valid_snapshot && cache.target == target
+        && valid_snapshot
+        && cache.target == target
     {
         cache.projection.apply(ed);
         app.block_drag_cache = previous;
@@ -370,7 +426,9 @@ pub(crate) fn handle_block_drag(app: &mut App, col: u16, row: u16) {
 
     if let Some(cache) = &mut previous
         && valid_snapshot
-        && cache.projection.update_line_endpoint(ed, &cache.target, &target)
+        && cache
+            .projection
+            .update_line_endpoint(ed, &cache.target, &target)
         && cache.projection.cursors.len() < MAX_CACHED_BLOCK_ROWS
         && cache.projection.cursors.capacity() <= MAX_CACHED_BLOCK_ROWS
         && cache.projection.anchors.capacity() <= MAX_CACHED_BLOCK_ROWS
@@ -382,7 +440,8 @@ pub(crate) fn handle_block_drag(app: &mut App, col: u16, row: u16) {
     }
 
     // Keep the two output buffers across samples; no row or placement vectors.
-    let mut projection = previous.as_mut()
+    let mut projection = previous
+        .as_mut()
         .map(|cache| std::mem::take(&mut cache.projection))
         .unwrap_or_default();
     projection.clear();
@@ -394,11 +453,24 @@ pub(crate) fn handle_block_drag(app: &mut App, col: u16, row: u16) {
         let end_wrap = ed.wrapped_row_for_position(end.0, end.1, width);
         let min_wrap = start_wrap.min(end_wrap);
         let max_wrap = start_wrap.max(end_wrap);
-        ed.visit_wrapped_rows(min_wrap, max_wrap.saturating_sub(min_wrap) + 1, width, |ed, row| {
-            let col = ed.source_column_at_cell(row.line_idx, row.start_col, row.end_col, screen_col).0;
-            let anchor = ed.source_column_at_cell(row.line_idx, row.start_col, row.end_col, start.2).0;
-            projection.push(row.line_idx, col, (anchor != col).then_some((row.line_idx, anchor)));
-        });
+        ed.visit_wrapped_rows(
+            min_wrap,
+            max_wrap.saturating_sub(min_wrap) + 1,
+            width,
+            |ed, row| {
+                let col = ed
+                    .source_column_at_cell(row.line_idx, row.start_col, row.end_col, screen_col)
+                    .0;
+                let anchor = ed
+                    .source_column_at_cell(row.line_idx, row.start_col, row.end_col, start.2)
+                    .0;
+                projection.push(
+                    row.line_idx,
+                    col,
+                    (anchor != col).then_some((row.line_idx, anchor)),
+                );
+            },
+        );
     } else {
         let min_line = start.0.min(end.0);
         let max_line = start.0.max(end.0).min(ed.line_count().saturating_sub(1));
@@ -406,8 +478,12 @@ pub(crate) fn handle_block_drag(app: &mut App, col: u16, row: u16) {
         for line in min_line..=max_line {
             let len = ed.line_len(line);
             let origin = ed.horizontal_scroll;
-            let col = ed.source_column_at_cell(line, origin, len, end_col.saturating_sub(origin)).0;
-            let anchor = ed.source_column_at_cell(line, origin, len, start.2.saturating_sub(origin)).0;
+            let col = ed
+                .source_column_at_cell(line, origin, len, end_col.saturating_sub(origin))
+                .0;
+            let anchor = ed
+                .source_column_at_cell(line, origin, len, start.2.saturating_sub(origin))
+                .0;
             projection.push(line, col, (anchor != col).then_some((line, anchor)));
         }
     }
@@ -437,7 +513,12 @@ pub(crate) fn handle_block_drag(app: &mut App, col: u16, row: u16) {
     folds.clear();
     folds.extend(ed.folded_ranges.iter().map(|(&a, &b)| (a, b)));
     let rope = ed.rope.clone();
-    app.block_drag_cache = Some(BlockDragCache { target, rope, folds, projection });
+    app.block_drag_cache = Some(BlockDragCache {
+        target,
+        rope,
+        folds,
+        projection,
+    });
 }
 
 /// Handle left-button drag events (resize, selection, tab drag, etc.).
@@ -450,22 +531,29 @@ pub(crate) fn handle_left_drag(
     modifiers: KeyModifiers,
 ) {
     if let Some((section, start_row, start_offset)) = app.explorer_scrollbar_drag {
-        if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Explorer
+        if app.show_explorer
+            && app.sidebar_view == crate::app::SidebarView::Explorer
             && let Some(area) = app.explorer_area
             && let Some(bar) = crate::ui_chrome::explorer_scrollbar(app, area, section)
         {
-            section.scroll_to(app, bar.drag_offset(bar.coordinate(col, row), start_row, start_offset));
+            section.scroll_to(
+                app,
+                bar.drag_offset(bar.coordinate(col, row), start_row, start_offset),
+            );
         }
         return;
     }
-    if app.diff_selection_mouse_drag(col, row) { return; }
+    if app.diff_selection_mouse_drag(col, row) {
+        return;
+    }
     if app.dragging_settings_categories {
         app.drag_settings_category_scrollbar(row);
         return;
     }
     if let Some(drag) = app.settings_scrollbar_drag {
         if let Some(area) = app.settings_sidebar_area
-            && let Some((_, track, thumb, max)) = crate::mouse::settings_scrollbar_metrics(app, area)
+            && let Some((_, track, thumb, max)) =
+                crate::mouse::settings_scrollbar_metrics(app, area)
         {
             app.settings_editor_scroll = drag.offset_at(row, track.saturating_sub(thumb), max);
         }
@@ -515,11 +603,15 @@ pub(crate) fn handle_left_drag(
         app.mouse_row = row;
         return;
     }
-    if crate::ui_source_control::drag_graph_header(app, col, row) { return; }
+    if crate::ui_source_control::drag_graph_header(app, col, row) {
+        return;
+    }
     // Drag to resize bottom panel
     if app.resizing_panel {
         // A press or a stationary drag must not change a maximized panel.
-        if app.drag_start_pos == Some((col, row)) { return; }
+        if app.drag_start_pos == Some((col, row)) {
+            return;
+        }
         if let (Some(panel), Some(body)) = (app.panel_area, app.workbench_body_area) {
             let available = panel.bottom().saturating_sub(body.y);
             let requested = panel.bottom().saturating_sub(row.saturating_add(1));
@@ -623,8 +715,10 @@ pub(crate) fn handle_left_drag(
     if app.dragging_explorer_path.is_some() {
         // Track drop target within explorer tree
         if let Some(exp_area) = app.explorer_area {
-            if col >= exp_area.x && col < exp_area.x + exp_area.width
-                && row >= exp_area.y && row < exp_area.y + exp_area.height
+            if col >= exp_area.x
+                && col < exp_area.x + exp_area.width
+                && row >= exp_area.y
+                && row < exp_area.y + exp_area.height
                 && app.sidebar_view == crate::app::SidebarView::Explorer
             {
                 let tree_area = crate::ui_chrome::explorer_tree_content_area(app, exp_area);
@@ -632,7 +726,8 @@ pub(crate) fn handle_left_drag(
                 if tree_area.contains((col, row).into()) {
                     let inner_row = (row - tree_start) as usize;
                     let visible_height = tree_area.height as usize;
-                    app.explorer_drop_target_idx = app.explorer.entry_at_row(inner_row, visible_height);
+                    app.explorer_drop_target_idx =
+                        app.explorer.entry_at_row(inner_row, visible_height);
                 } else {
                     app.explorer_drop_target_idx = None;
                 }
@@ -663,9 +758,15 @@ pub(crate) fn handle_left_drag(
                     } else {
                         ed.visible_line_count()
                     };
-                    let click_row = row.max(scrollbar_area.y).min(scrollbar_area.y + scrollbar_area.height.saturating_sub(1));
+                    let click_row = row
+                        .max(scrollbar_area.y)
+                        .min(scrollbar_area.y + scrollbar_area.height.saturating_sub(1));
                     let rel_row = (click_row.saturating_sub(scrollbar_area.y)) as usize;
-                    let max_scroll = total.saturating_sub(if ed.scroll_past_end { 1 } else { ed.viewport_height.max(1) });
+                    let max_scroll = total.saturating_sub(if ed.scroll_past_end {
+                        1
+                    } else {
+                        ed.viewport_height.max(1)
+                    });
                     let target = rel_row * max_scroll / sb_height.saturating_sub(1).max(1);
                     if ed.word_wrap {
                         ed.set_wrap_scroll_offset(target);
@@ -686,9 +787,7 @@ pub(crate) fn handle_left_drag(
             let total_width = app.diff_render_cache.max_left_text_width;
             let visible_width = h_area.width as usize;
             if total_width > visible_width {
-                let click_col = col
-                    .max(h_area.x)
-                    .min(h_area.right().saturating_sub(1));
+                let click_col = col.max(h_area.x).min(h_area.right().saturating_sub(1));
                 let relative = click_col.saturating_sub(h_area.x) as usize;
                 let max_scroll = total_width.saturating_sub(visible_width);
                 app.diff_left_horizontal_scroll =
@@ -708,7 +807,9 @@ pub(crate) fn handle_left_drag(
                 let visible_width = code_area.width as usize;
                 if max_line_width > visible_width {
                     let bar_width = h_area.width as usize;
-                    let click_col = col.max(h_area.x).min(h_area.x + h_area.width.saturating_sub(1));
+                    let click_col = col
+                        .max(h_area.x)
+                        .min(h_area.x + h_area.width.saturating_sub(1));
                     let rel_col = (click_col.saturating_sub(h_area.x)) as usize;
                     let max_scroll = max_line_width.saturating_sub(visible_width);
                     if let Some(ed) = app.editor_mut() {
@@ -746,12 +847,18 @@ pub(crate) fn handle_left_drag(
     if app.dragging_gutter {
         if let Some(start_line) = app.dragging_gutter_start_line {
             if let Some(code_area) = app.code_area {
-                let clamped_row = row.max(code_area.y).min(code_area.y + code_area.height.saturating_sub(1));
+                let clamped_row = row
+                    .max(code_area.y)
+                    .min(code_area.y + code_area.height.saturating_sub(1));
                 // Auto-scroll when dragging beyond viewport
                 if row < code_area.y {
-                    if let Some(ed) = app.editor_mut() { ed.scroll_up(1); }
+                    if let Some(ed) = app.editor_mut() {
+                        ed.scroll_up(1);
+                    }
                 } else if row >= code_area.y + code_area.height {
-                    if let Some(ed) = app.editor_mut() { ed.scroll_down(1); }
+                    if let Some(ed) = app.editor_mut() {
+                        ed.scroll_down(1);
+                    }
                 }
                 if let Some(ed) = app.editor_mut() {
                     let (drag_line, _) =
@@ -773,7 +880,9 @@ pub(crate) fn handle_left_drag(
         return;
     }
     if app.active_pane == ActivePane::Editor {
-        if app.handle_active_extension_view_mouse_drag(col, row, modifiers) { return; }
+        if app.handle_active_extension_view_mouse_drag(col, row, modifiers) {
+            return;
+        }
         // Alt+Shift+Drag: use block/column selection (same as middle drag)
         if app.middle_drag_start.is_some() {
             // Delegate to block selection logic
@@ -782,8 +891,13 @@ pub(crate) fn handle_left_drag(
         }
         // Opening a search result can focus the editor mid-gesture. Only a
         // press on this document's text may extend its ordinary selection.
-        let Some(document) = app.editor_selection_drag else { return; };
-        if app.editor().is_none_or(|editor| editor.navigation_id != document) {
+        let Some(document) = app.editor_selection_drag else {
+            return;
+        };
+        if app
+            .editor()
+            .is_none_or(|editor| editor.navigation_id != document)
+        {
             return;
         }
         if let Some(code_area) = app.code_area.filter(|area| !area.is_empty()) {
@@ -802,8 +916,11 @@ pub(crate) fn handle_left_drag(
                 let (drag_line, mut drag_col) =
                     code_area_to_buffer_pos(ed, code_area, clamped_col, clamped_row);
                 if (col <= code_area.x || col >= code_area.right() - 1)
-                    && !ed.word_wrap && !ed.bg_loading && !ed.ai_review.active
-                    && ed.diff_display_rows.is_none() && ed.selection_anchor.is_some()
+                    && !ed.word_wrap
+                    && !ed.bg_loading
+                    && !ed.ai_review.active
+                    && ed.diff_display_rows.is_none()
+                    && ed.selection_anchor.is_some()
                     && (pointer_moved || ed.has_selection())
                 {
                     let start = ed.horizontal_scroll;
@@ -817,10 +934,14 @@ pub(crate) fn handle_left_drag(
                     if ed.horizontal_scroll != start {
                         // The offset is in source columns. Hit-test the newly
                         // visible edge to account for tabs and wide characters.
-                        drag_col = ed.source_column_at_cell(
-                            drag_line, ed.horizontal_scroll, end,
-                            usize::from(clamped_col - code_area.x),
-                        ).0;
+                        drag_col = ed
+                            .source_column_at_cell(
+                                drag_line,
+                                ed.horizontal_scroll,
+                                end,
+                                usize::from(clamped_col - code_area.x),
+                            )
+                            .0;
                         repeat_scroll = if left {
                             ed.horizontal_scroll > 0
                         } else {
@@ -842,7 +963,8 @@ pub(crate) fn handle_left_drag(
                         }
                     } else {
                         // Keep whole words or whitespace runs selected during a double-click drag.
-                        let (ws, we) = ed.whitespace_boundaries_at(drag_line, drag_col)
+                        let (ws, we) = ed
+                            .whitespace_boundaries_at(drag_line, drag_col)
                             .unwrap_or_else(|| ed.word_boundaries_at(drag_line, drag_col));
                         if (drag_line, drag_col) >= (anchor_line, anchor_end) {
                             ed.selection_anchor = Some((anchor_line, anchor_start));
@@ -872,9 +994,14 @@ pub(crate) fn handle_left_up(app: &mut App, col: u16, row: u16, modifiers: KeyMo
         app.drag_has_moved = false;
         return;
     }
-    if app.diff_selection_mouse_up(col, row) { return; }
+    if app.diff_selection_mouse_up(col, row) {
+        return;
+    }
     app.block_drag_cache = None;
-    if let Some(view) = app.editor_mut().and_then(|ed| ed.markdown_preview_scroll.as_mut()) {
+    if let Some(view) = app
+        .editor_mut()
+        .and_then(|ed| ed.markdown_preview_scroll.as_mut())
+    {
         view.selecting = false;
     }
     // A tab/file transfer belongs to the workbench even when released over a
@@ -949,7 +1076,8 @@ pub(crate) fn handle_left_up(app: &mut App, col: u16, row: u16, modifiers: KeyMo
                 } else if app.tab_bar_area.is_some_and(|area| {
                     area.contains((col, row).into())
                         && crate::ui_chrome_tabs::TabBarHits::new(app, area)
-                            .after_tabs.contains((col, row).into())
+                            .after_tabs
+                            .contains((col, row).into())
                 }) {
                     app.move_tab_to_end(drag_idx);
                 }
@@ -1027,12 +1155,15 @@ pub(crate) fn handle_left_up(app: &mut App, col: u16, row: u16, modifiers: KeyMo
     // Handle text drag-and-drop
     if app.dragging_text {
         let did_drag = app.dragging_text_start.is_some_and(|(sx, sy)| {
-            (col as i32 - sx as i32).unsigned_abs() > 2 || (row as i32 - sy as i32).unsigned_abs() > 1
+            (col as i32 - sx as i32).unsigned_abs() > 2
+                || (row as i32 - sy as i32).unsigned_abs() > 1
         });
         if did_drag {
             if let Some(code_area) = app.code_area {
-                if col >= code_area.x && col < code_area.x + code_area.width
-                    && row >= code_area.y && row < code_area.y + code_area.height
+                if col >= code_area.x
+                    && col < code_area.x + code_area.width
+                    && row >= code_area.y
+                    && row < code_area.y + code_area.height
                 {
                     let ctrl_copy = modifiers.contains(crossterm::event::KeyModifiers::CONTROL);
                     if let Some(ed) = app.editor_mut() {
@@ -1043,8 +1174,11 @@ pub(crate) fn handle_left_up(app: &mut App, col: u16, row: u16, modifiers: KeyMo
                             if let Some(text) = ed.selected_text() {
                                 ed.save_undo();
                                 // Get selection char indices
-                                if let Some((sel_start, sel_end, _, _)) = ed.clamped_selection_indices() {
-                                    let dirty_start = ed.rope.char_to_line(sel_start).min(drop_line);
+                                if let Some((sel_start, sel_end, _, _)) =
+                                    ed.clamped_selection_indices()
+                                {
+                                    let dirty_start =
+                                        ed.rope.char_to_line(sel_start).min(drop_line);
                                     let dirty_end = ed.rope.char_to_line(sel_end).max(drop_line);
                                     let drop_char = ed.rope.line_to_char(drop_line) + drop_col;
                                     if ctrl_copy {
@@ -1061,7 +1195,9 @@ pub(crate) fn handle_left_up(app: &mut App, col: u16, row: u16, modifiers: KeyMo
                                         ed.rope.insert(adjusted_drop, &text);
                                         // Place cursor at end of dropped text
                                         let end_pos = adjusted_drop + text.len();
-                                        let new_line = ed.rope.char_to_line(end_pos.min(ed.rope.len_chars().saturating_sub(1)));
+                                        let new_line = ed.rope.char_to_line(
+                                            end_pos.min(ed.rope.len_chars().saturating_sub(1)),
+                                        );
                                         let line_start = ed.rope.line_to_char(new_line);
                                         ed.cursor_line = new_line;
                                         ed.cursor_col = end_pos - line_start;
@@ -1144,12 +1280,23 @@ mod tests {
     use ratatui::layout::Rect;
 
     pub(super) fn tile_area_for_text(app: &App, text: &str) -> Rect {
-        if app.tabs.iter().any(|tab| tab.editor.rope.to_string() == text) {
+        if app
+            .tabs
+            .iter()
+            .any(|tab| tab.editor.rope.to_string() == text)
+        {
             return app.editor_area.expect("active tile was rendered");
         }
-        app.groups.iter().enumerate()
-            .find(|(index, group)| *index != app.active_group
-                && group.tabs.iter().any(|tab| tab.editor.rope.to_string() == text))
+        app.groups
+            .iter()
+            .enumerate()
+            .find(|(index, group)| {
+                *index != app.active_group
+                    && group
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.editor.rope.to_string() == text)
+            })
             .and_then(|(_, group)| group.editor_area)
             .expect("inactive tile was rendered")
     }
@@ -1161,35 +1308,55 @@ mod tests {
     ) -> (u16, u16) {
         let width = label.len() as u16;
         let buffer = terminal.backend().buffer();
-        (area.y..area.bottom()).find_map(|row| {
-            (area.x..area.right().saturating_sub(width)).find_map(|col| {
-                let text: String = (col..col + width)
-                    .map(|x| buffer.cell((x, row)).unwrap().symbol()).collect();
-                (text == label).then_some((col, row))
+        (area.y..area.bottom())
+            .find_map(|row| {
+                (area.x..area.right().saturating_sub(width)).find_map(|col| {
+                    let text: String = (col..col + width)
+                        .map(|x| buffer.cell((x, row)).unwrap().symbol())
+                        .collect();
+                    (text == label).then_some((col, row))
+                })
             })
-        }).expect("dragged file is visible")
+            .expect("dragged file is visible")
     }
 
     fn mouse_at(app: &mut App, kind: crossterm::event::MouseEventKind, (column, row): (u16, u16)) {
-        crate::mouse::handle_mouse(app, crossterm::event::MouseEvent {
-            kind, column, row, modifiers: KeyModifiers::NONE,
-        });
+        crate::mouse::handle_mouse(
+            app,
+            crossterm::event::MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
     }
 
     #[test]
     fn explorer_and_tab_drops_split_the_hovered_tile_after_opening_a_file() {
         use crate::app::{SplitDirection, TabDropZone};
         use crossterm::event::{MouseButton, MouseEventKind};
-        use ratatui::{backend::TestBackend, Terminal};
+        use ratatui::{Terminal, backend::TestBackend};
 
-        for (target, tab_drag, preview, zone) in (0..3).flat_map(|target| {
-            [false, true].into_iter().flat_map(move |tab_drag| {
-                [false, true].into_iter().map(move |preview| (target, tab_drag, preview))
+        for (target, tab_drag, preview, zone) in (0..3)
+            .flat_map(|target| {
+                [false, true].into_iter().flat_map(move |tab_drag| {
+                    [false, true]
+                        .into_iter()
+                        .map(move |preview| (target, tab_drag, preview))
+                })
             })
-        }).flat_map(|(target, tab_drag, preview)| {
-            [TabDropZone::Left, TabDropZone::Right, TabDropZone::Top, TabDropZone::Bottom]
-                .into_iter().map(move |zone| (target, tab_drag, preview, zone))
-        }) {
+            .flat_map(|(target, tab_drag, preview)| {
+                [
+                    TabDropZone::Left,
+                    TabDropZone::Right,
+                    TabDropZone::Top,
+                    TabDropZone::Bottom,
+                ]
+                .into_iter()
+                .map(move |zone| (target, tab_drag, preview, zone))
+            })
+        {
             let workspace = tempfile::tempdir().unwrap();
             let path = workspace.path().join("dragged.txt");
             std::fs::write(&path, "dragged").unwrap();
@@ -1203,42 +1370,67 @@ mod tests {
             ];
             app.create_split_group_dir(1, SplitDirection::Horizontal);
             if target == 2 {
-                app.tabs.push(Tab::new_file(Editor::test_with_text("nested")));
+                app.tabs
+                    .push(Tab::new_file(Editor::test_with_text("nested")));
                 app.create_split_group_dir(1, SplitDirection::Vertical);
             }
             let source = if target == 0 { 1 } else { 0 };
             app.switch_group(source);
-            let target_text = match target { 0 => "left", 1 => "right", _ => "nested" };
+            let target_text = match target {
+                0 => "left",
+                1 => "right",
+                _ => "nested",
+            };
             let source_text = if source == 0 { "left" } else { "right" };
             let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             let target_area = tile_area_for_text(&app, target_text);
             let source_area = tile_area_for_text(&app, source_text);
-            let explorer_pos = rendered_label_position(&terminal, app.explorer_area.unwrap(), "dragged.txt");
+            let explorer_pos =
+                rendered_label_position(&terminal, app.explorer_area.unwrap(), "dragged.txt");
 
             // Mouse-down opens the file before the drag starts. Render between
             // events, just as the interactive editor does.
-            mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), explorer_pos);
+            mouse_at(
+                &mut app,
+                MouseEventKind::Down(MouseButton::Left),
+                explorer_pos,
+            );
             assert_eq!(app.dragging_explorer_path.as_ref(), Some(&path));
             assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&path));
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             if tab_drag {
-                mouse_at(&mut app, MouseEventKind::Up(MouseButton::Left), explorer_pos);
-                let tab_pos = rendered_label_position(&terminal, app.tab_bar_area.unwrap(), "dragged.txt");
+                mouse_at(
+                    &mut app,
+                    MouseEventKind::Up(MouseButton::Left),
+                    explorer_pos,
+                );
+                let tab_pos =
+                    rendered_label_position(&terminal, app.tab_bar_area.unwrap(), "dragged.txt");
                 mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), tab_pos);
                 assert!(app.dragging_tab.is_some());
-                terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+                terminal
+                    .draw(|frame| crate::ui::draw(frame, &mut app))
+                    .unwrap();
             }
             let drop_pos = super::pane_drag_tests::edge_position(target_area, zone);
             mouse_at(&mut app, MouseEventKind::Drag(MouseButton::Left), drop_pos);
             assert_eq!(app.tab_drop_target_group, Some(target));
             assert!(app.tab_drop_zone == Some(zone));
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             mouse_at(&mut app, MouseEventKind::Up(MouseButton::Left), drop_pos);
             app.wait_for_background(std::time::Duration::from_secs(5), |app| {
                 app.editor().is_some_and(|editor| !editor.bg_loading)
             });
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
 
             assert_eq!(app.groups.len(), if target == 2 { 4 } else { 3 });
             assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&path));
@@ -1249,7 +1441,9 @@ mod tests {
             assert!(remaining_source.width.abs_diff(source_area.width) <= 1);
             assert!(remaining_source.height.abs_diff(source_area.height) <= 1);
             super::pane_drag_tests::assert_placement(
-                tile_area_for_text(&app, "dragged"), tile_area_for_text(&app, target_text), zone,
+                tile_area_for_text(&app, "dragged"),
+                tile_area_for_text(&app, target_text),
+                zone,
             );
         }
     }
@@ -1258,7 +1452,7 @@ mod tests {
     fn explorer_drop_preserves_unsaved_content_when_the_source_pane_closes() {
         use crate::app::SplitDirection;
         use crossterm::event::{MouseButton, MouseEventKind};
-        use ratatui::{backend::TestBackend, Terminal};
+        use ratatui::{Terminal, backend::TestBackend};
 
         for (target, split) in [(0, false), (1, false), (0, true), (1, true)] {
             let workspace = tempfile::tempdir().unwrap();
@@ -1281,12 +1475,19 @@ mod tests {
             editor.cursor_col = 3;
             let target_text = if target == 0 { "left" } else { "right" };
             let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             let target_area = tile_area_for_text(&app, target_text);
-            let explorer_pos = rendered_label_position(&terminal, app.explorer_area.unwrap(), "dragged.txt");
+            let explorer_pos =
+                rendered_label_position(&terminal, app.explorer_area.unwrap(), "dragged.txt");
             let drop_pos = (
                 target_area.x + target_area.width / 2,
-                if split { target_area.bottom() - 2 } else { target_area.y + target_area.height / 2 },
+                if split {
+                    target_area.bottom() - 2
+                } else {
+                    target_area.y + target_area.height / 2
+                },
             );
 
             for (kind, position) in [
@@ -1295,7 +1496,9 @@ mod tests {
                 (MouseEventKind::Up(MouseButton::Left), drop_pos),
             ] {
                 mouse_at(&mut app, kind, position);
-                terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+                terminal
+                    .draw(|frame| crate::ui::draw(frame, &mut app))
+                    .unwrap();
             }
 
             let editor = app.editor().unwrap();
@@ -1304,7 +1507,15 @@ mod tests {
             assert!(editor.modified);
             assert_eq!((editor.cursor_line, editor.cursor_col), (1, 3));
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "saved content");
-            assert_eq!(app.tabs.len() + app.groups.iter().map(|group| group.tabs.len()).sum::<usize>(), 2);
+            assert_eq!(
+                app.tabs.len()
+                    + app
+                        .groups
+                        .iter()
+                        .map(|group| group.tabs.len())
+                        .sum::<usize>(),
+                2
+            );
             if split {
                 assert_eq!(app.groups.len(), 2);
                 let top = tile_area_for_text(&app, target_text);
@@ -1313,7 +1524,11 @@ mod tests {
                 assert!(bottom.y >= top.bottom());
             } else {
                 assert!(!app.split_active());
-                assert!(app.tabs.iter().any(|tab| tab.editor.rope.to_string() == target_text));
+                assert!(
+                    app.tabs
+                        .iter()
+                        .any(|tab| tab.editor.rope.to_string() == target_text)
+                );
             }
         }
     }
@@ -1321,7 +1536,7 @@ mod tests {
     #[test]
     fn tab_drop_bottom_splits_the_hovered_tile_in_both_columns() {
         use crate::app::{SplitDirection, TabDropZone};
-        use ratatui::{backend::TestBackend, Terminal};
+        use ratatui::{Terminal, backend::TestBackend};
         for target in [0, 1, 2] {
             let mut app = App::test_new();
             app.tabs = vec![
@@ -1330,16 +1545,24 @@ mod tests {
             ];
             app.create_split_group_dir(1, SplitDirection::Horizontal);
             if target == 2 {
-                app.tabs.push(Tab::new_file(Editor::test_with_text("nested")));
+                app.tabs
+                    .push(Tab::new_file(Editor::test_with_text("nested")));
                 app.create_split_group_dir(1, SplitDirection::Vertical);
             }
             let source = if target == 0 { 1 } else { 0 };
             app.switch_group(source);
-            app.tabs.push(Tab::new_file(Editor::test_with_text("dragged")));
+            app.tabs
+                .push(Tab::new_file(Editor::test_with_text("dragged")));
             app.active_tab = app.tabs.len() - 1;
             let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-            let target_text = match target { 0 => "left", 1 => "right", _ => "nested" };
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
+            let target_text = match target {
+                0 => "left",
+                1 => "right",
+                _ => "nested",
+            };
             let source_text = if source == 0 { "left" } else { "right" };
             let target_area = tile_area_for_text(&app, target_text);
             let source_area = tile_area_for_text(&app, source_text);
@@ -1349,17 +1572,37 @@ mod tests {
             app.dragging_tab = Some(app.active_tab);
             app.dragging_tab_source_group = Some(source);
             app.drag_has_moved = true;
-            handle_left_drag(&mut app, col, row, source_area.x, source_area.y, KeyModifiers::NONE);
+            handle_left_drag(
+                &mut app,
+                col,
+                row,
+                source_area.x,
+                source_area.y,
+                KeyModifiers::NONE,
+            );
             assert_eq!(app.tab_drop_target_group, Some(target));
             assert!(app.tab_drop_zone == Some(TabDropZone::Bottom));
             handle_left_up(&mut app, col, row, KeyModifiers::NONE);
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-            assert_eq!(app.groups.len(), if target == 2 { 4 } else { 3 }, "target tile {target}");
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
+            assert_eq!(
+                app.groups.len(),
+                if target == 2 { 4 } else { 3 },
+                "target tile {target}"
+            );
             assert_eq!(app.editor().unwrap().rope.to_string(), "dragged");
             assert_eq!(tile_area_for_text(&app, source_text), source_area);
             if let Some(area) = other_area {
                 let unchanged_sibling = tile_area_for_text(&app, "right");
-                assert_eq!((unchanged_sibling.x, unchanged_sibling.y, unchanged_sibling.width), (area.x, area.y, area.width));
+                assert_eq!(
+                    (
+                        unchanged_sibling.x,
+                        unchanged_sibling.y,
+                        unchanged_sibling.width
+                    ),
+                    (area.x, area.y, area.width)
+                );
                 // Flattening same-direction splits adds a divider cell; ratio
                 // rounding can change the sibling's height by one row.
                 assert!(unchanged_sibling.height.abs_diff(area.height) <= 1);
@@ -1375,7 +1618,7 @@ mod tests {
     #[test]
     fn tab_drop_bottom_preserves_destination_when_source_group_closes() {
         use crate::app::SplitDirection;
-        use ratatui::{backend::TestBackend, Terminal};
+        use ratatui::{Terminal, backend::TestBackend};
         for target in [0, 1] {
             let mut app = App::test_new();
             app.tabs = vec![
@@ -1386,7 +1629,9 @@ mod tests {
             let source = 1 - target;
             app.switch_group(source);
             let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             let target_text = if target == 0 { "left" } else { "right" };
             let source_text = if source == 0 { "left" } else { "right" };
             let area = tile_area_for_text(&app, target_text);
@@ -1398,17 +1643,26 @@ mod tests {
             handle_left_drag(&mut app, col, row, 0, 0, KeyModifiers::NONE);
             assert_eq!(app.tab_drop_target_group, Some(target));
             handle_left_up(&mut app, col, row, KeyModifiers::NONE);
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             assert_eq!(app.groups.len(), 2);
             assert_eq!(app.editor().unwrap().rope.to_string(), source_text);
             let top = tile_area_for_text(&app, target_text);
             let bottom = tile_area_for_text(&app, source_text);
             assert_eq!((top.x, top.width), (bottom.x, bottom.width));
             assert!(bottom.y >= top.bottom());
-            assert_eq!(app.tabs.len() + app.groups.iter().map(|group| group.tabs.len()).sum::<usize>(), 2);
+            assert_eq!(
+                app.tabs.len()
+                    + app
+                        .groups
+                        .iter()
+                        .map(|group| group.tabs.len())
+                        .sum::<usize>(),
+                2
+            );
         }
     }
-    
 
     /// Create an App with an editor containing the given text and word_wrap off.
     fn app_with_content(text: &str) -> App {
@@ -1478,10 +1732,11 @@ mod tests {
         handle_left_up(&mut app, 89, 15, KeyModifiers::NONE);
 
         assert!(app.terminal_is_in_dock(0, TerminalDock::Right));
-        assert!(app
-            .tabs
-            .iter()
-            .all(|tab| tab.kind != crate::app::TabKind::Terminal));
+        assert!(
+            app.tabs
+                .iter()
+                .all(|tab| tab.kind != crate::app::TabKind::Terminal)
+        );
         assert!(app.show_terminal_sidebar);
     }
 
@@ -1569,7 +1824,10 @@ mod tests {
     #[test]
     fn vertical_scroll_offset_shifts_line() {
         // 10 lines of content
-        let text = (0..10).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let text = (0..10)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let mut app = app_with_content(&text);
         let ed = app.editor_mut().unwrap();
         ed.viewport_height = 5;
@@ -1605,7 +1863,12 @@ mod tests {
             let ed = app.editor_mut().unwrap();
             ed.viewport_height = 30;
             ed.scroll_past_end = scroll_past_end;
-            crate::mouse_selection::handle_editor_area_left_click(&mut app, 95, 2, KeyModifiers::NONE);
+            crate::mouse_selection::handle_editor_area_left_click(
+                &mut app,
+                95,
+                2,
+                KeyModifiers::NONE,
+            );
             assert!(app.dragging_minimap);
             assert!(app.minimap_drag_start.is_some());
 

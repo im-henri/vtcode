@@ -1,6 +1,9 @@
 //! Embedded theme definitions and their independent, lazy parse caches.
 use crate::app_theme_loader::ThemeFile;
-use std::{path::{Component, Path, PathBuf}, sync::OnceLock};
+use std::{
+    path::{Component, Path, PathBuf},
+    sync::OnceLock,
+};
 
 pub(crate) struct Entry {
     pub key: &'static str,
@@ -14,10 +17,16 @@ pub(crate) struct Entry {
 impl Entry {
     pub(crate) fn theme(&'static self) -> &'static ThemeFile {
         self.parsed.get_or_init(|| {
-            let mut theme = crate::vscode_theme::load_embedded_theme(self.file, self.name, self.kind)
-                .expect("valid bundled VS Code theme");
+            let mut theme =
+                crate::vscode_theme::load_embedded_theme(self.file, self.name, self.kind)
+                    .expect("valid bundled VS Code theme");
             theme.config_key = self.key.into();
-            theme.syntax_theme = if self.key == "dark" { "dark-plus" } else { self.key }.into();
+            theme.syntax_theme = if self.key == "dark" {
+                "dark-plus"
+            } else {
+                self.key
+            }
+            .into();
             theme.builtin = true;
             theme
         })
@@ -81,8 +90,14 @@ themes! {
 /// Resolve the complete bundled path: different packs may reuse file names.
 /// Includes remain entirely in memory, including the original Dark+/Light+ bases.
 pub(crate) fn source(path: &Path) -> Option<&'static str> {
-    let path: PathBuf = path.components().filter(|part| *part != Component::CurDir).collect();
-    THEMES.iter().find(|entry| Path::new(entry.file) == path).map(|entry| entry.source)
+    let path: PathBuf = path
+        .components()
+        .filter(|part| *part != Component::CurDir)
+        .collect();
+    THEMES
+        .iter()
+        .find(|entry| Path::new(entry.file) == path)
+        .map(|entry| entry.source)
         .or_else(|| match path.to_str()? {
             "dark_vs.json" => Some(include_str!("../themes/dark_vs.json")),
             "light_vs.json" => Some(include_str!("../themes/light_vs.json")),
@@ -96,7 +111,10 @@ mod tests {
 
     #[test]
     fn embedded_theme_paths_preserve_pack_identity_and_resolve_base_includes() {
-        assert_eq!(source(Path::new("./dark_vs.json")), source(Path::new("dark_vs.json")));
+        assert_eq!(
+            source(Path::new("./dark_vs.json")),
+            source(Path::new("dark_vs.json"))
+        );
         assert!(source(Path::new("dark_vs.json")).is_some());
         assert!(source(Path::new("github/dark-default.json")).is_some());
         assert!(source(Path::new("dark-default.json")).is_none());
@@ -106,7 +124,10 @@ mod tests {
 
     #[test]
     fn selecting_a_bundled_theme_reuses_its_independent_parse_cache() {
-        let entry = THEMES.iter().find(|entry| entry.key == "catppuccin-mocha").unwrap();
+        let entry = THEMES
+            .iter()
+            .find(|entry| entry.key == "catppuccin-mocha")
+            .unwrap();
         assert!(std::ptr::eq(entry.theme(), entry.theme()));
         assert_eq!(entry.theme().syntax_theme, entry.key);
         assert_eq!(entry.theme().name, entry.name);
@@ -119,13 +140,27 @@ mod tests {
             let theme = entry.theme();
             if let Some(colors) = raw["colors"].as_object() {
                 for (key, value) in colors {
-                    assert_eq!(theme.workbench_colors.get(key), Some(value), "{}: {key}", entry.key);
+                    assert_eq!(
+                        theme.workbench_colors.get(key),
+                        Some(value),
+                        "{}: {key}",
+                        entry.key
+                    );
                 }
             }
             if let Some(rules) = raw["tokenColors"].as_array() {
-                assert!(theme.token_colors.ends_with(rules), "{} token rules", entry.key);
+                assert!(
+                    theme.token_colors.ends_with(rules),
+                    "{} token rules",
+                    entry.key
+                );
             }
-            assert_eq!(theme.high_contrast, entry.kind == "hc-black", "{}", entry.key);
+            assert_eq!(
+                theme.high_contrast,
+                entry.kind == "hc-black",
+                "{}",
+                entry.key
+            );
         }
     }
 }

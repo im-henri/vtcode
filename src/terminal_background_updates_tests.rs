@@ -60,7 +60,9 @@ fn remote_workbench_repaints_editor_text_on_unfocused_resize() {
     let text = "RemoteResizeContent\n";
     std::fs::write(directory.path().join("resize.txt"), text).unwrap();
     let workspace = crate::remote::workspace::Workspace::new(crate::remote::tests::connection(
-        directory.path(), Arc::default(), Arc::default(),
+        directory.path(),
+        Arc::default(),
+        Arc::default(),
     ));
     let mut app = App::new_deferred(workspace.view_root.clone());
     workspace.client.set_wake(app.background.wake_handle());
@@ -83,19 +85,28 @@ fn remote_workbench_repaints_editor_text_on_unfocused_resize() {
     let contents = editor.rope.clone();
 
     let output = Arc::new(Mutex::new(Vec::new()));
-    let writer = SlowOutput { bytes: output.clone(), written: false };
-    let backend = crate::terminal_output::AnsiBackend::new(crate::terminal_output::buffered_output(writer));
+    let writer = SlowOutput {
+        bytes: output.clone(),
+        written: false,
+    };
+    let backend =
+        crate::terminal_output::AnsiBackend::new(crate::terminal_output::buffered_output(writer));
     let mut terminal = Terminal::with_options(
         crate::terminal_output::test_cursor_backend(backend),
-        TerminalOptions { viewport: Viewport::Fixed(Rect::new(0, 0, 140, 32)) },
-    ).unwrap();
+        TerminalOptions {
+            viewport: Viewport::Fixed(Rect::new(0, 0, 140, 32)),
+        },
+    )
+    .unwrap();
     let wake = app.background.wake_handle();
     let (sender, receiver) = mpsc::channel();
     let (done, finished) = mpsc::channel();
     let (fail_sender, fail_wake) = (sender.clone(), wake.clone());
     let watchdog = std::thread::spawn(move || {
         if finished.recv_timeout(Duration::from_secs(5)).is_err() {
-            let _ = fail_sender.send(Err(io::Error::other("Resized remote workbench did not repaint")));
+            let _ = fail_sender.send(Err(io::Error::other(
+                "Resized remote workbench did not repaint",
+            )));
             fail_wake.notify();
         }
     });
@@ -128,7 +139,12 @@ fn remote_workbench_repaints_editor_text_on_unfocused_resize() {
         false
     });
     let _clear = ClearObserver;
-    let result = run_app(&mut terminal, &mut app, TerminalEventPump::from_receiver(receiver), None);
+    let result = run_app(
+        &mut terminal,
+        &mut app,
+        TerminalEventPump::from_receiver(receiver),
+        None,
+    );
     let _ = done.send(());
     watchdog.join().unwrap();
     result.unwrap();
@@ -136,7 +152,13 @@ fn remote_workbench_repaints_editor_text_on_unfocused_resize() {
     assert_eq!(terminal.get_frame().area(), Rect::new(0, 0, 100, 24));
     let bytes = output.lock().unwrap().clone();
     let screen = TerminalEmulator::test_with_output(100, 24, &String::from_utf8_lossy(&bytes));
-    let visible: String = screen.grid.cells.iter().flatten().map(|cell| cell.ch).collect();
+    let visible: String = screen
+        .grid
+        .cells
+        .iter()
+        .flatten()
+        .map(|cell| cell.ch)
+        .collect();
     assert!(visible.contains("!RemoteResizeContent"), "{visible:?}");
     assert_eq!(app.editor().unwrap().rope, contents);
     assert!(app.editor().unwrap().modified);

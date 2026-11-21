@@ -145,8 +145,14 @@ pub(super) fn draw_row(f: &mut Frame, app: &mut App, rect: Rect, row: &TerminalR
     } else {
         app.colors.ui.bg_terminal
     };
-    let foreground = app.colors.ui.readable_foreground(app.colors.ui.fg_terminal, background, 4.5);
-    let dim = app.colors.ui.readable_foreground(app.colors.fg_dim, background, 4.5);
+    let foreground = app
+        .colors
+        .ui
+        .readable_foreground(app.colors.ui.fg_terminal, background, 4.5);
+    let dim = app
+        .colors
+        .ui
+        .readable_foreground(app.colors.fg_dim, background, 4.5);
     let style = Style::default().fg(foreground).bg(background);
     f.render_widget(
         Paragraph::new(" ".repeat(rect.width as usize)).style(style),
@@ -574,11 +580,13 @@ fn command_line(app: &App, text: &str) -> Line<'static> {
             let fg = style.foreground;
             Span::styled(
                 token.to_owned(),
-                Style::default().fg(app.colors.ui.readable_foreground(
-                    Color::Rgb(fg.r, fg.g, fg.b),
-                    app.colors.ui.bg_terminal,
-                    4.5,
-                )).add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style)),
+                Style::default()
+                    .fg(app.colors.ui.readable_foreground(
+                        Color::Rgb(fg.r, fg.g, fg.b),
+                        app.colors.ui.bg_terminal,
+                        4.5,
+                    ))
+                    .add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style)),
             )
         })
         .collect::<Vec<_>>();

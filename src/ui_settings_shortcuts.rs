@@ -90,10 +90,7 @@ fn actions(app: &App, id: &str, value: &str, row: Rect) -> Vec<(Rect, Action, &'
     if value != "Unassigned" {
         wanted.push((Action::Remove, " Remove "));
     }
-    let total: u16 = wanted
-        .iter()
-        .map(|(_, label)| label.len() as u16 + 1)
-        .sum();
+    let total: u16 = wanted.iter().map(|(_, label)| label.len() as u16 + 1).sum();
     // Never cover the command name or the shortcut itself.
     let min_x = columns(row).shortcut.right().saturating_add(1);
     let mut x = row.right().saturating_sub(total.saturating_sub(1));
@@ -191,15 +188,19 @@ pub(crate) fn draw_row(
     } else {
         base
     };
-    let fg = app
-        .colors
-        .ui
-        .readable_foreground(app.colors.ui.workbench_text_color(row_bg), row_bg, 4.5);
+    let fg =
+        app.colors
+            .ui
+            .readable_foreground(app.colors.ui.workbench_text_color(row_bg), row_bg, 4.5);
     let dim = app.colors.ui.description_color(row_bg);
     let is_modified = modified(app, id);
     f.render_widget(Paragraph::new("").style(Style::default().bg(row_bg)), row);
     if focused || is_modified {
-        let color = if focused { app.colors.fg_accent } else { app.colors.fg_warning };
+        let color = if focused {
+            app.colors.fg_accent
+        } else {
+            app.colors.fg_warning
+        };
         f.render_widget(
             Paragraph::new("▏").style(Style::default().fg(color).bg(row_bg)),
             Rect::new(row.x, row.y, 1, 1),
@@ -228,7 +229,10 @@ pub(crate) fn draw_row(
     // The shortcut is drawn as a key cap so it reads as the clickable value.
     let keys = if editing { "Press keys…" } else { value };
     let key_style = if value == "Unassigned" && !editing {
-        Style::default().fg(dim).bg(row_bg).add_modifier(Modifier::ITALIC)
+        Style::default()
+            .fg(dim)
+            .bg(row_bg)
+            .add_modifier(Modifier::ITALIC)
     } else {
         app.colors.ui.keybinding_label_style(row_bg)
     };
@@ -241,7 +245,12 @@ pub(crate) fn draw_row(
     let key_width = UnicodeWidthStr::width(key_text.as_str()) as u16;
     f.render_widget(
         Paragraph::new(key_text).style(key_style),
-        Rect::new(cols.shortcut.x, row.y, key_width.min(cols.shortcut.width), 1),
+        Rect::new(
+            cols.shortcut.x,
+            row.y,
+            key_width.min(cols.shortcut.width),
+            1,
+        ),
     );
 
     let buttons = if hovered || focused {
@@ -274,10 +283,7 @@ pub(crate) fn draw_row(
     }
     for (rect, _, text) in buttons {
         let hot = rect.contains((app.mouse_col, app.mouse_row).into());
-        let style = app
-            .colors
-            .ui
-            .button_style(row_bg, false, hot, true);
+        let style = app.colors.ui.button_style(row_bg, false, hot, true);
         f.render_widget(Paragraph::new(text).style(style), rect);
     }
 }

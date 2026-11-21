@@ -1,21 +1,36 @@
 use super::*;
 use std::time::{Duration, Instant};
 
-fn path(value: &str) -> RemotePath { RemotePath::new(value.as_bytes().to_vec()).unwrap() }
+fn path(value: &str) -> RemotePath {
+    RemotePath::new(value.as_bytes().to_vec()).unwrap()
+}
 fn document(value: &str) -> Document {
     let rope = ropey::Rope::from_str(value);
-    Document { revision: revision(&rope, "UTF-8"), rope, encoding: "UTF-8" }
+    Document {
+        revision: revision(&rope, "UTF-8"),
+        rope,
+        encoding: "UTF-8",
+    }
 }
 fn files(service: &mut Service, known_version: Option<u64>) -> (u64, Option<Vec<RemotePath>>) {
-    let Reply::Files { version, files } = service.execute(Command::Files {
-        generation: 1, known_version, excludes: Default::default(),
-    }).unwrap() else { panic!("filename index reply"); };
+    let Reply::Files { version, files } = service
+        .execute(Command::Files {
+            generation: 1,
+            known_version,
+            excludes: Default::default(),
+        })
+        .unwrap()
+    else {
+        panic!("filename index reply");
+    };
     (version, files)
 }
 
 #[test]
 fn checkpoints_share_one_budget_without_cross_workspace_eviction_or_subtree_aliases() {
-    let mut cache = Documents { entries: cache::Cache::with_limits(3, 1024) };
+    let mut cache = Documents {
+        entries: cache::Cache::with_limits(3, 1024),
+    };
     let a = Path::new("workspace-a");
     let b = Path::new("workspace-b");
     cache.insert(a, path("dir/same.rs"), document("first root"));
@@ -23,18 +38,27 @@ fn checkpoints_share_one_budget_without_cross_workspace_eviction_or_subtree_alia
     cache.insert(a, path("directory/same.rs"), document("outside subtree"));
     cache.remove(a, &path("dir"), true);
     assert!(cache.get(a, &path("dir/same.rs")).is_none());
-    assert_eq!(cache.get(b, &path("dir/same.rs")).unwrap().rope.to_string(), "second root");
+    assert_eq!(
+        cache.get(b, &path("dir/same.rs")).unwrap().rope.to_string(),
+        "second root"
+    );
     assert!(cache.get(a, &path("directory/same.rs")).is_some());
     cache.insert(a, path("new.rs"), document("new"));
     cache.get(b, &path("dir/same.rs"));
     cache.insert(b, path("latest.rs"), document("latest"));
-    assert!(cache.get(a, &path("directory/same.rs")).is_none(), "one LRU across roots");
+    assert!(
+        cache.get(a, &path("directory/same.rs")).is_none(),
+        "one LRU across roots"
+    );
     cache.remove(a, &RemotePath::default(), true);
     assert!(cache.get(a, &path("new.rs")).is_none());
     assert!(cache.get(b, &path("dir/same.rs")).is_some());
     cache.insert(a, path("too-big.rs"), document(&"x".repeat(2048)));
     assert!(cache.get(a, &path("too-big.rs")).is_none());
-    assert!(cache.get(b, &path("dir/same.rs")).is_some(), "oversized insertion keeps useful entries");
+    assert!(
+        cache.get(b, &path("dir/same.rs")).is_some(),
+        "oversized insertion keeps useful entries"
+    );
 }
 
 #[test]
@@ -57,7 +81,11 @@ fn switching_workspaces_reuses_filename_indexes_and_revalidates_changed_roots() 
     let b_built = service.index.as_ref().unwrap().built;
     service.switch_root(a_root.clone());
     assert!(files(&mut service, Some(a_version)).1.is_none());
-    assert_eq!(service.index.as_ref().unwrap().built, a_built, "returning to a folder does not walk it again");
+    assert_eq!(
+        service.index.as_ref().unwrap().built,
+        a_built,
+        "returning to a folder does not walk it again"
+    );
     fs::write(a.path().join("added.rs"), "new").unwrap();
     a_watch.invalidate();
     let (changed_version, changed) = files(&mut service, Some(a_version));
@@ -65,11 +93,19 @@ fn switching_workspaces_reuses_filename_indexes_and_revalidates_changed_roots() 
     assert_eq!(changed.unwrap().len(), 2);
     service.switch_root(b_root);
     assert!(files(&mut service, Some(b_version)).1.is_none());
-    assert_eq!(service.index.as_ref().unwrap().built, b_built, "another root's changes do not invalidate this one");
+    assert_eq!(
+        service.index.as_ref().unwrap().built,
+        b_built,
+        "another root's changes do not invalidate this one"
+    );
     service.switch_root(a_root);
     service.index.as_mut().unwrap().built -= Duration::from_secs(31);
     fs::write(a.path().join("missed.rs"), "missed notification").unwrap();
-    assert_eq!(files(&mut service, Some(changed_version)).1.unwrap().len(), 3, "missed watcher events keep the existing bounded fallback");
+    assert_eq!(
+        files(&mut service, Some(changed_version)).1.unwrap().len(),
+        3,
+        "missed watcher events keep the existing bounded fallback"
+    );
 }
 
 #[test]
@@ -100,7 +136,11 @@ fn cancelling_a_root_scan_cannot_replace_the_cached_index() {
     let (version, _) = files(&mut service, None);
     let cancel = crate::background::CancellationToken::new();
     cancel.cancel();
-    assert!(service.ensure_file_index(2, true, Some(&Default::default()), &cancel).is_err());
+    assert!(
+        service
+            .ensure_file_index(2, true, Some(&Default::default()), &cancel)
+            .is_err()
+    );
     assert_eq!(service.index.as_ref().unwrap().version, version);
 }
 
@@ -112,16 +152,28 @@ fn headless_workspace_cache_benchmark() {
         for directory in 0..20 {
             let directory = root.path().join(format!("source-{directory}"));
             fs::create_dir(&directory).unwrap();
-            for file in 0..50 { fs::write(directory.join(format!("file-{file}.rs")), "fn main() {}\n").unwrap(); }
+            for file in 0..50 {
+                fs::write(directory.join(format!("file-{file}.rs")), "fn main() {}\n").unwrap();
+            }
         }
     }
     for keep in [false, true] {
         let mut service = Service::new(roots[0].path()).unwrap();
-        if !keep { service.recent_indexes = cache::Cache::with_limits(0, 0); }
-        let native: Vec<_> = roots.iter().map(|root| root.path().canonicalize().unwrap()).collect();
-        let observations: Vec<_> = native.iter().map(|root| {
-            let watch = service.observations.get(root); watch.active(true); watch
-        }).collect();
+        if !keep {
+            service.recent_indexes = cache::Cache::with_limits(0, 0);
+        }
+        let native: Vec<_> = roots
+            .iter()
+            .map(|root| root.path().canonicalize().unwrap())
+            .collect();
+        let observations: Vec<_> = native
+            .iter()
+            .map(|root| {
+                let watch = service.observations.get(root);
+                watch.active(true);
+                watch
+            })
+            .collect();
         let mut seen = vec![None; roots.len()];
         let mut scans = 0;
         let start = Instant::now();
@@ -130,9 +182,16 @@ fn headless_workspace_cache_benchmark() {
             service.switch_root(native[root].clone());
             files(&mut service, None);
             let built = service.index.as_ref().unwrap().built;
-            if seen[root] != Some(built) { scans += 1; seen[root] = Some(built); }
+            if seen[root] != Some(built) {
+                scans += 1;
+                seen[root] = Some(built);
+            }
         }
-        eprintln!("retained_workspaces={keep}: {scans} directory walks, {:.2?}, {} observed roots", start.elapsed(), observations.len());
+        eprintln!(
+            "retained_workspaces={keep}: {scans} directory walks, {:.2?}, {} observed roots",
+            start.elapsed(),
+            observations.len()
+        );
         assert_eq!(scans, if keep { 4 } else { 80 });
     }
 }

@@ -1,7 +1,7 @@
 use crate::app::{App, GitFileChange};
+use crate::source_control_rows::{Group, Layout, Visibility};
 use rustc_hash::FxHashSet;
 use std::path::PathBuf;
-use crate::source_control_rows::{Group, Layout, Visibility};
 
 type ChangeKey = (String, bool);
 
@@ -21,18 +21,33 @@ pub(crate) struct SourceControlSender {
 }
 
 impl SourceControlSender {
-    pub(crate) fn is_cancelled(&self) -> bool { self.cancel.is_cancelled() }
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancel.is_cancelled()
+    }
 
-    pub(crate) fn cancellation(&self) -> &crate::background::CancellationToken { &self.cancel }
+    pub(crate) fn cancellation(&self) -> &crate::background::CancellationToken {
+        &self.cancel
+    }
 
     pub(crate) fn send(&self, result: crate::background::BackgroundResult) -> Result<(), ()> {
-        if self.is_cancelled() { return Ok(()); }
+        if self.is_cancelled() {
+            return Ok(());
+        }
         let result = if let Some((root, generation)) = &self.repository {
-            crate::background::BackgroundResult::RepositoryRead { root: root.clone(), generation: *generation, result: Box::new(result) }
-        } else { result };
-        self.sender.send(crate::background::BackgroundResult::SourceControlRead {
-            cancel: self.cancel.clone(), result: Box::new(result),
-        }).map_err(|_| ())
+            crate::background::BackgroundResult::RepositoryRead {
+                root: root.clone(),
+                generation: *generation,
+                result: Box::new(result),
+            }
+        } else {
+            result
+        };
+        self.sender
+            .send(crate::background::BackgroundResult::SourceControlRead {
+                cancel: self.cancel.clone(),
+                result: Box::new(result),
+            })
+            .map_err(|_| ())
     }
 }
 
@@ -56,21 +71,36 @@ fn key(change: &GitFileChange) -> ChangeKey {
 }
 
 impl SourceControlSelection {
-    pub(crate) fn retain_visible(&mut self, files: &mut Vec<GitFileChange>, selected: usize,
-        visibility: Visibility) -> usize {
+    pub(crate) fn retain_visible(
+        &mut self,
+        files: &mut Vec<GitFileChange>,
+        selected: usize,
+        visibility: Visibility,
+    ) -> usize {
         let focused = files.get(selected).map(key);
         files.retain(|file| visibility.shows(Group::of(file)));
         self.reconcile_focused(focused, selected, files, visibility)
     }
 
-    pub(crate) fn reconcile(&mut self, previous: &[GitFileChange], selected: usize,
-        files: &[GitFileChange], visibility: Visibility) -> usize {
+    pub(crate) fn reconcile(
+        &mut self,
+        previous: &[GitFileChange],
+        selected: usize,
+        files: &[GitFileChange],
+        visibility: Visibility,
+    ) -> usize {
         let focused = previous.get(selected).map(key);
         self.reconcile_focused(focused, selected, files, visibility)
     }
 
-    pub(crate) fn update_worktree(&mut self, files: &mut Vec<GitFileChange>, selected: usize,
-        changed: Vec<GitFileChange>, paths: &crate::app_git::refresh::WorktreePaths, visibility: Visibility) -> usize {
+    pub(crate) fn update_worktree(
+        &mut self,
+        files: &mut Vec<GitFileChange>,
+        selected: usize,
+        changed: Vec<GitFileChange>,
+        paths: &crate::app_git::refresh::WorktreePaths,
+        visibility: Visibility,
+    ) -> usize {
         let focused = files.get(selected).map(key);
         // The index did not change. In particular a staged rename must keep
         // its original path even when only its destination was edited.
@@ -78,30 +108,46 @@ impl SourceControlSelection {
         self.reconcile_focused(focused, selected, files, visibility)
     }
 
-    fn reconcile_focused(&mut self, focused: Option<ChangeKey>, mut selected: usize,
-        files: &[GitFileChange], visibility: Visibility) -> usize {
+    fn reconcile_focused(
+        &mut self,
+        focused: Option<ChangeKey>,
+        mut selected: usize,
+        files: &[GitFileChange],
+        visibility: Visibility,
+    ) -> usize {
         if self.explicit {
             let mut available = [FxHashSet::default(), FxHashSet::default()];
-            for file in files.iter().filter(|file| visibility.shows(Group::of(file))) {
+            for file in files
+                .iter()
+                .filter(|file| visibility.shows(Group::of(file)))
+            {
                 available[usize::from(file.staged)].insert(file.path.as_str());
             }
             for (selected, available) in self.keys.iter_mut().zip(&available) {
                 selected.retain(|path| available.contains(path.as_str()));
             }
-            if self.anchor.as_ref().is_some_and(|key| {
-                !available[usize::from(key.1)].contains(key.0.as_str())
-            }) {
+            if self
+                .anchor
+                .as_ref()
+                .is_some_and(|key| !available[usize::from(key.1)].contains(key.0.as_str()))
+            {
                 self.anchor = None;
             }
         }
         selected = focused
-            .and_then(|focused| files.iter().position(|file| file.staged == focused.1 && file.path == focused.0))
-            .unwrap_or(
-                selected
-                    .min(files.len().saturating_sub(1)),
-            );
-        if !files.get(selected).is_some_and(|file| visibility.shows(Group::of(file))) {
-            selected = Layout::new(files, visibility, [false; 4]).file_at(0).unwrap_or(0);
+            .and_then(|focused| {
+                files
+                    .iter()
+                    .position(|file| file.staged == focused.1 && file.path == focused.0)
+            })
+            .unwrap_or(selected.min(files.len().saturating_sub(1)));
+        if !files
+            .get(selected)
+            .is_some_and(|file| visibility.shows(Group::of(file)))
+        {
+            selected = Layout::new(files, visibility, [false; 4])
+                .file_at(0)
+                .unwrap_or(0);
         }
         selected
     }
@@ -115,7 +161,9 @@ pub(crate) struct SourceControlPreview {
 
 impl App {
     pub(crate) fn source_control_tab_active(&self) -> bool {
-        self.tabs.get(self.active_tab).is_some_and(|tab| tab.kind == crate::app::TabKind::SourceControl)
+        self.tabs
+            .get(self.active_tab)
+            .is_some_and(|tab| tab.kind == crate::app::TabKind::SourceControl)
     }
 
     pub(crate) fn source_control_sidebar_visible(&self) -> bool {
@@ -123,22 +171,33 @@ impl App {
     }
 
     pub(crate) fn source_control_has_focus(&self) -> bool {
-        if self.rendering_inactive_editor { return false; }
+        if self.rendering_inactive_editor {
+            return false;
+        }
         match self.active_pane {
-            crate::app::ActivePane::Editor => self.source_control_tab_active() && !self.docked_terminal_has_focus(),
+            crate::app::ActivePane::Editor => {
+                self.source_control_tab_active() && !self.docked_terminal_has_focus()
+            }
             crate::app::ActivePane::Explorer => self.source_control_sidebar_visible(),
             _ => false,
         }
     }
 
     pub(crate) fn source_control_view_area(&self) -> Option<ratatui::layout::Rect> {
-        self.source_control_tab_surface().map(|(_, area)| area)
-            .or_else(|| self.explorer_area.filter(|_| self.source_control_sidebar_visible()))
+        self.source_control_tab_surface()
+            .map(|(_, area)| area)
+            .or_else(|| {
+                self.explorer_area
+                    .filter(|_| self.source_control_sidebar_visible())
+            })
     }
 
     pub(crate) fn source_control_tab_surface(&self) -> Option<(usize, ratatui::layout::Rect)> {
         let (view, area) = self.source_control_tab_area?;
-        Some((self.visible_tab_group(view, crate::app::TabKind::SourceControl)?, area))
+        Some((
+            self.visible_tab_group(view, crate::app::TabKind::SourceControl)?,
+            area,
+        ))
     }
 
     pub(crate) fn focus_source_control_surface(&mut self) {
@@ -172,22 +231,38 @@ impl App {
         let source_group = self.active_group;
         let last_editor = self.source_control_preview.last_editor;
         let main = (window != MAIN_WINDOW && self.main_window_in_background)
-            .then(|| self.window_desk(MAIN_WINDOW)).flatten();
+            .then(|| self.window_desk(MAIN_WINDOW))
+            .flatten();
         let main_id = main.map(|desk| desk.id);
-        let main_group = main.and_then(|desk| desk.layout.as_ref().map(|layout| layout.active_group));
+        let main_group =
+            main.and_then(|desk| desk.layout.as_ref().map(|layout| layout.active_group));
         let previous = self.source_control_preview.tab.and_then(|kind| {
             let (group, index) = self.tab_kind_location(kind)?;
-            let tab = if group == source_group { &self.tabs[index] } else { &self.groups[group].tabs[index] };
+            let tab = if group == source_group {
+                &self.tabs[index]
+            } else {
+                &self.groups[group].tabs[index]
+            };
             (!tab.pinned).then_some((kind, group, tab.editor.navigation_id))
         });
         let sibling = |group: usize| group != source_group && self.group_in_current_desk(group);
-        let target = previous.map(|(_, group, _)| group).filter(|&group| {
-            sibling(group) || self.groups.get(group).is_some_and(|pane| Some(pane.desk) == main_id)
-        }).or_else(|| {
-            let other = last_editor.and_then(|view| self.tab_location(view))
-                .map(|(group, _)| group).filter(|&group| sibling(group));
-            other.or_else(|| self.desk_panes().into_iter().find(|&group| sibling(group)))
-        }).or(main_group);
+        let target = previous
+            .map(|(_, group, _)| group)
+            .filter(|&group| {
+                sibling(group)
+                    || self
+                        .groups
+                        .get(group)
+                        .is_some_and(|pane| Some(pane.desk) == main_id)
+            })
+            .or_else(|| {
+                let other = last_editor
+                    .and_then(|view| self.tab_location(view))
+                    .map(|(group, _)| group)
+                    .filter(|&group| sibling(group));
+                other.or_else(|| self.desk_panes().into_iter().find(|&group| sibling(group)))
+            })
+            .or(main_group);
         if let Some(group) = target {
             self.switch_group(group);
         }
@@ -199,7 +274,8 @@ impl App {
         let kind = result.kind;
         let view = result.editor.navigation_id;
         let cross_window = self.tab_window(view) != Some(window);
-        if replace_preview && let Some((previous_kind, _, old_view)) = previous
+        if replace_preview
+            && let Some((previous_kind, _, old_view)) = previous
             && previous_kind != kind
         {
             if let Some((group, index)) = self.tab_location(old_view)
@@ -226,7 +302,9 @@ impl App {
 
     pub(crate) fn avoid_duplicate_source_control_sidebar(&mut self) {
         if self.sidebar_view == crate::app::SidebarView::SourceControl
-            && self.source_control_tab().is_some_and(|(group, _)| self.group_in_current_desk(group))
+            && self
+                .source_control_tab()
+                .is_some_and(|(group, _)| self.group_in_current_desk(group))
         {
             self.sidebar_view = crate::app::SidebarView::Explorer;
             self.activity_bar_selected = 0;
@@ -263,7 +341,11 @@ impl App {
         use crate::tab_windows::{MAIN_WINDOW, Request};
 
         let (group, index) = if let Some((group, index)) = self.source_control_tab() {
-            let tabs = if group == self.active_group { &self.tabs } else { &self.groups[group].tabs };
+            let tabs = if group == self.active_group {
+                &self.tabs
+            } else {
+                &self.groups[group].tabs
+            };
             let view = tabs[index].editor.navigation_id;
             let window = self.tab_window(view).unwrap_or(MAIN_WINDOW);
             if detach && window == MAIN_WINDOW {
@@ -276,10 +358,18 @@ impl App {
                 return;
             }
             let in_closed_desk = !self.group_in_current_desk(group)
-                && self.desks.items.iter().any(|desk| desk.id == self.groups[group].desk && desk.closed);
+                && self
+                    .desks
+                    .items
+                    .iter()
+                    .any(|desk| desk.id == self.groups[group].desk && desk.closed);
             if in_closed_desk {
-                if !self.move_tab_between_groups(group, index, self.active_group) { return; }
-                let Some(location) = self.tab_location(view) else { return; };
+                if !self.move_tab_between_groups(group, index, self.active_group) {
+                    return;
+                }
+                let Some(location) = self.tab_location(view) else {
+                    return;
+                };
                 location
             } else {
                 (group, index)
@@ -325,11 +415,18 @@ impl App {
 
     pub(crate) fn repository_sender(&self) -> SourceControlSender {
         let mut sender = self.source_control_sender();
-        sender.repository = Some((self.source_control_root().to_owned(), self.repositories.view_generation));
+        sender.repository = Some((
+            self.source_control_root().to_owned(),
+            self.repositories.view_generation,
+        ));
         sender
     }
 
-    pub(crate) fn save_source_control_enabled(&mut self, scope: crate::settings::SettingsScope, enabled: bool) {
+    pub(crate) fn save_source_control_enabled(
+        &mut self,
+        scope: crate::settings::SettingsScope,
+        enabled: bool,
+    ) {
         if let Err(error) = self.patch_settings_scope(scope, "sourceControlEnabled", |settings| {
             settings.source_control_enabled = Some(enabled);
         }) {
@@ -338,14 +435,25 @@ impl App {
     }
 
     pub(crate) fn toggle_workspace_source_control(&mut self) {
-        if !self.has_open_folder() { return; }
-        self.save_source_control_enabled(crate::settings::SettingsScope::Workspace, !self.source_control_enabled);
+        if !self.has_open_folder() {
+            return;
+        }
+        self.save_source_control_enabled(
+            crate::settings::SettingsScope::Workspace,
+            !self.source_control_enabled,
+        );
     }
 
-    pub(crate) fn save_source_control_show_untracked(&mut self, scope: crate::settings::SettingsScope, show: bool) {
-        if let Err(error) = self.patch_settings_scope(scope, "sourceControlShowUntracked", |settings| {
-            settings.source_control_show_untracked = Some(show);
-        }) {
+    pub(crate) fn save_source_control_show_untracked(
+        &mut self,
+        scope: crate::settings::SettingsScope,
+        show: bool,
+    ) {
+        if let Err(error) =
+            self.patch_settings_scope(scope, "sourceControlShowUntracked", |settings| {
+                settings.source_control_show_untracked = Some(show);
+            })
+        {
             self.notify_error(format!("Could not save Show untracked files: {error}"));
         }
     }
@@ -356,9 +464,11 @@ impl App {
         self.explorer.set_source_control_enabled(enabled);
         if self.source_control_enabled == enabled {
             if !self.has_open_folder() {
-                self.source_control_repository_state = crate::app::SourceControlRepositoryState::NoFolder;
+                self.source_control_repository_state =
+                    crate::app::SourceControlRepositoryState::NoFolder;
             } else if !enabled {
-                self.source_control_repository_state = crate::app::SourceControlRepositoryState::Disabled;
+                self.source_control_repository_state =
+                    crate::app::SourceControlRepositoryState::Disabled;
             }
             return;
         }
@@ -405,11 +515,19 @@ impl App {
         if self.source_control_action_menu_open() || self.source_control_filter_menu_open() {
             self.context_menu_active = false;
         }
-        if self.hunk_popup_status != 'N' { self.close_hunk_popup(); }
-        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
+        if self.hunk_popup_status != 'N' {
+            self.close_hunk_popup();
+        }
+        for tab in self
+            .tabs
+            .iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+        {
             // Snapshot diffs keep their comparison markers; normal documents
             // keep their independent saved-buffer/undo tracking.
-            if tab.kind == crate::app::TabKind::File { tab.editor.set_git_line_status(Vec::new()); }
+            if tab.kind == crate::app::TabKind::File {
+                tab.editor.set_git_line_status(Vec::new());
+            }
             tab.editor.blame.enabled = false;
             tab.editor.blame.selected = None;
             tab.editor.blame.history_loading = false;
@@ -436,7 +554,9 @@ impl App {
             if let Some(path) = self.pending_git_compare_path.clone() {
                 self.start_pending_git_compare_for_path(&path);
             }
-            if self.commit_details.active { self.load_commit_details(); }
+            if self.commit_details.active {
+                self.load_commit_details();
+            }
         }
     }
 
@@ -449,7 +569,9 @@ impl App {
         self.source_control_file_hover.clear_target();
         self.repositories.loading_root = None;
         self.source_control_cancel = crate::background::CancellationToken::new();
-        if !self.source_control_enabled { self.source_control_cancel.cancel(); }
+        if !self.source_control_enabled {
+            self.source_control_cancel.cancel();
+        }
         self.bg_git_status_running = false;
         self.bg_git_status_passive = false;
         self.git_watcher_refresh = Default::default();
@@ -468,8 +590,16 @@ impl App {
     }
 
     pub(crate) fn source_control_layout(&self) -> Layout {
-        Layout::new(&self.source_control_files, self.sc_visibility,
-            [self.sc_merge_collapsed, self.sc_staged_collapsed, self.sc_changes_collapsed, self.sc_untracked_collapsed])
+        Layout::new(
+            &self.source_control_files,
+            self.sc_visibility,
+            [
+                self.sc_merge_collapsed,
+                self.sc_staged_collapsed,
+                self.sc_changes_collapsed,
+                self.sc_untracked_collapsed,
+            ],
+        )
     }
 
     pub(crate) fn source_control_group_collapsed(&self, group: Group) -> bool {
@@ -491,18 +621,26 @@ impl App {
     }
 
     pub(crate) fn source_control_file_visible(&self, index: usize) -> bool {
-        self.source_control_files.get(index).is_some_and(|file| self.sc_visibility.shows(Group::of(file)))
+        self.source_control_files
+            .get(index)
+            .is_some_and(|file| self.sc_visibility.shows(Group::of(file)))
     }
 
     pub(crate) fn explorer_git_badge_visibility(&self) -> crate::explorer::GitBadgeVisibility {
         use crate::explorer::GitBadgeVisibility;
-        if !self.source_control_enabled { GitBadgeVisibility::None }
-        else if self.sc_visibility.untracked { GitBadgeVisibility::All }
-        else { GitBadgeVisibility::Tracked }
+        if !self.source_control_enabled {
+            GitBadgeVisibility::None
+        } else if self.sc_visibility.untracked {
+            GitBadgeVisibility::All
+        } else {
+            GitBadgeVisibility::Tracked
+        }
     }
 
     pub(crate) fn set_source_control_visibility(&mut self, visibility: Visibility) {
-        if self.sc_visibility == visibility { return; }
+        if self.sc_visibility == visibility {
+            return;
+        }
         self.sc_visibility = visibility;
         // A previous multi-selection must not silently retain newly hidden paths.
         self.source_control_selection = SourceControlSelection::default();
@@ -518,7 +656,11 @@ impl App {
         self.source_control_untracked_stage_area = None;
         self.source_control_untracked_discard_area = None;
         if !visibility.untracked {
-            for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
+            for tab in self
+                .tabs
+                .iter_mut()
+                .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+            {
                 if tab.kind == crate::app::TabKind::File && tab.editor.git_line_status_untracked {
                     tab.editor.clear_git_line_status();
                 }
@@ -528,7 +670,9 @@ impl App {
             if visibility.untracked {
                 // A tracked-only or path-limited snapshot cannot populate
                 // the newly visible group. Coalesce a complete refresh.
-                if self.source_control_enabled { self.refresh_source_control_async(); }
+                if self.source_control_enabled {
+                    self.refresh_source_control_async();
+                }
             } else {
                 self.clear_untracked_source_control_cache();
             }
@@ -537,16 +681,21 @@ impl App {
     }
 
     pub(crate) fn source_control_group_changes(&self, group: Group) -> Vec<GitFileChange> {
-        self.source_control_files.iter()
+        self.source_control_files
+            .iter()
             .filter(|file| self.sc_visibility.shows(group) && Group::of(file) == group)
-            .cloned().collect()
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn source_control_file_selected(&self, index: usize) -> bool {
-        if !self.source_control_file_visible(index) { return false; }
+        if !self.source_control_file_visible(index) {
+            return false;
+        }
         self.source_control_files.get(index).is_some_and(|file| {
             if self.source_control_selection.explicit {
-                self.source_control_selection.keys[usize::from(file.staged)].contains(file.path.as_str())
+                self.source_control_selection.keys[usize::from(file.staged)]
+                    .contains(file.path.as_str())
             } else {
                 index == self.source_control_selected
             }
@@ -563,8 +712,12 @@ impl App {
     }
 
     pub(crate) fn click_source_control_file(&mut self, index: usize, column: u16, row: u16) {
-        if !self.source_control_file_visible(index) { return; }
-        let Some(change) = self.source_control_files.get(index).map(key) else { return; };
+        if !self.source_control_file_visible(index) {
+            return;
+        }
+        let Some(change) = self.source_control_files.get(index).map(key) else {
+            return;
+        };
         let repository = self.source_control_root().to_owned();
         let position = (column, row);
         let time = std::time::Instant::now();
@@ -577,7 +730,11 @@ impl App {
                 && time.duration_since(last.time) < std::time::Duration::from_millis(400)
         });
         self.source_control_file_click = Some(FileClick {
-            change, repository, position, time, serial: self.mouse_press_serial,
+            change,
+            repository,
+            position,
+            time,
+            serial: self.mouse_press_serial,
             workspace: self.workspace_generation,
         });
         self.select_source_control_file(index, false, false);
@@ -585,14 +742,20 @@ impl App {
     }
 
     pub(crate) fn select_source_control_file(&mut self, index: usize, toggle: bool, range: bool) {
-        if !self.source_control_file_visible(index) { return; }
+        if !self.source_control_file_visible(index) {
+            return;
+        }
         let Some(target) = self.source_control_files.get(index).map(key) else {
             return;
         };
         if !self.source_control_selection.explicit {
-            if let Some(current) = self.source_control_files.get(self.source_control_selected)
-                .filter(|file| self.sc_visibility.shows(Group::of(file))) {
-                self.source_control_selection.keys[usize::from(current.staged)].insert(current.path.clone());
+            if let Some(current) = self
+                .source_control_files
+                .get(self.source_control_selected)
+                .filter(|file| self.sc_visibility.shows(Group::of(file)))
+            {
+                self.source_control_selection.keys[usize::from(current.staged)]
+                    .insert(current.path.clone());
                 self.source_control_selection.anchor = Some(key(current));
             }
             self.source_control_selection.explicit = true;
@@ -609,19 +772,31 @@ impl App {
                 })
                 .unwrap_or(index);
             if !toggle {
-                self.source_control_selection.keys.iter_mut().for_each(FxHashSet::clear);
+                self.source_control_selection
+                    .keys
+                    .iter_mut()
+                    .for_each(FxHashSet::clear);
             }
             for file in &self.source_control_files[anchor.min(index)..=anchor.max(index)] {
-                if self.sc_visibility.shows(Group::of(file)) && !self.source_control_group_collapsed(Group::of(file)) {
-                    self.source_control_selection.keys[usize::from(file.staged)].insert(file.path.clone());
+                if self.sc_visibility.shows(Group::of(file))
+                    && !self.source_control_group_collapsed(Group::of(file))
+                {
+                    self.source_control_selection.keys[usize::from(file.staged)]
+                        .insert(file.path.clone());
                 }
             }
         } else {
-            if toggle && self.source_control_selection.keys[usize::from(target.1)].contains(target.0.as_str()) {
+            if toggle
+                && self.source_control_selection.keys[usize::from(target.1)]
+                    .contains(target.0.as_str())
+            {
                 self.source_control_selection.keys[usize::from(target.1)].remove(target.0.as_str());
             } else {
                 if !toggle {
-                    self.source_control_selection.keys.iter_mut().for_each(FxHashSet::clear);
+                    self.source_control_selection
+                        .keys
+                        .iter_mut()
+                        .for_each(FxHashSet::clear);
                 }
                 self.source_control_selection.keys[usize::from(target.1)].insert(target.0.clone());
             }
@@ -645,10 +820,16 @@ impl App {
 
     pub(crate) fn select_all_source_control_files(&mut self) {
         self.source_control_selection.explicit = true;
-        self.source_control_selection.keys.iter_mut().for_each(FxHashSet::clear);
+        self.source_control_selection
+            .keys
+            .iter_mut()
+            .for_each(FxHashSet::clear);
         for file in &self.source_control_files {
-            if self.sc_visibility.shows(Group::of(file)) && !self.source_control_group_collapsed(Group::of(file)) {
-                self.source_control_selection.keys[usize::from(file.staged)].insert(file.path.clone());
+            if self.sc_visibility.shows(Group::of(file))
+                && !self.source_control_group_collapsed(Group::of(file))
+            {
+                self.source_control_selection.keys[usize::from(file.staged)]
+                    .insert(file.path.clone());
             }
         }
         self.source_control_selection.anchor = self
@@ -660,7 +841,11 @@ impl App {
 
     pub(crate) fn update_source_control_files(&mut self, files: Vec<GitFileChange>) {
         self.source_control_selected = self.source_control_selection.reconcile(
-            &self.source_control_files, self.source_control_selected, &files, self.sc_visibility);
+            &self.source_control_files,
+            self.source_control_selected,
+            &files,
+            self.sc_visibility,
+        );
         self.source_control_files = files;
     }
 
@@ -669,7 +854,9 @@ impl App {
         mut changes: Vec<GitFileChange>,
         all: bool,
     ) {
-        if !self.source_control_enabled { return; }
+        if !self.source_control_enabled {
+            return;
+        }
         changes.sort_by(|a, b| a.path.cmp(&b.path).then(b.staged.cmp(&a.staged)));
         changes.dedup_by(|a, b| a.path == b.path);
         if changes.is_empty() {

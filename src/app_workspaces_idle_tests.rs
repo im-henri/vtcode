@@ -286,14 +286,27 @@ fn remote_git_history_loads_and_pages_across_five_open_folders() {
     let mut expected = Vec::new();
     for index in 0..=crate::git_history::PAGE_SIZE {
         let parents: Vec<_> = parent.iter().collect();
-        let id = base.commit(None, &signature, &signature, &format!("Commit {index}"), &tree, &parents)
+        let id = base
+            .commit(
+                None,
+                &signature,
+                &signature,
+                &format!("Commit {index}"),
+                &tree,
+                &parents,
+            )
             .unwrap();
         parent = Some(base.find_commit(id).unwrap());
         expected.push(id.to_string());
     }
     let head = base.find_reference("HEAD").unwrap();
-    base.reference(head.symbolic_target().unwrap(), parent.unwrap().id(), false, "fixture")
-        .unwrap();
+    base.reference(
+        head.symbolic_target().unwrap(),
+        parent.unwrap().id(),
+        false,
+        "fixture",
+    )
+    .unwrap();
     expected.reverse();
 
     let first = remote::workspace::Workspace::new(headless_connection(fixture.path()));
@@ -302,8 +315,11 @@ fn remote_git_history_loads_and_pages_across_five_open_folders() {
     let folders: Vec<_> = (0..5)
         .map(|index| {
             let name = format!("clone-{index}");
-            git2::Repository::clone(base.path().to_str().unwrap(), fixture.path().join(&name)).unwrap();
-            first.open_workspace(&first.target_key(&name).unwrap()).unwrap()
+            git2::Repository::clone(base.path().to_str().unwrap(), fixture.path().join(&name))
+                .unwrap();
+            first
+                .open_workspace(&first.target_key(&name).unwrap())
+                .unwrap()
         })
         .collect();
     let make_app = |folder: &remote::workspace::Workspace| {
@@ -314,7 +330,11 @@ fn remote_git_history_loads_and_pages_across_five_open_folders() {
     };
     let check_first_page = |app: &mut App| {
         app.wait_for_background(Duration::from_secs(10), |app| !app.bg_git_log_running);
-        assert!(app.git_history.error.is_none(), "{:?}", app.git_history.error);
+        assert!(
+            app.git_history.error.is_none(),
+            "{:?}",
+            app.git_history.error
+        );
         assert_eq!(app.git_log.len(), crate::git_history::PAGE_SIZE);
         assert!(app.git_history.has_more);
     };
@@ -335,10 +355,17 @@ fn remote_git_history_loads_and_pages_across_five_open_folders() {
     assert_eq!((app.git_log_scroll, app.git_log_selected), (70, 75));
     app.load_more_git_history();
     app.wait_for_background(Duration::from_secs(10), |app| !app.bg_git_log_running);
-    assert!(app.git_history.error.is_none(), "{:?}", app.git_history.error);
+    assert!(
+        app.git_history.error.is_none(),
+        "{:?}",
+        app.git_history.error
+    );
     assert!(!app.git_history.has_more);
     assert_eq!(
-        app.git_log.iter().map(|commit| commit.full_hash.as_str()).collect::<Vec<_>>(),
+        app.git_log
+            .iter()
+            .map(|commit| commit.full_hash.as_str())
+            .collect::<Vec<_>>(),
         expected
     );
 

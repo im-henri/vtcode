@@ -34,14 +34,19 @@ fn fixture(count: usize, duplicate: bool) -> App {
 fn scene(app: &App, width: u16, indexed: bool) -> ratatui::buffer::Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width + 4, 3)).unwrap();
     let full_area = Rect::new(2, 1, width, 1);
-    let prefix=crate::ui_desks::controls(app,full_area,app.active_group).width;
-    let area=Rect::new(full_area.x+prefix,full_area.y,full_area.width-prefix,1);
+    let prefix = crate::ui_desks::controls(app, full_area, app.active_group).width;
+    let area = Rect::new(
+        full_area.x + prefix,
+        full_area.y,
+        full_area.width - prefix,
+        1,
+    );
     let duplicates = indexed
         .then(|| TabNameDuplicates::for_viewport(app, width))
         .flatten();
     terminal
         .draw(|frame| {
-            crate::ui_desks::draw_controls(frame,app,full_area,app.active_group);
+            crate::ui_desks::draw_controls(frame, app, full_area, app.active_group);
             draw_tab_bar_labels(
                 frame,
                 app,
@@ -148,10 +153,12 @@ fn tab_hits_follow_renames_reorders_dirty_state_and_unicode_without_stale_geomet
             2 => app.tabs[0].editor.modified = !app.tabs[0].editor.modified,
             3 => app.tabs[0].pinned = !app.tabs[0].pinned,
             4 => app.tabs[0].editor.file_path = Some("renamed/界 café.rs".into()),
-            _ => { app.tabs.remove(0); }
+            _ => {
+                app.tabs.remove(0);
+            }
         }
         let hits = TabBarHits::new(&app, area);
-        let mut x = area.x+crate::ui_desks::controls(&app,area,app.active_group).width;
+        let mut x = area.x + crate::ui_desks::controls(&app, area, app.active_group).width;
         for &(index, rect, _) in &hits.tabs {
             assert_eq!(rect.x, x);
             let width = tab_render_width(&app, index, &app.tabs[index]);
@@ -163,7 +170,10 @@ fn tab_hits_follow_renames_reorders_dirty_state_and_unicode_without_stale_geomet
     app.tabs[0].editor.file_path = Some(format!("{}.rs", "界".repeat(40_000)).into());
     let hits = TabBarHits::new(&app, Rect::new(65_500, 0, 20, 1));
     assert!(hits.tabs[0].1.width <= 12);
-    assert!(!hits.tabs[0].2.is_empty(), "ellipsized titles keep the close control on screen");
+    assert!(
+        !hits.tabs[0].2.is_empty(),
+        "ellipsized titles keep the close control on screen"
+    );
     assert!(hits.tab_at(65_520).is_none());
 }
 
@@ -173,15 +183,32 @@ fn split_tab_bars_share_path_hints_and_matching_hit_geometry() {
     app.tabs[0].editor.file_path = Some("cores/arm_cache/src/entry.cps".into());
     app.tabs[0].pinned = false;
     app.tabs[0].editor.modified = false;
-    app.groups = vec![crate::app::EditorGroup::default(), crate::app::EditorGroup::default()];
+    app.groups = vec![
+        crate::app::EditorGroup::default(),
+        crate::app::EditorGroup::default(),
+    ];
     let mut other = Tab::new_file(Editor::new());
     other.editor.file_path = Some("cores/axi_rv32/src/entry.cps".into());
     app.groups[1].tabs.push(other);
     let mut terminal = Terminal::new(TestBackend::new(100, 4)).unwrap();
-    terminal.draw(|frame| {
-        draw_tab_bar_for_group(frame, &app, Rect::new(0, 0, 100, 1), 0, std::time::Instant::now());
-        draw_tab_bar_for_group(frame, &app, Rect::new(0, 2, 100, 1), 1, std::time::Instant::now());
-    }).unwrap();
+    terminal
+        .draw(|frame| {
+            draw_tab_bar_for_group(
+                frame,
+                &app,
+                Rect::new(0, 0, 100, 1),
+                0,
+                std::time::Instant::now(),
+            );
+            draw_tab_bar_for_group(
+                frame,
+                &app,
+                Rect::new(0, 2, 100, 1),
+                1,
+                std::time::Instant::now(),
+            );
+        })
+        .unwrap();
     let buffer = terminal.backend().buffer().clone();
     for (group, row, branch) in [(0, 0, "arm_cache"), (1, 2, "axi_rv32")] {
         let text: String = (0..100).map(|x| buffer[(x, row)].symbol()).collect();
@@ -196,16 +223,30 @@ fn split_tab_bars_share_path_hints_and_matching_hit_geometry() {
 #[test]
 fn collapsed_groups_cache_later_visible_tabs_instead_of_hidden_candidates() {
     let mut app = fixture(140, true);
-    for tab in &mut app.tabs { tab.pinned = false; }
+    for tab in &mut app.tabs {
+        tab.pinned = false;
+    }
     app.tabs.last_mut().unwrap().pinned = true;
-    app.desks.selected_tabs = app.tabs.iter().skip(1).take(138)
-        .map(|tab| tab.editor.navigation_id).collect();
+    app.desks.selected_tabs = app
+        .tabs
+        .iter()
+        .skip(1)
+        .take(138)
+        .map(|tab| tab.editor.navigation_id)
+        .collect();
     app.group_selected_tabs("Hidden", None);
     app.desks.groups.values_mut().next().unwrap().collapsed = true;
     let index = TabNameDuplicates::for_viewport(&app, 180).unwrap();
-    assert!(index.context(app.tabs.last().unwrap()).is_some(), "the later visible tab must use the indexed path");
+    assert!(
+        index.context(app.tabs.last().unwrap()).is_some(),
+        "the later visible tab must use the indexed path"
+    );
     let hits = TabBarHits::new(&app, Rect::new(0, 0, 180, 1));
-    assert!(hits.tabs.iter().any(|(index, _, _)| *index == app.tabs.len() - 1));
+    assert!(
+        hits.tabs
+            .iter()
+            .any(|(index, _, _)| *index == app.tabs.len() - 1)
+    );
 }
 
 #[test]
@@ -213,19 +254,26 @@ fn preview_paths_are_distinct_and_compare_titles_stay_in_their_own_pane() {
     let mut app = fixture(2, false);
     app.tabs[0].editor.file_path = Some("cores/arm_cache/src/entry.md".into());
     app.tabs[1].editor.file_path = Some("cores/axi_rv32/src/entry.md".into());
-    for tab in &mut app.tabs { tab.kind = TabKind::MarkdownPreview; }
+    for tab in &mut app.tabs {
+        tab.kind = TabKind::MarkdownPreview;
+    }
     let first = tab_display_name(&app, 0, &app.tabs[0]);
     let second = tab_display_name(&app, 1, &app.tabs[1]);
     assert!(first.starts_with("Preview: entry.md") && first.contains("arm_cache"));
     assert!(second.starts_with("Preview: entry.md") && second.contains("axi_rv32"));
 
-    for tab in &mut app.tabs { tab.kind = TabKind::File; }
+    for tab in &mut app.tabs {
+        tab.kind = TabKind::File;
+    }
     app.active_tab = 0;
     app.diff_mode = crate::app::DiffMode::Inline;
     app.diff_tab_label = Some("Active comparison".into());
     assert!(app.active_editor_matches_diff_target());
     let other = app.tabs.remove(1);
-    app.groups = vec![crate::app::EditorGroup::default(), crate::app::EditorGroup::default()];
+    app.groups = vec![
+        crate::app::EditorGroup::default(),
+        crate::app::EditorGroup::default(),
+    ];
     app.groups[1].tabs.push(other);
     assert_eq!(tab_display_name(&app, 0, &app.tabs[0]), "Active comparison");
     assert!(tab_display_name(&app, 0, &app.groups[1].tabs[0]).contains("axi_rv32"));
@@ -233,10 +281,15 @@ fn preview_paths_are_distinct_and_compare_titles_stay_in_their_own_pane() {
 
 #[test]
 fn preview_disambiguated_tab_labels() {
-    let Some(directory) = std::env::var_os("VTCODE_TAB_NAMES_PREVIEW_DIR") else { return; };
+    let Some(directory) = std::env::var_os("VTCODE_TAB_NAMES_PREVIEW_DIR") else {
+        return;
+    };
     let directory = std::path::PathBuf::from(directory);
     std::fs::create_dir_all(&directory).unwrap();
-    for (theme, colors) in [("dark", crate::app_theme::EditorTheme::Dark.colors()), ("light", crate::app_theme::EditorTheme::Light.colors())] {
+    for (theme, colors) in [
+        ("dark", crate::app_theme::EditorTheme::Dark.colors()),
+        ("light", crate::app_theme::EditorTheme::Light.colors()),
+    ] {
         for width in [80, 140] {
             let mut app = App::test_new();
             app.colors = colors;
@@ -245,20 +298,30 @@ fn preview_disambiguated_tab_labels() {
             app.show_minimap = false;
             app.chat.visible = false;
             for core in ["arm_cache", "axi_rv32"] {
-                let mut editor = Editor::test_with_text("// Core entry point\nfunction entry() {\n    initialize_core();\n}\n");
+                let mut editor = Editor::test_with_text(
+                    "// Core entry point\nfunction entry() {\n    initialize_core();\n}\n",
+                );
                 editor.file_path = Some(format!("cores/{core}/src/entry.cps").into());
                 app.tabs.push(Tab::new_file(editor));
             }
             app.active_tab = 0;
             let mut terminal = Terminal::new(TestBackend::new(width, 15)).unwrap();
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             let buffer = terminal.backend().buffer();
             let cells: Vec<_> = buffer.content.iter().map(|cell| serde_json::json!({
                 "text": cell.symbol(), "fg": format!("{:?}", cell.fg), "bg": format!("{:?}", cell.bg),
                 "bold": cell.modifier.contains(Modifier::BOLD),
             })).collect();
-            std::fs::write(directory.join(format!("tabs-{theme}-{width}.json")),
-                serde_json::to_vec(&serde_json::json!({"width": width, "height": 15, "cells": cells})).unwrap()).unwrap();
+            std::fs::write(
+                directory.join(format!("tabs-{theme}-{width}.json")),
+                serde_json::to_vec(
+                    &serde_json::json!({"width": width, "height": 15, "cells": cells}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
         }
     }
 }
@@ -272,11 +335,17 @@ fn benchmark_tab_mouse_geometry() {
         let mut checksum = 0;
         for _ in 0..5 {
             let mut used = 2;
-            for (visible, (index, tab)) in app.tabs.iter().enumerate()
-                .skip(app.tab_scroll_offset).enumerate()
+            for (visible, (index, tab)) in app
+                .tabs
+                .iter()
+                .enumerate()
+                .skip(app.tab_scroll_offset)
+                .enumerate()
             {
                 let size = tab_render_width(app, index, tab) as usize;
-                if used + size > width && visible > 0 { break; }
+                if used + size > width && visible > 0 {
+                    break;
+                }
                 used += size;
             }
             checksum += used;
@@ -303,9 +372,13 @@ fn benchmark_tab_mouse_geometry() {
                     samples[usize::from(optimized)].push(start.elapsed() / 100);
                 }
             }
-            samples.iter_mut().for_each(|samples| samples.sort_unstable());
-            eprintln!("tab mouse {count}tabs duplicate={duplicate}: repeated {:?}, batched {:?}",
-                samples[0][3], samples[1][3]);
+            samples
+                .iter_mut()
+                .for_each(|samples| samples.sort_unstable());
+            eprintln!(
+                "tab mouse {count}tabs duplicate={duplicate}: repeated {:?}, batched {:?}",
+                samples[0][3], samples[1][3]
+            );
         }
     }
 }

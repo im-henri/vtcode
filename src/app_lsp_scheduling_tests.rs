@@ -29,7 +29,8 @@ fn fixture() -> (App, TestLspServer, tempfile::TempDir, PathBuf) {
         command: "unused-test-server".into(),
         args: Vec::new(),
         file_patterns: vec!["*.rs".into()],
-        settings: None, init_options: None,
+        settings: None,
+        init_options: None,
     });
     let (client, server) = LspClient::test_pair("fixture", &["*.rs"]);
     app.lsp_manager.clients.push(client);
@@ -76,24 +77,34 @@ fn hint(label: &str) -> lsp_types::InlayHint {
 fn passive_features_wait_for_startup_then_request_the_original_snapshot() {
     let (mut app, server, _directory, path) = fixture();
     app.lsp_manager.clients[0].initialized = false;
-    for _ in 0..32 { poll(&mut app); }
+    for _ in 0..32 {
+        poll(&mut app);
+    }
     assert!(server.take_messages().is_empty());
     assert!(app.lsp_manager.inlay_hint_request.is_none());
     assert!(app.lsp_manager.passive_document.is_none());
     // The manager also protects callers outside the app scheduler.
     assert!(!app.lsp_manager.request_inlay_hints(&path, 0, 100));
     assert!(app.lsp_manager.inlay_hint_request.is_none());
-    server.queue_event(LspEvent::Initialized { capabilities: Box::new(None) });
+    server.queue_event(LspEvent::Initialized {
+        capabilities: Box::new(None),
+    });
     poll(&mut app);
     let messages = server.take_messages();
     assert_eq!(passive(&messages).len(), 4);
-    assert!(messages.iter().all(|message| message["method"] != "textDocument/documentSymbol"));
+    assert!(
+        messages
+            .iter()
+            .all(|message| message["method"] != "textDocument/documentSymbol")
+    );
     let id = request_id(&messages, "textDocument/inlayHint");
     server.respond(json!({"id":id,"result":[hint("ready")]}));
     poll(&mut app);
     assert_eq!(app.lsp_inlay_hints[0].label, "ready");
     assert_eq!(app.editor().unwrap().content_version, 1);
-    for _ in 0..32 { poll(&mut app); }
+    for _ in 0..32 {
+        poll(&mut app);
+    }
     assert!(passive(&server.take_messages()).is_empty());
 }
 
@@ -109,7 +120,9 @@ fn unsupported_passive_features_are_recorded_without_building_requests_again() {
     assert_eq!(app.lsp_document_links_last_version, 1);
     assert!(app.lsp_manager.inlay_hint_request.is_some());
     assert!(app.lsp_manager.passive_document.is_some());
-    for _ in 0..32 { poll(&mut app); }
+    for _ in 0..32 {
+        poll(&mut app);
+    }
     assert!(passive(&server.take_messages()).is_empty());
 }
 
@@ -202,29 +215,62 @@ fn completion_details_follow_arrow_keys_and_repaint_once_without_requerying_cach
     server.respond(json!({"id":id,"result":{"label":"first","documentation":"first docs"}}));
     let mut redraw = false;
     poll_lsp(&mut app, &mut redraw);
-    assert!(redraw, "new completion documentation must repaint without more input");
+    assert!(
+        redraw,
+        "new completion documentation must repaint without more input"
+    );
     assert!(!app.lsp_manager.completion_resolve_dirty);
     server.take_messages();
-    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+    );
     poll(&mut app);
     assert_eq!(app.lsp_completion_selected, 1);
     let messages = server.take_messages();
     let id = request_id(&messages, "completionItem/resolve");
     // Returning to a cached row cancels the other pending request.
-    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+    );
     poll(&mut app);
     let messages = server.take_messages();
-    assert!(messages.iter().any(|message| message["method"] == "$/cancelRequest" && message["params"]["id"] == id));
-    assert!(messages.iter().all(|message| message["method"] != "completionItem/resolve"));
-    assert_eq!(app.lsp_manager.completion_items[0].documentation.as_deref(), Some("first docs"));
-    for _ in 0..32 { poll(&mut app); }
+    assert!(
+        messages
+            .iter()
+            .any(|message| message["method"] == "$/cancelRequest" && message["params"]["id"] == id)
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| message["method"] != "completionItem/resolve")
+    );
+    assert_eq!(
+        app.lsp_manager.completion_items[0].documentation.as_deref(),
+        Some("first docs")
+    );
+    for _ in 0..32 {
+        poll(&mut app);
+    }
     assert!(server.take_messages().is_empty());
-    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+    );
     poll(&mut app);
     let id = request_id(&server.take_messages(), "completionItem/resolve");
-    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+    );
     poll(&mut app);
-    assert!(server.take_messages().iter().any(|message| message["method"] == "$/cancelRequest" && message["params"]["id"] == id));
+    assert!(
+        server
+            .take_messages()
+            .iter()
+            .any(|message| message["method"] == "$/cancelRequest" && message["params"]["id"] == id)
+    );
     assert!(app.lsp_manager.active_resolve_id.is_none());
 }
 
@@ -238,14 +284,25 @@ fn completion_refresh_preserves_chosen_row_across_typing_backspace_and_resolve()
     let choices = json!([{"label":"letter"}, {"label":"length"}]);
     server.respond(json!({"id":app.lsp_manager.active_completion_id,"result":choices}));
     poll(&mut app);
-    app.lsp_completion_selected = app.lsp_manager.completion_items.iter().position(|item| item.label == "letter").unwrap();
+    app.lsp_completion_selected = app
+        .lsp_manager
+        .completion_items
+        .iter()
+        .position(|item| item.label == "letter")
+        .unwrap();
     poll(&mut app);
     let id = app.lsp_manager.active_resolve_id.unwrap();
     server.respond(json!({"id":id,"result":{"label":"letter","detail":"Resolved details"}}));
     poll(&mut app);
     for code in [KeyCode::Char('t'), KeyCode::Backspace] {
-        crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, KeyModifiers::NONE));
-        assert_eq!(app.editor().unwrap().cursor_col, if code == KeyCode::Backspace { 2 } else { 3 });
+        crate::input_keyboard::handle_keyboard_event(
+            &mut app,
+            KeyEvent::new(code, KeyModifiers::NONE),
+        );
+        assert_eq!(
+            app.editor().unwrap().cursor_col,
+            if code == KeyCode::Backspace { 2 } else { 3 }
+        );
         assert!(app.lsp_completion_active);
         // Complete the asynchronous document handoff before delivering a response.
         let editor = app.editor().unwrap();
@@ -256,8 +313,14 @@ fn completion_refresh_preserves_chosen_row_across_typing_backspace_and_resolve()
         server.respond(json!({"id":app.lsp_manager.active_completion_id,"result":choices}));
         let mut redraw = false;
         poll_lsp(&mut app, &mut redraw);
-        assert!(redraw, "new list must repaint even if it has the same number of rows");
-        assert_eq!(app.lsp_manager.completion_items[app.lsp_completion_selected].label, "letter");
+        assert!(
+            redraw,
+            "new list must repaint even if it has the same number of rows"
+        );
+        assert_eq!(
+            app.lsp_manager.completion_items[app.lsp_completion_selected].label,
+            "letter"
+        );
     }
 }
 
@@ -276,19 +339,29 @@ fn completion_explicit_empty_results_feedback_and_preselection_are_applied_once(
         {"label":"alpha"}, {"label":"zebra","preselect":true}
     ]}));
     poll(&mut app);
-    assert_eq!(app.lsp_manager.completion_items[app.lsp_completion_selected].label, "zebra");
+    assert_eq!(
+        app.lsp_manager.completion_items[app.lsp_completion_selected].label,
+        "zebra"
+    );
     app.lsp_completion_selected = 0;
     poll(&mut app);
-    assert_eq!(app.lsp_completion_selected, 0, "polling must not overwrite the user's selection");
+    assert_eq!(
+        app.lsp_completion_selected, 0,
+        "polling must not overwrite the user's selection"
+    );
 }
 
 #[test]
 fn completion_accept_rejects_a_changed_document_even_before_the_next_poll() {
     let (mut app, server, _directory, _path) = fixture();
     assert!(app.request_lsp_suggestions(false));
-    server.respond(json!({"id":app.lsp_manager.active_completion_id,"result":[{"label":"inserted"}]}));
+    server.respond(
+        json!({"id":app.lsp_manager.active_completion_id,"result":[{"label":"inserted"}]}),
+    );
     poll(&mut app);
-    app.editor_mut().unwrap().insert_char_replacing_selection('x');
+    app.editor_mut()
+        .unwrap()
+        .insert_char_replacing_selection('x');
     let changed = app.editor().unwrap().rope.clone();
     app.apply_lsp_completion();
     assert_eq!(app.editor().unwrap().rope, changed);
@@ -318,7 +391,10 @@ fn synchronized_scroll_reuses_covered_rows_and_requests_new_ranges_immediately()
         app.editor_mut().unwrap().scroll_offset = offset;
         poll(&mut app);
     }
-    assert!(passive(&server.take_messages()).is_empty(), "small scrolls reuse the prefetched range");
+    assert!(
+        passive(&server.take_messages()).is_empty(),
+        "small scrolls reuse the prefetched range"
+    );
     app.editor_mut().unwrap().scroll_offset = 51;
     poll(&mut app);
     let scroll = server.take_messages();
@@ -334,7 +410,10 @@ fn synchronized_scroll_reuses_covered_rows_and_requests_new_ranges_immediately()
         app.editor_mut().unwrap().scroll_offset = offset;
         poll(&mut app);
     }
-    assert!(server.take_messages().is_empty(), "keep the pending request while scrolling within it");
+    assert!(
+        server.take_messages().is_empty(),
+        "keep the pending request while scrolling within it"
+    );
     app.editor_mut().unwrap().scroll_offset = 102;
     poll(&mut app);
     let next = server.take_messages();
@@ -499,12 +578,23 @@ fn editor_navigation_requests_use_utf16_and_results_restore_scalar_columns() {
     editor.set_cursor(0, 12);
     app.execute_palette_command("go_to_definition");
     let messages = server.take_messages();
-    let request = messages.iter().find(|m| m["method"] == "textDocument/definition").unwrap();
+    let request = messages
+        .iter()
+        .find(|m| m["method"] == "textDocument/definition")
+        .unwrap();
     assert_eq!(request["params"]["position"]["character"], 13);
-    server.respond(json!({"id":request["id"],"result":{"uri":lsp_types::Url::from_file_path(&path).unwrap(),
-        "range":{"start":{"line":0,"character":11},"end":{"line":0,"character":17}}}}));
+    server.respond(
+        json!({"id":request["id"],"result":{"uri":lsp_types::Url::from_file_path(&path).unwrap(),
+        "range":{"start":{"line":0,"character":11},"end":{"line":0,"character":17}}}}),
+    );
     poll(&mut app);
-    assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (0, 10));
+    assert_eq!(
+        (
+            app.editor().unwrap().cursor_line,
+            app.editor().unwrap().cursor_col
+        ),
+        (0, 10)
+    );
 }
 
 #[test]
@@ -515,8 +605,16 @@ fn unicode_navigation_to_unopened_file_waits_for_the_real_text() {
     app.open_file(&target);
     app.editor_mut().unwrap().set_lsp_cursor(1, 11);
     assert!(app.editor().unwrap().bg_loading);
-    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
-    assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (1, 10));
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.editor().unwrap().bg_loading
+    });
+    assert_eq!(
+        (
+            app.editor().unwrap().cursor_line,
+            app.editor().unwrap().cursor_col
+        ),
+        (1, 10)
+    );
 }
 
 #[test]
@@ -531,9 +629,21 @@ fn stale_formatting_does_not_overwrite_typing() {
     editor.rope.insert(0, "// typing\n");
     server.respond(json!({"id":id,"result":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":14}},"newText":"OLD FORMAT"}]}));
     poll(&mut app);
-    assert!(app.editor().unwrap().rope.to_string().starts_with("// typing\n"));
+    assert!(
+        app.editor()
+            .unwrap()
+            .rope
+            .to_string()
+            .starts_with("// typing\n")
+    );
     assert!(!app.lsp_format_pending);
-    assert!(!app.editor().unwrap().rope.to_string().contains("OLD FORMAT"));
+    assert!(
+        !app.editor()
+            .unwrap()
+            .rope
+            .to_string()
+            .contains("OLD FORMAT")
+    );
 }
 
 #[test]
@@ -543,9 +653,15 @@ fn synchronized_typing_does_not_expose_transient_problems_in_editor_decorations(
     crate::ui_editor::refresh_cached_editor_diagnostics(&mut app);
     assert!(app.cached_editor_diagnostics.is_empty());
     let before = std::sync::Arc::clone(&app.cached_editor_diagnostics);
-    crate::input::handle_editor_key(&mut app, crossterm::event::KeyCode::Char('x'), crossterm::event::KeyModifiers::NONE);
+    crate::input::handle_editor_key(
+        &mut app,
+        crossterm::event::KeyCode::Char('x'),
+        crossterm::event::KeyModifiers::NONE,
+    );
     let version = app.editor().unwrap().content_version;
-    app.wait_for_background(Duration::from_secs(5), |app| app.lsp_manager.last_notified_version.get(&path) == Some(&version));
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.lsp_manager.last_notified_version.get(&path) == Some(&version)
+    });
     poll(&mut app);
     server.respond(json!({"method":"textDocument/publishDiagnostics","params":{
         "uri":lsp_types::Url::from_file_path(&path).unwrap(),
@@ -553,8 +669,14 @@ fn synchronized_typing_does_not_expose_transient_problems_in_editor_decorations(
             "severity":1,"message":"unfinished word"}]}}));
     poll(&mut app);
     crate::ui_editor::refresh_cached_editor_diagnostics(&mut app);
-    assert!(std::sync::Arc::ptr_eq(&before, &app.cached_editor_diagnostics), "typing must not churn the diagnostic cache");
-    assert!(app.cached_diag_lines.is_empty(), "no transient error marker in the gutter or overview");
+    assert!(
+        std::sync::Arc::ptr_eq(&before, &app.cached_editor_diagnostics),
+        "typing must not churn the diagnostic cache"
+    );
+    assert!(
+        app.cached_diag_lines.is_empty(),
+        "no transient error marker in the gutter or overview"
+    );
 
     app.lsp_manager.diagnostic_publication.set_delay_ms(0);
     let mut redraw = false;
@@ -574,7 +696,8 @@ fn identical_diagnostics_on_new_text_remap_utf16_columns_in_editor_caches() {
         editor.rope = ropey::Rope::from_str(text);
         editor.content_version = version;
         app.lsp_manager.invalidate_document_feedback(&path);
-        app.lsp_manager.sync_document_owned(&path, version, text.into());
+        app.lsp_manager
+            .sync_document_owned(&path, version, text.into());
         server.respond(json!({"method":"textDocument/publishDiagnostics","params":{
             "uri":lsp_types::Url::from_file_path(&path).unwrap(), "version":version - 1,
             "diagnostics":[{"range":{"start":{"line":0,"character":2},"end":{"line":0,"character":3}},
@@ -583,10 +706,22 @@ fn identical_diagnostics_on_new_text_remap_utf16_columns_in_editor_caches() {
         crate::ui_editor::refresh_cached_editor_diagnostics(&mut app);
         assert_eq!(app.cached_editor_diagnostics[0].col, expected_column);
         let cached = std::sync::Arc::clone(&app.cached_editor_diagnostics);
-        let report = app.lsp_manager.current_diagnostic_context(&path).unwrap().to_vec();
-        app.lsp_manager.receive_diagnostics(path.clone(), Some((version - 1) as i32), report, Instant::now());
+        let report = app
+            .lsp_manager
+            .current_diagnostic_context(&path)
+            .unwrap()
+            .to_vec();
+        app.lsp_manager.receive_diagnostics(
+            path.clone(),
+            Some((version - 1) as i32),
+            report,
+            Instant::now(),
+        );
         crate::ui_editor::refresh_cached_editor_diagnostics(&mut app);
-        assert!(std::sync::Arc::ptr_eq(&cached, &app.cached_editor_diagnostics));
+        assert!(std::sync::Arc::ptr_eq(
+            &cached,
+            &app.cached_editor_diagnostics
+        ));
     }
 }
 
@@ -596,20 +731,52 @@ fn typing_queues_completion_after_latest_did_change_without_stalling_input() {
     app.editor_mut().unwrap().rope = ropey::Rope::from_str("value");
     app.editor_mut().unwrap().set_cursor(0, 5);
     for _ in 0..30 {
-        crate::input::handle_editor_key(&mut app, crossterm::event::KeyCode::Char('x'), crossterm::event::KeyModifiers::NONE);
+        crate::input::handle_editor_key(
+            &mut app,
+            crossterm::event::KeyCode::Char('x'),
+            crossterm::event::KeyModifiers::NONE,
+        );
     }
-    assert!(server.take_messages().iter().all(|m| m["method"] != "textDocument/completion"));
+    assert!(
+        server
+            .take_messages()
+            .iter()
+            .all(|m| m["method"] != "textDocument/completion")
+    );
     let version = app.editor().unwrap().content_version;
-    app.wait_for_background(Duration::from_secs(5), |app| app.lsp_manager.last_notified_version.get(&path) == Some(&version));
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.lsp_manager.last_notified_version.get(&path) == Some(&version)
+    });
     poll(&mut app);
     let messages = server.take_messages();
-    let change = messages.iter().position(|m| m["method"] == "textDocument/didChange").unwrap();
-    let completion = messages.iter().position(|m| m["method"] == "textDocument/completion").unwrap();
+    let change = messages
+        .iter()
+        .position(|m| m["method"] == "textDocument/didChange")
+        .unwrap();
+    let completion = messages
+        .iter()
+        .position(|m| m["method"] == "textDocument/completion")
+        .unwrap();
     assert!(change < completion);
-    assert_eq!(messages[change]["params"]["contentChanges"][0]["text"], format!("value{}", "x".repeat(30)));
+    assert_eq!(
+        messages[change]["params"]["contentChanges"][0]["text"],
+        format!("value{}", "x".repeat(30))
+    );
     assert_eq!(messages[completion]["params"]["position"]["character"], 35);
-    assert_eq!(messages.iter().filter(|m| m["method"] == "textDocument/completion").count(), 1);
-    assert_eq!(messages.iter().filter(|m| m["method"] == "textDocument/didChange").count(), 1);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| m["method"] == "textDocument/completion")
+            .count(),
+        1
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|m| m["method"] == "textDocument/didChange")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -621,8 +788,11 @@ fn queued_snapshots_are_discarded_after_close_or_large_file_mode() {
         editor.content_version += 1;
         let (version, rope) = (editor.content_version, editor.rope.clone());
         app.queue_lsp_document_sync(path.clone(), version, rope);
-        if close { app.tabs.clear(); }
-        else { app.editor_mut().unwrap().large_file_mode = true; }
+        if close {
+            app.tabs.clear();
+        } else {
+            app.editor_mut().unwrap().large_file_mode = true;
+        }
         app.poll_background_results();
         assert!(server.take_messages().is_empty());
         assert_eq!(app.lsp_manager.last_notified_version[&path], 1);
@@ -648,8 +818,14 @@ fn document_highlights_reject_buffered_replies_after_cursor_moves_during_typing_
     app.last_edit_time = Instant::now() - Duration::from_secs(2);
     poll(&mut app);
     let messages = server.take_messages();
-    let request = messages.iter().find(|m| m["method"] == "textDocument/documentHighlight").unwrap();
-    assert_eq!(request["params"]["position"], json!({"line":1,"character":5}));
+    let request = messages
+        .iter()
+        .find(|m| m["method"] == "textDocument/documentHighlight")
+        .unwrap();
+    assert_eq!(
+        request["params"]["position"],
+        json!({"line":1,"character":5})
+    );
     server.respond(json!({"id":request["id"],"result":[{"range":{
         "start":{"line":1,"character":4},"end":{"line":1,"character":9}}}]}));
     poll(&mut app);
@@ -667,26 +843,50 @@ fn highlights_are_scoped_to_file_even_when_cursor_and_content_versions_match() {
     editor.file_path = Some(second.clone());
     app.tabs.push(Tab::new_file(editor));
     app.active_tab = 1;
-    app.lsp_manager.sync_document_owned(&second, 1, "let other = 2;\n".into());
+    app.lsp_manager
+        .sync_document_owned(&second, 1, "let other = 2;\n".into());
     server.respond(json!({"id":id,"result":[{"range":{
         "start":{"line":0,"character":4},"end":{"line":0,"character":9}}}]}));
     poll(&mut app);
     assert!(app.lsp_document_highlights.is_empty());
     let messages = server.take_messages();
-    let request = messages.iter().find(|m| m["method"] == "textDocument/documentHighlight").unwrap();
-    assert_eq!(request["params"]["textDocument"]["uri"], lsp_types::Url::from_file_path(&second).unwrap().as_str());
-    assert_ne!(app.lsp_manager.highlight_request.as_ref().unwrap().0.target.path, first);
+    let request = messages
+        .iter()
+        .find(|m| m["method"] == "textDocument/documentHighlight")
+        .unwrap();
+    assert_eq!(
+        request["params"]["textDocument"]["uri"],
+        lsp_types::Url::from_file_path(&second).unwrap().as_str()
+    );
+    assert_ne!(
+        app.lsp_manager
+            .highlight_request
+            .as_ref()
+            .unwrap()
+            .0
+            .target
+            .path,
+        first
+    );
     app.lsp_manager.did_close(&second);
     assert!(app.lsp_manager.highlight_request.is_none());
-    assert!(server.take_messages().iter().any(|m| m["method"] == "$/cancelRequest" && m["params"]["id"] == request["id"]));
+    assert!(
+        server
+            .take_messages()
+            .iter()
+            .any(|m| m["method"] == "$/cancelRequest" && m["params"]["id"] == request["id"])
+    );
 }
 
 #[test]
 fn unsupported_and_empty_highlights_do_not_repeat_work_on_idle_frames() {
     for supported in [false, true] {
         let (mut app, server, _directory, _path) = fixture();
-        app.lsp_manager.clients[0].install_capabilities(serde_json::from_value(json!({
-            "documentHighlightProvider":supported})).unwrap());
+        app.lsp_manager.clients[0].install_capabilities(
+            serde_json::from_value(json!({
+            "documentHighlightProvider":supported}))
+            .unwrap(),
+        );
         poll(&mut app);
         let initial = server.take_messages();
         if supported {
@@ -694,12 +894,36 @@ fn unsupported_and_empty_highlights_do_not_repeat_work_on_idle_frames() {
             server.respond(json!({"id":id,"result":null}));
             poll(&mut app);
         } else {
-            assert!(initial.iter().all(|m| m["method"] != "textDocument/documentHighlight"));
+            assert!(
+                initial
+                    .iter()
+                    .all(|m| m["method"] != "textDocument/documentHighlight")
+            );
         }
         let request = app.lsp_manager.highlight_request.as_ref().unwrap();
-        let allocation = request.0.target.path.as_os_str().as_encoded_bytes().as_ptr();
-        for _ in 0..100 { poll(&mut app); }
-        assert_eq!(app.lsp_manager.highlight_request.as_ref().unwrap().0.target.path.as_os_str().as_encoded_bytes().as_ptr(), allocation);
+        let allocation = request
+            .0
+            .target
+            .path
+            .as_os_str()
+            .as_encoded_bytes()
+            .as_ptr();
+        for _ in 0..100 {
+            poll(&mut app);
+        }
+        assert_eq!(
+            app.lsp_manager
+                .highlight_request
+                .as_ref()
+                .unwrap()
+                .0
+                .target
+                .path
+                .as_os_str()
+                .as_encoded_bytes()
+                .as_ptr(),
+            allocation
+        );
         assert!(server.take_messages().is_empty());
     }
 }
@@ -715,15 +939,27 @@ fn highlight_cursor_cache_keeps_scalar_and_utf16_positions_distinct() {
     app.lsp_manager.sync_document_owned(&path, 2, source.into());
     poll(&mut app);
     let messages = server.take_messages();
-    let request = messages.iter().find(|m| m["method"] == "textDocument/documentHighlight").unwrap();
+    let request = messages
+        .iter()
+        .find(|m| m["method"] == "textDocument/documentHighlight")
+        .unwrap();
     assert_eq!(request["params"]["position"]["character"], 14);
-    for _ in 0..20 { poll(&mut app); }
+    for _ in 0..20 {
+        poll(&mut app);
+    }
     assert!(server.take_messages().is_empty());
     app.editor_mut().unwrap().set_cursor(0, 14);
     poll(&mut app);
     let messages = server.take_messages();
-    assert!(messages.iter().any(|m| m["method"] == "$/cancelRequest" && m["params"]["id"] == request["id"]));
-    let request = messages.iter().find(|m| m["method"] == "textDocument/documentHighlight").unwrap();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m["method"] == "$/cancelRequest" && m["params"]["id"] == request["id"])
+    );
+    let request = messages
+        .iter()
+        .find(|m| m["method"] == "textDocument/documentHighlight")
+        .unwrap();
     assert_eq!(request["params"]["position"]["character"], 15);
 }
 
@@ -741,7 +977,10 @@ fn inlay_prefetch_accepts_pending_covered_replies_and_expands_when_viewport_grow
     app.editor_mut().unwrap().viewport_height = 200;
     poll(&mut app);
     let messages = server.take_messages();
-    let request = messages.iter().find(|m| m["method"] == "textDocument/inlayHint").unwrap();
+    let request = messages
+        .iter()
+        .find(|m| m["method"] == "textDocument/inlayHint")
+        .unwrap();
     assert_eq!(request["params"]["range"]["start"]["line"], 0);
     assert_eq!(request["params"]["range"]["end"]["line"], 301);
 }
@@ -752,7 +991,10 @@ fn inlay_request_reaches_visible_lines_beyond_a_large_collapsed_fold() {
     app.editor_mut().unwrap().folded_ranges.insert(0, 250);
     poll(&mut app);
     let messages = server.take_messages();
-    let request = messages.iter().find(|m| m["method"] == "textDocument/inlayHint").unwrap();
+    let request = messages
+        .iter()
+        .find(|m| m["method"] == "textDocument/inlayHint")
+        .unwrap();
     assert_eq!(request["params"]["range"]["end"]["line"], 301);
     for offset in 250..=260 {
         app.editor_mut().unwrap().scroll_offset = offset;
@@ -773,19 +1015,42 @@ fn pending_on_type_format_survives_another_documents_sync() {
     app.queue_lsp_document_sync(other, version, rope);
     app.poll_background_results();
     assert_eq!(app.pending_lsp_on_type_format.as_ref().unwrap().0, path);
-    assert!(server.take_messages().iter().all(|m| m["method"] != "textDocument/onTypeFormatting"));
+    assert!(
+        server
+            .take_messages()
+            .iter()
+            .all(|m| m["method"] != "textDocument/onTypeFormatting")
+    );
 }
 
 #[test]
 fn manual_completion_and_signature_help_work_with_automatic_suggestions_disabled() {
     let (mut app, server, _directory, _path) = fixture();
     app.quick_suggestions = false;
-    crate::input::handle_editor_key(&mut app, crossterm::event::KeyCode::Char(' '), crossterm::event::KeyModifiers::CONTROL);
+    crate::input::handle_editor_key(
+        &mut app,
+        crossterm::event::KeyCode::Char(' '),
+        crossterm::event::KeyModifiers::CONTROL,
+    );
     assert!(app.lsp_completion_active);
-    assert!(server.take_messages().iter().any(|m| m["method"] == "textDocument/completion"));
-    crate::input::handle_editor_key(&mut app, crossterm::event::KeyCode::Char(' '), crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT);
+    assert!(
+        server
+            .take_messages()
+            .iter()
+            .any(|m| m["method"] == "textDocument/completion")
+    );
+    crate::input::handle_editor_key(
+        &mut app,
+        crossterm::event::KeyCode::Char(' '),
+        crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+    );
     assert!(app.lsp_signature_active);
-    assert!(server.take_messages().iter().any(|m| m["method"] == "textDocument/signatureHelp"));
+    assert!(
+        server
+            .take_messages()
+            .iter()
+            .any(|m| m["method"] == "textDocument/signatureHelp")
+    );
 }
 
 #[test]
@@ -793,7 +1058,13 @@ fn escape_and_cursor_movement_discard_pending_suggestions_and_late_replies() {
     let (mut app, server, _directory, _path) = fixture();
     assert!(app.request_lsp_suggestions(false));
     let id = app.lsp_manager.active_completion_id.unwrap();
-    crate::input_keyboard::handle_keyboard_event(&mut app, crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE));
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        ),
+    );
     server.respond(json!({"id":id,"result":[{"label":"late"}]}));
     poll(&mut app);
     assert!(!app.lsp_completion_active);
@@ -818,7 +1089,13 @@ fn delayed_rename_does_not_replace_newer_unsaved_text() {
     let uri = lsp_types::Url::from_file_path(&path).unwrap();
     server.respond(json!({"id":id,"result":{"changes":{uri.as_str():[{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":9}},"newText":"renamed"}]}}}));
     poll(&mut app);
-    assert!(app.editor().unwrap().rope.to_string().starts_with("// newer typing\n"));
+    assert!(
+        app.editor()
+            .unwrap()
+            .rope
+            .to_string()
+            .starts_with("// newer typing\n")
+    );
     assert!(!app.editor().unwrap().rope.to_string().contains("renamed"));
 }
 
@@ -828,12 +1105,20 @@ fn on_type_formatting_cannot_edit_another_tab_with_the_same_version() {
     let mut editor = Editor::test_with_text("other text");
     editor.file_path = Some(directory.path().join("other.rs"));
     editor.content_version = app.editor().unwrap().content_version;
-    app.lsp_on_type_format_target = Some(crate::background::LspDocumentTarget { path, content_version:editor.content_version });
+    app.lsp_on_type_format_target = Some(crate::background::LspDocumentTarget {
+        path,
+        content_version: editor.content_version,
+    });
     app.tabs.push(Tab::new_file(editor));
     app.active_tab = 1;
     app.lsp_manager.on_type_format_dirty = true;
     app.lsp_manager.on_type_format_edits = vec![lsp_types::TextEdit::new(
-        lsp_types::Range::new(lsp_types::Position::new(0,0), lsp_types::Position::new(0,5)), "wrong tab".into())];
+        lsp_types::Range::new(
+            lsp_types::Position::new(0, 0),
+            lsp_types::Position::new(0, 5),
+        ),
+        "wrong tab".into(),
+    )];
     poll(&mut app);
     assert_eq!(app.editor().unwrap().rope.to_string(), "other text");
 }

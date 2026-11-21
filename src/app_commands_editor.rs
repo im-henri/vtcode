@@ -3,7 +3,9 @@ use crate::app::App;
 impl App {
     /// Dispatch editor text-editing / transform commands.
     pub(crate) fn execute_editor_command(&mut self, id: &str) -> bool {
-        if crate::ui_logs::focused(self) && id != "file_associations" { return false; }
+        if crate::ui_logs::focused(self) && id != "file_associations" {
+            return false;
+        }
         if let Some(language) = crate::app_menu::language_from_command_id(id) {
             self.set_editor_language(Some(language));
             self.notify(format!("Language: {language}"));
@@ -11,29 +13,61 @@ impl App {
         }
         match id {
             "file_associations" => self.open_file_associations(),
-            "duplicate_line" => { if let Some(ed) = self.editor_mut_writable() { ed.duplicate_line(); } }
-            "duplicate_line_up" => { if let Some(ed) = self.editor_mut_writable() { ed.duplicate_line_up(); } }
-            "delete_line" => { if let Some(ed) = self.editor_mut_writable() { ed.delete_line(); } }
-            "delete_to_line_start" => { if let Some(ed) = self.editor_mut_writable() { ed.delete_to_line_start(); } }
-            "delete_to_line_end" => { if let Some(ed) = self.editor_mut_writable() { ed.delete_to_line_end(); } }
+            "duplicate_line" => {
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.duplicate_line();
+                }
+            }
+            "duplicate_line_up" => {
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.duplicate_line_up();
+                }
+            }
+            "delete_line" => {
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.delete_line();
+                }
+            }
+            "delete_to_line_start" => {
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.delete_to_line_start();
+                }
+            }
+            "delete_to_line_end" => {
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.delete_to_line_end();
+                }
+            }
             "file_stats" => {
                 if let Some(ed) = self.editor() {
                     let (lines, non_blank, words, chars) = ed.compute_file_stats();
-                    self.notify(format!("{} ({non_blank} non-blank), {}, {}", crate::helpers::counted(lines, "line", "lines"), crate::helpers::counted(words, "word", "words"), crate::helpers::counted(chars, "char", "chars")));
+                    self.notify(format!(
+                        "{} ({non_blank} non-blank), {}, {}",
+                        crate::helpers::counted(lines, "line", "lines"),
+                        crate::helpers::counted(words, "word", "words"),
+                        crate::helpers::counted(chars, "char", "chars")
+                    ));
                 }
             }
             "fold_all" => {
-                if let Some(ed) = self.editor_mut() { ed.fold_all(); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.fold_all();
+                }
                 self.notify("All regions folded");
             }
             "unfold_all" => {
-                if let Some(ed) = self.editor_mut() { ed.unfold_all(); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.unfold_all();
+                }
                 self.notify("All regions unfolded");
             }
             id @ ("fold_level_1" | "fold_level_2" | "fold_level_3" | "fold_level_4"
-                | "fold_level_5" | "fold_level_6" | "fold_level_7" | "fold_level_8" | "fold_level_9") => {
+            | "fold_level_5" | "fold_level_6" | "fold_level_7" | "fold_level_8"
+            | "fold_level_9") => {
                 let level = usize::from(id.as_bytes()[id.len() - 1] - b'0');
-                if let Some(ed) = self.editor_mut() { ed.fold_at_level(level); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.fold_at_level(level);
+                }
                 self.notify(format!("Folded at level {level}"));
             }
             "remove_empty_lines" => {
@@ -92,13 +126,41 @@ impl App {
                 }
                 self.notify("Consecutive blank lines merged");
             }
-            "toggle_comment" => { if let Some(ed) = self.editor_mut_writable() { ed.toggle_line_comment(); } }
-            "toggle_block_comment" => { if let Some(ed) = self.editor_mut_writable() { ed.toggle_block_comment(); } }
-            "select_to_bracket" => { if let Some(ed) = self.editor_mut() { ed.select_to_matching_bracket(); } }
-            "select_inside_brackets" => { if let Some(ed) = self.editor_mut() { ed.select_inside_brackets(); } }
-            "select_inside_quotes" => { if let Some(ed) = self.editor_mut() { ed.select_inside_quotes(); } }
-            "move_line_up" => { if let Some(ed) = self.editor_mut_writable() { ed.move_line_up(); } }
-            "move_line_down" => { if let Some(ed) = self.editor_mut_writable() { ed.move_line_down(); } }
+            "toggle_comment" => {
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.toggle_line_comment();
+                }
+            }
+            "toggle_block_comment" => {
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.toggle_block_comment();
+                }
+            }
+            "select_to_bracket" => {
+                if let Some(ed) = self.editor_mut() {
+                    ed.select_to_matching_bracket();
+                }
+            }
+            "select_inside_brackets" => {
+                if let Some(ed) = self.editor_mut() {
+                    ed.select_inside_brackets();
+                }
+            }
+            "select_inside_quotes" => {
+                if let Some(ed) = self.editor_mut() {
+                    ed.select_inside_quotes();
+                }
+            }
+            "move_line_up" => {
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.move_line_up();
+                }
+            }
+            "move_line_down" => {
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.move_line_down();
+                }
+            }
             "fold" => {
                 if let Some(ed) = self.editor_mut() {
                     let line = ed.cursor_line;
@@ -108,10 +170,14 @@ impl App {
                 }
             }
             "fold_conditional" => {
-                if let Some(ed) = self.editor_mut() { ed.collapse_conditional(ed.cursor_line); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.collapse_conditional(ed.cursor_line);
+                }
             }
             "fold_conditional_branch" => {
-                if let Some(ed) = self.editor_mut() { ed.collapse_conditional_branch(ed.cursor_line); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.collapse_conditional_branch(ed.cursor_line);
+                }
             }
             "unfold" => {
                 if let Some(ed) = self.editor_mut() {
@@ -202,7 +268,14 @@ impl App {
                 if let Some(ed) = self.editor() {
                     let line_text = ed.rope.line(ed.cursor_line).to_string();
                     let chars: Vec<char> = line_text.chars().collect();
-                    let is_path_char = |c: char| c.is_alphanumeric() || c == '/' || c == '\\' || c == '.' || c == '_' || c == '-';
+                    let is_path_char = |c: char| {
+                        c.is_alphanumeric()
+                            || c == '/'
+                            || c == '\\'
+                            || c == '.'
+                            || c == '_'
+                            || c == '-'
+                    };
                     let col = ed.cursor_col.min(chars.len().saturating_sub(1));
                     let mut start = col;
                     while start > 0 && is_path_char(chars[start - 1]) {
@@ -237,7 +310,9 @@ impl App {
                 self.notify("Converted to lowercase");
             }
             "toggle_case" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.toggle_case(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.toggle_case();
+                }
                 self.notify("Case toggled");
             }
             "trim_trailing" => {
@@ -250,25 +325,39 @@ impl App {
                 }
             }
             "insert_line_above" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.insert_line_above(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.insert_line_above();
+                }
             }
             "insert_line_below" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.insert_line_below(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.insert_line_below();
+                }
             }
             "goto_bracket" => {
-                if let Some(ed) = self.editor_mut() { ed.go_to_matching_bracket(); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.go_to_matching_bracket();
+                }
             }
             "paragraph_up" => {
-                if let Some(ed) = self.editor_mut() { ed.move_paragraph_up(); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.move_paragraph_up();
+                }
             }
             "paragraph_down" => {
-                if let Some(ed) = self.editor_mut() { ed.move_paragraph_down(); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.move_paragraph_down();
+                }
             }
             "select_paragraph" => {
-                if let Some(ed) = self.editor_mut() { ed.select_paragraph(); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.select_paragraph();
+                }
             }
             "center_cursor" => {
-                if let Some(ed) = self.editor_mut() { ed.center_cursor(); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.center_cursor();
+                }
                 self.notify("Cursor centered in viewport");
             }
             "join_lines" => {
@@ -278,23 +367,33 @@ impl App {
                 }
             }
             "indent_2" => {
-                if let Some(ed) = self.editor_mut() { ed.tab_size = 2; }
+                if let Some(ed) = self.editor_mut() {
+                    ed.tab_size = 2;
+                }
                 self.notify("Indent: 2 Spaces");
             }
             "indent_4" => {
-                if let Some(ed) = self.editor_mut() { ed.tab_size = 4; }
+                if let Some(ed) = self.editor_mut() {
+                    ed.tab_size = 4;
+                }
                 self.notify("Indent: 4 Spaces");
             }
             "indent_8" => {
-                if let Some(ed) = self.editor_mut() { ed.tab_size = 8; }
+                if let Some(ed) = self.editor_mut() {
+                    ed.tab_size = 8;
+                }
                 self.notify("Indent: 8 Spaces");
             }
             "expand_selection" => {
                 self.expand_editor_selection();
             }
             "shrink_selection" => {
-                if !self.lsp_selection_context_current() { self.clear_lsp_selection_context(); }
-                if let Some(ed) = self.editor_mut() { ed.shrink_selection(); }
+                if !self.lsp_selection_context_current() {
+                    self.clear_lsp_selection_context();
+                }
+                if let Some(ed) = self.editor_mut() {
+                    ed.shrink_selection();
+                }
                 self.track_lsp_selection_cursor();
             }
             "remove_duplicates" => {
@@ -322,34 +421,50 @@ impl App {
                 self.notify("Lines shuffled");
             }
             "to_camel" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.convert_to_camel_case(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.convert_to_camel_case();
+                }
                 self.notify("Converted to camelCase");
             }
             "to_pascal" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.convert_to_pascal_case(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.convert_to_pascal_case();
+                }
                 self.notify("Converted to PascalCase");
             }
             "to_snake" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.convert_to_snake_case(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.convert_to_snake_case();
+                }
                 self.notify("Converted to snake_case");
             }
             "to_constant" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.convert_to_constant_case(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.convert_to_constant_case();
+                }
                 self.notify("Converted to CONSTANT_CASE");
             }
             "to_kebab" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.convert_to_kebab_case(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.convert_to_kebab_case();
+                }
                 self.notify("Converted to kebab-case");
             }
             "to_title_case" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.convert_to_title_case(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.convert_to_title_case();
+                }
                 self.notify("Converted to Title Case");
             }
             "indent_line" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.indent_lines(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.indent_lines();
+                }
             }
             "outdent_line" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.dedent_line(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.dedent_line();
+                }
             }
             "base64_encode" => {
                 if let Some(ed) = self.editor_mut_writable() {
@@ -396,14 +511,21 @@ impl App {
                             if ch.is_whitespace() {
                                 in_word = false;
                             } else {
-                                if !in_word { words += 1; }
+                                if !in_word {
+                                    words += 1;
+                                }
                                 in_word = true;
                             }
                         }
                     }
                     let chars = ed.rope.len_chars();
                     let lines = ed.line_count();
-                    self.notify(format!("{}, {}, {}", crate::helpers::counted(lines, "line", "lines"), crate::helpers::counted(words, "word", "words"), crate::helpers::counted(chars, "character", "characters")));
+                    self.notify(format!(
+                        "{}, {}, {}",
+                        crate::helpers::counted(lines, "line", "lines"),
+                        crate::helpers::counted(words, "word", "words"),
+                        crate::helpers::counted(chars, "character", "characters")
+                    ));
                 }
             }
             "char_count" => {
@@ -414,31 +536,49 @@ impl App {
                 }
             }
             "transpose_words" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.transpose_words(); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.transpose_words();
+                }
             }
             "surround_parens" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.surround_selection("(", ")"); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.surround_selection("(", ")");
+                }
             }
             "surround_brackets" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.surround_selection("[", "]"); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.surround_selection("[", "]");
+                }
             }
             "surround_braces" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.surround_selection("{", "}"); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.surround_selection("{", "}");
+                }
             }
             "surround_double_quotes" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.surround_selection("\"", "\""); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.surround_selection("\"", "\"");
+                }
             }
             "surround_single_quotes" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.surround_selection("'", "'"); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.surround_selection("'", "'");
+                }
             }
             "surround_backticks" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.surround_selection("`", "`"); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.surround_selection("`", "`");
+                }
             }
             "surround_tag" => {
-                if let Some(ed) = self.editor_mut_writable() { ed.surround_selection("<div>", "</div>"); }
+                if let Some(ed) = self.editor_mut_writable() {
+                    ed.surround_selection("<div>", "</div>");
+                }
             }
             "next_change" => {
-                if let Some(ed) = self.editor_mut() { ed.next_change(); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.next_change();
+                }
             }
             "indent_to_spaces" => {
                 if let Some(ed) = self.editor_mut_writable() {
@@ -468,12 +608,18 @@ impl App {
             "toggle_typewriter" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.typewriter_mode = !ed.typewriter_mode;
-                    let state = if ed.typewriter_mode { "enabled" } else { "disabled" };
+                    let state = if ed.typewriter_mode {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    };
                     self.notify(format!("Typewriter mode {state}"));
                 }
             }
             "toggle_read_only" => {
-                if self.amend_tab_is_active() { return true; }
+                if self.amend_tab_is_active() {
+                    return true;
+                }
                 if let Some(ed) = self.editor_mut() {
                     ed.set_read_only(!ed.read_only);
                     let state = if ed.read_only { "enabled" } else { "disabled" };
@@ -481,7 +627,9 @@ impl App {
                 }
             }
             "prev_change" => {
-                if let Some(ed) = self.editor_mut() { ed.prev_change(); }
+                if let Some(ed) = self.editor_mut() {
+                    ed.prev_change();
+                }
             }
             "revert_file" => {
                 if let Some(ed) = self.editor_mut_writable() {
@@ -516,21 +664,31 @@ impl App {
                 }
             }
             "tab_size_2" => {
-                if let Some(ed) = self.editor_mut() { ed.tab_size = 2; }
+                if let Some(ed) = self.editor_mut() {
+                    ed.tab_size = 2;
+                }
                 self.notify("Tab size: 2");
             }
             "tab_size_4" => {
-                if let Some(ed) = self.editor_mut() { ed.tab_size = 4; }
+                if let Some(ed) = self.editor_mut() {
+                    ed.tab_size = 4;
+                }
                 self.notify("Tab size: 4");
             }
             "tab_size_8" => {
-                if let Some(ed) = self.editor_mut() { ed.tab_size = 8; }
+                if let Some(ed) = self.editor_mut() {
+                    ed.tab_size = 8;
+                }
                 self.notify("Tab size: 8");
             }
             "detect_indentation" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.detect_indentation();
-                    let style = if ed.use_tabs { "Tabs".to_string() } else { format!("{} Spaces", ed.tab_size) };
+                    let style = if ed.use_tabs {
+                        "Tabs".to_string()
+                    } else {
+                        format!("{} Spaces", ed.tab_size)
+                    };
                     self.notify(format!("Detected: {style}"));
                 }
             }
@@ -544,16 +702,23 @@ impl App {
     fn lsp_selection_editor(&self) -> Option<&crate::editor::Editor> {
         let tab = self.tabs.get(self.active_tab)?;
         // A revision/diff must never replace the working document on a server.
-        (tab.kind == crate::app::TabKind::File && !self.diff_selection_owns_cursor()
-            && !tab.editor.bg_loading && !tab.editor.large_file_mode).then_some(&tab.editor)
+        (tab.kind == crate::app::TabKind::File
+            && !self.diff_selection_owns_cursor()
+            && !tab.editor.bg_loading
+            && !tab.editor.large_file_mode)
+            .then_some(&tab.editor)
     }
 
     pub(crate) fn lsp_selection_context_current(&self) -> bool {
-        self.lsp_selection_range_source.as_ref().zip(self.lsp_selection_editor()).is_some_and(|((id, path, source), ed)| {
-            *id == ed.navigation_id && ed.file_path.as_ref() == Some(path)
-                && source.is_instance(&ed.rope)
-                && self.lsp_selection_range_cursor == (ed.cursor_line, ed.cursor_col)
-        })
+        self.lsp_selection_range_source
+            .as_ref()
+            .zip(self.lsp_selection_editor())
+            .is_some_and(|((id, path, source), ed)| {
+                *id == ed.navigation_id
+                    && ed.file_path.as_ref() == Some(path)
+                    && source.is_instance(&ed.rope)
+                    && self.lsp_selection_range_cursor == (ed.cursor_line, ed.cursor_col)
+            })
     }
 
     pub(crate) fn clear_lsp_selection_context(&mut self) {
@@ -572,15 +737,26 @@ impl App {
     }
 
     fn expand_editor_selection(&mut self) {
-        if let Some(tab) = self.tabs.get_mut(self.active_tab) { tab.editor.refresh_document(); }
+        if let Some(tab) = self.tabs.get_mut(self.active_tab) {
+            tab.editor.refresh_document();
+        }
         let current = self.lsp_selection_context_current();
-        if !current { self.clear_lsp_selection_context(); }
+        if !current {
+            self.clear_lsp_selection_context();
+        }
         let range = self.editor().and_then(|ed| {
-            let (sl, sc, el, ec) = ed.selection_range().unwrap_or(
-                (ed.cursor_line, ed.cursor_col, ed.cursor_line, ed.cursor_col));
-            self.lsp_selection_ranges.iter().copied()
+            let (sl, sc, el, ec) = ed.selection_range().unwrap_or((
+                ed.cursor_line,
+                ed.cursor_col,
+                ed.cursor_line,
+                ed.cursor_col,
+            ));
+            self.lsp_selection_ranges
+                .iter()
+                .copied()
                 .find(|&(rsl, rsc, rel, rec)| {
-                    (rsl, rsc) <= (sl, sc) && (rel, rec) >= (el, ec)
+                    (rsl, rsc) <= (sl, sc)
+                        && (rel, rec) >= (el, ec)
                         && ((rsl, rsc) < (sl, sc) || (rel, rec) > (el, ec))
                 })
         });
@@ -599,17 +775,24 @@ impl App {
                         let source = ed.rope.clone();
                         let pos = lsp_types::Position {
                             line: ed.cursor_line as u32,
-                            character: crate::lsp_positions::to_utf16(&source, ed.cursor_line, ed.cursor_col),
+                            character: crate::lsp_positions::to_utf16(
+                                &source,
+                                ed.cursor_line,
+                                ed.cursor_col,
+                            ),
                         };
                         // The request must follow the exact text it describes.
-                        self.lsp_manager.sync_document(&path, version, source.clone());
+                        self.lsp_manager
+                            .sync_document(&path, version, source.clone());
                         if self.lsp_manager.request_selection_range(&path, vec![pos]) {
                             self.lsp_selection_range_source = Some((id, path, source));
                         }
                     }
                 }
             }
-            if let Some(ed) = self.editor_mut() { ed.expand_selection(); }
+            if let Some(ed) = self.editor_mut() {
+                ed.expand_selection();
+            }
         }
         // Local fallback expansion moves the caret while the server works.
         // Keep that movement valid; independent movement still retires replies.
@@ -634,44 +817,102 @@ mod tests {
     #[test]
     fn edge_case_read_only_palette_commands_preserve_content_and_history() {
         for command in [
-            "undo", "redo", "toggle_comment", "toggle_block_comment",
-            "move_line_up", "move_line_down", "transpose_words",
-            "eol_lf", "eol_crlf", "encoding_utf8bom", "encoding_utf16le",
-            "encoding_ascii", "duplicate_line", "delete_line", "indent_line",
-            "format_json", "minify_json", "sort_json_keys",
+            "undo",
+            "redo",
+            "toggle_comment",
+            "toggle_block_comment",
+            "move_line_up",
+            "move_line_down",
+            "transpose_words",
+            "eol_lf",
+            "eol_crlf",
+            "encoding_utf8bom",
+            "encoding_utf16le",
+            "encoding_ascii",
+            "duplicate_line",
+            "delete_line",
+            "indent_line",
+            "format_json",
+            "minify_json",
+            "sort_json_keys",
         ] {
             let is_json = command.ends_with("json") || command == "sort_json_keys";
-            let mut app = app_with_content(if is_json { "{\"b\": 2, \"a\": 1}" } else { "alpha beta\r\ngamma delta\r\nepsilon\r\n" });
+            let mut app = app_with_content(if is_json {
+                "{\"b\": 2, \"a\": 1}"
+            } else {
+                "alpha beta\r\ngamma delta\r\nepsilon\r\n"
+            });
             let editor = app.editor_mut().unwrap();
             editor.language_override = Some("C".into());
             editor.set_cursor(1, 2);
-            if !is_json { editor.insert_char('x'); }
-            if command == "redo" { editor.undo(); }
+            if !is_json {
+                editor.insert_char('x');
+            }
+            if command == "redo" {
+                editor.undo();
+            }
             editor.read_only = true;
             let before = editor.rope.clone();
-            let state = (editor.content_version, editor.modified, editor.encoding, editor.can_undo(), editor.can_redo());
+            let state = (
+                editor.content_version,
+                editor.modified,
+                editor.encoding,
+                editor.can_undo(),
+                editor.can_redo(),
+            );
             app.execute_palette_command(command);
             let editor = app.editor().unwrap();
             assert_eq!(editor.rope, before, "{command} changed read-only text");
-            assert_eq!((editor.content_version, editor.modified, editor.encoding, editor.can_undo(), editor.can_redo()), state, "{command} changed read-only state");
+            assert_eq!(
+                (
+                    editor.content_version,
+                    editor.modified,
+                    editor.encoding,
+                    editor.can_undo(),
+                    editor.can_redo()
+                ),
+                state,
+                "{command} changed read-only state"
+            );
         }
     }
 
     #[test]
     fn edge_case_read_only_keyboard_shortcuts_preserve_content_and_history() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        for (code, shift) in [('z', false), ('y', false), ('z', true), ('d', true), ('/', false), ('/', true), (']', false), ('[', false), ('j', false), ('k', true)] {
+        for (code, shift) in [
+            ('z', false),
+            ('y', false),
+            ('z', true),
+            ('d', true),
+            ('/', false),
+            ('/', true),
+            (']', false),
+            ('[', false),
+            ('j', false),
+            ('k', true),
+        ] {
             let mut app = app_with_content("alpha beta\n    gamma delta\nepsilon\n");
             let editor = app.editor_mut().unwrap();
             editor.language_override = Some("C".into());
             editor.set_cursor(1, 6);
             editor.insert_char('x');
-            if code == 'y' || (code == 'z' && shift) { editor.undo(); }
+            if code == 'y' || (code == 'z' && shift) {
+                editor.undo();
+            }
             editor.read_only = true;
             let before = editor.rope.clone();
             let history = (editor.can_undo(), editor.can_redo());
-            let modifiers = KeyModifiers::CONTROL | if shift { KeyModifiers::SHIFT } else { KeyModifiers::NONE };
-            assert!(!crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Char(code), modifiers)));
+            let modifiers = KeyModifiers::CONTROL
+                | if shift {
+                    KeyModifiers::SHIFT
+                } else {
+                    KeyModifiers::NONE
+                };
+            assert!(!crate::input_keyboard::handle_keyboard_event(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(code), modifiers)
+            ));
             let editor = app.editor().unwrap();
             assert_eq!(editor.rope, before, "Ctrl+{code}, shift={shift}");
             assert_eq!((editor.can_undo(), editor.can_redo()), history);
@@ -689,7 +930,10 @@ mod tests {
             editor.read_only = true;
             let before = editor.rope.clone();
             for key in ['k', code] {
-                assert!(!crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL)));
+                assert!(!crate::input_keyboard::handle_keyboard_event(
+                    &mut app,
+                    KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL)
+                ));
             }
             assert!(!app.chord_pending);
             assert_eq!(app.editor().unwrap().rope, before);
@@ -705,7 +949,10 @@ mod tests {
         app.editor_mut().unwrap().language_override = Some("C".into());
         for (code, expected) in [('c', "// alpha\n"), ('u', "alpha\n")] {
             for key in ['k', code] {
-                assert!(!crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL)));
+                assert!(!crate::input_keyboard::handle_keyboard_event(
+                    &mut app,
+                    KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL)
+                ));
             }
             assert!(!app.chord_pending);
             assert_eq!(app.editor().unwrap().rope.to_string(), expected);
@@ -752,9 +999,10 @@ mod tests {
                 editor.selection_anchor = anchor;
                 let selected = editor.selected_text();
 
-                crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(
-                    code, KeyModifiers::ALT | KeyModifiers::SHIFT,
-                ));
+                crate::input_keyboard::handle_keyboard_event(
+                    &mut app,
+                    KeyEvent::new(code, KeyModifiers::ALT | KeyModifiers::SHIFT),
+                );
 
                 let editor = app.editor_mut().unwrap();
                 assert_eq!(editor.rope.to_string(), "head\nalpha beta\nalpha beta\nend");
@@ -778,24 +1026,44 @@ mod tests {
 
         for ending in ["\n", "\r\n"] {
             let source = ["head", "alpha beta", "gamma delta", "end"].join(ending);
-            let expected = ["head", "alpha beta", "gamma delta", "alpha beta", "gamma delta", "end"].join(ending);
+            let expected = [
+                "head",
+                "alpha beta",
+                "gamma delta",
+                "alpha beta",
+                "gamma delta",
+                "end",
+            ]
+            .join(ending);
             for end in [(2, 5), (3, 0)] {
                 for backward in [false, true] {
                     for (code, offset) in [(KeyCode::Up, 0), (KeyCode::Down, 2)] {
                         let mut app = app_with_content(&source);
                         app.active_pane = crate::app::ActivePane::Editor;
-                        let (anchor, cursor) = if backward { (end, (1, 2)) } else { ((1, 2), end) };
+                        let (anchor, cursor) = if backward {
+                            (end, (1, 2))
+                        } else {
+                            ((1, 2), end)
+                        };
                         let editor = app.editor_mut().unwrap();
                         editor.detect_line_ending();
                         editor.selection_anchor = Some(anchor);
                         (editor.cursor_line, editor.cursor_col) = cursor;
                         let selected = editor.selected_text();
-                        crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(
-                            code, KeyModifiers::ALT | KeyModifiers::SHIFT,
-                        ));
+                        crate::input_keyboard::handle_keyboard_event(
+                            &mut app,
+                            KeyEvent::new(code, KeyModifiers::ALT | KeyModifiers::SHIFT),
+                        );
                         let editor = app.editor_mut().unwrap();
-                        assert_eq!(editor.rope.to_string(), expected, "ending={ending:?}, end={end:?}, backward={backward}, key={code:?}");
-                        assert_eq!((editor.cursor_line, editor.cursor_col), (cursor.0 + offset, cursor.1));
+                        assert_eq!(
+                            editor.rope.to_string(),
+                            expected,
+                            "ending={ending:?}, end={end:?}, backward={backward}, key={code:?}"
+                        );
+                        assert_eq!(
+                            (editor.cursor_line, editor.cursor_col),
+                            (cursor.0 + offset, cursor.1)
+                        );
                         assert_eq!(editor.selection_anchor, Some((anchor.0 + offset, anchor.1)));
                         assert_eq!(editor.selected_text(), selected);
                         editor.undo();
@@ -896,12 +1164,18 @@ mod tests {
         // Comment the line
         app.execute_editor_command("toggle_comment");
         let text = app.editor().unwrap().rope.to_string();
-        assert!(text.starts_with("// let x = 1;\n"), "Expected commented line, got: {text}");
+        assert!(
+            text.starts_with("// let x = 1;\n"),
+            "Expected commented line, got: {text}"
+        );
 
         // Uncomment the line
         app.execute_editor_command("toggle_comment");
         let text = app.editor().unwrap().rope.to_string();
-        assert!(text.starts_with("let x = 1;\n"), "Expected uncommented line, got: {text}");
+        assert!(
+            text.starts_with("let x = 1;\n"),
+            "Expected uncommented line, got: {text}"
+        );
     }
 
     #[test]
@@ -1004,7 +1278,10 @@ mod tests {
         // duplicate_line should be blocked in read-only mode
         app.execute_editor_command("duplicate_line");
         let text = app.editor().unwrap().rope.to_string();
-        assert_eq!(text, "hello\n", "Editing should be blocked in read-only mode");
+        assert_eq!(
+            text, "hello\n",
+            "Editing should be blocked in read-only mode"
+        );
 
         app.execute_editor_command("toggle_read_only");
         assert!(!app.editor().unwrap().read_only);
@@ -1032,7 +1309,10 @@ mod tests {
 
         app.execute_editor_command(&command);
 
-        assert_eq!(app.editor().unwrap().language_override.as_deref(), Some("YAML"));
+        assert_eq!(
+            app.editor().unwrap().language_override.as_deref(),
+            Some("YAML")
+        );
         assert_eq!(app.notification_history.last().unwrap().0, "Language: YAML");
     }
 
@@ -1050,9 +1330,7 @@ mod tests {
             .filtered
             .iter()
             .filter_map(|index| app.palette.commands.get(*index))
-            .filter_map(|command| {
-                crate::app_menu::language_from_command_id(command.id.as_ref())
-            })
+            .filter_map(|command| crate::app_menu::language_from_command_id(command.id.as_ref()))
             .collect();
         assert_eq!(listed.len(), expected.len());
         assert!(expected.iter().all(|name| listed.contains(name.as_str())));

@@ -119,7 +119,10 @@ struct Matrix<'a> {
 
 impl Matrix<'_> {
     fn floats(&self) -> Vec<f32> {
-        self.cells.iter().map(|&cell| f32::from(cell) * self.scale).collect()
+        self.cells
+            .iter()
+            .map(|&cell| f32::from(cell) * self.scale)
+            .collect()
     }
 
     /// Add row `index` to `cells`.
@@ -155,13 +158,18 @@ fn dot_portable(a: &[f32], b: &[f32]) -> f32 {
 /// Inner product of a row of byte weights with values.
 fn dot_bytes(weights: &[i8], values: &[f32]) -> f32 {
     let mut lanes = [0f32; 8];
-    let ((w_chunks, w_tail), (x_chunks, x_tail)) = (weights.as_chunks::<8>(), values.as_chunks::<8>());
+    let ((w_chunks, w_tail), (x_chunks, x_tail)) =
+        (weights.as_chunks::<8>(), values.as_chunks::<8>());
     for (w, x) in w_chunks.iter().zip(x_chunks) {
         for lane in 0..8 {
             lanes[lane] += f32::from(w[lane]) * x[lane];
         }
     }
-    let tail: f32 = w_tail.iter().zip(x_tail).map(|(&w, x)| f32::from(w) * x).sum();
+    let tail: f32 = w_tail
+        .iter()
+        .zip(x_tail)
+        .map(|(&w, x)| f32::from(w) * x)
+        .sum();
     lanes.iter().sum::<f32>() + tail
 }
 
@@ -180,7 +188,8 @@ fn thread_count() -> usize {
 
 /// Run on every helper thread before it computes, so that it can lower its
 /// scheduling priority like the thread that started it.
-static THREAD_SETUP: std::sync::OnceLock<fn() -> Box<dyn std::any::Any>> = std::sync::OnceLock::new();
+static THREAD_SETUP: std::sync::OnceLock<fn() -> Box<dyn std::any::Any>> =
+    std::sync::OnceLock::new();
 
 /// Let the editor give helper threads the completion worker's low priority.
 #[allow(dead_code)] // The replay benchmark has no scheduler to ask.
@@ -251,18 +260,27 @@ fn pool() -> &'static Pool {
                 let mut seen = 0;
                 loop {
                     let job = {
-                        let mut state = pool.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let mut state = pool
+                            .state
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         loop {
                             if let Some(job) = state.job.filter(|_| state.round != seen) {
                                 seen = state.round;
                                 state.running += 1;
                                 break job;
                             }
-                            state = pool.wake.wait(state).unwrap_or_else(std::sync::PoisonError::into_inner);
+                            state = pool
+                                .wake
+                                .wait(state)
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
                         }
                     };
                     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.work()));
-                    let mut state = pool.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let mut state = pool
+                        .state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     state.running -= 1;
                     if state.running == 0 {
                         pool.idle.notify_all();
@@ -280,10 +298,18 @@ struct Withdraw(&'static Pool);
 
 impl Drop for Withdraw {
     fn drop(&mut self) {
-        let mut state = self.0.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = self
+            .0
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.job = None;
         while state.running > 0 {
-            state = self.0.idle.wait(state).unwrap_or_else(std::sync::PoisonError::into_inner);
+            state = self
+                .0
+                .idle
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 }
@@ -301,9 +327,16 @@ fn parallel(count: usize, run: &(dyn Fn(usize) + Sync)) {
         count,
     };
     let pool = pool();
-    let turn = if count > 1 && pool.helpers > 0 { pool.busy.try_lock().ok() } else { None };
+    let turn = if count > 1 && pool.helpers > 0 {
+        pool.busy.try_lock().ok()
+    } else {
+        None
+    };
     let _withdraw = turn.as_ref().map(|_| {
-        let mut state = pool.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = pool
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.job = Some(job);
         state.round += 1;
         drop(state);
@@ -330,15 +363,20 @@ fn matmul(weights: &Matrix<'_>, cols: usize, input: &[f32], tokens: usize, outpu
         .step_by(band)
         .map(|start| (start, (start + band).min(rows)))
         .collect();
-    let parts: Vec<std::sync::Mutex<Vec<f32>>> = bands.iter().map(|_| std::sync::Mutex::default()).collect();
+    let parts: Vec<std::sync::Mutex<Vec<f32>>> =
+        bands.iter().map(|_| std::sync::Mutex::default()).collect();
     parallel(bands.len(), &|index| {
         let (start, end) = bands[index];
         let mut part = vec![0f32; (end - start) * tokens];
         product(weights.cells, cols, input, tokens, start, end, &mut part);
-        *parts[index].lock().unwrap_or_else(std::sync::PoisonError::into_inner) = part;
+        *parts[index]
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = part;
     });
     for (&(start, end), part) in bands.iter().zip(parts) {
-        let part = part.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let part = part
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for (row, values) in (start..end).zip(part.chunks_exact(tokens)) {
             for (token, &value) in values.iter().enumerate() {
                 output[token * rows + row] = value * weights.scale;
@@ -349,7 +387,15 @@ fn matmul(weights: &Matrix<'_>, cols: usize, input: &[f32], tokens: usize, outpu
 
 /// Rows `start..end` of `matmul` before scaling, stored row by row:
 /// `part[(row - start) * tokens + token]`.
-fn product(weights: &[i8], cols: usize, input: &[f32], tokens: usize, start: usize, end: usize, part: &mut [f32]) {
+fn product(
+    weights: &[i8],
+    cols: usize,
+    input: &[f32],
+    tokens: usize,
+    start: usize,
+    end: usize,
+    part: &mut [f32],
+) {
     #[cfg(target_arch = "x86_64")]
     if cols.is_multiple_of(8)
         && std::arch::is_x86_feature_detected!("avx2")
@@ -362,8 +408,10 @@ fn product(weights: &[i8], cols: usize, input: &[f32], tokens: usize, start: usi
     }
     for row in start..end {
         for token in 0..tokens {
-            part[(row - start) * tokens + token] =
-                dot_bytes(&weights[row * cols..][..cols], &input[token * cols..][..cols]);
+            part[(row - start) * tokens + token] = dot_bytes(
+                &weights[row * cols..][..cols],
+                &input[token * cols..][..cols],
+            );
         }
     }
 }
@@ -398,7 +446,10 @@ unsafe fn product_avx2(
     let quad_rows = start + (end - start) / 4 * 4;
     let full_tokens = tokens / 4 * 4;
     for row in (start..pair_rows).step_by(2) {
-        let (w0, w1) = (&weights[row * cols..][..cols], &weights[(row + 1) * cols..][..cols]);
+        let (w0, w1) = (
+            &weights[row * cols..][..cols],
+            &weights[(row + 1) * cols..][..cols],
+        );
         for token in (0..full_tokens).step_by(4) {
             let x = [
                 &input[token * cols..][..cols],
@@ -436,7 +487,8 @@ unsafe fn product_avx2(
                 for k in (0..cols).step_by(8) {
                     let value = _mm256_loadu_ps(x.as_ptr().add(k));
                     for (lane, cell) in acc.iter_mut().enumerate() {
-                        *cell = _mm256_fmadd_ps(wide(w.as_ptr().add(lane * cols + k)), value, *cell);
+                        *cell =
+                            _mm256_fmadd_ps(wide(w.as_ptr().add(lane * cols + k)), value, *cell);
                     }
                 }
                 for (lane, cell) in acc.iter().enumerate() {
@@ -448,10 +500,16 @@ unsafe fn product_avx2(
     // The few cells at the edges.
     for row in start..end {
         for token in 0..tokens {
-            let done = if token < full_tokens { row < pair_rows } else { row < quad_rows };
+            let done = if token < full_tokens {
+                row < pair_rows
+            } else {
+                row < quad_rows
+            };
             if !done {
-                part[(row - start) * tokens + token] =
-                    dot_bytes(&weights[row * cols..][..cols], &input[token * cols..][..cols]);
+                part[(row - start) * tokens + token] = dot_bytes(
+                    &weights[row * cols..][..cols],
+                    &input[token * cols..][..cols],
+                );
             }
         }
     }
@@ -515,11 +573,23 @@ unsafe fn exp8(x: std::arch::x86_64::__m256) -> std::arch::x86_64::__m256 {
     let r = _mm256_fnmadd_ps(n, _mm256_set1_ps(0.693_359_4), x);
     let r = _mm256_fnmadd_ps(n, _mm256_set1_ps(-2.121_944_4e-4), r);
     let mut y = _mm256_set1_ps(1.987_569_1e-4);
-    for term in [1.398_199_9e-3, 8.333_452e-3, 4.166_579_6e-2, 1.666_666_5e-1, 0.5] {
+    for term in [
+        1.398_199_9e-3,
+        8.333_452e-3,
+        4.166_579_6e-2,
+        1.666_666_5e-1,
+        0.5,
+    ] {
         y = _mm256_fmadd_ps(y, r, _mm256_set1_ps(term));
     }
-    let y = _mm256_add_ps(_mm256_fmadd_ps(y, _mm256_mul_ps(r, r), r), _mm256_set1_ps(1.));
-    let power = _mm256_slli_epi32::<23>(_mm256_add_epi32(_mm256_cvtps_epi32(n), _mm256_set1_epi32(127)));
+    let y = _mm256_add_ps(
+        _mm256_fmadd_ps(y, _mm256_mul_ps(r, r), r),
+        _mm256_set1_ps(1.),
+    );
+    let power = _mm256_slli_epi32::<23>(_mm256_add_epi32(
+        _mm256_cvtps_epi32(n),
+        _mm256_set1_epi32(127),
+    ));
     _mm256_mul_ps(y, _mm256_castsi256_ps(power))
 }
 
@@ -556,7 +626,11 @@ unsafe fn attend_avx2(
                 let key = keys.as_ptr().add(position * width + part * head);
                 let mut sum = _mm256_setzero_ps();
                 for lane in 0..lanes {
-                    sum = _mm256_fmadd_ps(_mm256_loadu_ps(asked.add(lane * 8)), _mm256_loadu_ps(key.add(lane * 8)), sum);
+                    sum = _mm256_fmadd_ps(
+                        _mm256_loadu_ps(asked.add(lane * 8)),
+                        _mm256_loadu_ps(key.add(lane * 8)),
+                        sum,
+                    );
                 }
                 *weights.get_unchecked_mut(part * count + position) = total(sum) * scale;
             }
@@ -589,7 +663,10 @@ unsafe fn attend_avx2(
             let inverse = _mm256_set1_ps(1. / sum);
             for (lane, cell) in mixed.iter().enumerate().take(lanes) {
                 let target = out.as_mut_ptr().add(part * head + lane * 8);
-                _mm256_storeu_ps(target, _mm256_fmadd_ps(*cell, inverse, _mm256_loadu_ps(target)));
+                _mm256_storeu_ps(
+                    target,
+                    _mm256_fmadd_ps(*cell, inverse, _mm256_loadu_ps(target)),
+                );
             }
         }
     }
@@ -871,7 +948,12 @@ impl<'weights> Network<'weights> {
     /// gain and bias, and the output bias, as numbers.
     #[allow(dead_code)] // Used by the replay benchmark.
     pub(crate) fn output_side(&self) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
-        (self.token.floats(), self.final_gain.clone(), self.final_bias.clone(), self.output_bias.clone())
+        (
+            self.token.floats(),
+            self.final_gain.clone(),
+            self.final_bias.clone(),
+            self.output_bias.clone(),
+        )
     }
 
     /// Weights of block `layer`'s neurons, as numbers: expanding (one row of
@@ -880,7 +962,11 @@ impl<'weights> Network<'weights> {
     #[allow(dead_code)] // Used by the replay benchmark.
     pub(crate) fn neuron_weights(&self, layer: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
         let block = &self.blocks[layer];
-        (block.expand.floats(), block.expand_bias.clone(), block.reduce.floats())
+        (
+            block.expand.floats(),
+            block.expand_bias.clone(),
+            block.reduce.floats(),
+        )
     }
 
     #[allow(dead_code)] // Used by the replay benchmark.
@@ -908,7 +994,9 @@ impl<'weights> Network<'weights> {
     /// session's window rather than starting a new one.
     pub(crate) fn continues(&self, session: &Session, count: usize) -> bool {
         let held = session.held();
-        held > 0 && session.base < count && count - session.base <= held.min(self.length) + self.slack()
+        held > 0
+            && session.base < count
+            && count - session.base <= held.min(self.length) + self.slack()
     }
 
     /// First document token to read when `count` precede the caret: where
@@ -952,18 +1040,23 @@ impl<'weights> Network<'weights> {
         }
         // Line the tokens up with the positions already held. The session
         // may have dropped its front since `base` was chosen.
-        let tokens = if session.held() > 0 && base <= session.base && session.base - base < tokens.len() {
-            &tokens[session.base - base..]
-        } else {
-            // A new window. The passages stay as computed unless the old
-            // window's sliding has turned them.
-            let keep = if session.dropped == 0 { session.pinned() } else { 0 };
-            self.cut(session, keep);
-            session.base = base;
-            session.dropped = 0;
-            session.settled = false;
-            tokens
-        };
+        let tokens =
+            if session.held() > 0 && base <= session.base && session.base - base < tokens.len() {
+                &tokens[session.base - base..]
+            } else {
+                // A new window. The passages stay as computed unless the old
+                // window's sliding has turned them.
+                let keep = if session.dropped == 0 {
+                    session.pinned()
+                } else {
+                    0
+                };
+                self.cut(session, keep);
+                session.base = base;
+                session.dropped = 0;
+                session.settled = false;
+                tokens
+            };
         self.advance(session, tokens, None, cancelled)
     }
 
@@ -1065,7 +1158,9 @@ impl<'weights> Network<'weights> {
             session.memory.drain(..excess * width);
             session.tokens.drain(pinned..pinned + drop);
             session.origins.drain(pinned..pinned + drop);
-            session.finals.drain(pinned * width..(pinned + drop) * width);
+            session
+                .finals
+                .drain(pinned * width..(pinned + drop) * width);
             let mut turns = Vec::new();
             self.turns(drop, &mut turns);
             for cache in &mut session.keys {
@@ -1093,7 +1188,13 @@ impl<'weights> Network<'weights> {
 
     /// Compute positions for `new` tokens, layer by layer. Keeps what was
     /// computed before and leaves the session unchanged when `cancelled`.
-    fn push_block(&self, session: &mut Session, new: &[u16], origins: &[u8], cancelled: &dyn Fn() -> bool) -> bool {
+    fn push_block(
+        &self,
+        session: &mut Session,
+        new: &[u16],
+        origins: &[u8],
+        cancelled: &dyn Fn() -> bool,
+    ) -> bool {
         let width = self.width;
         let count = new.len();
         let first = session.tokens.len();
@@ -1121,9 +1222,14 @@ impl<'weights> Network<'weights> {
             session.tokens.push(token);
             session.origins.push(origins[offset]);
             let cells = &mut hidden[offset * width..][..width];
-            self.token.add_row((token as usize).min(self.subwords.len() - 1), cells);
+            self.token
+                .add_row((token as usize).min(self.subwords.len() - 1), cells);
             let tables = [
-                row(&self.language, width, (session.language as usize).min(LANGUAGES - 1)),
+                row(
+                    &self.language,
+                    width,
+                    (session.language as usize).min(LANGUAGES - 1),
+                ),
                 row(&self.segment, width, segment),
                 row(&self.origin, width, (origins[offset] as usize).min(2)),
             ];
@@ -1135,7 +1241,8 @@ impl<'weights> Network<'weights> {
         }
         let head = width / self.heads;
         let scale = 1. / (head as f32).sqrt();
-        let (mut normal, mut query, mut keys, mut values) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut normal, mut query, mut keys, mut values) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let (mut projected, mut expanded) = (Vec::new(), Vec::new());
         let mut mixed = vec![0f32; count * width];
         let mut line = Vec::new();
@@ -1187,10 +1294,14 @@ impl<'weights> Network<'weights> {
                 1
             };
             let share = count.div_ceil(pieces);
-            let parts: Vec<std::sync::Mutex<&mut [f32]>> =
-                mixed.chunks_mut(share * width).map(std::sync::Mutex::new).collect();
+            let parts: Vec<std::sync::Mutex<&mut [f32]>> = mixed
+                .chunks_mut(share * width)
+                .map(std::sync::Mutex::new)
+                .collect();
             parallel(parts.len(), &|index| {
-                let mut part = parts[index].lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut part = parts[index]
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let tokens = part.len() / width;
                 attend_tokens(index * share..index * share + tokens, &mut part);
             });
@@ -1211,8 +1322,13 @@ impl<'weights> Network<'weights> {
                 }
             }
             matmul(&block.reduce, 4 * width, &expanded, count, &mut projected);
-            for (cells, extra) in hidden.chunks_exact_mut(width).zip(projected.chunks_exact(width)) {
-                for (cell, (value, bias)) in cells.iter_mut().zip(extra.iter().zip(&block.reduce_bias)) {
+            for (cells, extra) in hidden
+                .chunks_exact_mut(width)
+                .zip(projected.chunks_exact(width))
+            {
+                for (cell, (value, bias)) in
+                    cells.iter_mut().zip(extra.iter().zip(&block.reduce_bias))
+                {
                     *cell += value + bias;
                 }
             }
@@ -1222,7 +1338,9 @@ impl<'weights> Network<'weights> {
                 if layer == 0 {
                     session.trace.clear();
                 }
-                session.trace.extend_from_slice(&hidden[(count - 1) * width..]);
+                session
+                    .trace
+                    .extend_from_slice(&hidden[(count - 1) * width..]);
                 session.trace_at = first + count;
                 if layer + TRACED_NEURON_LAYERS >= self.blocks.len() {
                     session.neurons_trace(layer, &expanded[(count - 1) * 4 * width..]);
@@ -1262,7 +1380,11 @@ impl<'weights> Network<'weights> {
 
     /// Append one token being written.
     fn push(&self, session: &mut Session, token: u16, cancelled: &dyn Fn() -> bool) -> bool {
-        let origin = if session.passages.below.is_empty() { 0 } else { 2 };
+        let origin = if session.passages.below.is_empty() {
+            0
+        } else {
+            2
+        };
         self.push_block(session, &[token], &[origin], cancelled)
     }
 
@@ -1275,7 +1397,13 @@ impl<'weights> Network<'weights> {
     /// With `on`, the typed piece is taken to be unfinished: the token that
     /// completes it must go on past it.
     #[allow(dead_code)] // Used by tests.
-    pub(crate) fn write(&self, session: &mut Session, typed: &[u8], on: bool, stop: &dyn Fn() -> bool) -> Written {
+    pub(crate) fn write(
+        &self,
+        session: &mut Session,
+        typed: &[u8],
+        on: bool,
+        stop: &dyn Fn() -> bool,
+    ) -> Written {
         self.write_block(session, typed, on, 0, stop)
     }
 
@@ -1329,7 +1457,11 @@ impl<'weights> Network<'weights> {
         else {
             return greedy;
         };
-        let before = if branch == 0 { 0 } else { greedy.steps[branch - 1].0 };
+        let before = if branch == 0 {
+            0
+        } else {
+            greedy.steps[branch - 1].0
+        };
         let rest = &typed[before.min(typed.len())..];
         let base = mark + branch;
         if session.tokens.len() < base {
@@ -1382,7 +1514,10 @@ impl<'weights> Network<'weights> {
         let weight: f32 = scored.iter().map(|&(score, _)| (score - top).exp()).sum();
         // Tempered: one line per choice makes the estimate too sure, so it
         // goes halfway from the token's own probability.
-        let own = line.evidence.first().map_or(0., |evidence| evidence.probability);
+        let own = line
+            .evidence
+            .first()
+            .map_or(0., |evidence| evidence.probability);
         let posterior = (own * (covered / weight.max(1e-9)).min(1.)).sqrt();
         if posterior_used {
             if let Some(first) = line.evidence.first_mut() {
@@ -1402,12 +1537,17 @@ impl<'weights> Network<'weights> {
         };
         let shift = merged.bytes.len();
         merged.bytes.extend(&line.bytes);
-        merged.steps.extend(line.steps.iter().map(|&(end, probability)| (end + shift, probability)));
+        merged.steps.extend(
+            line.steps
+                .iter()
+                .map(|&(end, probability)| (end + shift, probability)),
+        );
         merged.tokens.append(&mut line.tokens);
         merged.evidence.append(&mut line.evidence);
         if recording() {
             RANKED.with(|ranked| {
-                *ranked.borrow_mut() = Some((typed.len(), greedy.bytes.clone(), merged.bytes.clone()));
+                *ranked.borrow_mut() =
+                    Some((typed.len(), greedy.bytes.clone(), merged.bytes.clone()));
             });
         }
         self.hold(session, &merged, stop);
@@ -1421,7 +1561,11 @@ impl<'weights> Network<'weights> {
         if let Some((_, tokens)) = written.tokens.split_last()
             && !tokens.is_empty()
         {
-            let origin = if session.passages.below.is_empty() { 0 } else { 2 };
+            let origin = if session.passages.below.is_empty() {
+                0
+            } else {
+                2
+            };
             let origins = vec![origin; tokens.len()];
             self.push_block(session, tokens, &origins, stop);
         }
@@ -1429,7 +1573,13 @@ impl<'weights> Network<'weights> {
 
     /// The `count` likeliest next tokens that agree with the typed `rest`,
     /// with their probabilities among those that do.
-    fn choices(&self, session: &mut Session, rest: &[u8], on: bool, count: usize) -> Vec<(u16, f32)> {
+    fn choices(
+        &self,
+        session: &mut Session,
+        rest: &[u8],
+        on: bool,
+        count: usize,
+    ) -> Vec<(u16, f32)> {
         let loose = !rest.iter().any(u8::is_ascii_uppercase);
         let subwords = &self.subwords;
         let probabilities = self.probabilities(session);
@@ -1444,7 +1594,11 @@ impl<'weights> Network<'weights> {
                 continue;
             }
             let continues = |byte: &u8| byte.is_ascii_alphanumeric() || *byte == b'_';
-            if on && !rest.is_empty() && spelling.len() >= rest.len() && !spelling.get(rest.len()).is_some_and(continues) {
+            if on
+                && !rest.is_empty()
+                && spelling.len() >= rest.len()
+                && !spelling.get(rest.len()).is_some_and(continues)
+            {
                 continue;
             }
             total += probability;
@@ -1478,7 +1632,10 @@ impl<'weights> Network<'weights> {
         let mut score = first.max(1e-9).ln();
         // The line must end in its last token, a line end; the text below
         // starts with its own line end, which stands in for it.
-        if suffix.is_empty() || !self.subwords.bytes(line.tokens[last]).starts_with(b"\n") || last == 0 {
+        if suffix.is_empty()
+            || !self.subwords.bytes(line.tokens[last]).starts_with(b"\n")
+            || last == 0
+        {
             return None;
         }
         // Positions held: the line's tokens but the last.
@@ -1511,7 +1668,10 @@ impl<'weights> Network<'weights> {
         if session.finals.is_empty() {
             return written;
         }
-        if recording() && session.trace_at != session.tokens.len() && session.tokens.len() > session.pinned() {
+        if recording()
+            && session.trace_at != session.tokens.len()
+            && session.tokens.len() > session.pinned()
+        {
             // Recompute the last position, so that its trace is its own.
             let at = session.tokens.len() - 1;
             let (token, origin) = (session.tokens[at], session.origins[at]);
@@ -1541,7 +1701,11 @@ impl<'weights> Network<'weights> {
                     continue;
                 }
                 let continues = |byte: &u8| byte.is_ascii_alphanumeric() || *byte == b'_';
-                if on && !rest.is_empty() && spelling.len() >= rest.len() && !spelling.get(rest.len()).is_some_and(continues) {
+                if on
+                    && !rest.is_empty()
+                    && spelling.len() >= rest.len()
+                    && !spelling.get(rest.len()).is_some_and(continues)
+                {
                     continue;
                 }
                 total += probability;
@@ -1562,7 +1726,11 @@ impl<'weights> Network<'weights> {
             if best.1 <= 0. {
                 break;
             }
-            let (token, probability) = if rest.is_empty() { best } else { (best.0, best.1 / total.max(1e-9)) };
+            let (token, probability) = if rest.is_empty() {
+                best
+            } else {
+                (best.0, best.1 / total.max(1e-9))
+            };
             // How the choice stood among the tokens it could have been:
             // the runner-up's share and the spread of all of them.
             // Only needed for studying the model: it costs a pass over the
@@ -1596,7 +1764,9 @@ impl<'weights> Network<'weights> {
             written.tokens.push(token);
             if recording() {
                 let width = self.width;
-                written.states.extend_from_slice(&session.finals[session.finals.len() - width..]);
+                written
+                    .states
+                    .extend_from_slice(&session.finals[session.finals.len() - width..]);
                 let fresh = session.trace_at == session.tokens.len()
                     && session.trace.len() == width * self.blocks.len()
                     && session.neurons.len() == 4 * width * TRACED_NEURON_LAYERS;
@@ -1604,8 +1774,13 @@ impl<'weights> Network<'weights> {
                     written.traces.extend_from_slice(&session.trace);
                     written.neurons.extend_from_slice(&session.neurons);
                 } else {
-                    written.traces.resize(written.traces.len() + width * self.blocks.len(), f32::NAN);
-                    written.neurons.resize(written.neurons.len() + 4 * width * TRACED_NEURON_LAYERS, f32::NAN);
+                    written
+                        .traces
+                        .resize(written.traces.len() + width * self.blocks.len(), f32::NAN);
+                    written.neurons.resize(
+                        written.neurons.len() + 4 * width * TRACED_NEURON_LAYERS,
+                        f32::NAN,
+                    );
                 }
             }
             let from = written.bytes.len().max(typed.len());
@@ -1622,7 +1797,8 @@ impl<'weights> Network<'weights> {
                     b')' | b']' | b'}' => open -= 1,
                     b'\n' => {
                         lines += 1;
-                        ended |= !blocks || open <= 0 || lines >= MAX_WRITTEN_LINES || chance < 0.05;
+                        ended |=
+                            !blocks || open <= 0 || lines >= MAX_WRITTEN_LINES || chance < 0.05;
                     }
                     _ => {}
                 }
@@ -1653,7 +1829,8 @@ impl<'weights> Network<'weights> {
         let whole = [typed, text].concat();
         let whole = std::str::from_utf8(&whole).ok()?;
         let (mut tokens, mut starts) = (Vec::new(), Vec::new());
-        self.subwords.encode(whole, &mut session.cache, &mut tokens, &mut starts);
+        self.subwords
+            .encode(whole, &mut session.cache, &mut tokens, &mut starts);
         // Positions written before that agree with these tokens are kept.
         let agreeing = session.tokens[mark.min(session.tokens.len())..]
             .iter()
@@ -1735,12 +1912,16 @@ impl<'weights> Network<'weights> {
         let part = |at: usize| usize::from(at >= elsewhere) + usize::from(at >= pinned);
         let mut found: Vec<(f32, u16)> = Vec::with_capacity(row + session.memory_next.len());
         let mut consider = |key: &[f32], next: u16| {
-            let similarity = dot_portable(query, key) / (length * dot_portable(key, key).sqrt().max(1e-6));
+            let similarity =
+                dot_portable(query, key) / (length * dot_portable(key, key).sqrt().max(1e-6));
             found.push((similarity, next));
         };
         for at in 0..row - 1 {
             if part(at) == part(at + 1) {
-                consider(&session.finals[at * width..(at + 1) * width], session.tokens[at + 1]);
+                consider(
+                    &session.finals[at * width..(at + 1) * width],
+                    session.tokens[at + 1],
+                );
             }
         }
         for (key, &next) in session.memory.chunks_exact(width).zip(&session.memory_next) {
@@ -1752,7 +1933,10 @@ impl<'weights> Network<'weights> {
         let nearest = nearest.min(found.len());
         found.select_nth_unstable_by(nearest - 1, |a, b| b.0.total_cmp(&a.0));
         found.truncate(nearest);
-        let best = found.iter().map(|&(similarity, _)| similarity).fold(f32::MIN, f32::max);
+        let best = found
+            .iter()
+            .map(|&(similarity, _)| similarity)
+            .fold(f32::MIN, f32::max);
         let weights: Vec<f32> = found
             .iter()
             .map(|&(similarity, _)| (sharpness * (similarity - best)).exp())
@@ -1799,7 +1983,12 @@ impl<'weights> Network<'weights> {
                 },
                 ..Session::default()
             };
-            if !self.advance(&mut session, &tokens[elsewhere + below..], Some(&origins[elsewhere + below..]), &|| false) {
+            if !self.advance(
+                &mut session,
+                &tokens[elsewhere + below..],
+                Some(&origins[elsewhere + below..]),
+                &|| false,
+            ) {
                 return None;
             }
             // The trainer has no rule against a document starting anywhere.
@@ -1830,7 +2019,9 @@ pub(crate) fn embedded() -> Option<&'static Network<'static>> {
 /// Tokens of no particular text, for timing.
 #[allow(dead_code)]
 fn filler(count: usize, step: usize) -> Vec<u16> {
-    (0..count).map(|at| (300 + (at * step) % 4000) as u16).collect()
+    (0..count)
+        .map(|at| (300 + (at * step) % 4000) as u16)
+        .collect()
 }
 
 /// Time reading a new window with full passages, in milliseconds, for the

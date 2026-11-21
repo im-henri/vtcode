@@ -193,14 +193,19 @@ impl RouteCache {
             return;
         }
         let projection = geometry.is_retained().then_some(geometry.projection_id);
-        if projection.is_some() && self.wall_projection == projection
-            && self.area == geometry.area && self.gutter == gutter && self.bounds == bounds
+        if projection.is_some()
+            && self.wall_projection == projection
+            && self.area == geometry.area
+            && self.gutter == gutter
+            && self.bounds == bounds
         {
             return;
         }
         self.wall_projection = projection;
         #[cfg(test)]
-        { self.wall_builds += 1; }
+        {
+            self.wall_builds += 1;
+        }
         self.walls.clear();
         self.walls.resize(count.div_ceil(64), 0);
         let mut block = |x: u16, y: u16| {
@@ -255,7 +260,9 @@ impl RouteCache {
         self.scratch.clear();
         self.scratch.resize(self.walls.len(), 0);
         for y in self.bounds.y..self.bounds.bottom() {
-            if painter.blocked_rows.contains(&y) { continue; }
+            if painter.blocked_rows.contains(&y) {
+                continue;
+            }
             for x in self.bounds.x..self.bounds.right() {
                 if self.available(painter, x, y) {
                     let index = usize::from(y - self.bounds.y) * usize::from(self.bounds.width)
@@ -280,27 +287,40 @@ impl RouteCache {
         pair: Pair,
     ) -> Option<&Route> {
         let normalized = (pair.0.min(pair.1), pair.0.max(pair.1));
-        let projection = geometry.is_retained().then_some((geometry.projection_id, normalized));
-        let hints = [normalized.0, normalized.1].map(|position| painter.scope_endpoints.get(&position).copied());
+        let projection = geometry
+            .is_retained()
+            .then_some((geometry.projection_id, normalized));
+        let hints = [normalized.0, normalized.1]
+            .map(|position| painter.scope_endpoints.get(&position).copied());
         let shape = painter.scope_shapes.get(&normalized);
         // Retained geometry certifies unchanged anchors and source rows. Keep
         // hints and source-shape identity in this check: offscreen edits can
         // move attachments even while the visible projection stays unchanged.
-        let projected = projection.and_then(|projection| self.entries.iter().position(|entry| {
-            entry.projection == Some(projection) && entry.hints == hints
-                && match (&entry.key.shape, shape) {
-                    (None, None) => true,
-                    (Some((key, rows, origins)), Some(shape)) => *key == shape.key
-                        && Arc::ptr_eq(rows, &shape.rows) && Arc::ptr_eq(origins, &shape.origins),
-                    _ => false,
-                }
-        }));
+        let projected = projection.and_then(|projection| {
+            self.entries.iter().position(|entry| {
+                entry.projection == Some(projection)
+                    && entry.hints == hints
+                    && match (&entry.key.shape, shape) {
+                        (None, None) => true,
+                        (Some((key, rows, origins)), Some(shape)) => {
+                            *key == shape.key
+                                && Arc::ptr_eq(rows, &shape.rows)
+                                && Arc::ptr_eq(origins, &shape.origins)
+                        }
+                        _ => false,
+                    }
+            })
+        });
         let mut key = None;
         let existing = projected.or_else(|| {
             #[cfg(test)]
-            { self.key_builds += 1; }
+            {
+                self.key_builds += 1;
+            }
             key = Some(Key::new(painter, geometry, rows, pair));
-            self.entries.iter().position(|entry| Some(&entry.key) == key.as_ref())
+            self.entries
+                .iter()
+                .position(|entry| Some(&entry.key) == key.as_ref())
         });
         if let Some(index) = existing {
             let exact = self.entries[index]

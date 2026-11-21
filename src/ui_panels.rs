@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Paragraph},
-    Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -38,21 +38,32 @@ struct ListScrollbar {
 fn notification_offset(app: &App, height: usize) -> usize {
     let maximum = app.notification_history.len().saturating_sub(height);
     app.panel_chrome.notification_top.map_or(maximum, |top| {
-        app.notification_history.partition_point(|(_, _, sequence)| *sequence < top).min(maximum)
+        app.notification_history
+            .partition_point(|(_, _, sequence)| *sequence < top)
+            .min(maximum)
     })
 }
 
 fn scroll_to(app: &mut App, tab: u8, offset: usize, maximum: usize) {
     let offset = offset.min(maximum);
-    if tab == 1 { app.problem_scroll = offset; }
+    if tab == 1 {
+        app.problem_scroll = offset;
+    }
     if tab == 3 {
-        app.panel_chrome.notification_top = if offset == maximum { None }
-            else { app.notification_history.get(offset).map(|item| item.2) };
+        app.panel_chrome.notification_top = if offset == maximum {
+            None
+        } else {
+            app.notification_history.get(offset).map(|item| item.2)
+        };
     }
 }
 
 pub(crate) fn scroll_input(app: &mut App, mouse: MouseEvent) -> bool {
-    if !app.show_panel || !app.panel_area.is_some_and(|area| area.contains((mouse.column, mouse.row).into())) {
+    if !app.show_panel
+        || !app
+            .panel_area
+            .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
+    {
         return false;
     }
     let down = match mouse.kind {
@@ -63,64 +74,114 @@ pub(crate) fn scroll_input(app: &mut App, mouse: MouseEvent) -> bool {
     };
     let panel = app.panel_area.unwrap();
     // Header and horizontal gestures never fall through to a file or terminal.
-    if mouse.row == panel.y || mouse.modifiers.contains(crossterm::event::KeyModifiers::SHIFT) { return true; }
+    if mouse.row == panel.y
+        || mouse
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::SHIFT)
+    {
+        return true;
+    }
     let height = panel.height.saturating_sub(1) as usize;
     let (offset, total) = match app.panel_tab {
         1 => (app.problem_scroll, problems::layout(app).total),
-        3 => (notification_offset(app, height), app.notification_history.len()),
+        3 => (
+            notification_offset(app, height),
+            app.notification_history.len(),
+        ),
         _ => return true, // Output's text view has already handled its own wheel.
     };
     let maximum = total.saturating_sub(height);
     let offset = offset.min(maximum);
-    let next = if down { offset.saturating_add(app.scroll_speed) } else { offset.saturating_sub(app.scroll_speed) };
+    let next = if down {
+        offset.saturating_add(app.scroll_speed)
+    } else {
+        offset.saturating_sub(app.scroll_speed)
+    };
     scroll_to(app, app.panel_tab, next, maximum);
     true
 }
 
 pub(crate) fn scrollbar_press(app: &mut App, col: u16, row: u16) -> bool {
-    let Some(bar) = app.panel_chrome.scrollbar.filter(|bar| bar.tab == app.panel_tab && bar.area.contains((col, row).into())) else { return false; };
+    let Some(bar) = app
+        .panel_chrome
+        .scrollbar
+        .filter(|bar| bar.tab == app.panel_tab && bar.area.contains((col, row).into()))
+    else {
+        return false;
+    };
     capture_pointer(app, MouseButton::Left);
     let relative = row - bar.area.y;
-    let offset = if (bar.thumb_top..bar.thumb_top + bar.thumb).contains(&relative) { bar.offset }
-        else {
-            let travel = bar.area.height.saturating_sub(bar.thumb);
-            ((relative.saturating_sub(bar.thumb / 2).min(travel) as u128 * bar.maximum as u128)
-                / travel.max(1) as u128) as usize
-        };
+    let offset = if (bar.thumb_top..bar.thumb_top + bar.thumb).contains(&relative) {
+        bar.offset
+    } else {
+        let travel = bar.area.height.saturating_sub(bar.thumb);
+        ((relative.saturating_sub(bar.thumb / 2).min(travel) as u128 * bar.maximum as u128)
+            / travel.max(1) as u128) as usize
+    };
     scroll_to(app, bar.tab, offset, bar.maximum);
     app.panel_chrome.scroll_drag = Some((bar.tab, crate::settings_layout::Drag { row, offset }));
     true
 }
 
-fn draw_list_scrollbar(f: &mut Frame, app: &mut App, area: Rect, total: usize, offset: usize, bg: Color) {
-    if area.height == 0 || area.width < 2 || total <= area.height as usize { return; }
+fn draw_list_scrollbar(
+    f: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    total: usize,
+    offset: usize,
+    bg: Color,
+) {
+    if area.height == 0 || area.width < 2 || total <= area.height as usize {
+        return;
+    }
     let rect = Rect::new(area.right() - 1, area.y, 1, area.height);
     let hovered = rect.contains((app.mouse_col, app.mouse_row).into());
-    let (track, thumb) = app.colors.ui.scrollbar_colors(bg, hovered, app.panel_chrome.scroll_drag.is_some());
-    let bar = crate::ui_widgets::VerticalScrollbar::new(rect.x, rect.y, rect.height, total, offset).colors(thumb, track, bg);
+    let (track, thumb) =
+        app.colors
+            .ui
+            .scrollbar_colors(bg, hovered, app.panel_chrome.scroll_drag.is_some());
+    let bar = crate::ui_widgets::VerticalScrollbar::new(rect.x, rect.y, rect.height, total, offset)
+        .colors(thumb, track, bg);
     let (thumb_top, thumb_size) = bar.thumb();
-    app.panel_chrome.scrollbar = Some(ListScrollbar { area: rect, tab: app.panel_tab, maximum: total - area.height as usize, offset, thumb_top, thumb: thumb_size });
+    app.panel_chrome.scrollbar = Some(ListScrollbar {
+        area: rect,
+        tab: app.panel_tab,
+        maximum: total - area.height as usize,
+        offset,
+        thumb_top,
+        thumb: thumb_size,
+    });
     bar.render(f);
 }
 
 pub(crate) fn hovered_problem(app: &mut App, col: u16, row: u16) -> Option<usize> {
-    match problems::hit(app, col, row) { Some(problems::Row::Marker(index)) => Some(index), _ => None }
+    match problems::hit(app, col, row) {
+        Some(problems::Row::Marker(index)) => Some(index),
+        _ => None,
+    }
 }
 
-pub(crate) fn activate_problem(app: &mut App, col: u16, row: u16) { problems::activate(app, col, row); }
+pub(crate) fn activate_problem(app: &mut App, col: u16, row: u16) {
+    problems::activate(app, col, row);
+}
 
 /// Keyboard control of the focused Problems and Notifications lists: arrows,
 /// Page Up/Down and Home/End move, Enter opens a problem, Esc returns to the
 /// editor.
 pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode) -> bool {
-    use crossterm::event::KeyCode;
     use crate::app::ActivePane;
-    if !app.show_panel || app.active_pane != ActivePane::Panel || !matches!(app.panel_tab, 1 | 3) { return false; }
+    use crossterm::event::KeyCode;
+    if !app.show_panel || app.active_pane != ActivePane::Panel || !matches!(app.panel_tab, 1 | 3) {
+        return false;
+    }
     if code == KeyCode::Esc {
         app.active_pane = ActivePane::Editor;
         return true;
     }
-    let height = app.panel_area.map_or(10, |area| area.height.saturating_sub(1) as usize).max(1);
+    let height = app
+        .panel_area
+        .map_or(10, |area| area.height.saturating_sub(1) as usize)
+        .max(1);
     if app.panel_tab == 3 {
         let maximum = app.notification_history.len().saturating_sub(height);
         let offset = notification_offset(app, height).min(maximum);
@@ -138,7 +199,16 @@ pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode) -> bool
     }
     let layout = problems::layout(app);
     let Some(current) = problems::selected(app, &layout) else {
-        return matches!(code, KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End | KeyCode::Enter);
+        return matches!(
+            code,
+            KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+                | KeyCode::Home
+                | KeyCode::End
+                | KeyCode::Enter
+        );
     };
     let last = layout.total.saturating_sub(1);
     let next = match code {
@@ -157,9 +227,13 @@ pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode) -> bool
     let next = next.unwrap_or(current);
     app.problem_selected = next;
     // Keep the selection on screen; the first problem also shows the summary.
-    if problems::nearest(&layout, 0, true) == Some(next) { app.problem_scroll = 0; }
-    else if next < app.problem_scroll { app.problem_scroll = next; }
-    else if next >= app.problem_scroll + height { app.problem_scroll = next + 1 - height; }
+    if problems::nearest(&layout, 0, true) == Some(next) {
+        app.problem_scroll = 0;
+    } else if next < app.problem_scroll {
+        app.problem_scroll = next;
+    } else if next >= app.problem_scroll + height {
+        app.problem_scroll = next + 1 - height;
+    }
     true
 }
 
@@ -168,7 +242,9 @@ pub(crate) fn hide_for_layout(app: &mut App) {
     app.logs.hide();
     app.panel_chrome.scrollbar = None;
     app.panel_chrome.scroll_drag = None;
-    if app.active_pane == crate::app::ActivePane::Panel { app.active_pane = crate::app::ActivePane::Editor; }
+    if app.active_pane == crate::app::ActivePane::Panel {
+        app.active_pane = crate::app::ActivePane::Editor;
+    }
 }
 
 pub(crate) fn invalidate_layout(app: &mut App) {
@@ -179,7 +255,9 @@ pub(crate) fn invalidate_layout(app: &mut App) {
     app.panel_chrome.scrollbar = None;
     app.panel_chrome.scroll_drag = None;
     app.logs.hide();
-    if app.active_pane == crate::app::ActivePane::Panel { app.active_pane = crate::app::ActivePane::Editor; }
+    if app.active_pane == crate::app::ActivePane::Panel {
+        app.active_pane = crate::app::ActivePane::Editor;
+    }
 }
 
 pub(crate) fn show_problems(app: &mut App) {
@@ -188,8 +266,11 @@ pub(crate) fn show_problems(app: &mut App) {
 }
 
 pub(crate) fn toggle_problems(app: &mut App) {
-    if app.show_panel && app.panel_tab == 1 { close_panel(app); }
-    else { show_problems(app); }
+    if app.show_panel && app.panel_tab == 1 {
+        close_panel(app);
+    } else {
+        show_problems(app);
+    }
 }
 
 /// Chrome and non-selectable panel content own their complete press gesture,
@@ -218,10 +299,15 @@ pub(crate) fn captured_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             if app.panel_chrome.pointer == Some(button) =>
         {
             if let Some((tab, drag)) = app.panel_chrome.scroll_drag
-                && tab == app.panel_tab && app.show_panel
+                && tab == app.panel_tab
+                && app.show_panel
                 && let Some(bar) = app.panel_chrome.scrollbar.filter(|bar| bar.tab == tab)
             {
-                let offset = drag.offset_at(mouse.row, bar.area.height.saturating_sub(bar.thumb) as usize, bar.maximum);
+                let offset = drag.offset_at(
+                    mouse.row,
+                    bar.area.height.saturating_sub(bar.thumb) as usize,
+                    bar.maximum,
+                );
                 scroll_to(app, tab, offset, bar.maximum);
             }
             if matches!(mouse.kind, MouseEventKind::Up(_)) {
@@ -237,16 +323,34 @@ pub(crate) fn captured_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     }
 }
 
-pub(crate) const PANEL_LABELS: [(u8, &str); 3] = [(1, "Problems"), (2, "Output"), (3, "Notifications")];
+pub(crate) const PANEL_LABELS: [(u8, &str); 3] =
+    [(1, "Problems"), (2, "Output"), (3, "Notifications")];
 
 /// Shorten labels before hiding tabs, and keep the selected tab reachable.
 pub(crate) fn panel_tab_layout(area: Rect, active: u8) -> Vec<(Rect, u8, &'static str)> {
-    if area.is_empty() { return Vec::new(); }
+    if area.is_empty() {
+        return Vec::new();
+    }
     let actions = if area.width >= 12 { 6 } else { 3 };
-    let more = if active == 2 && area.width >= 15 { 3 } else { 0 };
+    let more = if active == 2 && area.width >= 15 {
+        3
+    } else {
+        0
+    };
     let available = area.width.saturating_sub(actions + more) as usize;
-    let labels = [PANEL_LABELS, [(1, "Problems"), (2, "Output"), (3, "Alerts")], [(1, "P"), (2, "O"), (3, "N")]]
-        .into_iter().find(|labels| labels.iter().map(|(_, label)| UnicodeWidthStr::width(*label) + 2).sum::<usize>() <= available);
+    let labels = [
+        PANEL_LABELS,
+        [(1, "Problems"), (2, "Output"), (3, "Alerts")],
+        [(1, "P"), (2, "O"), (3, "N")],
+    ]
+    .into_iter()
+    .find(|labels| {
+        labels
+            .iter()
+            .map(|(_, label)| UnicodeWidthStr::width(*label) + 2)
+            .sum::<usize>()
+            <= available
+    });
     let mut tabs = Vec::with_capacity(3);
     if let Some(labels) = labels {
         let mut x = area.x;
@@ -258,10 +362,22 @@ pub(crate) fn panel_tab_layout(area: Rect, active: u8) -> Vec<(Rect, u8, &'stati
     } else if available > 0 {
         let active = App::normalize_panel_tab(active);
         let next_width = if available >= 5 { 2 } else { 0 };
-        let label = PANEL_LABELS.iter().find(|(index, _)| *index == active).unwrap().1;
-        tabs.push((Rect::new(area.x, area.y, (available - next_width) as u16, 1), active, label));
+        let label = PANEL_LABELS
+            .iter()
+            .find(|(index, _)| *index == active)
+            .unwrap()
+            .1;
+        tabs.push((
+            Rect::new(area.x, area.y, (available - next_width) as u16, 1),
+            active,
+            label,
+        ));
         if next_width > 0 {
-            tabs.push((Rect::new(area.x + (available - next_width) as u16, area.y, 2, 1), active % 3 + 1, "›"));
+            tabs.push((
+                Rect::new(area.x + (available - next_width) as u16, area.y, 2, 1),
+                active % 3 + 1,
+                "›",
+            ));
         }
     }
     tabs
@@ -273,31 +389,80 @@ fn draw_panel_header(f: &mut Frame, app: &mut App, area: Rect) {
     app.panel_tab_areas.clear();
     app.panel_chrome.close = Rect::default();
     app.panel_chrome.maximize = Rect::default();
-    if area.is_empty() { return; }
+    if area.is_empty() {
+        return;
+    }
     let mut tabs_end = area.x;
     for (tab_area, index, label) in panel_tab_layout(area, app.panel_tab) {
         let active = app.panel_tab == index;
         let hovered = tab_area.contains((app.mouse_col, app.mouse_row).into());
-        let fg = if active { app.colors.ui.fg_panel_title } else { app.colors.ui.fg_panel_inactive };
+        let fg = if active {
+            app.colors.ui.fg_panel_title
+        } else {
+            app.colors.ui.fg_panel_inactive
+        };
         let mut style = app.colors.ui.toolbar_style(fg, bg, hovered, active, false);
-        if active { style = style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED).underline_color(app.colors.ui.border_panel_active); }
-        let label = crate::ui_performance::clip_middle(label, tab_area.width.saturating_sub(2).max(1) as usize);
-        f.render_widget(Paragraph::new(if tab_area.width > 2 { format!(" {label} ") } else { label }).style(style), tab_area);
+        if active {
+            style = style
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                .underline_color(app.colors.ui.border_panel_active);
+        }
+        let label = crate::ui_performance::clip_middle(
+            label,
+            tab_area.width.saturating_sub(2).max(1) as usize,
+        );
+        f.render_widget(
+            Paragraph::new(if tab_area.width > 2 {
+                format!(" {label} ")
+            } else {
+                label
+            })
+            .style(style),
+            tab_area,
+        );
         app.panel_tab_areas.push((tab_area, index));
         tabs_end = tabs_end.max(tab_area.right());
     }
     let width = area.width.min(3);
     let close = Rect::new(area.right() - width, area.y, width, 1);
     app.panel_chrome.close = close;
-    let maximize = if area.width >= 12 { Rect::new(close.x - 3, area.y, 3, 1) } else { Rect::default() };
+    let maximize = if area.width >= 12 {
+        Rect::new(close.x - 3, area.y, 3, 1)
+    } else {
+        Rect::default()
+    };
     app.panel_chrome.maximize = maximize;
-    for (rect, label) in [(maximize, if app.panel_chrome.maximized { " ▿ " } else { " ▴ " }), (close, if width == 3 { " ✕ " } else { "✕" })] {
-        if rect.is_empty() { continue; }
-        f.render_widget(Paragraph::new(label).style(app.colors.ui.toolbar_style(app.colors.ui.fg_panel_inactive, bg,
-            rect.contains((app.mouse_col, app.mouse_row).into()), false, false)), rect);
+    for (rect, label) in [
+        (
+            maximize,
+            if app.panel_chrome.maximized {
+                " ▿ "
+            } else {
+                " ▴ "
+            },
+        ),
+        (close, if width == 3 { " ✕ " } else { "✕" }),
+    ] {
+        if rect.is_empty() {
+            continue;
+        }
+        f.render_widget(
+            Paragraph::new(label).style(app.colors.ui.toolbar_style(
+                app.colors.ui.fg_panel_inactive,
+                bg,
+                rect.contains((app.mouse_col, app.mouse_row).into()),
+                false,
+                false,
+            )),
+            rect,
+        );
     }
     if app.panel_tab == 2 {
-        let right = if maximize.is_empty() { close.x } else { maximize.x };
+        let right = if maximize.is_empty() {
+            close.x
+        } else {
+            maximize.x
+        };
         let start = tabs_end.saturating_add(1).min(right);
         crate::ui_logs::draw_toolbar(f, app, Rect::new(start, area.y, right - start, 1));
     }
@@ -309,36 +474,81 @@ pub(crate) fn close_panel(app: &mut App) {
 }
 
 pub(crate) fn draw_tooltip(frame: &mut Frame, app: &App) {
-    let terminal_resize = !app.terminal_sidebar.dragging() && app.terminal_sidebar.handle
-        .is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into()));
+    let terminal_resize = !app.terminal_sidebar.dragging()
+        && app
+            .terminal_sidebar
+            .handle
+            .is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into()));
     let point = (app.mouse_col, app.mouse_row).into();
-    let terminal_tab = app.terminal_sidebar_tab_areas.iter()
-        .find(|(area, _)| area.contains(point)).map(|(_, index)| *index)
+    let terminal_tab = app
+        .terminal_sidebar_tab_areas
+        .iter()
+        .find(|(area, _)| area.contains(point))
+        .map(|(_, index)| *index)
         .or_else(|| {
             let area = app.tab_bar_area.filter(|area| area.contains(point))?;
-            let (index, _, _) = crate::ui_chrome_tabs::TabBarHits::new(app, area).tab_at(app.mouse_col)?;
+            let (index, _, _) =
+                crate::ui_chrome_tabs::TabBarHits::new(app, area).tab_at(app.mouse_col)?;
             let tab = app.tabs.get(index)?;
-            (tab.kind == crate::app::TabKind::Terminal).then_some(tab.terminal_idx).flatten()
-        }).or_else(|| {
-            let (group, area) = app.groups.iter().enumerate()
-                .find_map(|(group, pane)| pane.tab_bar_area.filter(|area| area.contains(point)).map(|area| (group, area)))?;
-            let (index, _, _) = crate::ui_chrome_tabs::TabBarHits::for_group(app, area, group).tab_at(app.mouse_col)?;
-            let tab = if group == app.active_group { app.tabs.get(index)? } else { app.groups[group].tabs.get(index)? };
-            (tab.kind == crate::app::TabKind::Terminal).then_some(tab.terminal_idx).flatten()
+            (tab.kind == crate::app::TabKind::Terminal)
+                .then_some(tab.terminal_idx)
+                .flatten()
+        })
+        .or_else(|| {
+            let (group, area) = app.groups.iter().enumerate().find_map(|(group, pane)| {
+                pane.tab_bar_area
+                    .filter(|area| area.contains(point))
+                    .map(|area| (group, area))
+            })?;
+            let (index, _, _) = crate::ui_chrome_tabs::TabBarHits::for_group(app, area, group)
+                .tab_at(app.mouse_col)?;
+            let tab = if group == app.active_group {
+                app.tabs.get(index)?
+            } else {
+                app.groups[group].tabs.get(index)?
+            };
+            (tab.kind == crate::app::TabKind::Terminal)
+                .then_some(tab.terminal_idx)
+                .flatten()
         });
-    let waiting = terminal_tab.is_some_and(|index|
-        crate::ui_chrome_tabs::terminal_input_marker(app, index, std::time::Instant::now()).is_some());
-    if (!app.show_panel && !terminal_resize && !waiting) || app.menu_active || app.tab_context_active
-        || app.side_notice.area.is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into()))
-        || crate::ui_modal::active(app).is_some() || crate::ui_quick_picker::active(app).is_some() { return; }
-    let hint = if waiting { Some(crate::terminal_input_activity::HINT.into()) }
-        else if terminal_resize { Some("Drag to resize Terminal".into()) }
-        else if app.panel_chrome.close.contains(point) { Some("Close Panel".into()) }
-        else if app.panel_chrome.maximize.contains(point) { Some(if app.panel_chrome.maximized { "Restore Panel Size" } else { "Maximize Panel" }.into()) }
-        else { crate::ui_logs::hint(app) };
+    let waiting = terminal_tab.is_some_and(|index| {
+        crate::ui_chrome_tabs::terminal_input_marker(app, index, std::time::Instant::now())
+            .is_some()
+    });
+    if (!app.show_panel && !terminal_resize && !waiting)
+        || app.menu_active
+        || app.tab_context_active
+        || app
+            .side_notice
+            .area
+            .is_some_and(|area| area.contains((app.mouse_col, app.mouse_row).into()))
+        || crate::ui_modal::active(app).is_some()
+        || crate::ui_quick_picker::active(app).is_some()
+    {
+        return;
+    }
+    let hint = if waiting {
+        Some(crate::terminal_input_activity::HINT.into())
+    } else if terminal_resize {
+        Some("Drag to resize Terminal".into())
+    } else if app.panel_chrome.close.contains(point) {
+        Some("Close Panel".into())
+    } else if app.panel_chrome.maximize.contains(point) {
+        Some(
+            if app.panel_chrome.maximized {
+                "Restore Panel Size"
+            } else {
+                "Maximize Panel"
+            }
+            .into(),
+        )
+    } else {
+        crate::ui_logs::hint(app)
+    };
     if let Some(hint) = hint {
         crate::ui_widgets::Tooltip::hover(vec![Line::raw(hint)], &app.colors)
-            .max_width(76).render(frame, app.mouse_col, app.mouse_row);
+            .max_width(76)
+            .render(frame, app.mouse_col, app.mouse_row);
     }
 }
 
@@ -347,10 +557,13 @@ pub(crate) fn select_tab(app: &mut App, index: u8) {
     app.panel_chrome.scroll_drag = None;
     app.panel_tab = App::normalize_panel_tab(index);
     app.terminal_panel_focused = false;
-    if app.panel_tab == 2 { app.show_output(); }
-    else {
+    if app.panel_tab == 2 {
+        app.show_output();
+    } else {
         app.logs.hide();
-        if app.active_pane == crate::app::ActivePane::Panel { app.active_pane = crate::app::ActivePane::Editor; }
+        if app.active_pane == crate::app::ActivePane::Panel {
+            app.active_pane = crate::app::ActivePane::Editor;
+        }
     }
 }
 
@@ -358,16 +571,33 @@ pub(crate) fn draw_bottom_panel(f: &mut Frame, app: &mut App, area: Rect) {
     app.panel_chrome.scrollbar = None;
     app.panel_tab = App::normalize_panel_tab(app.panel_tab);
     let header = Rect::new(area.x, area.y, area.width, area.height.min(1));
-    let content = Rect::new(area.x, header.bottom(), area.width, area.height.saturating_sub(header.height));
-    f.render_widget(Block::default().style(Style::default().bg(app.colors.ui.bg_panel)), area);
-    if app.panel_tab == 2 { crate::ui_logs::draw_content(f, app, content); }
+    let content = Rect::new(
+        area.x,
+        header.bottom(),
+        area.width,
+        area.height.saturating_sub(header.height),
+    );
+    f.render_widget(
+        Block::default().style(Style::default().bg(app.colors.ui.bg_panel)),
+        area,
+    );
+    if app.panel_tab == 2 {
+        crate::ui_logs::draw_content(f, app, content);
+    }
     draw_panel_header(f, app, header);
     match app.panel_tab {
         1 => draw_panel_problems(f, app, content),
         3 => {
             draw_panel_notifications(f, app, content);
             let offset = notification_offset(app, content.height as usize);
-            draw_list_scrollbar(f, app, content, app.notification_history.len(), offset, app.colors.ui.bg_notification);
+            draw_list_scrollbar(
+                f,
+                app,
+                content,
+                app.notification_history.len(),
+                offset,
+                app.colors.ui.bg_notification,
+            );
         }
         _ => {}
     }
@@ -391,16 +621,22 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
 
     let area = crate::terminal_sidebar::content_area(f, app, area);
     let toggle_width = area.width.min(3);
-    let toggle_x = area.x.saturating_add(area.width.saturating_sub(toggle_width));
+    let toggle_x = area
+        .x
+        .saturating_add(area.width.saturating_sub(toggle_width));
     let toggle_area = Rect::new(toggle_x, area.y, toggle_width, 1);
     app.terminal_sidebar_toggle_area = Some(toggle_area);
 
     if !app.show_terminal_sidebar {
         let toggle = crate::ui_pickers::truncate_to_width(" ‹ ", area.width as usize);
         f.render_widget(
-            Paragraph::new(toggle).style(
-                app.colors.ui.toolbar_style(app.colors.ui.fg_panel_title, app.colors.ui.bg_panel, app.hovered_terminal_sidebar_toggle, false, false),
-            ),
+            Paragraph::new(toggle).style(app.colors.ui.toolbar_style(
+                app.colors.ui.fg_panel_title,
+                app.colors.ui.bg_panel,
+                app.hovered_terminal_sidebar_toggle,
+                false,
+                false,
+            )),
             toggle_area,
         );
         for (offset, ch) in "TERM".chars().enumerate() {
@@ -427,31 +663,53 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         area.y,
         title,
         Style::default()
-            .fg(app.colors.ui.readable_foreground(app.colors.ui.fg_panel_inactive, app.colors.ui.bg_panel, 4.5))
+            .fg(app.colors.ui.readable_foreground(
+                app.colors.ui.fg_panel_inactive,
+                app.colors.ui.bg_panel,
+                4.5,
+            ))
             .bg(app.colors.ui.bg_panel),
     );
 
     let plus_x = toggle_x.saturating_sub(3);
     if area.width >= 9 {
-        if let Some(index) = app.active_terminal_in_dock(TerminalDock::Right)
-            .or_else(|| (0..app.terminals.len()).find(|&index| app.terminal_is_in_dock(index, TerminalDock::Right))) {
-            crate::app_terminal_find::draw_button(f, app, Rect::new(plus_x - 3, area.y, 3, 1), index);
+        if let Some(index) = app
+            .active_terminal_in_dock(TerminalDock::Right)
+            .or_else(|| {
+                (0..app.terminals.len())
+                    .find(|&index| app.terminal_is_in_dock(index, TerminalDock::Right))
+            })
+        {
+            crate::app_terminal_find::draw_button(
+                f,
+                app,
+                Rect::new(plus_x - 3, area.y, 3, 1),
+                index,
+            );
         }
     }
     if plus_x >= area.x {
         let plus_area = Rect::new(plus_x, area.y, 3.min(area.width), 1);
         app.terminal_sidebar_plus_area = Some(plus_area);
         f.render_widget(
-            Paragraph::new(" + ").style(
-                app.colors.ui.toolbar_style(app.colors.ui.fg_panel_title, app.colors.ui.bg_panel, app.hovered_terminal_plus, false, false),
-            ),
+            Paragraph::new(" + ").style(app.colors.ui.toolbar_style(
+                app.colors.ui.fg_panel_title,
+                app.colors.ui.bg_panel,
+                app.hovered_terminal_plus,
+                false,
+                false,
+            )),
             plus_area,
         );
     }
     f.render_widget(
-        Paragraph::new(" › ").style(
-            app.colors.ui.toolbar_style(app.colors.ui.fg_panel_title, app.colors.ui.bg_panel, app.hovered_terminal_sidebar_toggle, false, false),
-        ),
+        Paragraph::new(" › ").style(app.colors.ui.toolbar_style(
+            app.colors.ui.fg_panel_title,
+            app.colors.ui.bg_panel,
+            app.hovered_terminal_sidebar_toggle,
+            false,
+            false,
+        )),
         toggle_area,
     );
 
@@ -488,19 +746,45 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         let label_width = (name.width() + 3) as u16;
         let tab_area = Rect::new(x, area.y + 1, label_width, 1);
         let is_active = Some(index) == selected;
-        let background = crate::ui_chrome_tabs::terminal_completion_background(app, Some(index), app.colors.ui.bg_panel, now);
-        let mut style = app.colors.ui.toolbar_style(
-            if is_active { app.colors.ui.fg_panel_title } else { app.colors.ui.fg_panel_inactive },
-            background, app.hovered_terminal_tab == Some(index), false, false,
+        let background = crate::ui_chrome_tabs::terminal_completion_background(
+            app,
+            Some(index),
+            app.colors.ui.bg_panel,
+            now,
         );
-        if is_active { style = style.add_modifier(Modifier::UNDERLINED).underline_color(app.colors.ui.border_terminal_tab); }
+        let mut style = app.colors.ui.toolbar_style(
+            if is_active {
+                app.colors.ui.fg_panel_title
+            } else {
+                app.colors.ui.fg_panel_inactive
+            },
+            background,
+            app.hovered_terminal_tab == Some(index),
+            false,
+            false,
+        );
+        if is_active {
+            style = style
+                .add_modifier(Modifier::UNDERLINED)
+                .underline_color(app.colors.ui.border_terminal_tab);
+        }
         crate::ui_chrome_tabs::show_terminal_input(app, Some(index), now);
         let waiting = crate::ui_chrome_tabs::terminal_input_marker(app, index, now);
-        let color = if waiting.is_some() { app.colors.fg_accent_blue }
-            else if notice.failed() { app.colors.fg_error } else { app.colors.fg_success };
+        let color = if waiting.is_some() {
+            app.colors.fg_accent_blue
+        } else if notice.failed() {
+            app.colors.fg_error
+        } else {
+            app.colors.fg_success
+        };
         let label = vec![
-            Span::styled(waiting.map_or_else(|| if notified { "● " } else { "  " }.to_owned(), |symbol| format!("{} ", symbol.trim_end())),
-                style.fg(app.colors.ui.readable_foreground(color, background, 3.0))),
+            Span::styled(
+                waiting.map_or_else(
+                    || if notified { "● " } else { "  " }.to_owned(),
+                    |symbol| format!("{} ", symbol.trim_end()),
+                ),
+                style.fg(app.colors.ui.readable_foreground(color, background, 3.0)),
+            ),
             Span::styled(format!("{name} "), style),
         ];
         f.render_widget(Paragraph::new(Line::from(label)).style(style), tab_area);
@@ -512,12 +796,13 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         }
         let close_area = Rect::new(x, area.y + 1, 2, 1);
         f.render_widget(
-            Paragraph::new("× ").style(
-                app.colors.ui.toolbar_style(
-                    app.colors.ui.fg_panel_inactive, app.colors.ui.bg_panel,
-                    app.hovered_terminal_close == Some(index), false, false,
-                ),
-            ),
+            Paragraph::new("× ").style(app.colors.ui.toolbar_style(
+                app.colors.ui.fg_panel_inactive,
+                app.colors.ui.bg_panel,
+                app.hovered_terminal_close == Some(index),
+                false,
+                false,
+            )),
             close_area,
         );
         app.terminal_sidebar_close_areas.push((close_area, index));
@@ -547,7 +832,10 @@ pub(crate) fn draw_terminal_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
 fn problem_row<'a>(spans: Vec<Span<'a>>, background: Color, width: u16) -> Line<'a> {
     let mut line = Line::from(spans);
     let fill = (width as usize).saturating_sub(line.width());
-    line.spans.push(Span::styled(crate::helpers::spaces(fill), Style::default().bg(background)));
+    line.spans.push(Span::styled(
+        crate::helpers::spaces(fill),
+        Style::default().bg(background),
+    ));
     line
 }
 
@@ -569,7 +857,9 @@ fn draw_docked_terminal(f: &mut Frame, app: &mut App, index: usize, area: Rect) 
     }
     if let Some(ref pty) = app.terminals[index].terminal_pty {
         let surface = crate::app_terminal_selection::TerminalSurface {
-            index, area: content, group: None,
+            index,
+            area: content,
+            group: None,
         };
         app.terminal_surfaces.push(surface);
         crate::ui_helpers::draw_terminal_emulator_with_cursor(
@@ -605,7 +895,9 @@ pub(crate) fn draw_panel_notifications(f: &mut Frame, app: &App, area: Rect) {
     if app.notification_history.is_empty() {
         let p = Paragraph::new(Line::from(Span::styled(
             " No notifications yet",
-            Style::default().fg(app.colors.ui.description_color(app.colors.ui.bg_panel)).bg(app.colors.ui.bg_panel),
+            Style::default()
+                .fg(app.colors.ui.description_color(app.colors.ui.bg_panel))
+                .bg(app.colors.ui.bg_panel),
         )));
         f.render_widget(p, area);
         return;
@@ -625,20 +917,35 @@ pub(crate) fn draw_panel_notifications(f: &mut Frame, app: &App, area: Rect) {
                 NotifyLevel::Warning => ("⚠ ", 1),
                 NotifyLevel::Error => ("✗ ", 2),
             };
-            let icon_color = app.colors.ui.notification_icon_color(severity, app.colors.ui.bg_notification);
+            let icon_color = app
+                .colors
+                .ui
+                .notification_icon_color(severity, app.colors.ui.bg_notification);
             let seq_label = format!(" #{:<4} ", seq + 1);
             Line::from(vec![
                 Span::styled(
                     seq_label,
                     Style::default()
-                        .fg(app.colors.ui.description_color(app.colors.ui.bg_notification))
+                        .fg(app
+                            .colors
+                            .ui
+                            .description_color(app.colors.ui.bg_notification))
                         .bg(app.colors.ui.bg_notification),
                 ),
-                Span::styled(icon, Style::default().fg(icon_color).bg(app.colors.ui.bg_notification)),
+                Span::styled(
+                    icon,
+                    Style::default()
+                        .fg(icon_color)
+                        .bg(app.colors.ui.bg_notification),
+                ),
                 Span::styled(
                     msg.clone(),
                     Style::default()
-                        .fg(app.colors.ui.readable_foreground(app.colors.ui.fg_notification, app.colors.ui.bg_notification, 4.5))
+                        .fg(app.colors.ui.readable_foreground(
+                            app.colors.ui.fg_notification,
+                            app.colors.ui.bg_notification,
+                            4.5,
+                        ))
                         .bg(app.colors.ui.bg_notification),
                 ),
             ])
@@ -680,7 +987,7 @@ mod tests {
     use super::*;
     use crate::app::Tab;
     use crate::editor::Editor;
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn bottom_panel_offers_output_problems_and_notifications_at_every_width() {
@@ -689,16 +996,24 @@ mod tests {
                 let mut app = App::test_new();
                 app.panel_tab = selected;
                 let mut terminal = Terminal::new(TestBackend::new(width, 6)).unwrap();
-                terminal.draw(|frame| draw_bottom_panel(frame, &mut app, frame.area())).unwrap();
+                terminal
+                    .draw(|frame| draw_bottom_panel(frame, &mut app, frame.area()))
+                    .unwrap();
                 assert_eq!(app.panel_tab, App::normalize_panel_tab(selected));
                 for (rect, index) in &app.panel_tab_areas {
                     assert!(matches!(index, 1 | 2 | 3));
                     assert!(rect.right() <= width.saturating_sub(3));
                 }
-                let header: String = (0..width).map(|x| terminal.backend().buffer()[(x, 0)].symbol()).collect();
+                let header: String = (0..width)
+                    .map(|x| terminal.backend().buffer()[(x, 0)].symbol())
+                    .collect();
                 assert!(!header.contains("Terminal"));
                 if width >= 48 {
-                    assert!(header.contains("Problems") && header.contains("Output") && header.contains("Notifications"));
+                    assert!(
+                        header.contains("Problems")
+                            && header.contains("Output")
+                            && header.contains("Notifications")
+                    );
                 }
             }
         }
@@ -707,9 +1022,20 @@ mod tests {
     #[test]
     fn menus_and_palette_cannot_reopen_removed_panel_surfaces() {
         let app = App::test_new();
-        assert!(App::build_command_list().iter().all(|command| command.id != "move_terminal_to_bottom"));
-        let terminal_menu = App::menu_labels().iter().position(|label| *label == "Terminal").unwrap();
-        assert!(app.menu_items(terminal_menu).iter().all(|(_, id)| *id != "move_terminal_to_bottom"));
+        assert!(
+            App::build_command_list()
+                .iter()
+                .all(|command| command.id != "move_terminal_to_bottom")
+        );
+        let terminal_menu = App::menu_labels()
+            .iter()
+            .position(|label| *label == "Terminal")
+            .unwrap();
+        assert!(
+            app.menu_items(terminal_menu)
+                .iter()
+                .all(|(_, id)| *id != "move_terminal_to_bottom")
+        );
     }
 
     #[test]

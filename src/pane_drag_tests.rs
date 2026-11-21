@@ -40,15 +40,27 @@ fn dragging_terminal_between_docks_and_split_directions_preserves_rendered_logs(
     app.active_tab = 0;
     app.show_terminal_sidebar = true;
     app.terminal_sidebar_revealed = true;
-    let output = "BEGINLOGabcdefghijklmnopqrstuvwxyz0123456789\r\nsecond log\r\nMOVE_LOG_READY\r\n> ";
-    app.terminals[0].terminal_pty = Some(crate::terminal::TerminalEmulator::test_with_output(80, 30, output));
+    let output =
+        "BEGINLOGabcdefghijklmnopqrstuvwxyz0123456789\r\nsecond log\r\nMOVE_LOG_READY\r\n> ";
+    app.terminals[0].terminal_pty = Some(crate::terminal::TerminalEmulator::test_with_output(
+        80, 30, output,
+    ));
     let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
     draw(&mut app, &mut terminal);
     let sidebar_tab = app.terminal_sidebar_tab_areas[0].0;
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), (sidebar_tab.x + 2, sidebar_tab.y));
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        (sidebar_tab.x + 2, sidebar_tab.y),
+    );
     assert_eq!(app.dragging_terminal_tab, Some(0));
 
-    for edge in [TabDropZone::Top, TabDropZone::Left, TabDropZone::Bottom, TabDropZone::Right] {
+    for edge in [
+        TabDropZone::Top,
+        TabDropZone::Left,
+        TabDropZone::Bottom,
+        TabDropZone::Right,
+    ] {
         if app.terminal_is_in_editor(0) {
             let source = app.active_group;
             start_drag(&mut app, &mut terminal, source);
@@ -56,8 +68,12 @@ fn dragging_terminal_between_docks_and_split_directions_preserves_rendered_logs(
         let file_area = area_for(&app, "file");
         let (mut x, mut y) = edge_position(file_area, edge);
         // Stay inside the editor split target, clear of the outer dock targets.
-        if edge == TabDropZone::Bottom { y = file_area.bottom() - 4; }
-        if edge == TabDropZone::Right { x = file_area.right() - 4; }
+        if edge == TabDropZone::Bottom {
+            y = file_area.bottom() - 4;
+        }
+        if edge == TabDropZone::Right {
+            x = file_area.right() - 4;
+        }
         finish_drag(&mut app, &mut terminal, (x, y));
         assert_eq!(app.tabs[app.active_tab].terminal_idx, Some(0));
         assert_placement(app.editor_area.unwrap(), area_for(&app, "file"), edge);
@@ -68,23 +84,48 @@ fn dragging_terminal_between_docks_and_split_directions_preserves_rendered_logs(
     let source = app.active_group;
     start_drag(&mut app, &mut terminal, source);
     let body = app.workbench_body_area.unwrap();
-    finish_drag(&mut app, &mut terminal, (body.right() - 1, body.y + body.height / 2));
+    finish_drag(
+        &mut app,
+        &mut terminal,
+        (body.right() - 1, body.y + body.height / 2),
+    );
     assert!(app.terminal_is_in_dock(0, TerminalDock::Right));
     assert_terminal_log(&app, &terminal, output);
 }
 
 fn assert_terminal_log(app: &App, terminal: &Terminal<TestBackend>, expected: &str) {
     let pty = app.terminals[0].terminal_pty.as_ref().unwrap();
-    assert_eq!(pty.profile_name, "Log fixture", "moving must reuse the session");
-    let text: String = pty.grid.scrollback.iter().chain(&pty.grid.cells).flatten()
-        .map(|cell| cell.ch).filter(|ch| !ch.is_whitespace()).collect();
-    assert_eq!(text, expected.chars().filter(|ch| !ch.is_whitespace()).collect::<String>());
+    assert_eq!(
+        pty.profile_name, "Log fixture",
+        "moving must reuse the session"
+    );
+    let text: String = pty
+        .grid
+        .scrollback
+        .iter()
+        .chain(&pty.grid.cells)
+        .flatten()
+        .map(|cell| cell.ch)
+        .filter(|ch| !ch.is_whitespace())
+        .collect();
+    assert_eq!(
+        text,
+        expected
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect::<String>()
+    );
     let buffer = terminal.backend().buffer();
     let visible = (0..buffer.area.height).any(|y| {
-        (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect::<String>()
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect::<String>()
             .contains("MOVE_LOG_READY")
     });
-    assert!(visible, "existing output must be visible without new PTY output");
+    assert!(
+        visible,
+        "existing output must be visible without new PTY output"
+    );
 }
 
 #[test]
@@ -92,11 +133,15 @@ fn terminal_center_drop_renders_live_output_without_a_split() {
     for dock in [TerminalDock::Right] {
         for keep_file in [false, true] {
             let mut app = App::test_new();
-            if keep_file { app.tabs = vec![tab("file")]; }
+            if keep_file {
+                app.tabs = vec![tab("file")];
+            }
             app.active_tab = 0;
             app.move_terminal_to_dock(0, dock);
             let output = "existing log\r\nMOVE_LOG_READY\r\n> ";
-            app.terminals[0].terminal_pty = Some(crate::terminal::TerminalEmulator::test_with_output(80, 24, output));
+            app.terminals[0].terminal_pty = Some(
+                crate::terminal::TerminalEmulator::test_with_output(80, 24, output),
+            );
             let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
             draw(&mut app, &mut terminal);
             let start = match dock {
@@ -108,7 +153,11 @@ fn terminal_center_drop_renders_live_output_without_a_split() {
             let area = app.editor_area.unwrap();
             mouse(&mut app, MouseEventKind::Down(MouseButton::Left), start);
             assert_eq!(app.dragging_terminal_tab, Some(0));
-            finish_drag(&mut app, &mut terminal, (area.x + area.width / 2, area.y + area.height / 2));
+            finish_drag(
+                &mut app,
+                &mut terminal,
+                (area.x + area.width / 2, area.y + area.height / 2),
+            );
             assert_single_terminal_view(&app, &terminal, output);
         }
     }
@@ -121,14 +170,19 @@ fn terminal_stays_live_when_the_last_neighboring_split_is_closed() {
         app.tabs = vec![tab("file")];
         app.active_tab = 0;
         let output = "existing log\r\nMOVE_LOG_READY\r\n> ";
-        app.terminals[0].terminal_pty = Some(crate::terminal::TerminalEmulator::test_with_output(80, 24, output));
+        app.terminals[0].terminal_pty = Some(crate::terminal::TerminalEmulator::test_with_output(
+            80, 24, output,
+        ));
         app.detach_terminal_to_tab();
         app.create_split_group_dir(app.active_tab, direction);
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
         draw(&mut app, &mut terminal);
         app.switch_group(0);
         draw(&mut app, &mut terminal);
-        assert!(app.code_area.is_some(), "neighboring file leaves editor hit areas");
+        assert!(
+            app.code_area.is_some(),
+            "neighboring file leaves editor hit areas"
+        );
         app.close_tab(0);
         draw(&mut app, &mut terminal);
         assert_single_terminal_view(&app, &terminal, output);
@@ -143,11 +197,17 @@ fn assert_single_terminal_view(app: &App, terminal: &Terminal<TestBackend>, outp
     assert_eq!(app.tabs[app.active_tab].kind, crate::app::TabKind::Terminal);
     assert_eq!(app.tabs[app.active_tab].terminal_idx, Some(0));
     assert_terminal_log(app, terminal, output);
-    let area = app.terminal_surfaces.iter()
+    let area = app
+        .terminal_surfaces
+        .iter()
         .find(|surface| surface.index == 0 && surface.group == Some(app.active_group))
-        .expect("the live PTY viewport excludes terminal chrome").area;
+        .expect("the live PTY viewport excludes terminal chrome")
+        .area;
     let grid = &app.terminals[0].terminal_pty.as_ref().unwrap().grid;
-    assert_eq!((grid.width, grid.height), (area.width as usize, area.height as usize));
+    assert_eq!(
+        (grid.width, grid.height),
+        (area.width as usize, area.height as usize)
+    );
     assert!(app.code_area.is_none());
     assert!(app.gutter_area.is_none());
     assert!(app.minimap_area.is_none());
@@ -230,14 +290,23 @@ fn start_drag(app: &mut App, terminal: &mut Terminal<TestBackend>, source: usize
     start_tab_drag(app, terminal, source, 0);
 }
 
-fn start_tab_drag(app: &mut App, terminal: &mut Terminal<TestBackend>, source: usize, index: usize) {
+fn start_tab_drag(
+    app: &mut App,
+    terminal: &mut Terminal<TestBackend>,
+    source: usize,
+    index: usize,
+) {
     let area = if source == app.active_group {
         app.tab_bar_area.unwrap()
     } else {
         app.groups[source].tab_bar_area.unwrap()
     };
     let tab = crate::ui_chrome_tabs::TabBarHits::for_group(app, area, source)
-        .tabs.into_iter().find(|(i, _, _)| *i == index).unwrap().1;
+        .tabs
+        .into_iter()
+        .find(|(i, _, _)| *i == index)
+        .unwrap()
+        .1;
     mouse(
         app,
         MouseEventKind::Down(MouseButton::Left),
@@ -260,14 +329,18 @@ fn finish_drag(app: &mut App, terminal: &mut Terminal<TestBackend>, position: (u
 
 fn grouped_tabs(count: usize) -> App {
     let mut app = App::test_new();
-    app.tabs = (0..count).map(|i| {
-        let mut tab = tab(&format!("f{i}"));
-        tab.editor.saved_rope = Some(tab.editor.rope.clone());
-        tab
-    }).collect();
+    app.tabs = (0..count)
+        .map(|i| {
+            let mut tab = tab(&format!("f{i}"));
+            tab.editor.saved_rope = Some(tab.editor.rope.clone());
+            tab
+        })
+        .collect();
     app.active_tab = 0;
     app.tab_mru_order = (0..count).rev().collect();
-    app.desks.selected_tabs.extend(app.tabs.iter().map(|t| t.editor.navigation_id));
+    app.desks
+        .selected_tabs
+        .extend(app.tabs.iter().map(|t| t.editor.navigation_id));
     app.group_selected_tabs("Feature", None);
     app
 }
@@ -281,27 +354,62 @@ fn tab_group_drag_to_empty_space_ungroups_without_changing_the_document_or_mru()
                 let group = app.tab_group(&app.tabs[source]).unwrap().id;
                 let view = app.tabs[source].editor.navigation_id;
                 app.tabs[source].editor.insert_char('!');
-                let other_views: Vec<_> = app.tabs.iter().filter(|t| t.editor.navigation_id != view)
-                    .map(|t| t.editor.navigation_id).collect();
+                let other_views: Vec<_> = app
+                    .tabs
+                    .iter()
+                    .filter(|t| t.editor.navigation_id != view)
+                    .map(|t| t.editor.navigation_id)
+                    .collect();
                 let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
                 draw(&mut app, &mut terminal);
                 let pane = app.active_group;
                 start_tab_drag(&mut app, &mut terminal, pane, source);
-                let mru: Vec<_> = app.tab_mru_order.iter().map(|&i| app.tabs[i].editor.navigation_id).collect();
+                let mru: Vec<_> = app
+                    .tab_mru_order
+                    .iter()
+                    .map(|&i| app.tabs[i].editor.navigation_id)
+                    .collect();
                 let area = app.tab_bar_area.unwrap();
                 let hits = TabBarHits::new(&app, area);
                 assert!(!hits.new_tab.is_empty());
-                let x = if onto_plus { hits.new_tab.x + 1 } else { area.right() - 2 };
+                let x = if onto_plus {
+                    hits.new_tab.x + 1
+                } else {
+                    area.right() - 2
+                };
                 finish_drag(&mut app, &mut terminal, (x, area.y));
 
-                assert_eq!(app.tabs.len(), count, "dropping on + must not create another tab");
+                assert_eq!(
+                    app.tabs.len(),
+                    count,
+                    "dropping on + must not create another tab"
+                );
                 assert_eq!(app.active_tab, count - 1);
                 assert_eq!(app.editor().unwrap().navigation_id, view);
                 assert!(app.tab_group(&app.tabs[count - 1]).is_none());
-                assert_eq!(app.tabs[..count - 1].iter().map(|t| t.editor.navigation_id).collect::<Vec<_>>(), other_views);
-                assert!(app.tabs[..count - 1].iter().all(|t| app.tab_group(t).unwrap().id == group));
-                assert_eq!(app.tab_mru_order.iter().map(|&i| app.tabs[i].editor.navigation_id).collect::<Vec<_>>(), mru);
-                assert_eq!(TabBarHits::new(&app, area).groups.len(), usize::from(count > 1));
+                assert_eq!(
+                    app.tabs[..count - 1]
+                        .iter()
+                        .map(|t| t.editor.navigation_id)
+                        .collect::<Vec<_>>(),
+                    other_views
+                );
+                assert!(
+                    app.tabs[..count - 1]
+                        .iter()
+                        .all(|t| app.tab_group(t).unwrap().id == group)
+                );
+                assert_eq!(
+                    app.tab_mru_order
+                        .iter()
+                        .map(|&i| app.tabs[i].editor.navigation_id)
+                        .collect::<Vec<_>>(),
+                    mru
+                );
+                assert_eq!(
+                    TabBarHits::new(&app, area).groups.len(),
+                    usize::from(count > 1)
+                );
                 let editor = app.editor_mut().unwrap();
                 assert_eq!(editor.rope.to_string(), format!("!f{source}"));
                 assert!(editor.modified);
@@ -319,7 +427,9 @@ fn tab_group_drag_to_empty_space_ungroups_without_changing_the_document_or_mru()
 fn tab_group_drag_past_a_collapsed_group_preserves_hidden_members() {
     let mut app = grouped_tabs(4);
     let first = app.tab_group(&app.tabs[0]).unwrap().id;
-    app.desks.selected_tabs.extend(app.tabs[2..].iter().map(|t| t.editor.navigation_id));
+    app.desks
+        .selected_tabs
+        .extend(app.tabs[2..].iter().map(|t| t.editor.navigation_id));
     app.group_selected_tabs("Tests", None);
     let second = app.tab_group(&app.tabs[2]).unwrap().id;
     app.desks.groups.get_mut(&second).unwrap().collapsed = true;
@@ -330,7 +440,13 @@ fn tab_group_drag_past_a_collapsed_group_preserves_hidden_members() {
     start_drag(&mut app, &mut terminal, pane);
     let area = app.tab_bar_area.unwrap();
     finish_drag(&mut app, &mut terminal, (area.right() - 2, area.y));
-    assert_eq!(app.tabs.iter().map(|t| t.editor.navigation_id).collect::<Vec<_>>(), [views[1], views[2], views[3], views[0]]);
+    assert_eq!(
+        app.tabs
+            .iter()
+            .map(|t| t.editor.navigation_id)
+            .collect::<Vec<_>>(),
+        [views[1], views[2], views[3], views[0]]
+    );
     assert_eq!(app.desks.membership.get(&views[1]), Some(&first));
     assert_eq!(app.desks.membership.get(&views[2]), Some(&second));
     assert_eq!(app.desks.membership.get(&views[3]), Some(&second));
@@ -353,13 +469,32 @@ fn tab_group_drag_uses_release_position_and_preserves_grouped_reordering() {
         let other_tab = TabBarHits::new(&app, area).tabs[1].1;
         let tab_position = (other_tab.x + 3, area.y);
         let empty = (area.right() - 2, area.y);
-        mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), if release_in_empty_space { tab_position } else { empty });
+        mouse(
+            &mut app,
+            MouseEventKind::Drag(MouseButton::Left),
+            if release_in_empty_space {
+                tab_position
+            } else {
+                empty
+            },
+        );
         draw(&mut app, &mut terminal);
-        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), if release_in_empty_space { empty } else { tab_position });
+        mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            if release_in_empty_space {
+                empty
+            } else {
+                tab_position
+            },
+        );
         draw(&mut app, &mut terminal);
         assert!(app.dragging_tab.is_none());
         assert_eq!(app.editor().unwrap().navigation_id, view);
-        assert_eq!(app.desks.membership.get(&view).copied(), (!release_in_empty_space).then_some(group));
+        assert_eq!(
+            app.desks.membership.get(&view).copied(),
+            (!release_in_empty_space).then_some(group)
+        );
         if release_in_empty_space {
             assert_eq!(app.active_tab, 2);
         }
@@ -376,9 +511,17 @@ fn tab_group_drag_across_a_header_keeps_capture_until_released_in_empty_space() 
     start_drag(&mut app, &mut terminal, pane);
     let area = app.tab_bar_area.unwrap();
     let header = TabBarHits::new(&app, area).groups[0].1;
-    mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), (header.x + 3, area.y));
+    mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        (header.x + 3, area.y),
+    );
     assert!(app.drag_has_moved);
-    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), (area.right() - 2, area.y));
+    mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        (area.right() - 2, area.y),
+    );
     assert!(app.dragging_tab.is_none());
     assert_eq!(app.active_tab, 1);
     assert_eq!(app.editor().unwrap().navigation_id, view);
@@ -397,11 +540,12 @@ fn tab_group_drag_only_ungroups_on_an_actual_drop_after_the_tabs() {
         let area = app.tab_bar_area.unwrap();
         let tab = TabBarHits::new(&app, area).tabs[0].1;
         let position = match target {
-            0 => (tab.x + 3, area.y), // Ordinary click.
+            0 => (tab.x + 3, area.y),        // Ordinary click.
             1 => (area.right() - 2, area.y), // No drag event.
-            2 => (tab.x + 4, area.y), // Movement within the tab.
-            3 => (area.x + 1, area.y), // New-desk control.
-            _ => { // Editor center, not an edge that creates a split.
+            2 => (tab.x + 4, area.y),        // Movement within the tab.
+            3 => (area.x + 1, area.y),       // New-desk control.
+            _ => {
+                // Editor center, not an edge that creates a split.
                 let editor = app.editor_area.unwrap();
                 (editor.x + editor.width / 2, editor.y + editor.height / 2)
             }
@@ -438,7 +582,12 @@ fn tab_group_drag_to_another_panes_empty_strip_ungroups_even_when_source_closes(
         assert_eq!(app.tabs.len(), 2);
         assert_eq!(app.split_active(), keep_source);
         if keep_source {
-            assert!(app.groups.iter().flat_map(|g| &g.tabs).any(|t| app.tab_group(t).is_some_and(|g| g.id == group)));
+            assert!(
+                app.groups
+                    .iter()
+                    .flat_map(|g| &g.tabs)
+                    .any(|t| app.tab_group(t).is_some_and(|g| g.id == group))
+            );
         }
     }
 }
@@ -448,19 +597,31 @@ fn tab_group_drag_onto_group_headers_and_ungrouped_tabs_still_works() {
     for onto_group in [false, true] {
         let mut app = grouped_tabs(2);
         let view = app.tabs[0].editor.navigation_id;
-        app.desks.membership.remove(&app.tabs[1].editor.navigation_id);
+        app.desks
+            .membership
+            .remove(&app.tabs[1].editor.navigation_id);
         if onto_group {
-            app.desks.selected_tabs.insert(app.tabs[1].editor.navigation_id);
+            app.desks
+                .selected_tabs
+                .insert(app.tabs[1].editor.navigation_id);
             app.group_selected_tabs("Tests", None);
         }
-        let expected = app.desks.membership.get(&app.tabs[1].editor.navigation_id).copied();
+        let expected = app
+            .desks
+            .membership
+            .get(&app.tabs[1].editor.navigation_id)
+            .copied();
         let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
         draw(&mut app, &mut terminal);
         let pane = app.active_group;
         start_drag(&mut app, &mut terminal, pane);
         let area = app.tab_bar_area.unwrap();
         let hits = TabBarHits::new(&app, area);
-        let target = if onto_group { hits.groups[1].1 } else { hits.tabs[1].1 };
+        let target = if onto_group {
+            hits.groups[1].1
+        } else {
+            hits.tabs[1].1
+        };
         finish_drag(&mut app, &mut terminal, (target.x + 3, area.y));
         assert_eq!(app.editor().unwrap().navigation_id, view);
         assert_eq!(app.desks.membership.get(&view).copied(), expected);
@@ -473,15 +634,31 @@ fn tab_group_drag_empty_drop_area_excludes_controls_and_clipped_tabs() {
     let app = grouped_tabs(3);
     let area = Rect::new(10, 2, 120, 1);
     let hits = TabBarHits::new(&app, area);
-    assert!(hits.after_tabs.contains((hits.new_tab.x + 1, area.y).into()));
+    assert!(
+        hits.after_tabs
+            .contains((hits.new_tab.x + 1, area.y).into())
+    );
     assert_eq!(hits.after_tabs.right(), area.right());
-    assert!(hits.groups.iter().all(|(_, r)| r.right() <= hits.after_tabs.x));
-    assert!(hits.tabs.iter().all(|(_, r, _)| r.right() <= hits.after_tabs.x));
+    assert!(
+        hits.groups
+            .iter()
+            .all(|(_, r)| r.right() <= hits.after_tabs.x)
+    );
+    assert!(
+        hits.tabs
+            .iter()
+            .all(|(_, r, _)| r.right() <= hits.after_tabs.x)
+    );
     assert!(!hits.after_tabs.contains((area.x + 1, area.y).into()));
 
-    let clipped = (20..80).map(|width| TabBarHits::new(&app, Rect::new(10, 2, width, 1)))
-        .find(|hits| !hits.right.is_empty() && !hits.new_tab.is_empty()).unwrap();
-    assert!(clipped.after_tabs.is_empty(), "space after a scroll arrow is not the end of the strip");
+    let clipped = (20..80)
+        .map(|width| TabBarHits::new(&app, Rect::new(10, 2, width, 1)))
+        .find(|hits| !hits.right.is_empty() && !hits.new_tab.is_empty())
+        .unwrap();
+    assert!(
+        clipped.after_tabs.is_empty(),
+        "space after a scroll arrow is not the end of the strip"
+    );
 }
 
 fn assert_groups(app: &App, count: usize, tab_count: usize) {

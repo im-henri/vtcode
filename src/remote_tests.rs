@@ -23,9 +23,17 @@ mod rename_tests;
 fn remote_breadcrumbs_preserve_escaped_names_and_hosted_workspace_roots() {
     for (native, uri, first) in [
         ("/project space λ", "file:///project%20space%20%CE%BB/", "/"),
-        (r"C:\project space λ", "file:///C:/project%20space%20%CE%BB/", r"C:\"),
+        (
+            r"C:\project space λ",
+            "file:///C:/project%20space%20%CE%BB/",
+            r"C:\",
+        ),
         ("/root-�", "file:///root-%FF/", "/"),
-        (r"\\server\share\repo", "file://server/share/repo/", "file://server/share/repo"),
+        (
+            r"\\server\share\repo",
+            "file://server/share/repo/",
+            "file://server/share/repo",
+        ),
     ] {
         let hello = Hello {
             version: VERSION,
@@ -36,7 +44,8 @@ fn remote_breadcrumbs_preserve_escaped_names_and_hosted_workspace_roots() {
             root_uri: uri.into(),
             session: 42,
         };
-        let client = client::Client::attach(io::Cursor::new(Vec::new()), Vec::new(), hello).unwrap();
+        let client =
+            client::Client::attach(io::Cursor::new(Vec::new()), Vec::new(), hello).unwrap();
         let workspace = workspace::Workspace::new(client);
         for (bytes, expected) in [
             ("space λ".as_bytes(), "space λ"),
@@ -51,7 +60,11 @@ fn remote_breadcrumbs_preserve_escaped_names_and_hosted_workspace_roots() {
             let parts = workspace.breadcrumbs(&key).unwrap();
             assert_eq!(parts.first().unwrap().0, first);
             assert_eq!(parts.last().unwrap(), &(expected.to_string(), key));
-            assert!(parts.iter().all(|(name, _)| !name.chars().any(char::is_control)));
+            assert!(
+                parts
+                    .iter()
+                    .all(|(name, _)| !name.chars().any(char::is_control))
+            );
             for (_, target) in parts {
                 assert!(workspace.remote_path(&target).is_ok());
                 let uri = url::Url::from_file_path(&target).unwrap();
@@ -66,7 +79,8 @@ fn remote_breadcrumbs_preserve_escaped_names_and_hosted_workspace_roots() {
 fn remote_filesystem_roots_keep_native_root_identity_and_stop_at_real_roots() {
     let root = tempfile::tempdir().unwrap();
     let mut service = service::Service::new(root.path()).unwrap();
-    let client = client::Client::attach(io::Cursor::new(Vec::new()), Vec::new(), service.hello(42)).unwrap();
+    let client =
+        client::Client::attach(io::Cursor::new(Vec::new()), Vec::new(), service.hello(42)).unwrap();
     let workspace = workspace::Workspace::new(client);
     let Reply::FilesystemRoots(roots) = service.execute(Command::FilesystemRoots).unwrap() else {
         panic!("Expected filesystem roots");
@@ -82,14 +96,20 @@ fn remote_filesystem_roots_keep_native_root_identity_and_stop_at_real_roots() {
         assert_eq!(workspace.file_uri_key(uri.as_str()), Some(key.clone()));
         let wire_uri = url::Url::from_file_path(&key).unwrap();
         let wire_uri = workspace.lsp_uri(wire_uri.as_str(), true).unwrap();
-        assert_eq!(wire_uri.trim_end_matches('/'), uri.as_str().trim_end_matches('/'));
+        assert_eq!(
+            wire_uri.trim_end_matches('/'),
+            uri.as_str().trim_end_matches('/')
+        );
         #[cfg(windows)]
         {
             assert!(native.parent().is_none());
             assert!(workspace.parent_key(&key).unwrap().is_none());
             assert_eq!(workspace.breadcrumbs(&key).unwrap().len(), 1);
             let child = path.child(b"child").unwrap();
-            assert_eq!(workspace.parent_key(&workspace.view_key(&child)).unwrap(), Some(key));
+            assert_eq!(
+                workspace.parent_key(&workspace.view_key(&child)).unwrap(),
+                Some(key)
+            );
         }
     }
 }
@@ -108,8 +128,14 @@ fn remote_posix_file_urls_match_native_escaping_and_preserve_drive_like_names() 
     let client = client::Client::attach(io::Cursor::new(Vec::new()), Vec::new(), hello).unwrap();
     let workspace = workspace::Workspace::new(client);
     for (path, expected) in [
-        (b"/run/credentials/getty@tty1.service".as_slice(), "file:///run/credentials/getty@tty1.service"),
-        (b"/mount/a=1+b&c;!/$%#?\\\xff", "file:///mount/a=1+b&c;!/$%25%23%3F%5C%FF"),
+        (
+            b"/run/credentials/getty@tty1.service".as_slice(),
+            "file:///run/credentials/getty@tty1.service",
+        ),
+        (
+            b"/mount/a=1+b&c;!/$%#?\\\xff",
+            "file:///mount/a=1+b&c;!/$%25%23%3F%5C%FF",
+        ),
         (b"/C|/file", "file:///C%7C/file"),
         (b"/D:/file", "file:///D%3A/file"),
     ] {
@@ -325,7 +351,10 @@ fn headless_service_fixture() {
 // Transport/lab fixtures supply native argv, independent of the public CLI.
 pub(super) fn raw_launch(args: impl IntoIterator<Item = std::ffi::OsString>) -> launch::Launch {
     let mut args = args.into_iter();
-    launch::Launch::new(args.next().expect("fixture transport executable"), args.collect())
+    launch::Launch::new(
+        args.next().expect("fixture transport executable"),
+        args.collect(),
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -1365,7 +1394,9 @@ fn remote_git_repositories_stage_and_unstage_use_native_shared_tasks() {
     std::fs::write(dir.path().join("file[1].rs"), "one\n").unwrap();
     let client = connection(dir.path(), Arc::default(), Arc::default());
     let Reply::GitStatus { discovery, scans } = client
-        .call(Command::GitStatus { progress: None, revalidate: false,
+        .call(Command::GitStatus {
+            progress: None,
+            revalidate: false,
             changed: None,
             include_untracked: true,
             known: None,
@@ -1463,9 +1494,14 @@ fn remote_history_pages_retain_the_walk_and_finish_unborn_repositories() {
                     .collect::<Vec<_>>(),
                 ids.iter().rev().collect::<Vec<_>>()
             );
-            assert!(app.git_log.last().unwrap().branches.iter().any(|reference| {
-                reference.tag_name() == Some("v1.0.0")
-            }));
+            assert!(
+                app.git_log
+                    .last()
+                    .unwrap()
+                    .branches
+                    .iter()
+                    .any(|reference| { reference.tag_name() == Some("v1.0.0") })
+            );
         }
         assert!(!app.git_history.has_more);
         workspace.client.call(Command::Shutdown).unwrap();
@@ -1540,7 +1576,10 @@ fn remote_branch_stash_amend_and_push_share_the_native_repository_implementation
         .set_times(std::fs::FileTimes::new().set_modified(modified))
         .unwrap();
     assert_eq!(
-        git2::Repository::open(dir.path()).unwrap().status_file(name).unwrap(),
+        git2::Repository::open(dir.path())
+            .unwrap()
+            .status_file(name)
+            .unwrap(),
         git2::Status::WT_MODIFIED
     );
     action(crate::git_tasks::Task::Stash {
@@ -1551,9 +1590,14 @@ fn remote_branch_stash_amend_and_push_share_the_native_repository_implementation
     action(crate::git_tasks::Task::StashPop);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "two\n");
     action(crate::git_tasks::Task::StageAll);
-    let Reply::GitAmendMessage(draft) = client.call(Command::GitAmendMessage {
-        repo: RemotePath::default(),
-    }).unwrap() else { panic!() };
+    let Reply::GitAmendMessage(draft) = client
+        .call(Command::GitAmendMessage {
+            repo: RemotePath::default(),
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
     action(crate::git_tasks::Task::Amend {
         target: draft.target,
         message: Some("amended remotely".into()),
@@ -1691,15 +1735,20 @@ fn remote_commit_details_and_hunks_are_exact_async_and_undoable() {
     app.open_commit_details(workspace.view_root.clone(), details);
     app.wait_for_background(Duration::from_secs(10), |app| !app.commit_details.loading);
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let card = app.commit_details.review.visible[0];
     assert!(app.commit_details.review.collapsed.contains(&card.file));
-    crate::mouse::handle_mouse(&mut app, MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: card.open.x + 1,
-        row: card.open.y,
-        modifiers: KeyModifiers::NONE,
-    });
+    crate::mouse::handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: card.open.x + 1,
+            row: card.open.y,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
     app.wait_for_background(Duration::from_secs(10), |app| {
         app.active_diff_tab_id().is_some() && !app.is_commit_details_tab()
     });
@@ -1786,25 +1835,35 @@ fn remote_hunk_preview_reports_delayed_loading_and_closes_without_waiting_for_th
 
     struct Release(Arc<AtomicBool>);
     impl Drop for Release {
-        fn drop(&mut self) { self.0.store(false, Ordering::Release); }
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::Release);
+        }
     }
     for close in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let _repo = git2::Repository::init(dir.path()).unwrap();
-        std::fs::write(dir.path().join("remote file ü.rs"), "fn remote_preview() {}\n").unwrap();
+        std::fs::write(
+            dir.path().join("remote file ü.rs"),
+            "fn remote_preview() {}\n",
+        )
+        .unwrap();
         let hold = Arc::new(AtomicBool::new(false));
         let _release = Release(hold.clone());
         let blocked = Arc::new(AtomicBool::new(false));
         let traffic = Arc::new(AtomicUsize::new(0));
         let workspace = workspace::Workspace::new(connection_with_status(
-            dir.path(), hold.clone(), traffic.clone(), blocked.clone(),
+            dir.path(),
+            hold.clone(),
+            traffic.clone(),
+            blocked.clone(),
         ));
         let key = workspace.target_key("remote file ü.rs").unwrap();
         let mut app = app_for_workspace(&workspace);
         app.open_file(&key);
         app.wait_for_background(Duration::from_secs(10), |app| {
             app.editor().is_some_and(|editor| !editor.bg_loading)
-                && !app.background.has_active_jobs() && !app.background.has_pending_results()
+                && !app.background.has_active_jobs()
+                && !app.background.has_pending_results()
         });
         app.editor_area = Some(Rect::new(10, 3, 110, 24));
         app.gutter_area = Some(Rect::new(10, 3, 6, 24));
@@ -1813,26 +1872,49 @@ fn remote_hunk_preview_reports_delayed_loading_and_closes_without_waiting_for_th
         app.open_hunk_popup(10, 4, key.clone(), 0, 'U');
         let deadline = Instant::now() + Duration::from_secs(5);
         while !blocked.load(Ordering::Acquire) {
-            assert!(Instant::now() < deadline, "The preview reply did not reach the response gate");
+            assert!(
+                Instant::now() < deadline,
+                "The preview reply did not reach the response gate"
+            );
             std::thread::sleep(Duration::from_millis(1));
         }
         let sent = traffic.load(Ordering::Relaxed);
         let mut terminal = Terminal::new(TestBackend::new(130, 32)).unwrap();
         for _ in 0..3 {
             app.loading.begin_frame();
-            terminal.draw(|frame| crate::ui_dialogs::draw_hunk_popup(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui_dialogs::draw_hunk_popup(frame, &mut app))
+                .unwrap();
             crate::ui_loading::finish_frame(&mut app, Instant::now());
-            let text: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
             assert!(text.contains("Loading changes from remote workspace…"));
-            assert!(text.contains("remote file ü.rs:1"), "Show the real filename, including escaped characters");
+            assert!(
+                text.contains("remote file ü.rs:1"),
+                "Show the real filename, including escaped characters"
+            );
             assert!(text.contains("Esc to close preview") && !text.contains("Cancel"));
         }
-        assert_eq!(traffic.load(Ordering::Relaxed), sent, "Rendering loading feedback makes no requests");
-        crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), "Remote gutter change preview loading");
+        assert_eq!(
+            traffic.load(Ordering::Relaxed),
+            sent,
+            "Rendering loading feedback makes no requests"
+        );
+        crate::ui_control_visibility_tests::snapshot(
+            terminal.backend().buffer(),
+            "Remote gutter change preview loading",
+        );
         if close {
             crate::input_keyboard::handle_keyboard_event(
-                &mut app, crossterm::event::KeyEvent::new(
-                    crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE,
+                &mut app,
+                crossterm::event::KeyEvent::new(
+                    crossterm::event::KeyCode::Esc,
+                    crossterm::event::KeyModifiers::NONE,
                 ),
             );
             assert!(!app.hunk_popup_active);
@@ -1848,18 +1930,33 @@ fn remote_hunk_preview_reports_delayed_loading_and_closes_without_waiting_for_th
             app.wait_for_hunk_preview();
             let peek = app.hunk_peek.as_ref().unwrap();
             assert!(peek.remote.is_some());
-            assert!(peek.rows.iter().any(|row| row.text == "fn remote_preview() {}"));
+            assert!(
+                peek.rows
+                    .iter()
+                    .any(|row| row.text == "fn remote_preview() {}")
+            );
             app.loading.begin_frame();
-            terminal.draw(|frame| crate::ui_dialogs::draw_hunk_popup(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui_dialogs::draw_hunk_popup(frame, &mut app))
+                .unwrap();
             crate::ui_loading::finish_frame(&mut app, Instant::now());
             assert!(app.loading.next_wait(true, Instant::now()).is_none());
-            let text: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+            let text: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
             assert!(text.contains("remote file ü.rs") && !text.contains("Loading changes"));
             app.close_hunk_popup();
         }
         workspace.client.call(Command::Shutdown).unwrap();
         app.poll_background_results();
-        assert!(!app.hunk_popup_active && app.hunk_peek.is_none(), "A late reply cannot reopen a closed preview");
+        assert!(
+            !app.hunk_popup_active && app.hunk_peek.is_none(),
+            "A late reply cannot reopen a closed preview"
+        );
     }
 }
 
@@ -2086,20 +2183,39 @@ fn remote_save_conflict_keeps_typed_reason_and_supports_native_compare_and_expli
         let root = tempfile::tempdir().unwrap();
         let native = root.path().join("file.txt");
         std::fs::write(&native, "original\n").unwrap();
-        let workspace = workspace::Workspace::new(connection(root.path(), Arc::default(), Arc::default()));
+        let workspace =
+            workspace::Workspace::new(connection(root.path(), Arc::default(), Arc::default()));
         let mut app = app_for_workspace(&workspace);
         app.format_on_save = false;
         let key = workspace.target_key("file.txt").unwrap();
         app.open_file(&key);
-        app.wait_for_background(Duration::from_secs(10), |app| app.editor().is_some_and(|editor| !editor.bg_loading));
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.editor().is_some_and(|editor| !editor.bg_loading)
+        });
         app.editor_mut().unwrap().insert_char('X');
-        if evict { workspace.client.call(Command::Close { path: workspace.remote_path(&key).unwrap() }).unwrap(); }
+        if evict {
+            workspace
+                .client
+                .call(Command::Close {
+                    path: workspace.remote_path(&key).unwrap(),
+                })
+                .unwrap();
+        }
         std::fs::write(&native, "external\n").unwrap();
-        let request = app.editor().unwrap().background_save_request(false, false, false).unwrap();
-        let error = workspace.save_progress(&request, None, None, |_, _| {}).err().unwrap();
+        let request = app
+            .editor()
+            .unwrap()
+            .background_save_request(false, false, false)
+            .unwrap();
+        let error = workspace
+            .save_progress(&request, None, None, |_, _| {})
+            .err()
+            .unwrap();
         assert!(crate::editor::save::is_conflict(&error), "{error}");
         app.save_current_file();
-        app.wait_for_background(Duration::from_secs(10), |app| app.pending_file_saves.is_empty());
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.pending_file_saves.is_empty()
+        });
         assert!(app.save_conflict.is_some());
         app.view_save_conflict();
         app.wait_for_background(Duration::from_secs(10), |app| app.save_error.is_none());
@@ -2109,14 +2225,24 @@ fn remote_save_conflict_keeps_typed_reason_and_supports_native_compare_and_expli
         app.active_tab = 0;
         app.sync_diff_tab();
         app.save_current_file();
-        app.wait_for_background(Duration::from_secs(10), |app| app.pending_file_saves.is_empty());
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.pending_file_saves.is_empty()
+        });
         assert!(app.save_conflict.is_some());
         app.overwrite_save_conflict();
-        app.wait_for_background(Duration::from_secs(10), |app| app.pending_file_saves.is_empty());
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.pending_file_saves.is_empty()
+        });
         assert!(app.save_error.is_none(), "{:?}", app.save_error);
         assert_eq!(std::fs::read_to_string(&native).unwrap(), "Xoriginal\n");
         assert!(!app.editor().unwrap().modified);
-        assert!(app.editor().unwrap().remote_checkpoint.as_ref().is_some_and(|checkpoint| !checkpoint.conflicted));
+        assert!(
+            app.editor()
+                .unwrap()
+                .remote_checkpoint
+                .as_ref()
+                .is_some_and(|checkpoint| !checkpoint.conflicted)
+        );
         app.editor_mut().unwrap().undo();
         assert_eq!(app.editor().unwrap().rope, "original\n");
         assert!(app.editor().unwrap().modified);
@@ -2395,22 +2521,39 @@ fn large_remote_binary_with_text_header_transfers_only_a_notice_and_still_suppor
     file.write_all(&[0xca, 0xfe]).unwrap();
     drop(file);
     let downloaded = Arc::new(AtomicUsize::new(0));
-    let workspace = workspace::Workspace::new(connection_with_traffic(dir.path(),
-        Arc::default(), Arc::default(), Arc::default(), downloaded.clone()));
+    let workspace = workspace::Workspace::new(connection_with_traffic(
+        dir.path(),
+        Arc::default(),
+        Arc::default(),
+        Arc::default(),
+        downloaded.clone(),
+    ));
     let key = workspace.target_key("large.bin").unwrap();
     let loaded = workspace.load(&key).unwrap();
     assert_eq!(loaded.encoding, "Binary");
     assert_eq!(loaded.file_size, size);
     assert!(loaded.rope.len_bytes() < 1024);
-    assert!(loaded.rope.to_string().contains("Binary file - cannot display"));
+    assert!(
+        loaded
+            .rope
+            .to_string()
+            .contains("Binary file - cannot display")
+    );
     let reloaded = workspace.reload(&key, None).unwrap();
     assert_eq!(reloaded.encoding, "Binary");
-    assert!(downloaded.load(Ordering::Relaxed) < 32 * 1024, "opening and reloading must not transfer the binary body");
-    let document = crate::extension_documents::BinaryDocument::open_remote(&key, &workspace).unwrap();
+    assert!(
+        downloaded.load(Ordering::Relaxed) < 32 * 1024,
+        "opening and reloading must not transfer the binary body"
+    );
+    let document =
+        crate::extension_documents::BinaryDocument::open_remote(&key, &workspace).unwrap();
     let mut tail = [0; 2];
     document.read(size - 2, &mut tail).unwrap();
     assert_eq!(tail, [0xca, 0xfe]);
-    assert!(downloaded.load(Ordering::Relaxed) < 256 * 1024, "custom editors fetch only the requested pages");
+    assert!(
+        downloaded.load(Ordering::Relaxed) < 256 * 1024,
+        "custom editors fetch only the requested pages"
+    );
     assert_eq!(std::fs::metadata(path).unwrap().len(), size);
 }
 
@@ -3262,25 +3405,41 @@ fn remote_explorer_partial_cut_reports_exact_sources_that_succeeded() {
     std::fs::create_dir(dir.path().join("destination")).unwrap();
     std::fs::write(dir.path().join("source.rs"), "move").unwrap();
     std::fs::write(dir.path().join("destination/stays.rs"), "keep").unwrap();
-    let workspace = workspace::Workspace::new(connection(dir.path(), Arc::default(), Arc::default()));
+    let workspace =
+        workspace::Workspace::new(connection(dir.path(), Arc::default(), Arc::default()));
     let path = |name: &str| RemotePath::new(name.as_bytes().to_vec()).unwrap();
-    let outcome = workspace.filesystem(
-        fs::Task::Paste {
-            sources: vec![path("source.rs"), path("missing.rs"), path("destination/stays.rs")],
-            directory: path("destination"),
-            cut: true,
-        },
-        &crate::background::CancellationToken::new(),
-        |_| {},
-    ).unwrap();
+    let outcome = workspace
+        .filesystem(
+            fs::Task::Paste {
+                sources: vec![
+                    path("source.rs"),
+                    path("missing.rs"),
+                    path("destination/stays.rs"),
+                ],
+                directory: path("destination"),
+                cut: true,
+            },
+            &crate::background::CancellationToken::new(),
+            |_| {},
+        )
+        .unwrap();
     assert!(outcome.warning);
-    assert_eq!(outcome.completed_cut_paths, [
-        workspace.view_key(&path("source.rs")),
-        workspace.view_key(&path("destination/stays.rs")),
-    ]);
+    assert_eq!(
+        outcome.completed_cut_paths,
+        [
+            workspace.view_key(&path("source.rs")),
+            workspace.view_key(&path("destination/stays.rs")),
+        ]
+    );
     assert_eq!(outcome.renames.len(), 1);
-    assert_eq!(std::fs::read_to_string(dir.path().join("destination/source.rs")).unwrap(), "move");
-    assert_eq!(std::fs::read_to_string(dir.path().join("destination/stays.rs")).unwrap(), "keep");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("destination/source.rs")).unwrap(),
+        "move"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("destination/stays.rs")).unwrap(),
+        "keep"
+    );
     workspace.client.call(Command::Shutdown).unwrap();
 }
 

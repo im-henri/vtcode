@@ -1,5 +1,5 @@
-use crossterm::event::KeyModifiers;
 use crate::app::{ActivePane, App};
+use crossterm::event::KeyModifiers;
 
 /// Switch focus to a non-active split group if the click lands inside its area.
 ///
@@ -48,26 +48,35 @@ pub(crate) fn handle_editor_area_left_click(
     row: u16,
     modifiers: KeyModifiers,
 ) {
-    if app.tabs.get(app.active_tab).is_some_and(|tab| tab.kind == crate::app::TabKind::MarkdownPreview) {
-        if app.scrollbar_area.is_some_and(|area| area.contains(ratatui::layout::Position::new(col, row))) {
+    if app
+        .tabs
+        .get(app.active_tab)
+        .is_some_and(|tab| tab.kind == crate::app::TabKind::MarkdownPreview)
+    {
+        if app
+            .scrollbar_area
+            .is_some_and(|area| area.contains(ratatui::layout::Position::new(col, row)))
+        {
             app.dragging_v_scrollbar = true;
             app.markdown_preview_scrollbar_input(row, true);
         } else {
             let opened = modifiers.contains(KeyModifiers::CONTROL)
                 && !modifiers.contains(KeyModifiers::SHIFT)
                 && app.markdown_preview_link_click(col, row);
-            if !opened { app.markdown_preview_selection_click(col, row, modifiers.contains(KeyModifiers::SHIFT)); }
+            if !opened {
+                app.markdown_preview_selection_click(
+                    col,
+                    row,
+                    modifiers.contains(KeyModifiers::SHIFT),
+                );
+            }
         }
         app.active_pane = ActivePane::Editor;
         return;
     }
     // The original (left) diff pane owns an independent horizontal scrollbar.
     if let Some(h_area) = app.diff_left_h_scrollbar_area {
-        if col >= h_area.x
-            && col < h_area.right()
-            && row >= h_area.y
-            && row < h_area.bottom()
-        {
+        if col >= h_area.x && col < h_area.right() && row >= h_area.y && row < h_area.bottom() {
             app.dragging_diff_left_h_scrollbar = true;
             let total_width = app.diff_render_cache.max_left_text_width;
             let visible_width = h_area.width as usize;
@@ -81,12 +90,15 @@ pub(crate) fn handle_editor_area_left_click(
         }
     }
 
-    if modifiers.is_empty() && let Some((id, original)) = app.diff_move_at(col, row)
+    if modifiers.is_empty()
+        && let Some((id, original)) = app.diff_move_at(col, row)
         && app.follow_diff_move(id, original)
     {
         return;
     }
-    if app.diff_selection_mouse_down(col, row, modifiers) { return; }
+    if app.diff_selection_mouse_down(col, row, modifiers) {
+        return;
+    }
 
     // Click on gutter (line numbers) — select entire line
     if let Some(gutter_area) = app.gutter_area {
@@ -97,7 +109,8 @@ pub(crate) fn handle_editor_area_left_click(
         {
             app.active_pane = ActivePane::Editor;
             app.clear_diff_selection();
-            let is_diff_col = crate::ui_editor_highlight::change_gutter_column(gutter_area) == Some(col);
+            let is_diff_col =
+                crate::ui_editor_highlight::change_gutter_column(gutter_area) == Some(col);
             let is_fold_col = col == gutter_area.x + gutter_area.width - 1;
             let screen_row = (row - gutter_area.y) as usize;
             let (clicked_row, file_path, diff_status) = {
@@ -105,9 +118,17 @@ pub(crate) fn handle_editor_area_left_click(
                     return;
                 };
                 let clicked_row = if let Some(rows) = &ed.diff_display_rows {
-                    rows.get(screen_row).copied().flatten().map(|row| (row.line_idx, row.is_first))
+                    rows.get(screen_row)
+                        .copied()
+                        .flatten()
+                        .map(|row| (row.line_idx, row.is_first))
                 } else if ed.ai_review.active {
-                    ed.ai_review.source_rows.get(screen_row).copied().flatten().map(|row| (row.line_idx, row.is_first))
+                    ed.ai_review
+                        .source_rows
+                        .get(screen_row)
+                        .copied()
+                        .flatten()
+                        .map(|row| (row.line_idx, row.is_first))
                 } else {
                     ed.source_line_at_screen(screen_row)
                 };
@@ -156,14 +177,18 @@ pub(crate) fn handle_editor_area_left_click(
             app.dragging_minimap = true;
             app.minimap_drag_start = app.editor_mut().map(|editor| {
                 crate::ui_editor_minimap::MinimapDrag::begin(
-                    editor, (row - minimap_area.y) as usize, minimap_area.height as usize,
+                    editor,
+                    (row - minimap_area.y) as usize,
+                    minimap_area.height as usize,
                 )
             });
             return;
         }
     }
 
-    if crate::ui_editor_folds::click(app, col, row) { return; }
+    if crate::ui_editor_folds::click(app, col, row) {
+        return;
+    }
 
     // Click on editor code area?
     if let Some(code_area) = app.code_area {
@@ -200,7 +225,8 @@ pub(crate) fn handle_editor_area_left_click(
             let alt_held = modifiers.contains(KeyModifiers::ALT);
             let shift_held = modifiers.contains(KeyModifiers::SHIFT);
             let ctrl_position = (ctrl_held && !alt_held && !shift_held)
-                .then(|| crate::app_lsp_links::editor_position_at(app, col, row)).flatten();
+                .then(|| crate::app_lsp_links::editor_position_at(app, col, row))
+                .flatten();
             if modifiers == KeyModifiers::CONTROL
                 && let Some((line, column)) = ctrl_position
                 && app.lsp_document_link_at(line, column).is_none()
@@ -220,8 +246,9 @@ pub(crate) fn handle_editor_area_left_click(
             }
             let mut new_mc_anchor: Option<Option<(usize, usize, usize, usize)>> = None;
             if let Some(ed) = app.editor_mut() {
-                let (clicked_line, clicked_col) = ctrl_position.unwrap_or_else(||
-                    crate::mouse_drag::code_area_to_buffer_pos(ed, code_area, col, row));
+                let (clicked_line, clicked_col) = ctrl_position.unwrap_or_else(|| {
+                    crate::mouse_drag::code_area_to_buffer_pos(ed, code_area, col, row)
+                });
 
                 if alt_held && shift_held {
                     // Alt+Shift+Click: start column/block drag selection
@@ -238,8 +265,7 @@ pub(crate) fn handle_editor_area_left_click(
                         ed.horizontal_scroll
                             .saturating_add(col.saturating_sub(code_area.x) as usize)
                     };
-                    app.middle_drag_start =
-                        Some((clicked_line, clicked_col, start_visual_col));
+                    app.middle_drag_start = Some((clicked_line, clicked_col, start_visual_col));
                 } else if shift_held {
                     // Shift+Click: extend selection to clicked position
                     ed.extra_cursors.clear();
@@ -271,24 +297,28 @@ pub(crate) fn handle_editor_area_left_click(
                             ed.select_line();
                             ed.reveal_mouse_cursor_column();
                             let line_end = ed.line_len(clicked_line);
-                            new_mc_anchor =
-                                Some(Some((clicked_line, 0, clicked_line, line_end)));
+                            new_mc_anchor = Some(Some((clicked_line, 0, clicked_line, line_end)));
                         }
                         2 => {
                             ed.extra_cursors.clear();
                             ed.extra_cursor_anchors.clear();
                             ed.clear_selection();
                             ed.set_cursor_without_scrolling(clicked_line, clicked_col);
-                            if let Some((start, end)) = ed.whitespace_boundaries_at(clicked_line, clicked_col) {
+                            if let Some((start, end)) =
+                                ed.whitespace_boundaries_at(clicked_line, clicked_col)
+                            {
                                 ed.selection_anchor = Some((clicked_line, start));
                                 ed.cursor_col = end;
                             } else {
                                 ed.select_word_at_cursor();
                             }
                             ed.reveal_mouse_cursor_column();
-                            new_mc_anchor = Some(Some(ed.selection_range().unwrap_or(
-                                (clicked_line, clicked_col, clicked_line, clicked_col),
-                            )));
+                            new_mc_anchor = Some(Some(ed.selection_range().unwrap_or((
+                                clicked_line,
+                                clicked_col,
+                                clicked_line,
+                                clicked_col,
+                            ))));
                         }
                         _ => {
                             new_mc_anchor = Some(None);
@@ -303,8 +333,7 @@ pub(crate) fn handle_editor_area_left_click(
                                 ed.extra_cursor_anchors.clear();
                                 ed.clear_selection();
                                 ed.set_mouse_cursor(clicked_line, clicked_col);
-                                ed.selection_anchor =
-                                    Some((ed.cursor_line, ed.cursor_col));
+                                ed.selection_anchor = Some((ed.cursor_line, ed.cursor_col));
                             }
                         }
                     }
@@ -373,7 +402,11 @@ pub(crate) fn handle_editor_area_left_click(
                     } else {
                         ed.visible_line_count()
                     };
-                    let max_scroll = total.saturating_sub(if ed.scroll_past_end { 1 } else { ed.viewport_height.max(1) });
+                    let max_scroll = total.saturating_sub(if ed.scroll_past_end {
+                        1
+                    } else {
+                        ed.viewport_height.max(1)
+                    });
                     let click_row = row.saturating_sub(scrollbar_area.y) as usize;
                     let target = click_row * max_scroll / sb_height.saturating_sub(1).max(1);
                     if ed.word_wrap {
@@ -407,8 +440,7 @@ pub(crate) fn handle_editor_area_left_click(
                     let max_scroll = max_line_width.saturating_sub(visible_width);
                     if let Some(ed) = app.editor_mut() {
                         if !ed.word_wrap {
-                            ed.horizontal_scroll =
-                                (click_col * max_scroll) / bar_width.max(1);
+                            ed.horizontal_scroll = (click_col * max_scroll) / bar_width.max(1);
                             ed.horizontal_scroll = ed.horizontal_scroll.min(max_scroll);
                         }
                     }
@@ -484,8 +516,11 @@ pub(crate) fn handle_middle_button_down(app: &mut App, col: u16, row: u16) {
 /// control, explorer, and editor).
 pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
     if app.show_terminal_sidebar {
-        if let Some(index) = app.terminal_sidebar_tab_areas.iter()
-            .find(|(area, _)| area.contains((col, row).into())).map(|(_, index)| *index)
+        if let Some(index) = app
+            .terminal_sidebar_tab_areas
+            .iter()
+            .find(|(area, _)| area.contains((col, row).into()))
+            .map(|(_, index)| *index)
         {
             app.open_terminal_context_menu(index, col, row.saturating_add(1));
             return;
@@ -495,7 +530,9 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
     if let Some(tab_area) = app.tab_bar_area {
         if tab_area.contains((col, row).into()) {
             if let Some(tab_idx) = crate::mouse::find_tab_at_col(app, col, tab_area) {
-                app.terminal_rename.context_target = app.tabs.get(tab_idx)
+                app.terminal_rename.context_target = app
+                    .tabs
+                    .get(tab_idx)
                     .filter(|tab| tab.kind == crate::app::TabKind::Terminal)
                     .and_then(|tab| tab.terminal_idx);
                 app.tab_context_active = true;
@@ -509,7 +546,9 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
             return;
         }
     }
-    if crate::ui_source_control::right_click(app, col, row) { return; }
+    if crate::ui_source_control::right_click(app, col, row) {
+        return;
+    }
     // Right-click in explorer opens explorer context menu
     if let Some(exp_area) = app.explorer_area {
         if app.sidebar_view == crate::app::SidebarView::Explorer
@@ -519,7 +558,9 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
             && row < exp_area.y + exp_area.height
         {
             let (_, tree_area) = crate::ui_chrome::explorer_sections(app, exp_area);
-            if tree_area.is_empty() { return; }
+            if tree_area.is_empty() {
+                return;
+            }
             let content = crate::ui_chrome::explorer_tree_content_area(app, exp_area);
             let tree_start = content.y;
             if !content.contains((col, row).into()) {
@@ -531,7 +572,10 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
             if let Some(clicked_idx) = app.explorer.entry_at_row(inner_row, visible_height) {
                 let clicked_path = app.explorer.entries[clicked_idx].path.clone();
                 let keep_multi_selection = app.explorer_multi_selected.len() > 1
-                    && app.explorer_multi_selected.iter().any(|p| p == &clicked_path);
+                    && app
+                        .explorer_multi_selected
+                        .iter()
+                        .any(|p| p == &clicked_path);
                 if keep_multi_selection {
                     app.explorer.selected = clicked_idx;
                 } else {
@@ -545,7 +589,9 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
         }
     }
     if app.should_render_diff_for_active_editor()
-        && [app.code_area, app.diff_left_code_area].into_iter().flatten()
+        && [app.code_area, app.diff_left_code_area]
+            .into_iter()
+            .flatten()
             .any(|area| area.contains((col, row).into()))
     {
         app.active_pane = ActivePane::Editor;
@@ -567,26 +613,26 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
     let is_file_tab = current_kind == Some(crate::app::TabKind::File);
     if is_file_tab {
         if let Some(code_area) = app.code_area {
-        if ((col >= code_area.x && col < code_area.x + code_area.width)
-            || crate::ui_editor_folds::gutter_at(app, col, row))
-            && row >= code_area.y
-            && row < code_area.y + code_area.height
-        {
-            app.active_pane = ActivePane::Editor;
-            // Move cursor to right-click position
-            if let Some(ed) = app.editor_mut() {
-                let (clicked_line, clicked_col) =
-                    crate::mouse_drag::code_area_to_buffer_pos(ed, code_area, col, row);
-                ed.set_mouse_cursor(clicked_line, clicked_col);
+            if ((col >= code_area.x && col < code_area.x + code_area.width)
+                || crate::ui_editor_folds::gutter_at(app, col, row))
+                && row >= code_area.y
+                && row < code_area.y + code_area.height
+            {
+                app.active_pane = ActivePane::Editor;
+                // Move cursor to right-click position
+                if let Some(ed) = app.editor_mut() {
+                    let (clicked_line, clicked_col) =
+                        crate::mouse_drag::code_area_to_buffer_pos(ed, code_area, col, row);
+                    ed.set_mouse_cursor(clicked_line, clicked_col);
+                }
+                app.context_menu_active = true;
+                app.context_menu_items = App::build_context_menu();
+                crate::ui_editor_folds::add_context_actions(app);
+                app.refresh_shortcut_hints();
+                app.context_menu_pos = (col, row);
+                app.context_menu_inner = None;
+                app.context_menu_selected = 0;
             }
-            app.context_menu_active = true;
-            app.context_menu_items = App::build_context_menu();
-            crate::ui_editor_folds::add_context_actions(app);
-            app.refresh_shortcut_hints();
-            app.context_menu_pos = (col, row);
-            app.context_menu_inner = None;
-            app.context_menu_selected = 0;
-        }
         }
     }
 }

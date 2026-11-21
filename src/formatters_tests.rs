@@ -4,22 +4,35 @@ use crate::{editor::Editor, settings::Settings};
 #[test]
 fn formatter_source_writes_are_batched_and_flush_failures_are_reported() {
     #[derive(Default)]
-    struct Sink { bytes: Vec<u8>, writes: usize, fail: bool }
+    struct Sink {
+        bytes: Vec<u8>,
+        writes: usize,
+        fail: bool,
+    }
     impl std::io::Write for Sink {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if self.fail { return Err(std::io::Error::other("write failed")); }
+            if self.fail {
+                return Err(std::io::Error::other("write failed"));
+            }
             self.writes += 1;
             self.bytes.extend_from_slice(bytes);
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
     let text = "variable = 'é😀'\r\n".repeat(100_000);
     let source = ropey::Rope::from_str(&text);
     let mut sink = Sink::default();
     write_source(&source, &mut sink).unwrap();
     assert_eq!(sink.bytes, text.as_bytes());
-    assert!(sink.writes * 16 < source.chunks().count(), "{} writes for {} rope chunks", sink.writes, source.chunks().count());
+    assert!(
+        sink.writes * 16 < source.chunks().count(),
+        "{} writes for {} rope chunks",
+        sink.writes,
+        source.chunks().count()
+    );
     // This fits entirely in the buffer: errors must surface on the final flush.
     sink.fail = true;
     assert!(write_source(&ropey::Rope::from_str("small"), &mut sink).is_err());
@@ -31,13 +44,22 @@ fn benchmark_external_formatter_pipeline() {
     let command = std::env::var("VTCODE_BLACK").expect("set VTCODE_BLACK");
     let dir = tempfile::tempdir().unwrap();
     for lines in [20, 1_000, 10_000] {
-        let source: String = (0..lines).map(|i| format!("value_{i}={{'first':{i},'second':[{i},2,3]}}\n")).collect();
+        let source: String = (0..lines)
+            .map(|i| format!("value_{i}={{'first':{i},'second':[{i},2,3]}}\n"))
+            .collect();
         let path = dir.path().join("example.py");
         std::fs::write(&path, &source).unwrap();
         let started = Instant::now();
-        let result = std::process::Command::new(&command).arg(&path).output().unwrap();
+        let result = std::process::Command::new(&command)
+            .arg(&path)
+            .output()
+            .unwrap();
         let direct = started.elapsed();
-        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
         let formatted = std::fs::read_to_string(&path).unwrap();
         let mut editor = Editor::test_with_text(&source);
         let started = Instant::now();
@@ -48,14 +70,27 @@ fn benchmark_external_formatter_pipeline() {
         let apply = started.elapsed();
         assert_eq!(editor.rope.to_string(), formatted);
         let config = Config {
-            provider: Provider::Command, mode: CommandMode::File, command: command.clone(),
+            provider: Provider::Command,
+            mode: CommandMode::File,
+            command: command.clone(),
             args: vec!["{file}".into()],
         };
         let started = Instant::now();
-        let changes = run(&config, &path, dir.path(), &ropey::Rope::from_str(&source), None,
-            Arc::new(AtomicBool::new(false)), Duration::from_secs(60)).unwrap();
+        let changes = run(
+            &config,
+            &path,
+            dir.path(),
+            &ropey::Rope::from_str(&source),
+            None,
+            Arc::new(AtomicBool::new(false)),
+            Duration::from_secs(60),
+        )
+        .unwrap();
         let pipeline = started.elapsed();
-        eprintln!("{lines} lines: direct formatter {direct:?}; prepare {prepare_time:?}; apply {apply:?}; VTCode pipeline {pipeline:?}; {} edits", changes.len());
+        eprintln!(
+            "{lines} lines: direct formatter {direct:?}; prepare {prepare_time:?}; apply {apply:?}; VTCode pipeline {pipeline:?}; {} edits",
+            changes.len()
+        );
     }
 }
 
@@ -113,7 +148,12 @@ fn formatter_settings_merge_per_language_and_serialize() {
     assert_eq!(map["cpp"].provider, Provider::Lsp);
     let decoded: Settings = serde_json::from_value(serde_json::to_value(&merged).unwrap()).unwrap();
     assert_eq!(decoded.formatters, merged.formatters);
-    let command = Config { provider: Provider::Command, command: "formatter".into(), args: vec!["{file}".into()], ..Default::default() };
+    let command = Config {
+        provider: Provider::Command,
+        command: "formatter".into(),
+        args: vec!["{file}".into()],
+        ..Default::default()
+    };
     assert!(validate("python", &command).is_ok());
     assert!(validate("c", &command).is_ok());
     assert!(
@@ -132,10 +172,20 @@ fn formatter_settings_merge_per_language_and_serialize() {
 fn external_formatter_selection_fails_before_launching_a_document_formatter() {
     let dir = tempfile::tempdir().unwrap();
     let error = run(
-        &Config { provider: Provider::Command, command: "not-an-installed-tool".into(), args: vec![], ..Default::default() },
-        &dir.path().join("file.py"), dir.path(), &ropey::Rope::from_str("x=1\n"),
-        Some((1, 1)), Arc::new(AtomicBool::new(false)), Duration::from_secs(1),
-    ).unwrap_err();
+        &Config {
+            provider: Provider::Command,
+            command: "not-an-installed-tool".into(),
+            args: vec![],
+            ..Default::default()
+        },
+        &dir.path().join("file.py"),
+        dir.path(),
+        &ropey::Rope::from_str("x=1\n"),
+        Some((1, 1)),
+        Arc::new(AtomicBool::new(false)),
+        Duration::from_secs(1),
+    )
+    .unwrap_err();
     assert!(error.contains("range formatting"), "{error}");
 }
 
@@ -224,7 +274,10 @@ fn external_formatter_reads_unsaved_stdin_and_expands_literal_arguments() {
     assert_eq!(copy.file_name().unwrap(), "unsaved file.py");
     assert_eq!(copy.parent().unwrap().parent().unwrap(), dir.path());
     assert!(is_temporary_path(copy));
-    assert!(!copy.parent().unwrap().exists(), "working copy must be cleaned up");
+    assert!(
+        !copy.parent().unwrap().exists(),
+        "working copy must be cleaned up"
+    );
     assert_eq!(parts[2], dir.path().to_string_lossy());
     assert_eq!(parts[3], "literal & $value; with spaces");
     assert!(!dir.path().join("unsaved file.py").exists());
@@ -313,7 +366,9 @@ fn real_black_formatter_external_command_and_project_configuration() {
         provider: Provider::Command,
         mode: CommandMode::Stdin,
         command: std::env::var("VTCODE_BLACK").unwrap_or_else(|_| "black".into()),
-        args: ["--quiet", "--stdin-filename", "{file}", "-"].map(String::from).into(),
+        args: ["--quiet", "--stdin-filename", "{file}", "-"]
+            .map(String::from)
+            .into(),
     };
     let source = "first=  '😀'\r\n\r\nsecond=   2\r\n";
     let mut editor = Editor::test_with_text(source);
@@ -341,11 +396,20 @@ fn real_black_formatter_external_command_and_project_configuration() {
         ..config
     };
     let changes = run(
-        &file_config, &path, dir.path(), &editor.rope, None,
-        Arc::new(AtomicBool::new(false)), Duration::from_secs(30),
-    ).unwrap();
+        &file_config,
+        &path,
+        dir.path(),
+        &editor.rope,
+        None,
+        Arc::new(AtomicBool::new(false)),
+        Duration::from_secs(30),
+    )
+    .unwrap();
     changes.apply(&mut editor).unwrap();
-    assert_eq!(editor.rope.to_string(), "first = '😀'\r\n\r\nsecond = 2\r\n");
+    assert_eq!(
+        editor.rope.to_string(),
+        "first = '😀'\r\n\r\nsecond = 2\r\n"
+    );
     editor.undo();
     assert_eq!(editor.rope.to_string(), source);
     assert!(!path.exists());
@@ -359,24 +423,38 @@ fn external_formatter_file_modes_require_an_explicit_file_argument() {
         command: "formatter".into(),
         ..Default::default()
     };
-    assert!(validate("python", &config).unwrap_err().contains("No arguments are added automatically"));
+    assert!(
+        validate("python", &config)
+            .unwrap_err()
+            .contains("No arguments are added automatically")
+    );
     config.args = vec!["--input={file}".into()];
-    for mode in [CommandMode::File, CommandMode::FileStdout, CommandMode::Stdin] {
+    for mode in [
+        CommandMode::File,
+        CommandMode::FileStdout,
+        CommandMode::Stdin,
+    ] {
         config.mode = mode;
         assert!(validate("python", &config).is_ok());
         let encoded = serde_json::to_string(&config).unwrap();
         assert_eq!(serde_json::from_str::<Config>(&encoded).unwrap(), config);
     }
     config.args.clear();
-    assert!(validate("python", &config).is_ok(), "stdin need not receive a filename");
+    assert!(
+        validate("python", &config).is_ok(),
+        "stdin need not receive a filename"
+    );
     config.mode = CommandMode::FileStdout;
     assert!(validate("python", &config).is_err());
 }
 
 fn assert_no_working_copies(root: &Path) {
-    assert!(!std::fs::read_dir(root).unwrap().any(|entry| {
-        is_temporary_path(&entry.unwrap().path())
-    }), "formatter working copies were not removed");
+    assert!(
+        !std::fs::read_dir(root)
+            .unwrap()
+            .any(|entry| { is_temporary_path(&entry.unwrap().path()) }),
+        "formatter working copies were not removed"
+    );
 }
 
 #[test]
@@ -433,27 +511,50 @@ fn external_formatter_file_to_stdout_and_unchanged_in_place_results() {
 
     // In-place mode must not mistake log output for the formatted document.
     config.mode = CommandMode::File;
-    assert!(execute(&config, dir.path(), "value=2\n", Duration::from_secs(10)).unwrap().is_empty());
+    assert!(
+        execute(&config, dir.path(), "value=2\n", Duration::from_secs(10))
+            .unwrap()
+            .is_empty()
+    );
     assert_no_working_copies(dir.path());
 }
 
 #[test]
 fn external_formatter_file_failures_leave_the_original_and_clean_up() {
     for (windows, unix, expected) in [
-        ("[IO.File]::WriteAllText($args[0], 'changed'); [Console]::Error.Write('broken tool'); exit 2",
-            r#"printf changed > "$1"; printf 'broken tool' >&2; exit 2"#, "broken tool"),
-        ("[IO.File]::WriteAllText($args[0], '')", r#": > "$1""#, "emptied"),
-        ("[IO.File]::Delete($args[0])", r#"rm "$1""#, "Could not read"),
-        ("[IO.File]::WriteAllBytes($args[0], [byte[]]@(255))", r#"printf '\377' > "$1""#, "UTF-8"),
-        ("[IO.File]::WriteAllText($args[0], ('x' * 2000000))",
-            r#"head -c 2000000 /dev/zero > "$1""#, "size limit"),
+        (
+            "[IO.File]::WriteAllText($args[0], 'changed'); [Console]::Error.Write('broken tool'); exit 2",
+            r#"printf changed > "$1"; printf 'broken tool' >&2; exit 2"#,
+            "broken tool",
+        ),
+        (
+            "[IO.File]::WriteAllText($args[0], '')",
+            r#": > "$1""#,
+            "emptied",
+        ),
+        (
+            "[IO.File]::Delete($args[0])",
+            r#"rm "$1""#,
+            "Could not read",
+        ),
+        (
+            "[IO.File]::WriteAllBytes($args[0], [byte[]]@(255))",
+            r#"printf '\377' > "$1""#,
+            "UTF-8",
+        ),
+        (
+            "[IO.File]::WriteAllText($args[0], ('x' * 2000000))",
+            r#"head -c 2000000 /dev/zero > "$1""#,
+            "size limit",
+        ),
     ] {
         let (dir, mut config) = script(windows, unix);
         let path = dir.path().join("unsaved file.py");
         std::fs::write(&path, "on disk").unwrap();
         config.mode = CommandMode::File;
         config.args.push("{file}".into());
-        let error = execute(&config, dir.path(), "unsaved text", Duration::from_secs(10)).unwrap_err();
+        let error =
+            execute(&config, dir.path(), "unsaved text", Duration::from_secs(10)).unwrap_err();
         assert!(error.contains(expected), "{error}");
         assert_eq!(std::fs::read_to_string(path).unwrap(), "on disk");
         assert_no_working_copies(dir.path());
@@ -461,8 +562,16 @@ fn external_formatter_file_failures_leave_the_original_and_clean_up() {
     let (dir, mut config) = script("Start-Sleep -Seconds 20", "sleep 20");
     config.mode = CommandMode::File;
     config.args.push("{file}".into());
-    assert!(execute(&config, dir.path(), "unsaved text", Duration::from_millis(400))
-        .unwrap_err().contains("did not finish"));
+    assert!(
+        execute(
+            &config,
+            dir.path(),
+            "unsaved text",
+            Duration::from_millis(400)
+        )
+        .unwrap_err()
+        .contains("did not finish")
+    );
     assert_no_working_copies(dir.path());
 }
 

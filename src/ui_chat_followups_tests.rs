@@ -288,8 +288,10 @@ fn collapsed_terminal_commands_bound_wrapped_lines_and_expand_to_full_text() {
                     *app.chat.session_mut().unwrap() = Session::new(id.clone());
                     app.chat.output_detail = detail;
                     if hosted {
-                        app.chat.session_mut().unwrap().terminal(
-                            vtcode::acp::TerminalSnapshot {
+                        app.chat
+                            .session_mut()
+                            .unwrap()
+                            .terminal(vtcode::acp::TerminalSnapshot {
                                 session_id: id,
                                 id: "long-command".into(),
                                 command: command.clone(),
@@ -302,8 +304,7 @@ fn collapsed_terminal_commands_bound_wrapped_lines_and_expand_to_full_text() {
                                 error: None,
                                 history: None,
                                 history_version: 0,
-                            },
-                        );
+                            });
                     } else {
                         app.chat.session_mut().unwrap().apply(
                             serde_json::from_value(serde_json::json!({

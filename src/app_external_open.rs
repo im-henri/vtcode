@@ -5,8 +5,15 @@ impl App {
     pub(crate) fn open_external(&mut self, request: Request) {
         if self.remote_workspace.is_some() {
             match &request {
-                Request::Terminal(path) => { let cwd = self.explorer_target_directory(Some(path)); self.new_terminal_tab_at(&cwd); return; }
-                Request::SystemApp(_) | Request::Reveal(_) => { self.notify("This file is on the remote host. Use the VTCode Explorer or a remote terminal to access it."); return; }
+                Request::Terminal(path) => {
+                    let cwd = self.explorer_target_directory(Some(path));
+                    self.new_terminal_tab_at(&cwd);
+                    return;
+                }
+                Request::SystemApp(_) | Request::Reveal(_) => {
+                    self.notify("This file is on the remote host. Use the VTCode Explorer or a remote terminal to access it.");
+                    return;
+                }
                 Request::Url(_) => {}
             }
         }

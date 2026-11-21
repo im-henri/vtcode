@@ -20,15 +20,20 @@ fn workspace() -> (tempfile::TempDir, FileExplorer) {
 #[test]
 fn temporary_working_copies_are_hidden_from_explorer_and_filename_search() {
     let (temp, mut explorer) = workspace();
-    let copies = [".vtcode-format-test", ".vtcode-copy-ABcd12345678"]
-        .map(|name| temp.path().join(name));
+    let copies =
+        [".vtcode-format-test", ".vtcode-copy-ABcd12345678"].map(|name| temp.path().join(name));
     for copy in &copies {
         std::fs::create_dir(copy).unwrap();
         std::fs::write(copy.join("main.rs"), "temporary text").unwrap();
     }
     refresh(&mut explorer);
     for copy in &copies {
-        assert!(!explorer.entries.iter().any(|entry| entry.path.starts_with(copy)));
+        assert!(
+            !explorer
+                .entries
+                .iter()
+                .any(|entry| entry.path.starts_with(copy))
+        );
     }
     explorer.find.open = true;
     explorer.find.filter = true;
@@ -36,7 +41,12 @@ fn temporary_working_copies_are_hidden_from_explorer_and_filename_search() {
     refresh(&mut explorer);
     assert_eq!(explorer.find.results.count, 3);
     for copy in &copies {
-        assert!(!explorer.entries.iter().any(|entry| entry.path.starts_with(copy)));
+        assert!(
+            !explorer
+                .entries
+                .iter()
+                .any(|entry| entry.path.starts_with(copy))
+        );
     }
 }
 
@@ -66,7 +76,9 @@ fn expanding_and_collapsing_only_reads_new_directories() {
 fn compiler_style_burst_updates_closed_directory_without_rebuilding_the_explorer() {
     use notify::{Event, EventKind, event::CreateKind};
     let (temp, mut explorer) = workspace();
-    for name in ["alpha", "beta"] { explorer.expanded_dirs.insert(temp.path().join(name)); }
+    for name in ["alpha", "beta"] {
+        explorer.expanded_dirs.insert(temp.path().join(name));
+    }
     refresh(&mut explorer);
     let output = temp.path().join("gamma");
     let added = output.join("final.o");
@@ -85,25 +97,49 @@ fn compiler_style_burst_updates_closed_directory_without_rebuilding_the_explorer
     let started = std::time::Instant::now();
     let mut burst = crate::workspace_watch::Burst::default();
     for index in 0..50_000 {
-        burst.push(temp.path(), Ok(Event::new(EventKind::Create(CreateKind::File))
-            .add_path(output.join(format!("object-{index}.o")))));
+        burst.push(
+            temp.path(),
+            Ok(Event::new(EventKind::Create(CreateKind::File))
+                .add_path(output.join(format!("object-{index}.o")))),
+        );
     }
     let event = crate::workspace_watch::NoiseFilter::default().filter(burst);
     assert!(!event.rescan);
     assert_eq!(event.paths.as_slice(), std::slice::from_ref(&output));
     let inspections = event.paths.len();
-    let changes = event.paths.into_iter().map(crate::background::inspect_workspace_path).collect();
-    app.apply_workspace_file_changes(temp.path().to_path_buf(), changes, event.structure_changed,
-        event.rescan, event.git_metadata_changed);
+    let changes = event
+        .paths
+        .into_iter()
+        .map(crate::background::inspect_workspace_path)
+        .collect();
+    app.apply_workspace_file_changes(
+        temp.path().to_path_buf(),
+        changes,
+        event.structure_changed,
+        event.rescan,
+        event.git_metadata_changed,
+    );
     assert_eq!(app.explorer_refresh_generation, generation);
     assert!(!app.bg_explorer_refresh_running && !app.bg_explorer_refresh_pending);
     assert_eq!(app.explorer.directory_cache.read_count(), reads);
-    assert!(!app.repositories.rescan, "build output must not rediscover repositories");
-    assert!(app.pending_git_status_paths.is_none(), "watcher work stays coalesced while Git is busy");
+    assert!(
+        !app.repositories.rescan,
+        "build output must not rediscover repositories"
+    );
+    assert!(
+        app.pending_git_status_paths.is_none(),
+        "watcher work stays coalesced while Git is busy"
+    );
     let mut pending = Some(rustc_hash::FxHashSet::default());
     assert!(!app.absorb_git_watcher_refresh(&mut pending));
-    assert_eq!(pending.as_ref().unwrap().iter().collect::<Vec<_>>(), vec![&output]);
-    eprintln!("watcher stress: 50000 notifications, {inspections} directory inspection, 0 Explorer rebuilds, 0 directory reads, {:?}", started.elapsed());
+    assert_eq!(
+        pending.as_ref().unwrap().iter().collect::<Vec<_>>(),
+        vec![&output]
+    );
+    eprintln!(
+        "watcher stress: 50000 notifications, {inspections} directory inspection, 0 Explorer rebuilds, 0 directory reads, {:?}",
+        started.elapsed()
+    );
     // Invalidations remain useful: opening that folder reads its new contents.
     app.explorer.expanded_dirs.insert(output);
     refresh(&mut app.explorer);
@@ -119,7 +155,10 @@ fn tree_refresh_scope_follows_expansion_sorting_and_recursive_search() {
     let child = folder.join("new.rs");
     assert!(!explorer.changed_path_affects_tree(&child, Some(true)));
     assert!(!explorer.changed_path_affects_tree(&folder, Some(true)));
-    assert!(explorer.changed_path_affects_tree(&folder, Some(false)), "deleting a displayed folder must update the root listing");
+    assert!(
+        explorer.changed_path_affects_tree(&folder, Some(false)),
+        "deleting a displayed folder must update the root listing"
+    );
     assert!(explorer.changed_path_affects_tree(&temp.path().join("new-folder"), Some(true)));
     explorer.expanded_dirs.insert(folder.clone());
     refresh(&mut explorer);
@@ -168,8 +207,17 @@ fn scoped_filename_queries_only_read_the_selected_subtree_and_reuse_its_scan() {
         refresh(&mut explorer);
     }
     assert_eq!(explorer.find.results.count, 2);
-    assert_eq!(explorer.directory_cache.read_count(), 3, "only root, alpha and alpha/deep are read");
-    assert!(explorer.entries.iter().all(|entry| entry.path.starts_with(temp.path().join("alpha"))));
+    assert_eq!(
+        explorer.directory_cache.read_count(),
+        3,
+        "only root, alpha and alpha/deep are read"
+    );
+    assert!(
+        explorer
+            .entries
+            .iter()
+            .all(|entry| entry.path.starts_with(temp.path().join("alpha")))
+    );
 
     assert!(explorer.changed_path_affects_tree(&temp.path().join("alpha/deep/new.rs"), Some(true)));
     assert!(explorer.changed_path_affects_tree(&temp.path().join("alpha"), Some(false)));
@@ -209,7 +257,8 @@ fn scoped_search_refreshes_when_sibling_rules_change_its_boundary() {
     let (temp, mut explorer) = workspace();
     let patterns = serde_json::from_value(serde_json::json!({
         "**/alpha": { "when": "$(basename).hidden" }
-    })).unwrap();
+    }))
+    .unwrap();
     explorer.set_files_exclude(&patterns);
     explorer.find.open = true;
     explorer.find.filter = true;
@@ -220,7 +269,9 @@ fn scoped_search_refreshes_when_sibling_rules_change_its_boundary() {
     let sibling = temp.path().join("alpha.hidden");
     std::fs::write(&sibling, "").unwrap();
     assert!(explorer.changed_path_affects_tree(&sibling, Some(false)));
-    assert!(!explorer.changed_path_affects_tree(&temp.path().join("beta/unrelated.rs"), Some(true)));
+    assert!(
+        !explorer.changed_path_affects_tree(&temp.path().join("beta/unrelated.rs"), Some(true))
+    );
     explorer.invalidate_directory_paths([sibling.as_path()], true);
     refresh(&mut explorer);
     assert_eq!(explorer.find.results.count, 0);
@@ -268,14 +319,18 @@ fn create_delete_and_rename_invalidate_only_affected_listings() {
     explorer.invalidate_directory_paths([old.as_path(), renamed.as_path()], true);
     explorer.expanded_dirs.insert(renamed.clone());
     refresh(&mut explorer);
-    assert!(!explorer
-        .entries
-        .iter()
-        .any(|entry| entry.path.starts_with(&old)));
-    assert!(explorer
-        .entries
-        .iter()
-        .any(|entry| entry.path == renamed.join("main.rs")));
+    assert!(
+        !explorer
+            .entries
+            .iter()
+            .any(|entry| entry.path.starts_with(&old))
+    );
+    assert!(
+        explorer
+            .entries
+            .iter()
+            .any(|entry| entry.path == renamed.join("main.rs"))
+    );
     assert_eq!(explorer.directory_cache.read_count(), 8);
 }
 
@@ -314,10 +369,12 @@ fn explicit_refresh_discards_cached_directory_contents() {
     refresh(&mut explorer);
     std::fs::write(temp.path().join("external.txt"), "new").unwrap();
     explorer.refresh();
-    assert!(explorer
-        .entries
-        .iter()
-        .any(|entry| entry.name == "external.txt"));
+    assert!(
+        explorer
+            .entries
+            .iter()
+            .any(|entry| entry.name == "external.txt")
+    );
     assert_eq!(explorer.directory_cache.read_count(), 2);
 }
 

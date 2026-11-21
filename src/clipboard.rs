@@ -156,11 +156,14 @@ pub(crate) fn set_text(text: impl AsRef<str>) -> Result<(), arboard::Error> {
     if result.is_ok() {
         remember_line_copy(text, false);
     }
-    LAST_WRITE_ERROR.with(|slot| *slot.borrow_mut() = result.as_ref().err().map(ToString::to_string));
+    LAST_WRITE_ERROR
+        .with(|slot| *slot.borrow_mut() = result.as_ref().err().map(ToString::to_string));
     result
 }
 
-pub(crate) fn last_write_error() -> Option<String> { LAST_WRITE_ERROR.with(|slot| slot.borrow().clone()) }
+pub(crate) fn last_write_error() -> Option<String> {
+    LAST_WRITE_ERROR.with(|slot| slot.borrow().clone())
+}
 
 /// Line-copy semantics belong to the clipboard, not to the source editor tab.
 /// Other copy actions clear them; paste also verifies the actual clipboard text.
@@ -180,23 +183,29 @@ pub(crate) fn remember_line_copy(text: &str, is_line: bool) {
 
 pub(crate) fn line_copy_status(text: &str) -> Option<bool> {
     COPY_KIND.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .map(|kind| match kind {
-                CopyKind::Text => false,
-                CopyKind::Line(line) => {
-                    if !text.contains('\r') { return line == text; }
-                    // Clipboard providers may change CRLF to LF. Compare the
-                    // normalized stream without allocating another huge line.
-                    let mut bytes = text.bytes().peekable();
-                    line.bytes().eq(std::iter::from_fn(|| bytes.next().map(|byte| {
-                        if byte == b'\r' {
-                            if bytes.peek() == Some(&b'\n') { bytes.next(); }
-                            b'\n'
-                        } else { byte }
-                    })))
+        slot.borrow().as_ref().map(|kind| match kind {
+            CopyKind::Text => false,
+            CopyKind::Line(line) => {
+                if !text.contains('\r') {
+                    return line == text;
                 }
-            })
+                // Clipboard providers may change CRLF to LF. Compare the
+                // normalized stream without allocating another huge line.
+                let mut bytes = text.bytes().peekable();
+                line.bytes().eq(std::iter::from_fn(|| {
+                    bytes.next().map(|byte| {
+                        if byte == b'\r' {
+                            if bytes.peek() == Some(&b'\n') {
+                                bytes.next();
+                            }
+                            b'\n'
+                        } else {
+                            byte
+                        }
+                    })
+                }))
+            }
+        })
     })
 }
 
@@ -231,14 +240,21 @@ impl Drop for ClipboardGuard {
         COPY_KIND.with(|slot| {
             slot.borrow_mut().take();
         });
-        LAST_WRITE_ERROR.with(|slot| { slot.borrow_mut().take(); });
+        LAST_WRITE_ERROR.with(|slot| {
+            slot.borrow_mut().take();
+        });
         TERMINAL_CLIPBOARD.with(|slot| *slot.borrow_mut() = TerminalClipboard::default());
     }
 }
 
 #[cfg(test)]
 pub(crate) fn test_terminal_clipboard() -> impl Drop {
-    struct Restore(TerminalClipboard, Option<CopyKind>, Option<Vec<u8>>, Option<String>);
+    struct Restore(
+        TerminalClipboard,
+        Option<CopyKind>,
+        Option<Vec<u8>>,
+        Option<String>,
+    );
     impl Drop for Restore {
         fn drop(&mut self) {
             TERMINAL_CLIPBOARD.with(|slot| *slot.borrow_mut() = std::mem::take(&mut self.0));

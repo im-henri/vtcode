@@ -8,8 +8,14 @@ use ratatui::{
 
 #[test]
 fn fused_cell_styles_preserve_wide_continuations_blank_tails_and_scalar_symbols() {
-    let mut symbols = vec!["·", "→", "│", "界", "😀", "\u{301}", "\u{fe0f}", "\0", "\r", "\t", ""];
-    let sampled: Vec<_> = (0..=0x10ffff).step_by(997).filter_map(char::from_u32).map(|ch| ch.to_string()).collect();
+    let mut symbols = vec![
+        "·", "→", "│", "界", "😀", "\u{301}", "\u{fe0f}", "\0", "\r", "\t", "",
+    ];
+    let sampled: Vec<_> = (0..=0x10ffff)
+        .step_by(997)
+        .filter_map(char::from_u32)
+        .map(|ch| ch.to_string())
+        .collect();
     symbols.extend(sampled.iter().map(String::as_str));
     for symbol in symbols {
         for width in [1, 2, 3, 7] {
@@ -17,19 +23,40 @@ fn fused_cell_styles_preserve_wide_continuations_blank_tails_and_scalar_symbols(
                 let bounds = Rect::new(2, 2, 12, 4);
                 let area = Rect::new(origin, 2, width, 3);
                 let mut actual = Buffer::filled(bounds, ratatui::buffer::Cell::new("x"));
-                actual.set_style(bounds, Style::default().fg(Color::Red).bg(Color::Green)
-                    .add_modifier(Modifier::DIM | Modifier::ITALIC).underline_color(Color::Red));
+                actual.set_style(
+                    bounds,
+                    Style::default()
+                        .fg(Color::Red)
+                        .bg(Color::Green)
+                        .add_modifier(Modifier::DIM | Modifier::ITALIC)
+                        .underline_color(Color::Red),
+                );
                 let mut expected = actual.clone();
-                let base = Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD)
-                    .remove_modifier(Modifier::ITALIC).underline_color(Color::Green);
-                let line = Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC)
+                let base = Style::default()
+                    .bg(Color::Blue)
+                    .add_modifier(Modifier::BOLD)
+                    .remove_modifier(Modifier::ITALIC)
+                    .underline_color(Color::Green);
+                let line = Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::ITALIC)
                     .remove_modifier(Modifier::BOLD);
-                let span = Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-                    .remove_modifier(Modifier::DIM).underline_color(Color::Blue);
-                let lines = vec![Line::from(vec![Span::styled(symbol, span), Span::raw("a")]).style(line), Line::default()];
+                let span = Style::default()
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                    .remove_modifier(Modifier::DIM)
+                    .underline_color(Color::Blue);
+                let lines = vec![
+                    Line::from(vec![Span::styled(symbol, span), Span::raw("a")]).style(line),
+                    Line::default(),
+                ];
                 paint(&mut actual, area, lines.clone(), base);
-                Paragraph::new(lines).style(base).render(area, &mut expected);
-                assert_eq!(actual, expected, "symbol={symbol:?}, width={width}, origin={origin}");
+                Paragraph::new(lines)
+                    .style(base)
+                    .render(area, &mut expected);
+                assert_eq!(
+                    actual, expected,
+                    "symbol={symbol:?}, width={width}, origin={origin}"
+                );
             }
         }
     }

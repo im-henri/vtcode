@@ -4,7 +4,9 @@ use ratatui::layout::Rect;
 use std::{cell::RefCell, rc::Rc};
 
 pub(crate) fn exclusion_count(id: &str, value: &str) -> usize {
-    if !matches!(id, "files_exclude" | "search_exclude") { return 0; }
+    if !matches!(id, "files_exclude" | "search_exclude") {
+        return 0;
+    }
     serde_json::from_str::<crate::settings::ExcludePatterns>(value).map_or(0, |map| map.len())
 }
 
@@ -93,9 +95,11 @@ impl Cache {
                 && layout.rows.len() == filtered.len()
                 && layout.rows.iter().zip(filtered).all(|(row, &index)| {
                     row.index == index
-                        && items
-                            .get(index)
-                            .is_some_and(|(label, value, id)| row.lines[0] == *label && row.id == *id && row.entries == exclusion_count(id, value))
+                        && items.get(index).is_some_and(|(label, value, id)| {
+                            row.lines[0] == *label
+                                && row.id == *id
+                                && row.entries == exclusion_count(id, value)
+                        })
                 })
         }) {
             return Rc::clone(layout);
@@ -111,12 +115,17 @@ impl Cache {
                 let entries = exclusion_count(id, value);
                 // Shortcut group headings get one blank line above the label.
                 let table_heading = id.starts_with("heading_kb_");
-                let height = visual_height(kind, lines.len(), width) + entries + usize::from(table_heading);
+                let height =
+                    visual_height(kind, lines.len(), width) + entries + usize::from(table_heading);
                 let row = Row {
                     index,
                     start: total,
                     height,
-                    control: if table_heading { 1 } else { control_offset(kind, lines.len(), width) },
+                    control: if table_heading {
+                        1
+                    } else {
+                        control_offset(kind, lines.len(), width)
+                    },
                     lines,
                     id: id.clone(),
                     entries,

@@ -309,7 +309,11 @@ impl App {
         *cursor = start;
     }
 
-    pub(crate) fn inline_delete(text: &mut String, cursor: &mut usize, selection_anchor: &mut Option<usize>) {
+    pub(crate) fn inline_delete(
+        text: &mut String,
+        cursor: &mut usize,
+        selection_anchor: &mut Option<usize>,
+    ) {
         Self::normalize_inline_cursor(text, cursor, selection_anchor);
         if Self::inline_delete_selection(text, cursor, selection_anchor) {
             return;
@@ -400,7 +404,9 @@ impl App {
     }
 
     pub(crate) fn cancel_rename(&mut self) {
-        if self.remote_workspace.is_some() && self.rename.placeholder_active { self.refresh_explorer_async(); }
+        if self.remote_workspace.is_some() && self.rename.placeholder_active {
+            self.refresh_explorer_async();
+        }
         if self.rename.placeholder_active {
             if let Some(target) = &self.rename.target {
                 if target.exists() {
@@ -470,7 +476,10 @@ mod tests {
                 assert!(app.rename.active);
                 assert!(!app.rename.symbol_active);
                 assert!(!app.lsp_prepare_rename_pending);
-                assert_eq!(app.rename.target.as_ref(), Some(&app.explorer.entries[0].path));
+                assert_eq!(
+                    app.rename.target.as_ref(),
+                    Some(&app.explorer.entries[0].path)
+                );
                 rename_key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
                 assert_eq!(app.rename.query, if is_dir { "x" } else { "x.py" });
                 // Repeated presses must not restart an in-progress rename.
@@ -506,7 +515,11 @@ mod tests {
 
     #[test]
     fn rename_f2_ignores_modified_keys_and_other_sidebars() {
-        for modifiers in [KeyModifiers::CONTROL, KeyModifiers::SHIFT, KeyModifiers::ALT] {
+        for modifiers in [
+            KeyModifiers::CONTROL,
+            KeyModifiers::SHIFT,
+            KeyModifiers::ALT,
+        ] {
             let mut app = rename_app("module.py", false);
             rename_key(&mut app, KeyCode::F(2), modifiers);
             assert!(!app.rename.active, "{modifiers:?}");
@@ -756,7 +769,11 @@ mod tests {
         let mut text = String::from("hello");
         let mut cursor = 3;
         let mut anchor = None;
-        assert!(!App::inline_delete_selection(&mut text, &mut cursor, &mut anchor));
+        assert!(!App::inline_delete_selection(
+            &mut text,
+            &mut cursor,
+            &mut anchor
+        ));
         assert_eq!(text, "hello");
     }
 
@@ -896,7 +913,7 @@ mod tests {
     fn word_left_boundary_multiple_spaces() {
         let text = "hello   world";
         assert_eq!(App::inline_word_left_boundary(text, 10), 8); // mid-"world" → 'w'
-        assert_eq!(App::inline_word_left_boundary(text, 8), 0);  // 'w' → start of "hello"
+        assert_eq!(App::inline_word_left_boundary(text, 8), 0); // 'w' → start of "hello"
     }
 
     #[test]
@@ -1287,6 +1304,6 @@ mod tests {
     fn prev_next_char_multibyte() {
         let text = "a😀b"; // a=1, 😀=4, b=1
         assert_eq!(App::inline_prev_char_start(text, 5), 1); // before 'b' → start of 😀
-        assert_eq!(App::inline_next_char_end(text, 1), 5);   // after 'a' → end of 😀
+        assert_eq!(App::inline_next_char_end(text, 1), 5); // after 'a' → end of 😀
     }
 }

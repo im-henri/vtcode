@@ -14,7 +14,7 @@ fn make_tab(name: &str) -> Tab {
 
 #[test]
 fn terminal_layout_menu_items_are_disabled_without_an_open_terminal() {
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     for closed in [false, true] {
         for keyboard in [false, true] {
@@ -25,7 +25,10 @@ fn terminal_layout_menu_items_are_disabled_without_an_open_terminal() {
                     app.toggle_terminal_sidebar();
                     app.close_terminal_tab();
                 }
-                app.menu_selected = App::menu_labels().iter().position(|label| *label == "Terminal").unwrap();
+                app.menu_selected = App::menu_labels()
+                    .iter()
+                    .position(|label| *label == "Terminal")
+                    .unwrap();
                 app.menu_active = true;
                 app.menu_open = true;
                 let items = app.menu_items(app.menu_selected);
@@ -33,27 +36,42 @@ fn terminal_layout_menu_items_are_disabled_without_an_open_terminal() {
                 let label = &items[index].0;
                 app.menu_item_selected = index;
                 let mut terminal = Terminal::new(TestBackend::new(140, 35)).unwrap();
-                terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+                terminal
+                    .draw(|frame| crate::ui::draw(frame, &mut app))
+                    .unwrap();
                 let buffer = terminal.backend().buffer();
-                let (column, row) = (1..12).find_map(|row| {
-                    (0..140 - label.len() as u16).find_map(|column| {
-                        label.chars().enumerate().all(|(i, ch)| {
-                            buffer[(column + i as u16, row)].symbol() == ch.to_string()
-                        }).then_some((column, row))
+                let (column, row) = (1..12)
+                    .find_map(|row| {
+                        (0..140 - label.len() as u16).find_map(|column| {
+                            label
+                                .chars()
+                                .enumerate()
+                                .all(|(i, ch)| {
+                                    buffer[(column + i as u16, row)].symbol() == ch.to_string()
+                                })
+                                .then_some((column, row))
+                        })
                     })
-                }).expect("terminal menu action is rendered");
+                    .expect("terminal menu action is rendered");
                 // Disabled actions stay dim even when selected or hovered.
                 let enabled_row = row - index as u16;
                 assert_ne!(buffer[(column, row)].fg, buffer[(column, enabled_row)].fg);
                 let tabs = app.tabs.len();
                 if keyboard {
-                    crate::input_keyboard::handle_keyboard_event(&mut app,
-                        event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                    crate::input_keyboard::handle_keyboard_event(
+                        &mut app,
+                        event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                    );
                 } else {
-                    handle_mouse(&mut app, MouseEvent {
-                        kind: MouseEventKind::Down(MouseButton::Left), column, row,
-                        modifiers: KeyModifiers::NONE,
-                    });
+                    handle_mouse(
+                        &mut app,
+                        MouseEvent {
+                            kind: MouseEventKind::Down(MouseButton::Left),
+                            column,
+                            row,
+                            modifiers: KeyModifiers::NONE,
+                        },
+                    );
                 }
                 assert!(app.menu_active && app.menu_open, "{command}");
                 assert!(!app.show_terminal_sidebar && !app.show_panel);
@@ -68,22 +86,36 @@ fn terminal_layout_menu_items_are_disabled_without_an_open_terminal() {
 
 #[test]
 fn new_terminal_menu_click_takes_priority_over_settings_search() {
-    use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
     use crate::text_input::TextInputId;
+    use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
     fn label_at(buffer: &Buffer, label: &str, mut rows: std::ops::Range<u16>) -> (u16, u16) {
         rows.find_map(|row| {
             (0..=buffer.area.width.saturating_sub(label.len() as u16)).find_map(|col| {
-                label.chars().enumerate().all(|(i, ch)| {
-                    buffer[(col + i as u16, row)].symbol() == ch.to_string()
-                }).then_some((col, row))
+                label
+                    .chars()
+                    .enumerate()
+                    .all(|(i, ch)| buffer[(col + i as u16, row)].symbol() == ch.to_string())
+                    .then_some((col, row))
             })
-        }).expect("visible menu label")
+        })
+        .expect("visible menu label")
     }
 
     fn click(app: &mut App, (column, row): (u16, u16)) {
-        for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
-            handle_mouse(app, MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE });
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            handle_mouse(
+                app,
+                MouseEvent {
+                    kind,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
         }
     }
 
@@ -97,19 +129,29 @@ fn new_terminal_menu_click_takes_priority_over_settings_search() {
             app.settings_editor_search_cursor = 1;
             app.settings_editor_search_selection_anchor = Some(4);
             let mut terminal = Terminal::new(TestBackend::new(width, 35)).unwrap();
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             let menu = label_at(terminal.backend().buffer(), "Terminal", 0..1);
             click(&mut app, menu);
             assert!(app.menu_active && app.menu_open);
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             let label = "New Terminal in Editor Tab";
             let (column, row) = label_at(terminal.backend().buffer(), label, 1..10);
             let search = app.text_input_area(TextInputId::SettingsSearch).unwrap();
             let action = (column.max(search.x), row);
-            assert!(action.0 < column + label.len() as u16 && search.contains(action.into()),
-                "exercise a menu item directly above the Settings search field");
+            assert!(
+                action.0 < column + label.len() as u16 && search.contains(action.into()),
+                "exercise a menu item directly above the Settings search field"
+            );
             click(&mut app, action);
-            assert_eq!(app.terminals.len(), 1, "opening the first terminal reuses the empty slot");
+            assert_eq!(
+                app.terminals.len(),
+                1,
+                "opening the first terminal reuses the empty slot"
+            );
             assert!(!app.menu_active && !app.menu_open);
             assert_eq!(app.focused_terminal_index(), Some(app.active_terminal));
             assert_eq!(app.tabs[app.active_tab].kind, TabKind::Terminal);
@@ -122,10 +164,14 @@ fn new_terminal_menu_click_takes_priority_over_settings_search() {
             let mut pty = crate::terminal::TerminalEmulator::test_with_output(40, 20, "");
             let input = pty.test_capture_input();
             app.terminals[app.active_terminal].terminal_pty = Some(pty);
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             assert!(app.terminal_is_in_editor(app.active_terminal));
-            crate::input_keyboard::handle_keyboard_event(&mut app,
-                event::KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+            crate::input_keyboard::handle_keyboard_event(
+                &mut app,
+                event::KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+            );
             assert_eq!(&*input.lock().unwrap(), b"x");
             assert_eq!(app.settings_editor_search, "theme");
         }
@@ -134,42 +180,86 @@ fn new_terminal_menu_click_takes_priority_over_settings_search() {
 
 #[test]
 fn edge_case_source_control_menu_uses_rendered_geometry() {
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
-    for (width, height, x, y) in [(80, 40, 4, 3), (80, 40, 75, 36), (40, 18, 36, 14), (80, 40, u16::MAX, u16::MAX)] {
+    for (width, height, x, y) in [
+        (80, 40, 4, 3),
+        (80, 40, 75, 36),
+        (40, 18, 36, 14),
+        (80, 40, u16::MAX, u16::MAX),
+    ] {
         for action in ["Discard Selected", "Cancel"] {
             let mut app = App::test_new();
-            app.sc_context_targets = ["first.rs", "second.rs"].into_iter().map(|path| crate::app::GitFileChange { directory: false,
-                path: path.into(), original_path: None, status: 'M', staged: false,
-            }).collect();
+            app.sc_context_targets = ["first.rs", "second.rs"]
+                .into_iter()
+                .map(|path| crate::app::GitFileChange {
+                    directory: false,
+                    path: path.into(),
+                    original_path: None,
+                    status: 'M',
+                    staged: false,
+                })
+                .collect();
             app.sc_context_target = Some(app.sc_context_targets[0].clone());
             app.sc_context_pos = (x, y);
             app.sc_context_active = true;
-            let action_index = app.source_control_context_menu_items().iter().position(|item| *item == action).unwrap();
+            let action_index = app
+                .source_control_context_menu_items()
+                .iter()
+                .position(|item| *item == action)
+                .unwrap();
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-            terminal.draw(|frame| crate::ui_dialogs::draw_source_control_context_menu(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui_dialogs::draw_source_control_context_menu(frame, &mut app))
+                .unwrap();
             let buffer = terminal.backend().buffer();
-            let (col, row) = (0..height).find_map(|row| {
-                (0..width.saturating_sub(action.len() as u16)).find_map(|col| {
-                    let text: String = (col..col + action.len() as u16).map(|x| buffer[(x, row)].symbol()).collect();
-                    // Include the far edge of long labels in hit testing.
-                    (text == action).then_some((col + action.len() as u16 - 1, row))
+            let (col, row) = (0..height)
+                .find_map(|row| {
+                    (0..width.saturating_sub(action.len() as u16)).find_map(|col| {
+                        let text: String = (col..col + action.len() as u16)
+                            .map(|x| buffer[(x, row)].symbol())
+                            .collect();
+                        // Include the far edge of long labels in hit testing.
+                        (text == action).then_some((col + action.len() as u16 - 1, row))
+                    })
                 })
-            }).expect("action is visible");
+                .expect("action is visible");
             app.sc_context_selected = usize::MAX;
-            handle_mouse(&mut app, MouseEvent { kind: MouseEventKind::Moved, column: col, row, modifiers: KeyModifiers::NONE });
-            assert_eq!(app.sc_context_selected, action_index, "{action} at {width}x{height}, anchor {x},{y}");
-            handle_mouse(&mut app, MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: col, row, modifiers: KeyModifiers::NONE });
+            handle_mouse(
+                &mut app,
+                MouseEvent {
+                    kind: MouseEventKind::Moved,
+                    column: col,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
+            assert_eq!(
+                app.sc_context_selected, action_index,
+                "{action} at {width}x{height}, anchor {x},{y}"
+            );
+            handle_mouse(
+                &mut app,
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: col,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
             assert!(!app.sc_context_active);
             assert_eq!(app.sc_discard_confirm_active, action == "Discard Selected");
-            assert!(!app.bg_git_action_running, "no destructive action before confirmation");
+            assert!(
+                !app.bg_git_action_running,
+                "no destructive action before confirmation"
+            );
         }
     }
 }
 
 #[test]
 fn tab_compare_actions_work_with_mouse_and_keyboard_on_unsaved_files() {
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn choose(app: &mut App, tab: usize, command: &str, keyboard: bool) {
         app.tab_context_tab = tab;
@@ -188,24 +278,31 @@ fn tab_compare_actions_work_with_mouse_and_keyboard_on_unsaved_files() {
             // the host console size (including headless test runs).
             let (width, height) = (80, 40);
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-            terminal.draw(|frame| crate::ui_chrome::draw_tab_context_menu(frame, app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui_chrome::draw_tab_context_menu(frame, app))
+                .unwrap();
             let label = items[index].0;
             let label_width = label.len() as u16;
             let buffer = terminal.backend().buffer();
-            let (column, row) = (0..height).find_map(|row| {
-                (0..width.saturating_sub(label_width)).find_map(|column| {
-                    let text: String = (column..column + label_width)
-                        .map(|x| buffer.cell((x, row)).unwrap().symbol())
-                        .collect();
-                    (text == label).then_some((column, row))
+            let (column, row) = (0..height)
+                .find_map(|row| {
+                    (0..width.saturating_sub(label_width)).find_map(|column| {
+                        let text: String = (column..column + label_width)
+                            .map(|x| buffer.cell((x, row)).unwrap().symbol())
+                            .collect();
+                        (text == label).then_some((column, row))
+                    })
                 })
-            }).expect("rendered compare action");
-            handle_mouse(app, MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column,
-                row,
-                modifiers: KeyModifiers::NONE,
-            });
+                .expect("rendered compare action");
+            handle_mouse(
+                app,
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
         }
         assert!(!app.tab_context_active);
     }
@@ -218,8 +315,15 @@ fn tab_compare_actions_work_with_mouse_and_keyboard_on_unsaved_files() {
         std::fs::write(&target, "saved right\n").unwrap();
         let mut app = App::test_new();
         app.explorer.root = workspace.path().to_path_buf();
-        app.tabs = vec![make_tab(base.to_str().unwrap()), make_tab(target.to_str().unwrap())];
-        for (tab, content) in app.tabs.iter_mut().zip(["unsaved left\n", "unsaved right\n"]) {
+        app.tabs = vec![
+            make_tab(base.to_str().unwrap()),
+            make_tab(target.to_str().unwrap()),
+        ];
+        for (tab, content) in app
+            .tabs
+            .iter_mut()
+            .zip(["unsaved left\n", "unsaved right\n"])
+        {
             tab.editor.rope = ropey::Rope::from_str(content);
             tab.editor.modified = true;
             tab.editor.content_version = 1;
@@ -227,7 +331,10 @@ fn tab_compare_actions_work_with_mouse_and_keyboard_on_unsaved_files() {
         app.active_tab = 1;
 
         choose(&mut app, 0, "tab_select_compare", keyboard);
-        assert_eq!(app.active_tab, 1, "selecting an inactive tab must keep focus");
+        assert_eq!(
+            app.active_tab, 1,
+            "selecting an inactive tab must keep focus"
+        );
         assert_eq!(app.selected_compare_path.as_ref(), Some(&base));
         assert_eq!(app.compare_base_path, None);
         choose(&mut app, 1, "tab_compare_selected", keyboard);
@@ -237,8 +344,14 @@ fn tab_compare_actions_work_with_mouse_and_keyboard_on_unsaved_files() {
         assert!(app.should_render_diff_for_active_editor());
         assert_eq!(app.compare_base_content.as_deref(), Some("unsaved left\n"));
         assert_eq!(app.editor().unwrap().rope.to_string(), "unsaved right\n");
-        assert_eq!(app.compare_diff_lines, crate::app::compute_file_diff("unsaved left\n", "unsaved right\n"));
-        assert_eq!(app.diff_labels, Some(crate::app::DiffLabels::new("left.txt", "right.txt")));
+        assert_eq!(
+            app.compare_diff_lines,
+            crate::app::compute_file_diff("unsaved left\n", "unsaved right\n")
+        );
+        assert_eq!(
+            app.diff_labels,
+            Some(crate::app::DiffLabels::new("left.txt", "right.txt"))
+        );
         assert_eq!(std::fs::read_to_string(&base).unwrap(), "saved left\n");
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "saved right\n");
 
@@ -255,7 +368,7 @@ fn tab_compare_actions_work_with_mouse_and_keyboard_on_unsaved_files() {
 
 #[test]
 fn explorer_new_file_click_and_hover_follow_the_rendered_menu() {
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     for (width, height, x, y, workspace_menu) in [
         (80, 40, 4, 3, true),
@@ -329,7 +442,10 @@ fn handle_tab_click_close_clears_drag_state() {
     app.tab_drop_target_group = Some(0);
 
     let tab_area = ratatui::layout::Rect::new(0, 0, 200, 1);
-    let close_col = crate::ui_chrome_tabs::TabBarHits::new(&app,tab_area).tabs[1].2.x+1;
+    let close_col = crate::ui_chrome_tabs::TabBarHits::new(&app, tab_area).tabs[1]
+        .2
+        .x
+        + 1;
 
     assert!(handle_tab_click(&mut app, close_col, tab_area));
     assert_eq!(app.tabs.len(), 1);
@@ -410,8 +526,14 @@ fn activity_bar_toggling_source_control_off_hides_sidebar() {
     let mut app = App::new(PathBuf::from("."));
     app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
     app.activity_bar_area = Some(Rect::new(0, 0, 2, 20));
-    let source_control_area = crate::ui_chrome::activity_item_regions(app.activity_bar_area.unwrap(), app.activity_bar_position)
-        .into_iter().find(|(_, index)| *index == 2).unwrap().0;
+    let source_control_area = crate::ui_chrome::activity_item_regions(
+        app.activity_bar_area.unwrap(),
+        app.activity_bar_position,
+    )
+    .into_iter()
+    .find(|(_, index)| *index == 2)
+    .unwrap()
+    .0;
 
     let source_control_click = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
@@ -437,8 +559,15 @@ fn activity_item_hit_test_rejects_rows_outside_the_bar() {
     app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
     app.activity_bar_area = Some(Rect::new(0, 2, 5, 24));
     for (row, expected) in [
-        (1, None), (26, None), (2, Some(0)), (8, Some(2)), (11, Some(3)),
-        (14, Some(4)), (17, None), (20, None), (25, Some(ACTIVITY_SETTINGS_INDEX)),
+        (1, None),
+        (26, None),
+        (2, Some(0)),
+        (8, Some(2)),
+        (11, Some(3)),
+        (14, Some(4)),
+        (17, None),
+        (20, None),
+        (25, Some(ACTIVITY_SETTINGS_INDEX)),
     ] {
         assert_eq!(activity_item_at(&app, 0, row), expected, "row {row}");
     }
@@ -446,40 +575,77 @@ fn activity_item_hit_test_rejects_rows_outside_the_bar() {
     for height in [15, 17] {
         let compact = Rect::new(0, 2, 5, height);
         app.activity_bar_area = Some(compact);
-        assert_eq!(activity_item_at(&app, 0, compact.bottom() - 1), Some(ACTIVITY_SETTINGS_INDEX));
+        assert_eq!(
+            activity_item_at(&app, 0, compact.bottom() - 1),
+            Some(ACTIVITY_SETTINGS_INDEX)
+        );
     }
 }
 
 #[test]
 fn top_activity_bar_uses_rendered_columns_for_hover_and_clicks() {
     let mut app = App::test_new();
-    app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
+    app.tabs
+        .push(crate::app::Tab::new_file(crate::editor::Editor::new()));
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-    let button = |app: &App, target| crate::ui_chrome::activity_item_regions(
-        app.activity_bar_area.unwrap(), app.activity_bar_position,
-    ).into_iter().find(|(_, index)| *index == target).unwrap().0;
-    let send = |app: &mut App, kind, column, row| handle_mouse(app, MouseEvent {
-        kind, column, row, modifiers: KeyModifiers::NONE,
-    });
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
+    let button = |app: &App, target| {
+        crate::ui_chrome::activity_item_regions(
+            app.activity_bar_area.unwrap(),
+            app.activity_bar_position,
+        )
+        .into_iter()
+        .find(|(_, index)| *index == target)
+        .unwrap()
+        .0
+    };
+    let send = |app: &mut App, kind, column, row| {
+        handle_mouse(
+            app,
+            MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+        )
+    };
     let search = button(&app, 1);
     assert_eq!(search.width, 4);
     let search_right = search.right() - 1;
     send(&mut app, MouseEventKind::Moved, search_right, search.y);
     assert_eq!(app.hovered_activity, Some(1));
-    send(&mut app, MouseEventKind::Down(MouseButton::Left), search_right, search.y);
+    send(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        search_right,
+        search.y,
+    );
     assert_eq!(app.sidebar_view, crate::app::SidebarView::Search);
     assert!(app.global_search_active);
 
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let tab_strip = app.tab_bar_area.unwrap();
     send(&mut app, MouseEventKind::Moved, tab_strip.x, tab_strip.y);
     assert_eq!(app.hovered_activity, None);
     let bar = app.activity_bar_area.unwrap();
-    assert!(app.search_control_regions.iter().all(|control| control.area.intersection(bar).is_empty()));
+    assert!(
+        app.search_control_regions
+            .iter()
+            .all(|control| control.area.intersection(bar).is_empty())
+    );
 
     let settings = button(&app, ACTIVITY_SETTINGS_INDEX);
-    send(&mut app, MouseEventKind::Down(MouseButton::Left), settings.x, settings.y);
+    send(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        settings.x,
+        settings.y,
+    );
     assert!(app.settings_editor_active);
 }
 
@@ -493,7 +659,12 @@ fn top_activity_overflow_opens_hidden_views_and_dismisses_on_resize() {
     app.tabs.push(Tab::new_file(Editor::new()));
     let mut terminal = Terminal::new(TestBackend::new(45, 24)).unwrap();
     let mouse = |app: &mut App, kind, column, row| {
-        let event = MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE };
+        let event = MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
         if app.context_menu_active {
             handle_context_menu_mouse(app, event);
         } else {
@@ -505,36 +676,70 @@ fn top_activity_overflow_opens_hidden_views_and_dismisses_on_resize() {
     };
     let open = |app: &mut App| {
         let (button, _) = activity_overflow_button(app).unwrap();
-        mouse(app, MouseEventKind::Down(MouseButton::Left), button.x + 1, button.y);
-        mouse(app, MouseEventKind::Up(MouseButton::Left), button.x + 1, button.y);
+        mouse(
+            app,
+            MouseEventKind::Down(MouseButton::Left),
+            button.x + 1,
+            button.y,
+        );
+        mouse(
+            app,
+            MouseEventKind::Up(MouseButton::Left),
+            button.x + 1,
+            button.y,
+        );
         assert!(app.activity_overflow_menu_open());
     };
 
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     open(&mut app);
-    assert_eq!(app.context_menu_items.iter().map(|item| item.id).collect::<Vec<_>>(),
-        ["activity_bar_remote", "activity_bar_extensions", "activity_bar_settings"]);
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    assert_eq!(
+        app.context_menu_items
+            .iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>(),
+        [
+            "activity_bar_remote",
+            "activity_bar_extensions",
+            "activity_bar_settings"
+        ]
+    );
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let menu = app.context_menu_inner.unwrap();
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), menu.x + 1, menu.y + 1);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        menu.x + 1,
+        menu.y + 1,
+    );
     assert_eq!(app.sidebar_view, crate::app::SidebarView::Extensions);
     assert!(!app.context_menu_active);
 
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     open(&mut app);
     key(&mut app, KeyCode::End);
     key(&mut app, KeyCode::Enter);
     assert!(app.settings_editor_active);
     assert!(!app.context_menu_active);
 
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     open(&mut app);
     key(&mut app, KeyCode::Esc);
     assert!(!app.context_menu_active);
     open(&mut app);
 
     terminal.backend_mut().resize(100, 24);
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     assert!(activity_overflow_button(&app).is_none());
     assert!(!app.context_menu_active);
     assert!(app.context_menu_inner.is_none());
@@ -551,12 +756,19 @@ fn top_activity_bar_takes_priority_over_remote_pane_bounds() {
     app.sidebar_view = SidebarView::Remote;
     app.sync_activity_bar_selection();
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
 
     let bar = app.activity_bar_area.unwrap();
     let sidebar = app.explorer_area.unwrap();
     // Recreate the shared header bounds that let Remote intercept the bar.
-    app.explorer_area = Some(Rect::new(sidebar.x, bar.y, sidebar.width, sidebar.bottom() - bar.y));
+    app.explorer_area = Some(Rect::new(
+        sidebar.x,
+        bar.y,
+        sidebar.width,
+        sidebar.bottom() - bar.y,
+    ));
     let (explorer, _) = activity_item_regions(bar, app.activity_bar_position)[0];
     let event = MouseEvent {
         kind: MouseEventKind::Moved,
@@ -566,7 +778,13 @@ fn top_activity_bar_takes_priority_over_remote_pane_bounds() {
     };
     handle_mouse(&mut app, event);
     assert_eq!(app.hovered_activity, Some(0));
-    handle_mouse(&mut app, MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), ..event });
+    handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            ..event
+        },
+    );
     assert_eq!(app.sidebar_view, SidebarView::Explorer);
 }
 
@@ -577,10 +795,20 @@ fn top_activity_bar_switches_views_with_direct_and_overflow_buttons() {
     use crate::ui_chrome::activity_item_regions;
     use ratatui::{Terminal, backend::TestBackend};
 
-    let views = [SidebarView::Explorer, SidebarView::Search, SidebarView::SourceControl,
-        SidebarView::Remote, SidebarView::Extensions];
+    let views = [
+        SidebarView::Explorer,
+        SidebarView::Search,
+        SidebarView::SourceControl,
+        SidebarView::Remote,
+        SidebarView::Extensions,
+    ];
     let mouse = |app: &mut App, kind, column, row| {
-        let event = MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE };
+        let event = MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
         if app.context_menu_active {
             handle_context_menu_mouse(app, event);
         } else {
@@ -595,7 +823,8 @@ fn top_activity_bar_switches_views_with_direct_and_overflow_buttons() {
         terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
         let bar = app.activity_bar_area.unwrap();
         if let Some((button, _)) = activity_item_regions(bar, app.activity_bar_position)
-            .into_iter().find(|&(_, item)| item == index)
+            .into_iter()
+            .find(|&(_, item)| item == index)
         {
             mouse(app, MouseEventKind::Moved, button.x + 1, button.y);
             assert_eq!(app.hovered_activity, Some(index));
@@ -606,8 +835,11 @@ fn top_activity_bar_switches_views_with_direct_and_overflow_buttons() {
             assert!(app.activity_overflow_menu_open());
             terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
             let menu = app.context_menu_inner.unwrap();
-            let item = app.context_menu_items.iter()
-                .position(|item| activity_menu_index(item.id) == Some(index)).unwrap();
+            let item = app
+                .context_menu_items
+                .iter()
+                .position(|item| activity_menu_index(item.id) == Some(index))
+                .unwrap();
             let row = menu.y + (item - app.context_menu_scroll) as u16;
             click(app, menu.x, row);
             assert!(!app.context_menu_active);
@@ -632,7 +864,10 @@ fn top_activity_bar_switches_views_with_direct_and_overflow_buttons() {
                     }
                     select(&mut app, &mut terminal, dest);
                     if let Some(&expected) = views.get(dest) {
-                        assert_eq!(app.sidebar_view, expected, "from {view:?}, width {width}, right {right}");
+                        assert_eq!(
+                            app.sidebar_view, expected,
+                            "from {view:?}, width {width}, right {right}"
+                        );
                         assert!(app.show_explorer);
                         assert_eq!(app.global_search_active, expected == SidebarView::Search);
                     } else {
@@ -718,7 +953,10 @@ fn explorer_file_click_keeps_delete_in_explorer_until_editor_is_focused() {
             handle_mouse(&mut app, click);
             handle_mouse(
                 &mut app,
-                MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), ..click },
+                MouseEvent {
+                    kind: MouseEventKind::Up(MouseButton::Left),
+                    ..click
+                },
             );
             app.wait_for_background(std::time::Duration::from_secs(5), |app| {
                 app.editor().is_some_and(|editor| !editor.bg_loading)
@@ -750,7 +988,10 @@ fn explorer_file_click_keeps_delete_in_explorer_until_editor_is_focused() {
             handle_mouse(&mut app, click);
             handle_mouse(
                 &mut app,
-                MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), ..click },
+                MouseEvent {
+                    kind: MouseEventKind::Up(MouseButton::Left),
+                    ..click
+                },
             );
         } else {
             crate::input_keyboard::handle_keyboard_event(
@@ -764,11 +1005,18 @@ fn explorer_file_click_keeps_delete_in_explorer_until_editor_is_focused() {
         // A later click in the editor gives Delete its ordinary text-editing role.
         app.active_pane = ActivePane::Explorer;
         app.code_area = Some(Rect::new(40, 5, 20, 4));
-        let editor_click = MouseEvent { column: 40, row: 5, ..click };
+        let editor_click = MouseEvent {
+            column: 40,
+            row: 5,
+            ..click
+        };
         handle_mouse(&mut app, editor_click);
         handle_mouse(
             &mut app,
-            MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), ..editor_click },
+            MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                ..editor_click
+            },
         );
         crate::input_keyboard::handle_keyboard_event(
             &mut app,
@@ -822,9 +1070,15 @@ fn explorer_whitespace_right_click_targets_an_empty_workspace() {
 }
 
 fn render_search_controls(app: &mut App, area: Rect) {
-    use ratatui::{backend::TestBackend, Terminal};
-    let mut terminal = Terminal::new(TestBackend::new(area.right().max(80), area.bottom().max(24))).unwrap();
-    terminal.draw(|frame| crate::ui_search_panel::draw_search_panel(frame, app, area)).unwrap();
+    use ratatui::{Terminal, backend::TestBackend};
+    let mut terminal = Terminal::new(TestBackend::new(
+        area.right().max(80),
+        area.bottom().max(24),
+    ))
+    .unwrap();
+    terminal
+        .draw(|frame| crate::ui_search_panel::draw_search_panel(frame, app, area))
+        .unwrap();
 }
 
 #[test]
@@ -876,7 +1130,8 @@ fn search_collapse_button_remains_clickable_in_narrow_sidebar() {
         col_end: 2,
         context_before: None,
         context_after: None,
-    }].into();
+    }]
+    .into();
 
     render_search_controls(&mut app, area);
     let collapse = crate::ui_search_panel::search_header_action_areas(area)[2];
@@ -937,7 +1192,8 @@ fn search_clear_button_clears_query_results_and_filters_nothing_else() {
         col_end: 6,
         context_before: None,
         context_after: None,
-    }].into();
+    }]
+    .into();
     render_search_controls(&mut app, area);
     let clear = crate::ui_search_panel::search_header_action_areas(area)[1];
 
@@ -959,7 +1215,7 @@ fn search_clear_button_clears_query_results_and_filters_nothing_else() {
 
 #[test]
 fn workspace_search_result_drag_never_moves_the_editor_caret() {
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     for sidebar_right in [false, true] {
         for unfinished_editor_gesture in [false, true] {
@@ -978,28 +1234,63 @@ fn workspace_search_result_drag_never_moves_the_editor_caret() {
             app.active_tab = 0;
             app.global_search_query = "needle".into();
             app.global_search_results = vec![crate::app::GlobalSearchResult {
-                file_path: path, line_num: 8, line_text: "row needle and some more text".into(),
-                col_start: 4, col_end: 10, context_before: None, context_after: None,
-            }].into();
+                file_path: path,
+                line_num: 8,
+                line_text: "row needle and some more text".into(),
+                col_start: 4,
+                col_end: 10,
+                context_before: None,
+                context_after: None,
+            }]
+            .into();
             let mut terminal = Terminal::new(TestBackend::new(120, 35)).unwrap();
             terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
             let pointer = |kind, column, row| MouseEvent {
-                kind, column, row, modifiers: KeyModifiers::NONE,
+                kind,
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
             };
             if unfinished_editor_gesture {
                 let code = app.code_area.unwrap();
-                handle_mouse(&mut app, pointer(MouseEventKind::Down(MouseButton::Left), code.x + 2, code.y + 1));
+                handle_mouse(
+                    &mut app,
+                    pointer(
+                        MouseEventKind::Down(MouseButton::Left),
+                        code.x + 2,
+                        code.y + 1,
+                    ),
+                );
             }
             let sidebar = app.explorer_area.unwrap();
             let result_y = crate::ui_search_panel::search_results_start_y(&app, sidebar) + 1;
-            handle_mouse(&mut app, pointer(MouseEventKind::Down(MouseButton::Left), sidebar.x + 3, result_y));
+            handle_mouse(
+                &mut app,
+                pointer(
+                    MouseEventKind::Down(MouseButton::Left),
+                    sidebar.x + 3,
+                    result_y,
+                ),
+            );
             assert_eq!(app.active_pane, ActivePane::Explorer);
-            assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (7, 4));
+            assert_eq!(
+                (
+                    app.editor().unwrap().cursor_line,
+                    app.editor().unwrap().cursor_col
+                ),
+                (7, 4)
+            );
             terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
             let state = |app: &App| {
                 let editor = app.editor().unwrap();
-                (editor.cursor_line, editor.cursor_col, editor.selection_anchor,
-                    editor.scroll_offset, editor.wrap_scroll_offset, editor.horizontal_scroll)
+                (
+                    editor.cursor_line,
+                    editor.cursor_col,
+                    editor.selection_anchor,
+                    editor.scroll_offset,
+                    editor.wrap_scroll_offset,
+                    editor.horizontal_scroll,
+                )
             };
             let before = state(&app);
             let code = app.code_area.unwrap();
@@ -1009,20 +1300,66 @@ fn workspace_search_result_drag_never_moves_the_editor_caret() {
                 (code.x + 6, code.y.saturating_sub(1)),
                 (code.x + 6, code.bottom() + 1),
             ] {
-                handle_mouse(&mut app, pointer(MouseEventKind::Drag(MouseButton::Left), column, row));
-                assert_eq!(state(&app), before, "sidebar_right={sidebar_right}, unfinished_editor_gesture={unfinished_editor_gesture}, pointer={column}:{row}");
+                handle_mouse(
+                    &mut app,
+                    pointer(MouseEventKind::Drag(MouseButton::Left), column, row),
+                );
+                assert_eq!(
+                    state(&app),
+                    before,
+                    "sidebar_right={sidebar_right}, unfinished_editor_gesture={unfinished_editor_gesture}, pointer={column}:{row}"
+                );
             }
-            handle_mouse(&mut app, pointer(MouseEventKind::Up(MouseButton::Left), code.x + 6, code.y + 3));
+            handle_mouse(
+                &mut app,
+                pointer(
+                    MouseEventKind::Up(MouseButton::Left),
+                    code.x + 6,
+                    code.y + 3,
+                ),
+            );
             assert_eq!(state(&app), before);
 
             // An ordinary editor press still begins a real selection afterwards.
-            handle_mouse(&mut app, pointer(MouseEventKind::Down(MouseButton::Left), code.x + 2, code.y + 1));
-            handle_mouse(&mut app, pointer(MouseEventKind::Drag(MouseButton::Left), code.x + 8, code.y + 2));
+            handle_mouse(
+                &mut app,
+                pointer(
+                    MouseEventKind::Down(MouseButton::Left),
+                    code.x + 2,
+                    code.y + 1,
+                ),
+            );
+            handle_mouse(
+                &mut app,
+                pointer(
+                    MouseEventKind::Drag(MouseButton::Left),
+                    code.x + 8,
+                    code.y + 2,
+                ),
+            );
             assert!(app.editor().unwrap().selection_range().is_some());
-            handle_mouse(&mut app, pointer(MouseEventKind::Up(MouseButton::Left), code.x + 8, code.y + 2));
+            handle_mouse(
+                &mut app,
+                pointer(
+                    MouseEventKind::Up(MouseButton::Left),
+                    code.x + 8,
+                    code.y + 2,
+                ),
+            );
             let selected = state(&app);
-            handle_mouse(&mut app, pointer(MouseEventKind::Drag(MouseButton::Left), code.x + 12, code.y + 4));
-            assert_eq!(state(&app), selected, "a released gesture cannot extend the selection");
+            handle_mouse(
+                &mut app,
+                pointer(
+                    MouseEventKind::Drag(MouseButton::Left),
+                    code.x + 12,
+                    code.y + 4,
+                ),
+            );
+            assert_eq!(
+                state(&app),
+                selected,
+                "a released gesture cannot extend the selection"
+            );
         }
     }
 }
@@ -1072,7 +1409,9 @@ fn context_menu_closes_after_selecting_item() {
     app.context_menu_active = true;
     app.context_menu_pos = (10, 5);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 40)).unwrap();
-    terminal.draw(|frame| crate::ui_dialogs::draw_context_menu(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui_dialogs::draw_context_menu(frame, &mut app))
+        .unwrap();
     let inner = app.context_menu_inner.unwrap();
 
     handle_context_menu_mouse(
@@ -1086,7 +1425,10 @@ fn context_menu_closes_after_selecting_item() {
     );
 
     assert!(!app.context_menu_active);
-    assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some("select this"));
+    assert_eq!(
+        app.editor().unwrap().selected_text().as_deref(),
+        Some("select this")
+    );
 }
 
 #[test]
@@ -1100,7 +1442,9 @@ fn tab_click_clears_stale_diff_state_for_other_file() {
     app.diff_target_path = Some(PathBuf::from("a.rs"));
 
     let tab_area = ratatui::layout::Rect::new(0, 0, 200, 1);
-    let second_tab_col = crate::ui_chrome_tabs::TabBarHits::new(&app,tab_area).tabs[1].1.x;
+    let second_tab_col = crate::ui_chrome_tabs::TabBarHits::new(&app, tab_area).tabs[1]
+        .1
+        .x;
 
     assert!(handle_tab_click(&mut app, second_tab_col, tab_area));
     assert_eq!(app.active_tab, 1);
@@ -1218,28 +1562,84 @@ fn selection_app() -> App {
     app
 }
 
-fn selection_mouse(app: &mut App, kind: MouseEventKind, column: u16, row: u16, modifiers: KeyModifiers) {
-    handle_mouse(app, MouseEvent { kind, column, row, modifiers });
+fn selection_mouse(
+    app: &mut App,
+    kind: MouseEventKind,
+    column: u16,
+    row: u16,
+    modifiers: KeyModifiers,
+) {
+    handle_mouse(
+        app,
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers,
+        },
+    );
 }
 
 #[test]
 fn selection_drag_does_not_transfer_to_a_different_editor() {
     let mut app = selection_app();
-    selection_mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 12, 6, KeyModifiers::NONE);
-    app.tabs.push(Tab::new_file(Editor::test_with_text("another document\nsecond line\n")));
+    selection_mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        12,
+        6,
+        KeyModifiers::NONE,
+    );
+    app.tabs.push(Tab::new_file(Editor::test_with_text(
+        "another document\nsecond line\n",
+    )));
     app.active_tab = 1;
-    let before = (app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col,
-        app.editor().unwrap().selection_anchor);
-    selection_mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 17, 7, KeyModifiers::NONE);
+    let before = (
+        app.editor().unwrap().cursor_line,
+        app.editor().unwrap().cursor_col,
+        app.editor().unwrap().selection_anchor,
+    );
+    selection_mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        17,
+        7,
+        KeyModifiers::NONE,
+    );
     let editor = app.editor().unwrap();
-    assert_eq!((editor.cursor_line, editor.cursor_col, editor.selection_anchor), before);
+    assert_eq!(
+        (
+            editor.cursor_line,
+            editor.cursor_col,
+            editor.selection_anchor
+        ),
+        before
+    );
 }
 
 fn selection_double_click(app: &mut App, column: u16, row: u16) {
     app.last_click_time = std::time::Instant::now() - std::time::Duration::from_secs(1);
-    selection_mouse(app, MouseEventKind::Down(MouseButton::Left), column, row, KeyModifiers::NONE);
-    selection_mouse(app, MouseEventKind::Up(MouseButton::Left), column, row, KeyModifiers::NONE);
-    selection_mouse(app, MouseEventKind::Down(MouseButton::Left), column, row, KeyModifiers::NONE);
+    selection_mouse(
+        app,
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        KeyModifiers::NONE,
+    );
+    selection_mouse(
+        app,
+        MouseEventKind::Up(MouseButton::Left),
+        column,
+        row,
+        KeyModifiers::NONE,
+    );
+    selection_mouse(
+        app,
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        KeyModifiers::NONE,
+    );
 }
 
 #[test]
@@ -1264,8 +1664,18 @@ fn double_click_selects_whitespace_runs_without_line_endings() {
             let mut app = selection_app();
             app.tabs[0].editor = Editor::test_with_text(text);
             selection_double_click(&mut app, 10 + col, 5);
-            selection_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 10 + col, 5, KeyModifiers::NONE);
-            assert_eq!(app.editor().unwrap().selected_text().as_deref(), expected, "{text:?}, column {col}");
+            selection_mouse(
+                &mut app,
+                MouseEventKind::Up(MouseButton::Left),
+                10 + col,
+                5,
+                KeyModifiers::NONE,
+            );
+            assert_eq!(
+                app.editor().unwrap().selected_text().as_deref(),
+                expected,
+                "{text:?}, column {col}"
+            );
             assert_eq!(app.editor().unwrap().rope.to_string(), text);
         }
     }
@@ -1283,12 +1693,34 @@ fn double_click_whitespace_drag_keeps_whole_runs_in_both_directions() {
         (11, "one   "),
         (14, "   "),
     ] {
-        selection_mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), col, 5, KeyModifiers::NONE);
-        assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some(expected), "column {col}");
+        selection_mouse(
+            &mut app,
+            MouseEventKind::Drag(MouseButton::Left),
+            col,
+            5,
+            KeyModifiers::NONE,
+        );
+        assert_eq!(
+            app.editor().unwrap().selected_text().as_deref(),
+            Some(expected),
+            "column {col}"
+        );
     }
-    selection_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 14, 5, KeyModifiers::NONE);
-    assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some("   "));
-    assert_eq!(app.editor().unwrap().rope.to_string(), "one   two   three\n");
+    selection_mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        14,
+        5,
+        KeyModifiers::NONE,
+    );
+    assert_eq!(
+        app.editor().unwrap().selected_text().as_deref(),
+        Some("   ")
+    );
+    assert_eq!(
+        app.editor().unwrap().rope.to_string(),
+        "one   two   three\n"
+    );
 }
 
 #[test]
@@ -1296,13 +1728,21 @@ fn double_click_whitespace_selection_can_be_deleted_and_undone() {
     let mut app = selection_app();
     app.tabs[0].editor = Editor::test_with_text("one   two\n");
     selection_double_click(&mut app, 13, 5);
-    selection_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 13, 5, KeyModifiers::NONE);
+    selection_mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        13,
+        5,
+        KeyModifiers::NONE,
+    );
     crate::input_keyboard::handle_keyboard_event(
-        &mut app, event::KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+        &mut app,
+        event::KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
     );
     assert_eq!(app.editor().unwrap().rope.to_string(), "onetwo\n");
     crate::input_keyboard::handle_keyboard_event(
-        &mut app, event::KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+        &mut app,
+        event::KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
     );
     assert_eq!(app.editor().unwrap().rope.to_string(), "one   two\n");
 }
@@ -1311,29 +1751,80 @@ fn double_click_whitespace_selection_can_be_deleted_and_undone() {
 fn shift_click_extends_from_caret_and_keeps_the_original_anchor() {
     let mut app = selection_app();
     for (column, row, cursor) in [(16, 6, (1, 6)), (12, 5, (0, 2)), (14, 7, (2, 4))] {
-        selection_mouse(&mut app, MouseEventKind::Down(MouseButton::Left), column, row, KeyModifiers::SHIFT);
-        selection_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), column, row, KeyModifiers::SHIFT);
+        selection_mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::SHIFT,
+        );
+        selection_mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            column,
+            row,
+            KeyModifiers::SHIFT,
+        );
         let ed = app.editor().unwrap();
         assert_eq!(ed.selection_anchor, Some((0, 6)));
         assert_eq!((ed.cursor_line, ed.cursor_col), cursor);
     }
-    assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some("word here\nsecond row\nthir"));
+    assert_eq!(
+        app.editor().unwrap().selected_text().as_deref(),
+        Some("word here\nsecond row\nthir")
+    );
 }
 
 #[test]
 fn shift_drag_after_word_selection_uses_exact_character_endpoints() {
     let mut app = selection_app();
     for _ in 0..2 {
-        selection_mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 17, 5, KeyModifiers::NONE);
-        selection_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 17, 5, KeyModifiers::NONE);
+        selection_mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            17,
+            5,
+            KeyModifiers::NONE,
+        );
+        selection_mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            17,
+            5,
+            KeyModifiers::NONE,
+        );
     }
-    assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some("word"));
-    selection_mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 13, 6, KeyModifiers::SHIFT);
+    assert_eq!(
+        app.editor().unwrap().selected_text().as_deref(),
+        Some("word")
+    );
+    selection_mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        13,
+        6,
+        KeyModifiers::SHIFT,
+    );
     // Releasing Shift before the mouse must keep the same drag anchor.
-    selection_mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 12, 7, KeyModifiers::NONE);
-    selection_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 12, 7, KeyModifiers::NONE);
+    selection_mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        12,
+        7,
+        KeyModifiers::NONE,
+    );
+    selection_mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        12,
+        7,
+        KeyModifiers::NONE,
+    );
     assert_eq!(app.editor().unwrap().selection_anchor, Some((0, 6)));
-    assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some("word here\nsecond row\nth"));
+    assert_eq!(
+        app.editor().unwrap().selected_text().as_deref(),
+        Some("word here\nsecond row\nth")
+    );
     assert!(app.multi_click_anchor.is_none());
     assert!(!app.dragging_text);
 }
@@ -1345,13 +1836,34 @@ fn shift_click_inside_selection_extends_without_moving_text_or_extra_cursors() {
     ed.selection_anchor = Some((0, 1));
     ed.extra_cursors = vec![(1, 2)];
     ed.extra_cursor_anchors = vec![None];
-    selection_mouse(&mut app, MouseEventKind::Down(MouseButton::Left), 13, 5, KeyModifiers::SHIFT);
-    selection_mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), 15, 6, KeyModifiers::SHIFT);
-    selection_mouse(&mut app, MouseEventKind::Up(MouseButton::Left), 15, 6, KeyModifiers::SHIFT);
+    selection_mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        13,
+        5,
+        KeyModifiers::SHIFT,
+    );
+    selection_mouse(
+        &mut app,
+        MouseEventKind::Drag(MouseButton::Left),
+        15,
+        6,
+        KeyModifiers::SHIFT,
+    );
+    selection_mouse(
+        &mut app,
+        MouseEventKind::Up(MouseButton::Left),
+        15,
+        6,
+        KeyModifiers::SHIFT,
+    );
     let ed = app.editor().unwrap();
     assert_eq!(ed.selection_anchor, Some((0, 1)));
     assert_eq!(ed.selected_text().as_deref(), Some("irst word here\nsecon"));
-    assert_eq!(ed.rope.to_string(), "first word here\nsecond row\nthird row\n");
+    assert_eq!(
+        ed.rope.to_string(),
+        "first word here\nsecond row\nthird row\n"
+    );
     assert!(ed.extra_cursors.is_empty());
 }
 
@@ -1362,7 +1874,11 @@ fn shift_wheel_moves_horizontal_scroll_without_moving_caret_or_vertical_scroll()
     let ed = app.editor_mut().unwrap();
     ed.viewport_width = 30;
     ed.word_wrap = false;
-    for (kind, expected) in [(MouseEventKind::ScrollDown, 6), (MouseEventKind::ScrollDown, 12), (MouseEventKind::ScrollUp, 6)] {
+    for (kind, expected) in [
+        (MouseEventKind::ScrollDown, 6),
+        (MouseEventKind::ScrollDown, 12),
+        (MouseEventKind::ScrollUp, 6),
+    ] {
         selection_mouse(&mut app, kind, 20, 6, KeyModifiers::SHIFT);
         let ed = app.editor().unwrap();
         assert_eq!(ed.horizontal_scroll, expected);

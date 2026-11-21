@@ -82,7 +82,11 @@ struct Speculation {
 }
 
 /// The document with `text` inserted at `cursor`, and the caret after it.
-fn accepted(rope: &ropey::Rope, cursor: (usize, usize), text: &str) -> Option<(ropey::Rope, (usize, usize))> {
+fn accepted(
+    rope: &ropey::Rope,
+    cursor: (usize, usize),
+    text: &str,
+) -> Option<(ropey::Rope, (usize, usize))> {
     let (line, column) = cursor;
     if line >= rope.len_lines() {
         return None;
@@ -94,7 +98,10 @@ fn accepted(rope: &ropey::Rope, cursor: (usize, usize), text: &str) -> Option<(r
     let mut rope = rope.clone();
     rope.insert(at, text);
     let cursor = match text.rfind('\n') {
-        Some(end) => (line + text.matches('\n').count(), text[end + 1..].chars().count()),
+        Some(end) => (
+            line + text.matches('\n').count(),
+            text[end + 1..].chars().count(),
+        ),
         None => (line, column + text.chars().count()),
     };
     Some((rope, cursor))
@@ -411,7 +418,9 @@ impl App {
         self.vtcomplete_inline.requested = None;
         self.vtcomplete_inline.warmed = None;
         let pending = {
-            let mut queue = self.vtcomplete_inline.queue
+            let mut queue = self
+                .vtcomplete_inline
+                .queue
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             queue.retype = None;
@@ -520,7 +529,9 @@ impl App {
                 self.clear_inline();
             }
             // The caret moved: read its new surroundings ahead of typing.
-            if self.vtcomplete_inline.ghost.is_none() && self.vtcomplete_inline.warmed.as_ref() != Some(&target) {
+            if self.vtcomplete_inline.ghost.is_none()
+                && self.vtcomplete_inline.warmed.as_ref() != Some(&target)
+            {
                 self.vtcomplete_inline.warmed = Some(target.clone());
                 self.submit_inline_job(target, false, true);
             }
@@ -704,7 +715,9 @@ impl App {
             queue
                 .retype
                 .take_if(|(answered, _)| *answered == generation)
-                .and_then(|(_, retype)| Some((target.cursor.1.checked_sub(retype.chars().count())?, retype)))
+                .and_then(|(_, retype)| {
+                    Some((target.cursor.1.checked_sub(retype.chars().count())?, retype))
+                })
         };
         self.vtcomplete_inline.ghost = Some(Ghost {
             target,
@@ -752,7 +765,12 @@ impl App {
         if !self.inline_ghost_visible() {
             return false;
         }
-        let Ghost { text, retype, target: shown, .. } = self.vtcomplete_inline.ghost.take().unwrap();
+        let Ghost {
+            text,
+            retype,
+            target: shown,
+            ..
+        } = self.vtcomplete_inline.ghost.take().unwrap();
         let end = if word {
             next_word_end(&text)
         } else {
@@ -1006,7 +1024,10 @@ pub(crate) fn draw_ghost(frame: &mut ratatui::Frame, app: &mut App) {
             cell.set_bg(background(column, row));
         }
         let mut phase = 0;
-        let mut spans = vec![Span::styled(expand_tabs(text, &mut phase, size), ghost_style)];
+        let mut spans = vec![Span::styled(
+            expand_tabs(text, &mut phase, size),
+            ghost_style,
+        )];
         if index + 1 == count {
             spans.push(Span::styled(
                 expand_tabs(&suffix, &mut phase, size),
@@ -1029,7 +1050,14 @@ pub(crate) fn draw_ghost(frame: &mut ratatui::Frame, app: &mut App) {
 
 /// Move the rows `top..bottom` of the columns `left..right` down by `by`
 /// rows; rows pushed past `bottom` drop out of view.
-fn push_rows_down(buffer: &mut ratatui::buffer::Buffer, left: u16, right: u16, top: u16, bottom: u16, by: u16) {
+fn push_rows_down(
+    buffer: &mut ratatui::buffer::Buffer,
+    left: u16,
+    right: u16,
+    top: u16,
+    bottom: u16,
+    by: u16,
+) {
     let area = buffer.area;
     let (left, right) = (left.max(area.x), right.min(area.right()));
     let bottom = bottom.min(area.bottom());

@@ -10,21 +10,36 @@ fn message<P: AsRef<Path>>(action: &str, changes: &[GitFileChange<P>]) -> String
     }
 }
 
-fn expand_directories<P: AsRef<Path>>(repo: &git2::Repository, changes: &[GitFileChange<P>]) -> Result<Vec<GitFileChange<PathBuf>>, String> {
+fn expand_directories<P: AsRef<Path>>(
+    repo: &git2::Repository,
+    changes: &[GitFileChange<P>],
+) -> Result<Vec<GitFileChange<PathBuf>>, String> {
     let workdir = if changes.iter().any(|change| change.directory) {
         super::ignore_working_copies(repo).map_err(|error| error.to_string())?;
-        Some(std::fs::canonicalize(repo.workdir().ok_or("Bare repository")?).map_err(|error| error.to_string())?)
-    } else { None };
+        Some(
+            std::fs::canonicalize(repo.workdir().ok_or("Bare repository")?)
+                .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
     let mut expanded = Vec::new();
     let mut seen = BTreeSet::new();
     for change in changes {
         if !change.directory {
             let change = GitFileChange {
                 path: change.path.as_ref().to_owned(),
-                original_path: change.original_path.as_ref().map(|path| path.as_ref().to_owned()),
-                status: change.status, staged: change.staged, directory: false,
+                original_path: change
+                    .original_path
+                    .as_ref()
+                    .map(|path| path.as_ref().to_owned()),
+                status: change.status,
+                staged: change.staged,
+                directory: false,
             };
-            if seen.insert(change.path.clone()) { expanded.push(change); }
+            if seen.insert(change.path.clone()) {
+                expanded.push(change);
+            }
             continue;
         }
         let relative: PathBuf = change.path.as_ref().components().collect();
@@ -33,21 +48,44 @@ fn expand_directories<P: AsRef<Path>>(repo: &git2::Repository, changes: &[GitFil
         }
         worktree_path(workdir.as_ref().unwrap(), &relative)?;
         let mut options = git2::StatusOptions::new();
-        options.show(git2::StatusShow::Workdir).include_untracked(true).recurse_untracked_dirs(true)
-            .disable_pathspec_match(true).pathspec(&relative);
-        let statuses = repo.statuses(Some(&mut options)).map_err(|error| error.to_string())?;
-        for entry in statuses.iter().filter(|entry| entry.status().contains(git2::Status::WT_NEW)) {
-            let Some(path) = entry.index_to_workdir().and_then(|delta| delta.new_file().path()) else { continue; };
+        options
+            .show(git2::StatusShow::Workdir)
+            .include_untracked(true)
+            .recurse_untracked_dirs(true)
+            .disable_pathspec_match(true)
+            .pathspec(&relative);
+        let statuses = repo
+            .statuses(Some(&mut options))
+            .map_err(|error| error.to_string())?;
+        for entry in statuses
+            .iter()
+            .filter(|entry| entry.status().contains(git2::Status::WT_NEW))
+        {
+            let Some(path) = entry
+                .index_to_workdir()
+                .and_then(|delta| delta.new_file().path())
+            else {
+                continue;
+            };
             let path: PathBuf = path.components().collect();
             if path.starts_with(&relative) && seen.insert(path.clone()) {
-                expanded.push(GitFileChange { path, original_path: None, status: '?', staged: false, directory: false });
+                expanded.push(GitFileChange {
+                    path,
+                    original_path: None,
+                    status: '?',
+                    staged: false,
+                    directory: false,
+                });
             }
         }
     }
     Ok(expanded)
 }
 
-pub(crate) fn stage<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>]) -> Result<GitActionOutcome, String> {
+pub(crate) fn stage<P: AsRef<Path>>(
+    root: &Path,
+    changes: &[GitFileChange<P>],
+) -> Result<GitActionOutcome, String> {
     let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
     let expanded = expand_directories(&repo, changes)?;
     let changes = expanded.as_slice();
@@ -59,7 +97,13 @@ pub(crate) fn stage<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>]) -
             stage_resolved_conflict(&repo, &mut index, path)?;
             continue;
         }
-        if change.status == 'D' || change.status == '!' && repo.workdir().is_some_and(|root| std::fs::symlink_metadata(root.join(path)).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)) {
+        if change.status == 'D'
+            || change.status == '!'
+                && repo.workdir().is_some_and(|root| {
+                    std::fs::symlink_metadata(root.join(path))
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+                })
+        {
             index.remove_path(path)
         } else {
             index.add_path(path)
@@ -74,7 +118,11 @@ pub(crate) fn stage<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>]) -
     })
 }
 
-fn stage_resolved_conflict(repo: &git2::Repository, index: &mut git2::Index, path: &Path) -> Result<(), String> {
+fn stage_resolved_conflict(
+    repo: &git2::Repository,
+    index: &mut git2::Index,
+    path: &Path,
+) -> Result<(), String> {
     // add_all can treat conflicted gitlinks as deletions; add_path can retain
     // their conflict stages. Remove them explicitly, preserving Git's REUC
     // resolution history, before adding the resolved file/link/commit.
@@ -82,25 +130,36 @@ fn stage_resolved_conflict(repo: &git2::Repository, index: &mut git2::Index, pat
     let absent_or_directory = repo.workdir().is_some_and(|root| {
         let full = root.join(path);
         let metadata = std::fs::symlink_metadata(&full);
-        metadata.as_ref().is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
-            || metadata.is_ok_and(|metadata| metadata.is_dir()) && std::fs::symlink_metadata(full.join(".git"))
-                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        metadata
+            .as_ref()
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            || metadata.is_ok_and(|metadata| metadata.is_dir())
+                && std::fs::symlink_metadata(full.join(".git"))
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
     });
     // A file/directory resolution removes the old file. Stage All's ordinary
     // traversal adds its children; a gitlink is added explicitly above that scan.
-    if !absent_or_directory { index.add_path(path).map_err(|error| format!("{}: {error}", path.display()))?; }
+    if !absent_or_directory {
+        index
+            .add_path(path)
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+    }
     Ok(())
 }
 
 fn check_conflict_file(repo: &git2::Repository, path: &Path) -> Result<(), String> {
-    let Some(workdir) = repo.workdir() else { return Err("Cannot resolve conflicts in a bare repository".into()); };
+    let Some(workdir) = repo.workdir() else {
+        return Err("Cannot resolve conflicts in a bare repository".into());
+    };
     let workdir = std::fs::canonicalize(workdir).map_err(|error| error.to_string())?;
     let full = worktree_path(&workdir, path)?;
     match std::fs::symlink_metadata(&full) {
         // Git stages a link itself, or a submodule's checked-out commit. Neither
         // is a text file to inspect, and a special device/pipe must not be opened.
         Ok(metadata) if metadata.file_type().is_symlink() || metadata.is_dir() => return Ok(()),
-        Ok(metadata) if !metadata.is_file() => return Err(format!("{} is not a regular file", path.display())),
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(format!("{} is not a regular file", path.display()));
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(format!("{}: {error}", path.display())),
         Ok(_) => {}
@@ -111,17 +170,28 @@ fn check_conflict_file(repo: &git2::Repository, path: &Path) -> Result<(), Strin
         Err(error) => return Err(format!("{}: {error}", path.display())),
     };
     if crate::merge_conflicts::has_markers_in_reader(file).map_err(|error| error.to_string())? {
-        return Err(format!("Resolve all conflict markers in {} and save the file before staging", path.display()));
+        return Err(format!(
+            "Resolve all conflict markers in {} and save the file before staging",
+            path.display()
+        ));
     }
     Ok(())
 }
 
-pub(crate) fn prepare_conflicts_for_stage_all(repo: &git2::Repository, index: &mut git2::Index) -> Result<(), String> {
-    if !index.has_conflicts() { return Ok(()); }
+pub(crate) fn prepare_conflicts_for_stage_all(
+    repo: &git2::Repository,
+    index: &mut git2::Index,
+) -> Result<(), String> {
+    if !index.has_conflicts() {
+        return Ok(());
+    }
     let mut paths = BTreeSet::new();
     for conflict in index.conflicts().map_err(|error| error.to_string())? {
         let conflict = conflict.map_err(|error| error.to_string())?;
-        for entry in [conflict.our, conflict.their, conflict.ancestor].into_iter().flatten() {
+        for entry in [conflict.our, conflict.their, conflict.ancestor]
+            .into_iter()
+            .flatten()
+        {
             paths.insert(entry.path);
         }
     }
@@ -133,7 +203,8 @@ pub(crate) fn prepare_conflicts_for_stage_all(repo: &git2::Repository, index: &m
             Path::new(std::ffi::OsStr::from_bytes(&path))
         };
         #[cfg(not(unix))]
-        let path = std::str::from_utf8(&path).map_err(|_| "Resolve this non-UTF-8 conflict path with Git")?;
+        let path = std::str::from_utf8(&path)
+            .map_err(|_| "Resolve this non-UTF-8 conflict path with Git")?;
         check_conflict_file(repo, path.as_ref())?;
         checked.push(PathBuf::from(path));
     }
@@ -174,7 +245,10 @@ fn reset_index_paths<'a, P: AsRef<Path> + 'a>(
     Ok(())
 }
 
-pub(crate) fn unstage<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>]) -> Result<GitActionOutcome, String> {
+pub(crate) fn unstage<P: AsRef<Path>>(
+    root: &Path,
+    changes: &[GitFileChange<P>],
+) -> Result<GitActionOutcome, String> {
     let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
     let mut index = repo.index().map_err(|error| error.to_string())?;
     reset_index_paths(&repo, &mut index, changes.iter())?;
@@ -211,7 +285,10 @@ fn worktree_path(workdir: &Path, relative: &Path) -> Result<PathBuf, String> {
     Err("Cannot resolve discard target".into())
 }
 
-pub(crate) fn discard<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>]) -> Result<GitActionOutcome, String> {
+pub(crate) fn discard<P: AsRef<Path>>(
+    root: &Path,
+    changes: &[GitFileChange<P>],
+) -> Result<GitActionOutcome, String> {
     let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
     let workdir = std::fs::canonicalize(
         repo.workdir()
@@ -222,7 +299,12 @@ pub(crate) fn discard<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>])
     let mut cleanup = BTreeSet::new();
     for directory in changes.iter().filter(|change| change.directory) {
         for change in &expanded {
-            for parent in change.path.ancestors().skip(1).take_while(|path| path.starts_with(directory.path.as_ref())) {
+            for parent in change
+                .path
+                .ancestors()
+                .skip(1)
+                .take_while(|path| path.starts_with(directory.path.as_ref()))
+            {
                 cleanup.insert(parent.to_owned());
             }
         }
@@ -238,7 +320,10 @@ pub(crate) fn discard<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>])
                     .get_path(relative, 0)
                     .is_some_and(|entry| entry.mode == 0o160000)
             {
-                return Err(format!("Cannot discard directory or submodule: {}", relative.display()));
+                return Err(format!(
+                    "Cannot discard directory or submodule: {}",
+                    relative.display()
+                ));
             }
             paths.insert(relative.to_owned());
         }
@@ -285,7 +370,8 @@ pub(crate) fn discard<P: AsRef<Path>>(root: &Path, changes: &[GitFileChange<P>])
     cleanup.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     for relative in cleanup {
         if let Ok(path) = worktree_path(&workdir, &relative)
-            && std::fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
+            && std::fs::symlink_metadata(&path)
+                .is_ok_and(|metadata| metadata.is_dir() && !metadata.file_type().is_symlink())
         {
             // Only remove empty directories; ignored or newly staged files survive.
             let _ = std::fs::remove_dir(path);

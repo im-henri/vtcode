@@ -13,7 +13,9 @@ pub(crate) struct Pos {
 }
 
 impl Pos {
-    pub(crate) const fn new(line: usize, col: usize) -> Self { Self { line, col } }
+    pub(crate) const fn new(line: usize, col: usize) -> Self {
+        Self { line, col }
+    }
 }
 
 /// Result of stepping the cursor, mirroring Vim's `inc()`/`dec()`.
@@ -36,7 +38,9 @@ pub(crate) struct Text<'a> {
 }
 
 impl<'a> Text<'a> {
-    pub(crate) fn new(rope: &'a Rope) -> Self { Self::of(rope, false) }
+    pub(crate) fn new(rope: &'a Rope) -> Self {
+        Self::of(rope, false)
+    }
 
     /// `trailing_empty`: the empty text after the final line break is a
     /// line of its own (Vim kept an empty last line).
@@ -52,9 +56,13 @@ impl<'a> Text<'a> {
     }
 
     /// Number of Vim lines.
-    pub(crate) fn lines(&self) -> usize { self.lines }
+    pub(crate) fn lines(&self) -> usize {
+        self.lines
+    }
 
-    pub(crate) fn last_line(&self) -> usize { self.lines - 1 }
+    pub(crate) fn last_line(&self) -> usize {
+        self.lines - 1
+    }
 
     /// Length of a line's content in characters, without its line ending.
     pub(crate) fn len(&self, line: usize) -> usize {
@@ -67,7 +75,9 @@ impl<'a> Text<'a> {
         match tail.next() {
             Some('\n') => {
                 len -= 1;
-                if tail.next() == Some('\r') { len -= 1; }
+                if tail.next() == Some('\r') {
+                    len -= 1;
+                }
             }
             Some('\r') => len -= 1,
             _ => {}
@@ -75,14 +85,18 @@ impl<'a> Text<'a> {
         len
     }
 
-    pub(crate) fn is_empty_line(&self, line: usize) -> bool { self.len(line) == 0 }
+    pub(crate) fn is_empty_line(&self, line: usize) -> bool {
+        self.len(line) == 0
+    }
 
     pub(crate) fn line_start(&self, line: usize) -> usize {
         self.rope.line_to_char(line.min(self.rope.len_lines()))
     }
 
     /// Character offset just past the line's content (before its ending).
-    pub(crate) fn line_end(&self, line: usize) -> usize { self.line_start(line) + self.len(line) }
+    pub(crate) fn line_end(&self, line: usize) -> usize {
+        self.line_start(line) + self.len(line)
+    }
 
     /// Offset of the next line's start, or the end of the rope.
     pub(crate) fn line_next_start(&self, line: usize) -> usize {
@@ -113,7 +127,9 @@ impl<'a> Text<'a> {
     }
 
     /// Vim's `gchar_pos`: NUL is reported as `'\0'`.
-    pub(crate) fn gchar(&self, pos: Pos) -> char { self.char_at(pos).unwrap_or('\0') }
+    pub(crate) fn gchar(&self, pos: Pos) -> char {
+        self.char_at(pos).unwrap_or('\0')
+    }
 
     pub(crate) fn line_string(&self, line: usize) -> String {
         if line >= self.rope.len_lines() {
@@ -128,7 +144,10 @@ impl<'a> Text<'a> {
             return Vec::new();
         }
         let start = self.line_start(line);
-        self.rope.slice(start..start + self.len(line)).chars().collect()
+        self.rope
+            .slice(start..start + self.len(line))
+            .chars()
+            .collect()
     }
 
     pub(crate) fn slice(&self, start: usize, end: usize) -> String {
@@ -142,7 +161,11 @@ impl<'a> Text<'a> {
         let len = self.len(pos.line);
         if pos.col < len {
             pos.col += 1;
-            return if pos.col < len { Step::Same } else { Step::OntoEol };
+            return if pos.col < len {
+                Step::Same
+            } else {
+                Step::OntoEol
+            };
         }
         if pos.line + 1 < self.lines {
             pos.line += 1;
@@ -190,11 +213,16 @@ impl<'a> Text<'a> {
 
     pub(crate) fn first_nonblank(&self, line: usize) -> usize {
         let chars = self.line_chars(line);
-        chars.iter().position(|c| !matches!(c, ' ' | '\t')).unwrap_or(chars.len())
+        chars
+            .iter()
+            .position(|c| !matches!(c, ' ' | '\t'))
+            .unwrap_or(chars.len())
     }
 
     /// Last column a Normal-mode cursor may occupy.
-    pub(crate) fn max_normal_col(&self, line: usize) -> usize { self.len(line).saturating_sub(1) }
+    pub(crate) fn max_normal_col(&self, line: usize) -> usize {
+        self.len(line).saturating_sub(1)
+    }
 
     pub(crate) fn clamp_normal(&self, pos: Pos) -> Pos {
         let line = pos.line.min(self.last_line());
@@ -210,10 +238,16 @@ impl<'a> Text<'a> {
     pub(crate) fn vcol(&self, line: usize, col: usize, tabstop: usize) -> usize {
         let mut v = 0;
         for (i, c) in self.line_chars(line).into_iter().enumerate() {
-            if i >= col { break; }
+            if i >= col {
+                break;
+            }
             v += char_width(c, v, tabstop);
         }
-        if col > self.len(line) { v + (col - self.len(line)) } else { v }
+        if col > self.len(line) {
+            v + (col - self.len(line))
+        } else {
+            v
+        }
     }
 
     /// Display column just past the character at `col`.
@@ -231,7 +265,9 @@ impl<'a> Text<'a> {
         let mut v = 0;
         for (i, c) in self.line_chars(line).into_iter().enumerate() {
             let w = char_width(c, v, tabstop);
-            if v + w > want { return i; }
+            if v + w > want {
+                return i;
+            }
             v += w;
         }
         self.len(line)
@@ -247,7 +283,9 @@ pub(crate) fn char_width(c: char, vcol: usize, tabstop: usize) -> usize {
         let ts = tabstop.max(1);
         ts - vcol % ts
     } else {
-        unicode_width::UnicodeWidthChar::width(c).unwrap_or(0).max(if c < ' ' { 2 } else { 0 })
+        unicode_width::UnicodeWidthChar::width(c)
+            .unwrap_or(0)
+            .max(if c < ' ' { 2 } else { 0 })
     }
 }
 
@@ -261,9 +299,15 @@ pub(crate) struct Keyword {
 
 impl Keyword {
     pub(crate) fn is_word(&self, c: char) -> bool {
-        if self.removed.contains(&c) { return false; }
-        if self.extra.contains(&c) { return true; }
-        c == '_' || c.is_alphanumeric() || (c as u32 >= 192 && c as u32 <= 255 && c != '×' && c != '÷')
+        if self.removed.contains(&c) {
+            return false;
+        }
+        if self.extra.contains(&c) {
+            return true;
+        }
+        c == '_'
+            || c.is_alphanumeric()
+            || (c as u32 >= 192 && c as u32 <= 255 && c != '×' && c != '÷')
     }
 
     /// Vim's `cls()` for `w`/`b`/`e`: 0 blank (including EOL), 1

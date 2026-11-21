@@ -194,7 +194,10 @@ fn erase_screen_keeps_saved_lines() {
 fn colon_sgr_subparameters_are_single_attributes() {
     let mut grid = TermGrid::new(8, 1);
     // Neovim-style underline color and curly underline between colored text.
-    feed(&mut grid, "\x1b[38;2;1;2;3;48;5;17mA\x1b[58:2::255:204:102m\x1b[4:3mB\x1b[38:2::9:8:7mC\x1b[38:2:4:5:6;1mD\x1b[4:0mE");
+    feed(
+        &mut grid,
+        "\x1b[38;2;1;2;3;48;5;17mA\x1b[58:2::255:204:102m\x1b[4:3mB\x1b[38:2::9:8:7mC\x1b[38:2:4:5:6;1mD\x1b[4:0mE",
+    );
     let cells = &grid.cells[0];
     for cell in &cells[..5] {
         assert_eq!(cell.bg, Color::Indexed(17), "{cell:?}");

@@ -75,8 +75,14 @@ fn reference_hit(editor: &mut Editor, area: Rect, col: u16, row: u16) -> (usize,
         .get(row.saturating_sub(area.y) as usize)
         .copied()
         .unwrap_or_else(|| editor.line_count().saturating_sub(1));
-    let col = editor.source_column_at_cell(line, editor.horizontal_scroll, editor.line_len(line),
-        col.saturating_sub(area.x) as usize).0;
+    let col = editor
+        .source_column_at_cell(
+            line,
+            editor.horizontal_scroll,
+            editor.line_len(line),
+            col.saturating_sub(area.x) as usize,
+        )
+        .0;
     (line, col)
 }
 
@@ -107,8 +113,11 @@ fn reference_block(
 ) -> Vec<CursorPlacement> {
     let end = reference_hit(editor, area, col, row);
     let screen_col = col.saturating_sub(area.x) as usize;
-    let end_column = if editor.word_wrap { screen_col }
-        else { editor.horizontal_scroll.saturating_add(screen_col) };
+    let end_column = if editor.word_wrap {
+        screen_col
+    } else {
+        editor.horizontal_scroll.saturating_add(screen_col)
+    };
     let mut rows = Vec::new();
     if editor.word_wrap {
         let width = editor.viewport_width.max(1);
@@ -118,8 +127,12 @@ fn reference_block(
         let min_col = start.2.min(screen_col);
         let max_col = start.2.max(screen_col);
         for row in editor.wrapped_rows(first.min(last), first.abs_diff(last) + 1, width) {
-            let col = editor.source_column_at_cell(row.line_idx, row.start_col, row.end_col, min_col).0;
-            let anchor = editor.source_column_at_cell(row.line_idx, row.start_col, row.end_col, max_col).0;
+            let col = editor
+                .source_column_at_cell(row.line_idx, row.start_col, row.end_col, min_col)
+                .0;
+            let anchor = editor
+                .source_column_at_cell(row.line_idx, row.start_col, row.end_col, max_col)
+                .0;
             rows.push((
                 row.line_idx,
                 col,
@@ -138,8 +151,12 @@ fn reference_block(
             }
             let len = editor.line_len(line);
             let origin = editor.horizontal_scroll;
-            let col = editor.source_column_at_cell(line, origin, len, min_col.saturating_sub(origin)).0;
-            let anchor = editor.source_column_at_cell(line, origin, len, max_col.saturating_sub(origin)).0;
+            let col = editor
+                .source_column_at_cell(line, origin, len, min_col.saturating_sub(origin))
+                .0;
+            let anchor = editor
+                .source_column_at_cell(line, origin, len, max_col.saturating_sub(origin))
+                .0;
             rows.push((line, col, (anchor > col).then_some((line, anchor))));
         }
     }
@@ -147,7 +164,9 @@ fn reference_block(
     rows.into_iter()
         .filter(|row| !any_span || row.2.is_some())
         .map(|(line, col, anchor)| {
-            if end_column > start.2 && let Some((_, end)) = anchor {
+            if end_column > start.2
+                && let Some((_, end)) = anchor
+            {
                 (line, end, Some((line, col)))
             } else {
                 (line, col, anchor)
@@ -453,7 +472,14 @@ fn ordered_outside_selection_samples_preserve_each_autoscroll_step() {
             assert_eq!(state(editor), state(expected));
             assert_eq!(editor.scroll_offset, expected.scroll_offset);
             assert_eq!(editor.wrap_scroll_offset, expected.wrap_scroll_offset);
-            assert_eq!(if wrapped { editor.wrap_scroll_offset } else { editor.scroll_offset }, scroll);
+            assert_eq!(
+                if wrapped {
+                    editor.wrap_scroll_offset
+                } else {
+                    editor.scroll_offset
+                },
+                scroll
+            );
         }
     }
 }
@@ -469,9 +495,17 @@ fn block_drag_outside_viewport_scrolls_gradually_and_releases_capture() {
             let mut app = app_with_editor(&"abcdefgh\n".repeat(10_000), wrapped);
             let area = app.code_area.unwrap();
             let column = area.x + 2;
-            let send = |app: &mut App, kind, row| crate::mouse::handle_mouse(app, MouseEvent {
-                kind, column, row, modifiers,
-            });
+            let send = |app: &mut App, kind, row| {
+                crate::mouse::handle_mouse(
+                    app,
+                    MouseEvent {
+                        kind,
+                        column,
+                        row,
+                        modifiers,
+                    },
+                )
+            };
             send(&mut app, MouseEventKind::Down(button), area.bottom() - 3);
             assert_eq!(app.middle_drag_start, Some((37, 2, 2)));
 
@@ -487,8 +521,11 @@ fn block_drag_outside_viewport_scrolls_gradually_and_releases_capture() {
             ] {
                 send(&mut app, MouseEventKind::Drag(button), row);
                 let editor = app.editor().unwrap();
-                assert_eq!(state(editor), (37..=last).map(|line| (line, 2, None)).collect::<Vec<_>>(),
-                    "wrapped={wrapped}, button={button:?}, row={row}");
+                assert_eq!(
+                    state(editor),
+                    (37..=last).map(|line| (line, 2, None)).collect::<Vec<_>>(),
+                    "wrapped={wrapped}, button={button:?}, row={row}"
+                );
                 assert_eq!(editor.scroll_offset, scroll);
                 if wrapped {
                     assert_eq!(editor.wrap_scroll_offset, scroll);
@@ -516,10 +553,20 @@ fn block_drag_clamps_top_and_horizontal_edges_and_ignores_empty_viewports() {
         handle_block_drag(&mut app, 0, 0);
         let editor = app.editor().unwrap();
         assert_eq!(editor.scroll_offset, 19);
-        assert_eq!(state(editor), (19..=22).map(|line| (line, 0, Some((line, 2)))).collect::<Vec<_>>());
+        assert_eq!(
+            state(editor),
+            (19..=22)
+                .map(|line| (line, 0, Some((line, 2))))
+                .collect::<Vec<_>>()
+        );
 
         handle_block_drag(&mut app, u16::MAX, area.y + 2);
-        assert_eq!(state(app.editor().unwrap()), (21..=22).map(|line| (line, 5, Some((line, 2)))).collect::<Vec<_>>());
+        assert_eq!(
+            state(app.editor().unwrap()),
+            (21..=22)
+                .map(|line| (line, 5, Some((line, 2))))
+                .collect::<Vec<_>>()
+        );
         let expected = state(app.editor().unwrap());
         for empty in [Rect::new(5, 2, 0, 10), Rect::new(5, 2, 6, 0)] {
             app.code_area = Some(empty);
@@ -539,7 +586,9 @@ fn wrapped_block_drag_outside_uses_the_scrolled_visual_edge() {
         let editor = app.editor_mut().unwrap();
         editor.viewport_height = 10;
         if ready {
-            let rows = Editor::build_wrap_row_offsets(&editor.rope, 9, editor.tab_size, &[], || false).unwrap();
+            let rows =
+                Editor::build_wrap_row_offsets(&editor.rope, 9, editor.tab_size, &[], || false)
+                    .unwrap();
             assert!(editor.install_wrap_layout(9, rows));
         }
         crate::mouse_selection::handle_middle_button_down(&mut app, area.x + 2, area.y + 7);
@@ -547,8 +596,18 @@ fn wrapped_block_drag_outside_uses_the_scrolled_visual_edge() {
         for scroll in 1..=3 {
             handle_block_drag(&mut app, area.x + 2, area.bottom() + 2);
             assert_eq!(app.editor().unwrap().wrap_scroll_offset, scroll);
-            let expected = reference_block(app.editor_mut().unwrap(), area, start, area.x + 2, area.bottom() - 1);
-            assert_eq!(state(app.editor().unwrap()), expected, "ready={ready}, scroll={scroll}");
+            let expected = reference_block(
+                app.editor_mut().unwrap(),
+                area,
+                start,
+                area.x + 2,
+                area.bottom() - 1,
+            );
+            assert_eq!(
+                state(app.editor().unwrap()),
+                expected,
+                "ready={ready}, scroll={scroll}"
+            );
             assert!(expected.iter().all(|&(line, _, _)| line < 15));
         }
     }
@@ -673,7 +732,10 @@ fn benchmark_pointer_lookup_and_repeated_block_drag() {
     let start = (0, 1, 1);
     app.middle_drag_start = Some(start);
     app.editor_mut().unwrap().viewport_height = 4_000;
-    let area = Rect { height: 4_000, ..area };
+    let area = Rect {
+        height: 4_000,
+        ..area
+    };
     app.code_area = Some(area);
     let expected = reference_block(app.editor_mut().unwrap(), area, start, 10, 3_002);
     handle_block_drag(&mut app, 10, 3_002);

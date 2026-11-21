@@ -201,18 +201,32 @@ fn ctrl_f_keeps_the_previous_query_when_only_a_diff_caret_is_present() {
 #[test]
 fn copy_animation_covers_original_diff_selections_in_both_layouts() {
     for mode in [DiffMode::Inline, DiffMode::SideBySide] {
-        let mut app = comparison("alpha\nremoved abcdef\nlast\n", "alpha\nadded xyz\nlast\n", mode, false);
+        let mut app = comparison(
+            "alpha\nremoved abcdef\nlast\n",
+            "alpha\nadded xyz\nlast\n",
+            mode,
+            false,
+        );
         app.copy_animation.duration_ms = 1_000;
         render(&mut app, 100, 20);
         let origin = source_origin(&app, 1, true);
         drag(&mut app, origin, (origin.0 + 7, origin.1));
         app.cursor_visible = false;
         let before = render(&mut app, 100, 20);
-        assert!(app.copy_diff_selection_with(|text| { assert_eq!(text, "removed"); true }));
+        assert!(app.copy_diff_selection_with(|text| {
+            assert_eq!(text, "removed");
+            true
+        }));
         app.start_copy_animation(std::time::Instant::now() - std::time::Duration::from_millis(350));
         let during = render(&mut app, 100, 20);
         assert_ne!(before, during);
-        assert!(before.content.iter().zip(&during.content).all(|(a, b)| a.symbol() == b.symbol()));
+        assert!(
+            before
+                .content
+                .iter()
+                .zip(&during.content)
+                .all(|(a, b)| a.symbol() == b.symbol())
+        );
         app.copy_animation.clear();
         let after = render(&mut app, 100, 20);
         assert_eq!(before, after);
@@ -260,8 +274,11 @@ fn diff_vertical_selection_preserves_screen_column_on_both_sides() {
                         // no selection exists, so check selection state first.
                         None
                     };
-                    assert_eq!(selected.as_deref(), expected,
-                        "compact={compact}, original={original}, key={key:?}");
+                    assert_eq!(
+                        selected.as_deref(),
+                        expected,
+                        "compact={compact}, original={original}, key={key:?}"
+                    );
                 }
                 assert_source(&app, base, target, version);
             }

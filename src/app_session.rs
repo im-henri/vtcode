@@ -49,10 +49,14 @@ impl App {
         }
 
         let plus;
-        let text = if text == "+" { "Plus" } else if text.ends_with("++") {
+        let text = if text == "+" {
+            "Plus"
+        } else if text.ends_with("++") {
             plus = format!("{}Plus", &text[..text.len() - 1]);
             &plus
-        } else { text };
+        } else {
+            text
+        };
 
         let parts: Vec<&str> = text
             .split('+')
@@ -71,7 +75,10 @@ impl App {
                 modifiers |= KeyModifiers::ALT;
             } else if part.eq_ignore_ascii_case("shift") {
                 modifiers |= KeyModifiers::SHIFT;
-            } else if ["super", "win", "cmd"].iter().any(|name| part.eq_ignore_ascii_case(name)) {
+            } else if ["super", "win", "cmd"]
+                .iter()
+                .any(|name| part.eq_ignore_ascii_case(name))
+            {
                 modifiers |= KeyModifiers::SUPER;
             } else if part.eq_ignore_ascii_case("hyper") {
                 modifiers |= KeyModifiers::HYPER;
@@ -180,12 +187,19 @@ impl App {
             word_wrap: Some(word_wrap),
             word_wrap_column: Some(self.word_wrap_column),
             whitespace_mode: Some(whitespace_mode_str),
-            comment_whitespace_mode: Some(self.comment_whitespace_mode.map_or("inherit", |mode| mode.name()).to_lowercase()),
+            comment_whitespace_mode: Some(
+                self.comment_whitespace_mode
+                    .map_or("inherit", |mode| mode.name())
+                    .to_lowercase(),
+            ),
             read_only: Some(self.default_read_only),
             diff_side_by_side: Some(self.preferred_diff_mode == crate::app::DiffMode::SideBySide),
             diff_algorithm: Some(self.diff_algorithm),
             theme: Some(theme_name),
-            workbench_color_customizations: self.settings_effective.workbench_color_customizations.clone(),
+            workbench_color_customizations: self
+                .settings_effective
+                .workbench_color_customizations
+                .clone(),
             show_explorer: Some(show_explorer),
             sidebar_auto_hide: Some(self.sidebar_auto_hide.enabled),
             show_open_editors: Some(self.show_open_editors),
@@ -250,14 +264,31 @@ impl App {
                 AutoSaveMode::OnWindowChange => "onWindowChange".to_string(),
             }),
             auto_save_delay: Some(self.auto_save_delay),
-            animation_cursor_smear: Some(self.animation_settings.enabled(crate::animation_config::AnimationEffect::CursorSmear)),
-            animation_cursor_smear_when_typing: Some(self.animation_settings.cursor_smear_when_typing),
+            animation_cursor_smear: Some(
+                self.animation_settings
+                    .enabled(crate::animation_config::AnimationEffect::CursorSmear),
+            ),
+            animation_cursor_smear_when_typing: Some(
+                self.animation_settings.cursor_smear_when_typing,
+            ),
             animation_copy: Some(self.copy_animation.enabled),
             animation_copy_duration_ms: Some(self.copy_animation.duration_ms),
-            animation_cursor_fire: Some(self.animation_settings.enabled(crate::animation_config::AnimationEffect::CursorFire)),
-            animation_whitespace_reveal: Some(self.animation_settings.enabled(crate::animation_config::AnimationEffect::WhitespaceReveal)),
-            animation_scope_connector: Some(self.animation_settings.enabled(crate::animation_config::AnimationEffect::ScopeConnector)),
-            animation_tab_slide: Some(self.animation_settings.enabled(crate::animation_config::AnimationEffect::TabSlide)),
+            animation_cursor_fire: Some(
+                self.animation_settings
+                    .enabled(crate::animation_config::AnimationEffect::CursorFire),
+            ),
+            animation_whitespace_reveal: Some(
+                self.animation_settings
+                    .enabled(crate::animation_config::AnimationEffect::WhitespaceReveal),
+            ),
+            animation_scope_connector: Some(
+                self.animation_settings
+                    .enabled(crate::animation_config::AnimationEffect::ScopeConnector),
+            ),
+            animation_tab_slide: Some(
+                self.animation_settings
+                    .enabled(crate::animation_config::AnimationEffect::TabSlide),
+            ),
             animation_duration_ms: Some(self.animation_settings.duration_ms),
             animation_fps: Some(self.animation_settings.fps),
             animation_intensity: Some(self.animation_settings.intensity),
@@ -303,7 +334,9 @@ impl App {
             ),
             animation_scope_bubble_tight: Some(self.animation_settings.scope_tight),
             animation_scope_bubble_fill: Some(self.animation_settings.scope_fill),
-            animation_scope_bubble_languages: Some(self.animation_settings.scope_languages.configs.clone()),
+            animation_scope_bubble_languages: Some(
+                self.animation_settings.scope_languages.configs.clone(),
+            ),
             animation_scope_bubble_disabled_languages: Some(
                 self.animation_settings.scope_disabled_languages.clone(),
             ),
@@ -321,10 +354,26 @@ impl App {
             global_search_whole_word: Some(self.global_search_whole_word),
             global_search_preserve_case: Some(self.global_search_preserve_case),
             search_debounce_ms: Some(self.search_debounce_ms),
-            search_use_ignore_files: Some(self.settings_effective.search_use_ignore_files.unwrap_or(true)),
-            search_use_global_ignore_files: Some(self.settings_effective.search_use_global_ignore_files.unwrap_or(false)),
-            search_use_parent_ignore_files: Some(self.settings_effective.search_use_parent_ignore_files.unwrap_or(false)),
-            search_follow_symlinks: Some(self.settings_effective.search_follow_symlinks.unwrap_or(true)),
+            search_use_ignore_files: Some(
+                self.settings_effective
+                    .search_use_ignore_files
+                    .unwrap_or(true),
+            ),
+            search_use_global_ignore_files: Some(
+                self.settings_effective
+                    .search_use_global_ignore_files
+                    .unwrap_or(false),
+            ),
+            search_use_parent_ignore_files: Some(
+                self.settings_effective
+                    .search_use_parent_ignore_files
+                    .unwrap_or(false),
+            ),
+            search_follow_symlinks: Some(
+                self.settings_effective
+                    .search_follow_symlinks
+                    .unwrap_or(true),
+            ),
             files_exclude: self.settings_effective.files_exclude.clone(),
             search_exclude: self.settings_effective.search_exclude.clone(),
             language_associations: if self.language_associations.is_empty() {
@@ -346,25 +395,36 @@ impl App {
             self.set_diff_algorithm(algorithm);
         }
         if let Some(side_by_side) = s.diff_side_by_side {
-            self.preferred_diff_mode = if side_by_side { crate::app::DiffMode::SideBySide } else { crate::app::DiffMode::Inline };
+            self.preferred_diff_mode = if side_by_side {
+                crate::app::DiffMode::SideBySide
+            } else {
+                crate::app::DiffMode::Inline
+            };
         }
         if let Some(enabled) = s.source_control_enabled {
             self.set_source_control_enabled(enabled);
         }
         if let Some(untracked) = s.source_control_show_untracked {
-            self.set_source_control_visibility(crate::source_control_rows::Visibility { untracked });
+            self.set_source_control_visibility(crate::source_control_rows::Visibility {
+                untracked,
+            });
         }
-        if let Some(enabled) = s.lsp_enabled { self.lsp_enabled = enabled; }
+        if let Some(enabled) = s.lsp_enabled {
+            self.lsp_enabled = enabled;
+        }
         if let Some(delay) = s.lsp_diagnostic_delay_ms {
             self.lsp_manager.diagnostic_publication.set_delay_ms(delay);
         }
         self.animation_settings.apply(s);
         if let Some(enabled) = s.animation_copy {
             self.copy_animation.enabled = enabled;
-            if !enabled { self.copy_animation.clear(); }
+            if !enabled {
+                self.copy_animation.clear();
+            }
         }
         if let Some(duration) = s.animation_copy_duration_ms {
-            self.copy_animation.duration_ms = crate::animation_config::clamp_animation_duration_ms(duration);
+            self.copy_animation.duration_ms =
+                crate::animation_config::clamp_animation_duration_ms(duration);
         }
         // Share compiled profiles across all views/desks. Preserve identity on
         // unrelated settings changes so cached scope analysis remains reusable.
@@ -375,7 +435,8 @@ impl App {
         if let Some(expanded) = s.chat_thinking_expanded {
             self.chat.thinking_expanded = expanded;
         }
-        self.settings_effective.workbench_color_customizations = s.workbench_color_customizations.clone();
+        self.settings_effective.workbench_color_customizations =
+            s.workbench_color_customizations.clone();
         let requested_zen_mode = s.zen_mode;
         if requested_zen_mode == Some(false) && self.zen_mode {
             self.execute_view_command("toggle_zen");
@@ -543,7 +604,9 @@ impl App {
                 self.show_activity_bar = v;
             }
         }
-        if let Some(position) = s.activity_bar_position.as_deref()
+        if let Some(position) = s
+            .activity_bar_position
+            .as_deref()
             .and_then(crate::settings::ActivityBarPosition::parse)
         {
             self.activity_bar_position = position;
@@ -591,7 +654,8 @@ impl App {
             self.vim.opts.clipboard_unnamed = v;
         }
         if let Some(path) = &s.vimrc_path {
-            self.vim_rc_path = (!path.trim().is_empty()).then(|| std::path::PathBuf::from(path.trim()));
+            self.vim_rc_path =
+                (!path.trim().is_empty()).then(|| std::path::PathBuf::from(path.trim()));
         }
         if let Some(v) = s.vim_mode {
             crate::vim::app_host::set_enabled(self, v);
@@ -782,13 +846,27 @@ impl App {
             self.search_debounce_ms = v;
         }
         if self.zen_mode {
-            let mut state = self.zen_pre_state.unwrap_or((true, true, false, true, true, true));
-            if let Some(value) = s.show_explorer { state.0 = value; }
-            if let Some(value) = s.show_minimap { state.1 = value; }
-            if let Some(value) = s.show_panel { state.2 = value; }
-            if let Some(value) = s.show_tab_bar { state.3 = value; }
-            if let Some(value) = s.show_status_bar { state.4 = value; }
-            if let Some(value) = s.show_activity_bar { state.5 = value; }
+            let mut state = self
+                .zen_pre_state
+                .unwrap_or((true, true, false, true, true, true));
+            if let Some(value) = s.show_explorer {
+                state.0 = value;
+            }
+            if let Some(value) = s.show_minimap {
+                state.1 = value;
+            }
+            if let Some(value) = s.show_panel {
+                state.2 = value;
+            }
+            if let Some(value) = s.show_tab_bar {
+                state.3 = value;
+            }
+            if let Some(value) = s.show_status_bar {
+                state.4 = value;
+            }
+            if let Some(value) = s.show_activity_bar {
+                state.5 = value;
+            }
             self.zen_pre_state = Some(state);
             self.show_explorer = false;
             self.show_minimap = false;
@@ -810,8 +888,7 @@ impl App {
     #[cfg(test)]
     pub(crate) fn initialize_settings(&mut self) {
         self.settings_global_path = crate::settings::global_settings_path();
-        self.settings_workspace_path =
-            crate::settings::project_settings_path(&self.explorer.root);
+        self.settings_workspace_path = crate::settings::project_settings_path(&self.explorer.root);
 
         if !self.settings_persistence_enabled {
             self.apply_effective_settings();
@@ -832,8 +909,12 @@ impl App {
         // Otherwise retain separate built-in durations.
         let mut defaults = self.settings_defaults.clone();
         let legacy_duration = if scope == crate::settings::SettingsScope::Workspace {
-            self.settings_workspace.animation_duration_ms.or(self.settings_global.animation_duration_ms)
-        } else { self.settings_global.animation_duration_ms };
+            self.settings_workspace
+                .animation_duration_ms
+                .or(self.settings_global.animation_duration_ms)
+        } else {
+            self.settings_global.animation_duration_ms
+        };
         if legacy_duration.is_some() {
             defaults.animation_cursor_smear_duration_ms = None;
             defaults.animation_tab_slide_duration_ms = legacy_duration;
@@ -860,14 +941,19 @@ impl App {
     /// Read/edit one control in its selected scope without temporarily applying
     /// that scope's unrelated values over workspace or document preferences.
     pub(crate) fn apply_setting_value(&mut self, id: &str, settings: &Settings) {
-        let Some(key) = Self::setting_json_key(id) else { return; };
+        let Some(key) = Self::setting_json_key(id) else {
+            return;
+        };
         if key == "keybindings" {
             self.keybindings = Self::keybindings_for_settings(settings).into();
             self.rebuild_keybinding_settings_cache();
             return;
         }
         let mut patch = Settings {
-            workbench_color_customizations: self.settings_effective.workbench_color_customizations.clone(),
+            workbench_color_customizations: self
+                .settings_effective
+                .workbench_color_customizations
+                .clone(),
             status_bar_items: self.status_bar_pins.clone(),
             ..Default::default()
         };
@@ -880,11 +966,15 @@ impl App {
         let mut effective = self.settings_for_scope(crate::settings::SettingsScope::Workspace);
         effective.validate();
         let files_changed = effective.files_exclude != self.settings_effective.files_exclude;
-        let search_changed = files_changed || effective.search_exclude != self.settings_effective.search_exclude;
-        let workspace_options_changed = effective.global_search_case_sensitive != self.settings_effective.global_search_case_sensitive
-            || effective.global_search_whole_word != self.settings_effective.global_search_whole_word
+        let search_changed =
+            files_changed || effective.search_exclude != self.settings_effective.search_exclude;
+        let workspace_options_changed = effective.global_search_case_sensitive
+            != self.settings_effective.global_search_case_sensitive
+            || effective.global_search_whole_word
+                != self.settings_effective.global_search_whole_word
             || effective.global_search_regex != self.settings_effective.global_search_regex;
-        let file_options_changed = effective.search_case_sensitive != self.settings_effective.search_case_sensitive
+        let file_options_changed = effective.search_case_sensitive
+            != self.settings_effective.search_case_sensitive
             || effective.search_whole_word != self.settings_effective.search_whole_word
             || effective.search_regex != self.settings_effective.search_regex;
         self.apply_resolved_settings(&effective);
@@ -893,13 +983,18 @@ impl App {
             self.refresh_explorer_tree_async();
         }
         if search_changed {
-            self.workspace_file_index_generation = self.workspace_file_index_generation.wrapping_add(1);
-            if self.quick_open_active { self.update_quick_open(); }
+            self.workspace_file_index_generation =
+                self.workspace_file_index_generation.wrapping_add(1);
+            if self.quick_open_active {
+                self.update_quick_open();
+            }
         }
         if (search_changed || workspace_options_changed) && !self.global_search_query.is_empty() {
             self.update_global_search();
         }
-        if file_options_changed && self.search_active { self.update_search(); }
+        if file_options_changed && self.search_active {
+            self.update_search();
+        }
         self.refresh_language_servers(false);
         self.preview_palette_theme();
     }
@@ -920,13 +1015,27 @@ impl App {
                 })+
             };
         }
-        preserve_document_overrides!(tab_size, use_tabs, word_wrap, word_wrap_column,
-            whitespace_mode, read_only, cursor_surrounding_lines, large_file_threshold_mb);
+        preserve_document_overrides!(
+            tab_size,
+            use_tabs,
+            word_wrap,
+            word_wrap_column,
+            whitespace_mode,
+            read_only,
+            cursor_surrounding_lines,
+            large_file_threshold_mb
+        );
         // Layout sizes change by dragging without touching settings. Saving an
         // unrelated preference must not snap them back to the configured size.
         for (field, previous) in [
-            (&mut applied.explorer_width, self.settings_effective.explorer_width),
-            (&mut applied.panel_height, self.settings_effective.panel_height),
+            (
+                &mut applied.explorer_width,
+                self.settings_effective.explorer_width,
+            ),
+            (
+                &mut applied.panel_height,
+                self.settings_effective.panel_height,
+            ),
         ] {
             if *field == previous {
                 *field = None;
@@ -935,11 +1044,17 @@ impl App {
         self.animation_settings = crate::animation_config::AnimationSettings::default();
         self.copy_animation.enabled = settings.animation_copy.unwrap_or(true);
         self.set_sidebar_auto_hide(settings.sidebar_auto_hide.unwrap_or(false));
-        self.copy_animation.duration_ms = settings.animation_copy_duration_ms
+        self.copy_animation.duration_ms = settings
+            .animation_copy_duration_ms
             .unwrap_or(crate::copy_animation::DEFAULT_DURATION_MS);
-        if !self.copy_animation.enabled { self.copy_animation.clear(); }
-        self.chat.output_detail = settings.chat_output_detail.as_deref()
-            .map(crate::app_acp::OutputDetail::parse).unwrap_or_default();
+        if !self.copy_animation.enabled {
+            self.copy_animation.clear();
+        }
+        self.chat.output_detail = settings
+            .chat_output_detail
+            .as_deref()
+            .map(crate::app_acp::OutputDetail::parse)
+            .unwrap_or_default();
         self.chat.thinking_expanded = settings.chat_thinking_expanded.unwrap_or(false);
         // Optional collection fields use `None` to mean "inherit/default".
         // Applying a complete stack must actively clear a previously applied
@@ -1016,7 +1131,8 @@ impl App {
             if self.settings_file_has_unsaved_edits(path) {
                 return Err("The settings file has unsaved edits. Save or close those edits, then try again.".into());
             }
-            layer = crate::settings::patch_file(path, key, patch).map_err(|error| error.to_string())?;
+            layer =
+                crate::settings::patch_file(path, key, patch).map_err(|error| error.to_string())?;
         } else {
             patch(&mut layer);
         }
@@ -1029,7 +1145,11 @@ impl App {
 
     pub(crate) fn save_minimap_width(&mut self, width: u16) {
         use crate::settings::SettingsScope::{Global, Workspace};
-        let scope = if self.settings_workspace.minimap_width.is_some() { Workspace } else { Global };
+        let scope = if self.settings_workspace.minimap_width.is_some() {
+            Workspace
+        } else {
+            Global
+        };
         match self.patch_settings_layer(scope, "minimapWidth", |settings| {
             settings.minimap_width = Some(width);
         }) {
@@ -1049,11 +1169,17 @@ impl App {
         settings.validate();
         if self.settings_persistence_enabled {
             let (path, previous) = match scope {
-                crate::settings::SettingsScope::Global => (&self.settings_global_path, &self.settings_global),
-                crate::settings::SettingsScope::Workspace => (&self.settings_workspace_path, &self.settings_workspace),
+                crate::settings::SettingsScope::Global => {
+                    (&self.settings_global_path, &self.settings_global)
+                }
+                crate::settings::SettingsScope::Workspace => {
+                    (&self.settings_workspace_path, &self.settings_workspace)
+                }
             };
             let result = if self.settings_file_has_unsaved_edits(path) {
-                Err(std::io::Error::other("The settings file has unsaved edits. Save or close those edits, then try again."))
+                Err(std::io::Error::other(
+                    "The settings file has unsaved edits. Save or close those edits, then try again.",
+                ))
             } else {
                 crate::settings::save_changes(path, previous, &settings)
             };
@@ -1061,7 +1187,10 @@ impl App {
                 Ok(merged) => settings = merged,
                 Err(error) => {
                     log_error!("failed to save {} settings: {error}", scope.label());
-                    self.notify(format!("Could not save {} settings: {error}", scope.label()));
+                    self.notify(format!(
+                        "Could not save {} settings: {error}",
+                        scope.label()
+                    ));
                 }
             }
         }
@@ -1139,19 +1268,29 @@ impl App {
     }
 
     fn shortcut_snapshot(bindings: &[crate::app::KeyBinding]) -> Option<Vec<KeybindingSetting>> {
-        let mut overrides: Vec<_> = bindings.iter().enumerate()
+        let mut overrides: Vec<_> = bindings
+            .iter()
+            .enumerate()
             .filter(|(_, binding)| binding.priority != 0 || binding.is_modified())
             .collect();
         overrides.sort_by_key(|(_, binding)| binding.priority);
-        (!overrides.is_empty()).then(|| overrides.into_iter().map(|(index, binding)| {
-            KeybindingSetting {
-                command: Some(binding.id.to_owned()),
-                key: Some(binding.display()),
-                index: (bindings.iter().filter(|other| other.id == binding.id).count() > 1).then_some(index),
-                when: binding.when.as_ref().map(|when| when.text().to_owned()),
-                ..Default::default()
-            }
-        }).collect())
+        (!overrides.is_empty()).then(|| {
+            overrides
+                .into_iter()
+                .map(|(index, binding)| KeybindingSetting {
+                    command: Some(binding.id.to_owned()),
+                    key: Some(binding.display()),
+                    index: (bindings
+                        .iter()
+                        .filter(|other| other.id == binding.id)
+                        .count()
+                        > 1)
+                    .then_some(index),
+                    when: binding.when.as_ref().map(|when| when.text().to_owned()),
+                    ..Default::default()
+                })
+                .collect()
+        })
     }
 
     fn keybinding_overrides_for_scope(
@@ -1167,16 +1306,30 @@ impl App {
         };
         let parent_bindings = Self::keybindings_for_settings(&parent);
         let mut overrides = Vec::new();
-        for (index, (binding, inherited)) in self.keybindings.iter().zip(parent_bindings.iter()).enumerate() {
+        for (index, (binding, inherited)) in self
+            .keybindings
+            .iter()
+            .zip(parent_bindings.iter())
+            .enumerate()
+        {
             let when_changed = binding.when().text() != inherited.when().text();
             if !binding.same_keys(inherited) || when_changed {
-                overrides.push((binding.priority, KeybindingSetting {
-                    command: Some(binding.id.to_string()),
-                    key: Some(binding.display()),
-                    index: (self.keybindings.iter().filter(|other| other.id == binding.id).count() > 1).then_some(index),
-                    when: when_changed.then(|| binding.when().text().to_owned()),
-                    ..Default::default()
-                }));
+                overrides.push((
+                    binding.priority,
+                    KeybindingSetting {
+                        command: Some(binding.id.to_string()),
+                        key: Some(binding.display()),
+                        index: (self
+                            .keybindings
+                            .iter()
+                            .filter(|other| other.id == binding.id)
+                            .count()
+                            > 1)
+                        .then_some(index),
+                        when: when_changed.then(|| binding.when().text().to_owned()),
+                        ..Default::default()
+                    },
+                ));
             }
         }
         overrides.sort_by_key(|(priority, _)| *priority);
@@ -1185,14 +1338,23 @@ impl App {
         // Preserve entries for commands supplied by a newer build or plugin;
         // editing a built-in shortcut must never discard unknown JSON data.
         if let Some(existing) = &existing_layer.keybindings {
-            overrides.extend(existing.iter().filter(|entry| {
-                let known_command = entry.command.as_deref().is_some_and(|command| {
-                    self.keybindings.iter().any(|binding| binding.id == crate::app_menu::keybinding_id_for_command(command))
-                });
-                let known_index = entry.command.is_none()
-                    && entry.index.is_some_and(|index| index < self.keybindings.len());
-                !known_command && !known_index
-            }).cloned());
+            overrides.extend(
+                existing
+                    .iter()
+                    .filter(|entry| {
+                        let known_command = entry.command.as_deref().is_some_and(|command| {
+                            self.keybindings.iter().any(|binding| {
+                                binding.id == crate::app_menu::keybinding_id_for_command(command)
+                            })
+                        });
+                        let known_index = entry.command.is_none()
+                            && entry
+                                .index
+                                .is_some_and(|index| index < self.keybindings.len());
+                        !known_command && !known_index
+                    })
+                    .cloned(),
+            );
         }
 
         (!overrides.is_empty()).then_some(overrides)
@@ -1207,12 +1369,17 @@ impl App {
         use crate::settings::SettingsScope::{Global, Workspace};
         let (mut target, parent) = match scope {
             Global => (self.settings_global.clone(), self.settings_defaults.clone()),
-            Workspace => (self.settings_workspace.clone(), self.settings_for_scope(Global)),
+            Workspace => (
+                self.settings_workspace.clone(),
+                self.settings_for_scope(Global),
+            ),
         };
         let parent = Self::keybindings_for_settings(&parent);
         let mut entries = target.keybindings.take().unwrap_or_default();
-        entries.retain(|entry| !Self::shortcut_entry_index(bindings, entry)
-            .is_some_and(|index| edited.contains(&index)));
+        entries.retain(|entry| {
+            !Self::shortcut_entry_index(bindings, entry)
+                .is_some_and(|index| edited.contains(&index))
+        });
         for &index in edited {
             let binding = &bindings[index];
             let inherited = &parent[index];
@@ -1222,7 +1389,12 @@ impl App {
             if key.is_some() || when.is_some() {
                 entries.push(KeybindingSetting {
                     command: Some(binding.id.to_owned()),
-                    index: (bindings.iter().filter(|other| other.id == binding.id).count() > 1).then_some(index),
+                    index: (bindings
+                        .iter()
+                        .filter(|other| other.id == binding.id)
+                        .count()
+                        > 1)
+                    .then_some(index),
                     key,
                     when,
                     ..Default::default()
@@ -1244,8 +1416,7 @@ impl App {
                 crate::settings::SettingsScope::Global => self.settings_global.clone(),
                 crate::settings::SettingsScope::Workspace => self.settings_workspace.clone(),
             };
-            let overrides =
-                self.keybinding_overrides_for_scope(self.settings_scope, &target);
+            let overrides = self.keybinding_overrides_for_scope(self.settings_scope, &target);
             if target.keybindings != overrides {
                 target.keybindings = overrides;
                 self.write_settings_scope(self.settings_scope, target);
@@ -1256,9 +1427,7 @@ impl App {
         let after = self.current_settings();
         let before_value = serde_json::to_value(before).ok();
         let after_value = serde_json::to_value(&after).ok();
-        if before_value
-            .as_ref()
-            .and_then(|value| value.get(key))
+        if before_value.as_ref().and_then(|value| value.get(key))
             == after_value.as_ref().and_then(|value| value.get(key))
         {
             self.apply_effective_settings();
@@ -1271,7 +1440,8 @@ impl App {
         };
         if Self::copy_json_setting_field(&mut target, &after, key) {
             if id == "word_count" {
-                target.status_bar_items
+                target
+                    .status_bar_items
                     .insert("word_count".into(), self.show_word_count);
             }
             self.write_settings_scope(self.settings_scope, target);
@@ -1304,15 +1474,21 @@ impl App {
             return false;
         };
         let has_word_count_pin = id == "word_count"
-            && target_object.get("statusBarItems")
+            && target_object
+                .get("statusBarItems")
                 .and_then(serde_json::Value::as_object)
                 .is_some_and(|items| items.contains_key("word_count"));
-        if target_object.get(key).is_none_or(serde_json::Value::is_null) && !has_word_count_pin {
+        if target_object
+            .get(key)
+            .is_none_or(serde_json::Value::is_null)
+            && !has_word_count_pin
+        {
             return false;
         }
         target_object.remove(key);
         if id == "word_count"
-            && let Some(items) = target_object.get_mut("statusBarItems")
+            && let Some(items) = target_object
+                .get_mut("statusBarItems")
                 .and_then(serde_json::Value::as_object_mut)
         {
             items.remove("word_count");
@@ -1388,8 +1564,11 @@ impl App {
             before.keybindings = Self::shortcut_snapshot(&Self::keybindings_for_settings(&before));
         }
         before.animation_copy = Some(before.animation_copy.unwrap_or(true));
-        before.animation_copy_duration_ms = Some(before.animation_copy_duration_ms
-            .unwrap_or(crate::copy_animation::DEFAULT_DURATION_MS));
+        before.animation_copy_duration_ms = Some(
+            before
+                .animation_copy_duration_ms
+                .unwrap_or(crate::copy_animation::DEFAULT_DURATION_MS),
+        );
         let mut animations = crate::animation_config::AnimationSettings::default();
         animations.apply(&before);
         for effect in crate::animation_config::AnimationEffect::ALL {
@@ -1409,7 +1588,10 @@ impl App {
         };
 
         let workspace = serde_json::to_value(&self.settings_workspace).unwrap_or_default();
-        let mut targets = [self.settings_global.clone(), self.settings_workspace.clone()];
+        let mut targets = [
+            self.settings_global.clone(),
+            self.settings_workspace.clone(),
+        ];
         let mut changed = [false; 2];
         for (key, after_field) in after_object {
             if before_object.get(key) != Some(after_field) {
@@ -1470,7 +1652,10 @@ impl App {
         }
         let unsaved = tab.editor.modified.then(|| tab.editor.rope.clone());
         let (undo_entries, redo_entries) = if tab.editor.modified {
-            (Some(tab.editor.export_undo_stack()), Some(tab.editor.export_redo_stack()))
+            (
+                Some(tab.editor.export_undo_stack()),
+                Some(tab.editor.export_redo_stack()),
+            )
         } else {
             (None, None)
         };
@@ -1490,7 +1675,12 @@ impl App {
             undo_entries,
             redo_entries,
             bookmarks: tab.editor.bookmarks.iter().copied().collect(),
-            folded_ranges: tab.editor.folded_ranges.iter().map(|(&start, &end)| (start, end)).collect(),
+            folded_ranges: tab
+                .editor
+                .folded_ranges
+                .iter()
+                .map(|(&start, &end)| (start, end))
+                .collect(),
         }
     }
 
@@ -1506,7 +1696,8 @@ impl App {
             preceding_files.min(file_count.saturating_sub(1))
         };
         let visibility = if self.zen_mode {
-            self.zen_pre_state.unwrap_or((true, true, false, true, true, true))
+            self.zen_pre_state
+                .unwrap_or((true, true, false, true, true, true))
         } else {
             (
                 self.show_explorer,
@@ -1538,10 +1729,16 @@ impl App {
                 active_tab: saved_active_tab(&g.tabs, g.active_tab),
             })
             .collect();
-        let save_desks = self.desks.items.len() > 1 || !self.desks.membership.is_empty()
-            || self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
-                .any(|tab| tab.kind == TabKind::SourceControl
-                    || (tab.kind == TabKind::File && tab.editor.document_has_other_views()));
+        let save_desks = self.desks.items.len() > 1
+            || !self.desks.membership.is_empty()
+            || self
+                .tabs
+                .iter()
+                .chain(self.groups.iter().flat_map(|group| &group.tabs))
+                .any(|tab| {
+                    tab.kind == TabKind::SourceControl
+                        || (tab.kind == TabKind::File && tab.editor.document_has_other_views())
+                });
         // Serialize theme name
         let theme_str = self.committed_theme_key().to_string();
         let sidebar_str = match self.sidebar_view {
@@ -1555,10 +1752,24 @@ impl App {
         crate::session::Session {
             recovery_lease: Default::default(),
             recovery_incomplete: self.incomplete_session_recovery.is_some(),
-            remote_checkpoints: self.remote_workspace.as_ref().map(|_| std::sync::Arc::new(self.tabs.iter()
-                .chain(self.groups.iter().flat_map(|group| &group.tabs))
-                .filter_map(|tab| Some((tab.editor.file_path.as_ref()?.to_string_lossy().into_owned(), tab.editor.remote_checkpoint.clone()?)))
-                .collect())),
+            remote_checkpoints: self.remote_workspace.as_ref().map(|_| {
+                std::sync::Arc::new(
+                    self.tabs
+                        .iter()
+                        .chain(self.groups.iter().flat_map(|group| &group.tabs))
+                        .filter_map(|tab| {
+                            Some((
+                                tab.editor
+                                    .file_path
+                                    .as_ref()?
+                                    .to_string_lossy()
+                                    .into_owned(),
+                                tab.editor.remote_checkpoint.clone()?,
+                            ))
+                        })
+                        .collect(),
+                )
+            }),
             desks: save_desks.then(|| self.save_desks()),
             tabs,
             active_tab: saved_active_tab(&self.tabs, self.active_tab),
@@ -1583,9 +1794,15 @@ impl App {
             sc_graph_height: self.sc_graph_height,
             search_history: self.search_history.saved(&self.search_query),
             global_search_history: self.global_search_history.saved(&self.global_search_query),
-            global_search_replace_history: self.global_search_replace_history.saved(&self.global_search_replace_query),
-            search_include_history: self.search_include_history.saved(&self.search_include_pattern),
-            search_exclude_history: self.search_exclude_history.saved(&self.search_exclude_pattern),
+            global_search_replace_history: self
+                .global_search_replace_history
+                .saved(&self.global_search_replace_query),
+            search_include_history: self
+                .search_include_history
+                .saved(&self.search_include_pattern),
+            search_exclude_history: self
+                .search_exclude_history
+                .saved(&self.search_exclude_pattern),
             global_search_query: self.global_search_query.clone(),
             global_search_replace_query: self.global_search_replace_query.clone(),
             search_include_pattern: self.search_include_pattern.clone(),
@@ -1624,7 +1841,9 @@ impl App {
                     .chain(self.groups.iter().flat_map(|group| &group.tabs))
                     .any(|tab| {
                         tab.editor.bg_loading
-                            && tab.editor.pending_session_restore
+                            && tab
+                                .editor
+                                .pending_session_restore
                                 .as_ref()
                                 .is_some_and(|pending| pending.id == restore.id)
                     })
@@ -1634,7 +1853,10 @@ impl App {
         }
     }
 
-    pub(crate) fn mark_session_recovery_incomplete(&mut self, lease: crate::session::RecoveryLease) {
+    pub(crate) fn mark_session_recovery_incomplete(
+        &mut self,
+        lease: crate::session::RecoveryLease,
+    ) {
         self.incomplete_session_recovery = Some(lease);
         self.notify_warn(
             "Some recovery files could not be read. The previous session backup was preserved.",
@@ -1644,7 +1866,9 @@ impl App {
     /// Restore session state
     pub(crate) fn restore_session(&mut self, session: &crate::session::Session) {
         self.restore_search_histories(session);
-        if let Some(remote) = &self.remote_workspace { remote.set_recovery(session.remote_checkpoints.clone()); }
+        if let Some(remote) = &self.remote_workspace {
+            remote.set_recovery(session.remote_checkpoints.clone());
+        }
         let lang_assoc = self.language_associations.clone();
         let scope_rules = self.animation_settings.scope_languages.clone();
         let default_word_wrap = self.default_word_wrap;
@@ -1693,7 +1917,9 @@ impl App {
 
             Tab {
                 pinned: saved_tab.pinned,
-                preview: enable_preview_tabs && saved_tab.preview && !saved_tab.pinned
+                preview: enable_preview_tabs
+                    && saved_tab.preview
+                    && !saved_tab.pinned
                     && saved_tab.unsaved_file.is_none()
                     && saved_tab.pending_unsaved_content.is_none(),
                 text_color: saved_tab.text_color,
@@ -1721,7 +1947,8 @@ impl App {
         self.show_minimap = session.show_minimap;
         self.show_panel = session.show_panel;
         self.panel_height = session.panel_height.max(3);
-        self.terminal_sidebar.restore_width(session.terminal_sidebar_width);
+        self.terminal_sidebar
+            .restore_width(session.terminal_sidebar_width);
         self.panel_tab = Self::normalize_panel_tab(session.panel_tab);
         if let Some(v) = session.show_line_numbers {
             self.show_line_numbers = v;
@@ -1808,7 +2035,9 @@ impl App {
                 group.active_tab = saved_group
                     .active_tab
                     .min(group.tabs.len().saturating_sub(1));
-                if !group.tabs.is_empty() { group.tab_mru_order.push(group.active_tab); }
+                if !group.tabs.is_empty() {
+                    group.tab_mru_order.push(group.active_tab);
+                }
                 // The active group's tabs live in self.tabs, so its empty
                 // placeholder is necessary to preserve every pane's index.
                 self.groups.push(group);
@@ -1851,20 +2080,34 @@ impl App {
             self.split_ratio = session.split_ratio;
         }
         drop(restore_tab);
-        if let Some(desks) = &session.desks { self.restore_desks(desks); }
+        if let Some(desks) = &session.desks {
+            self.restore_desks(desks);
+        }
         // Untitled split views have no path to group their recovery reads by.
         // Use the document handles restored from the session instead.
         let mut untitled_jobs: rustc_hash::FxHashMap<u64, Vec<_>> = Default::default();
         if !untitled_restores.is_empty() {
-            for tab in self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs)) {
-                if let Some(restore) = tab.editor.pending_session_restore.as_ref()
+            for tab in self
+                .tabs
+                .iter()
+                .chain(self.groups.iter().flat_map(|group| &group.tabs))
+            {
+                if let Some(restore) = tab
+                    .editor
+                    .pending_session_restore
+                    .as_ref()
                     .and_then(|pending| untitled_restores.remove(&pending.id))
                 {
-                    untitled_jobs.entry(tab.editor.save_identity).or_default().push(restore);
+                    untitled_jobs
+                        .entry(tab.editor.save_identity)
+                        .or_default()
+                        .push(restore);
                 }
             }
         }
-        let active_restore = self.editor().and_then(|editor| editor.pending_session_restore.as_ref())
+        let active_restore = self
+            .editor()
+            .and_then(|editor| editor.pending_session_restore.as_ref())
             .map(|restore| restore.id);
         let mut visible_restores = rustc_hash::FxHashSet::default();
         if let Some(tree) = &self.split_tree {
@@ -1873,13 +2116,19 @@ impl App {
                     && let Some(group) = self.groups.get(index)
                     && let Some(tab) = group.tabs.get(group.active_tab)
                     && let Some(restore) = &tab.editor.pending_session_restore
-                { visible_restores.insert(restore.id); }
+                {
+                    visible_restores.insert(restore.id);
+                }
             });
         }
         let priority = |restore: &crate::session::SessionRestore| {
-            if Some(restore.id) == active_restore { 0 }
-            else if visible_restores.contains(&restore.id) { 1 }
-            else { 2 }
+            if Some(restore.id) == active_restore {
+                0
+            } else if visible_restores.contains(&restore.id) {
+                1
+            } else {
+                2
+            }
         };
         enum RestoreJob {
             File(std::path::PathBuf, Vec<crate::session::SessionRestore>),
@@ -1888,11 +2137,21 @@ impl App {
         // Active buffer first (including untitled recovery), then visible split
         // panes, then hidden tabs/desks. Recovery disk reads never occupy the
         // CPU pool needed for highlighting and immediate editor feedback.
-        let mut jobs: Vec<_> = restore_jobs.into_iter().map(|(path, restores)| {
-            (restores.iter().map(&priority).min().unwrap_or(2), RestoreJob::File(path, restores))
-        }).chain(untitled_jobs.into_values().map(|restores| {
-            (restores.iter().map(&priority).min().unwrap_or(2), RestoreJob::Untitled(restores))
-        })).collect();
+        let mut jobs: Vec<_> = restore_jobs
+            .into_iter()
+            .map(|(path, restores)| {
+                (
+                    restores.iter().map(&priority).min().unwrap_or(2),
+                    RestoreJob::File(path, restores),
+                )
+            })
+            .chain(untitled_jobs.into_values().map(|restores| {
+                (
+                    restores.iter().map(&priority).min().unwrap_or(2),
+                    RestoreJob::Untitled(restores),
+                )
+            }))
+            .collect();
         jobs.sort_by_key(|(priority, _)| *priority);
         for (priority, job) in jobs {
             match job {
@@ -1903,11 +2162,22 @@ impl App {
                     let project_root = self.explorer.root.clone();
                     let activity_path = project_root.clone();
                     let sender = self.background.sender.clone();
-                    self.background.read_for_file("session-recovery", &activity_path, priority < 2, move || {
-                        crate::session::hydrate_saved_tabs(&project_root,
-                            restores.iter_mut().map(|restore| &mut restore.tab));
-                        let _ = sender.send(crate::background::BackgroundResult::SessionUntitledLoaded { restores });
-                    });
+                    self.background.read_for_file(
+                        "session-recovery",
+                        &activity_path,
+                        priority < 2,
+                        move || {
+                            crate::session::hydrate_saved_tabs(
+                                &project_root,
+                                restores.iter_mut().map(|restore| &mut restore.tab),
+                            );
+                            let _ = sender.send(
+                                crate::background::BackgroundResult::SessionUntitledLoaded {
+                                    restores,
+                                },
+                            );
+                        },
+                    );
                 }
             }
         }
@@ -1921,7 +2191,9 @@ impl App {
         fn valid_splits(tree: &crate::app::SplitNode) -> bool {
             match tree {
                 crate::app::SplitNode::Leaf(_) => true,
-                crate::app::SplitNode::Split { children, ratios, .. } => {
+                crate::app::SplitNode::Split {
+                    children, ratios, ..
+                } => {
                     children.len() >= 2
                         && ratios.len() == children.len()
                         && ratios.iter().all(|ratio| ratio.is_finite() && *ratio > 0.0)
@@ -2097,7 +2369,13 @@ mod tests {
         app.tabs[0].editor.rope.insert(0, "later edit\n");
         assert_eq!(captured, &expected);
         let cloned = session.clone();
-        assert!(cloned.tabs[0].pending_unsaved_content.as_ref().unwrap().is_instance(captured));
+        assert!(
+            cloned.tabs[0]
+                .pending_unsaved_content
+                .as_ref()
+                .unwrap()
+                .is_instance(captured)
+        );
     }
 
     #[test]
@@ -2445,8 +2723,15 @@ mod tests {
         wait_for_session_restore(&mut restored);
         drop(manifest);
         assert_eq!(restored.tabs[0].editor.rope, "saved file\n");
-        assert!(restored.incomplete_session_recovery.as_ref().unwrap().is_held());
-        let error = crate::session::save_session(dir.path(), &restored.build_session()).unwrap_err();
+        assert!(
+            restored
+                .incomplete_session_recovery
+                .as_ref()
+                .unwrap()
+                .is_held()
+        );
+        let error =
+            crate::session::save_session(dir.path(), &restored.build_session()).unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         restored.exit_discard_quit = true;
         restored.save_finished_workspace().unwrap();
@@ -2460,7 +2745,9 @@ mod tests {
         use std::os::unix::ffi::OsStrExt;
 
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(std::ffi::OsStr::from_bytes(b"source-\xff.txt"));
+        let path = dir
+            .path()
+            .join(std::ffi::OsStr::from_bytes(b"source-\xff.txt"));
         std::fs::write(&path, "native filename\n").unwrap();
         std::fs::write(dir.path().join("source-\u{fffd}.txt"), "different file\n").unwrap();
         let mut source = App::new(dir.path().to_path_buf());
@@ -2670,12 +2957,22 @@ mod tests {
         let session = source.build_session();
         let mut restored = App::test_new();
         restored.restore_session(&session);
-        let first_id = restored.tabs[0].editor.pending_session_restore.as_ref().unwrap().id;
+        let first_id = restored.tabs[0]
+            .editor
+            .pending_session_restore
+            .as_ref()
+            .unwrap()
+            .id;
         restored.tabs.clear();
 
         restored.restore_session(&session);
 
-        let second_id = restored.tabs[0].editor.pending_session_restore.as_ref().unwrap().id;
+        let second_id = restored.tabs[0]
+            .editor
+            .pending_session_restore
+            .as_ref()
+            .unwrap()
+            .id;
         assert_ne!(first_id, second_id);
         wait_for_session_restore(&mut restored);
         assert_eq!(restored.tabs.len(), 1);
@@ -3088,16 +3385,26 @@ mod tests {
         app.apply_effective_settings();
         app.explorer_width = 47;
         app.panel_height = 19;
-        app.patch_settings_scope(crate::settings::SettingsScope::Global, "sourceControlShowUntracked", |s| {
-            s.source_control_show_untracked = Some(false);
-        }).unwrap();
+        app.patch_settings_scope(
+            crate::settings::SettingsScope::Global,
+            "sourceControlShowUntracked",
+            |s| {
+                s.source_control_show_untracked = Some(false);
+            },
+        )
+        .unwrap();
         assert!(!app.sc_visibility.untracked);
         assert_eq!(app.explorer_width, 47);
         assert_eq!(app.panel_height, 19);
         // An explicit width change in settings still applies.
-        app.patch_settings_scope(crate::settings::SettingsScope::Global, "explorerWidth", |s| {
-            s.explorer_width = Some(40);
-        }).unwrap();
+        app.patch_settings_scope(
+            crate::settings::SettingsScope::Global,
+            "explorerWidth",
+            |s| {
+                s.explorer_width = Some(40);
+            },
+        )
+        .unwrap();
         assert_eq!(app.explorer_width, 40);
     }
 
@@ -3509,9 +3816,11 @@ mod tests {
         let result = app.settings_filtered_indices_for_category(0);
         assert!(!result.is_empty());
         let items = app.settings_items();
-        assert!(result
-            .iter()
-            .all(|&idx| !items[idx].2.starts_with("heading_")));
+        assert!(
+            result
+                .iter()
+                .all(|&idx| !items[idx].2.starts_with("heading_"))
+        );
     }
 
     #[test]

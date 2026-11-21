@@ -10,7 +10,10 @@ fn silent_client(root: &std::path::Path) -> (Client, mpsc::Sender<()>) {
     }
     let hello = super::super::service::Service::new(root).unwrap().hello(42);
     let (end, input) = mpsc::channel();
-    (Client::attach(BufReader::new(Silent(input)), Vec::new(), hello).unwrap(), end)
+    (
+        Client::attach(BufReader::new(Silent(input)), Vec::new(), hello).unwrap(),
+        end,
+    )
 }
 
 #[test]
@@ -27,7 +30,9 @@ fn stalled_control_writes_do_not_hold_ui_mailbox_locks() {
             }
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
     }
     let root = tempfile::tempdir().unwrap();
     let client = super::super::tests::connection(root.path(), Arc::default(), Arc::default());
@@ -36,25 +41,56 @@ fn stalled_control_writes_do_not_hold_ui_mailbox_locks() {
     for kind in 0..9 {
         let shared = client.0.shared.clone();
         match kind {
-            0 => { shared.agent_closed.lock().unwrap().insert(1); }
-            1 => { shared.agent_credits.lock().unwrap().insert((1, 2)); }
-            2 => { shared.agent_histories_closed.lock().unwrap().insert(1, 1); }
-            3 => { shared.rollback_closed.lock().unwrap().insert(1); }
-            4 => { shared.text_closed.lock().unwrap().insert(1); }
-            5 => { shared.binary_closed.lock().unwrap().insert(1); }
-            6 => { shared.cancelled.lock().unwrap().insert(1); }
-            7 => { shared.resized.lock().unwrap().insert(1, (80, 24)); }
-            _ => { shared.agent_cancelled.lock().unwrap().insert(
-                (1, vtcode::acp::protocol::SessionId::new("session")),
-                Request { id: 0, workspace: None, command: Command::Cancel { request: 1 } }); }
+            0 => {
+                shared.agent_closed.lock().unwrap().insert(1);
+            }
+            1 => {
+                shared.agent_credits.lock().unwrap().insert((1, 2));
+            }
+            2 => {
+                shared.agent_histories_closed.lock().unwrap().insert(1, 1);
+            }
+            3 => {
+                shared.rollback_closed.lock().unwrap().insert(1);
+            }
+            4 => {
+                shared.text_closed.lock().unwrap().insert(1);
+            }
+            5 => {
+                shared.binary_closed.lock().unwrap().insert(1);
+            }
+            6 => {
+                shared.cancelled.lock().unwrap().insert(1);
+            }
+            7 => {
+                shared.resized.lock().unwrap().insert(1, (80, 24));
+            }
+            _ => {
+                shared.agent_cancelled.lock().unwrap().insert(
+                    (1, vtcode::acp::protocol::SessionId::new("session")),
+                    Request {
+                        id: 0,
+                        workspace: None,
+                        command: Command::Cancel { request: 1 },
+                    },
+                );
+            }
         }
         let (entered, ready) = mpsc::sync_channel(1);
         let (release, gate) = mpsc::sync_channel(1);
         let worker_shared = shared.clone();
         let worker = std::thread::spawn(move || {
             let (_, controls) = mpsc::sync_channel(1);
-            write_controls(&mut StalledWrite { entered: Some(entered), release: gate },
-                &worker_shared, &controls, 42).unwrap();
+            write_controls(
+                &mut StalledWrite {
+                    entered: Some(entered),
+                    release: gate,
+                },
+                &worker_shared,
+                &controls,
+                42,
+            )
+            .unwrap();
         });
         ready.recv_timeout(Duration::from_secs(5)).unwrap();
         let free = match kind {
@@ -70,32 +106,54 @@ fn stalled_control_writes_do_not_hold_ui_mailbox_locks() {
         };
         release.send(()).unwrap();
         worker.join().unwrap();
-        if !free { blocked.push(kind); }
+        if !free {
+            blocked.push(kind);
+        }
     }
     client.call(Command::Shutdown).unwrap();
-    assert!(blocked.is_empty(), "Network writes held UI mailbox locks: {blocked:?}");
+    assert!(
+        blocked.is_empty(),
+        "Network writes held UI mailbox locks: {blocked:?}"
+    );
 }
 
 #[test]
 fn transport_eof_releases_file_waiters_capacity_and_transfer_permits() {
     let root = tempfile::tempdir().unwrap();
     let (client, end) = silent_client(root.path());
-    let command = || Command::Open { path: super::super::RemotePath::new(b"file.rs".to_vec()).unwrap() };
+    let command = || Command::Open {
+        path: super::super::RemotePath::new(b"file.rs".to_vec()).unwrap(),
+    };
     let mut replies = Vec::new();
-    for _ in 0..8 { replies.push(client.submit_inner(command(), None).unwrap().1); }
+    for _ in 0..8 {
+        replies.push(client.submit_inner(command(), None).unwrap().1);
+    }
     let first = client.text_permit().unwrap();
     let second = client.text_permit().unwrap();
     let (done, results) = mpsc::channel();
     let file_client = client.clone();
     let file_done = done.clone();
-    let file = std::thread::spawn(move || file_done.send(file_client.call_file(command()).is_err()).unwrap());
+    let file = std::thread::spawn(move || {
+        file_done
+            .send(file_client.call_file(command()).is_err())
+            .unwrap()
+    });
     let permit_client = client.clone();
-    let permit = std::thread::spawn(move || done.send(permit_client.text_permit().is_err()).unwrap());
+    let permit =
+        std::thread::spawn(move || done.send(permit_client.text_permit().is_err()).unwrap());
     end.send(()).unwrap();
     for reply in replies {
-        assert!(reply.recv_timeout(Duration::from_secs(5)).unwrap().take().is_err());
+        assert!(
+            reply
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .take()
+                .is_err()
+        );
     }
-    for _ in 0..2 { assert!(results.recv_timeout(Duration::from_secs(5)).unwrap()); }
+    for _ in 0..2 {
+        assert!(results.recv_timeout(Duration::from_secs(5)).unwrap());
+    }
     file.join().unwrap();
     permit.join().unwrap();
     assert!(!client.connected());
@@ -126,10 +184,16 @@ fn disconnect_cannot_lose_the_notification_between_a_permit_check_and_wait() {
         std::thread::yield_now();
     }
     let premature = done.recv_timeout(Duration::from_millis(20)).is_ok();
-    let (active, result) = shared.text_ready.wait_timeout(active, Duration::from_secs(2)).unwrap();
+    let (active, result) = shared
+        .text_ready
+        .wait_timeout(active, Duration::from_secs(2))
+        .unwrap();
     drop(active);
     worker.join().unwrap();
-    assert!(!premature && !result.timed_out(), "Disconnect notification raced the permit waiter");
+    assert!(
+        !premature && !result.timed_out(),
+        "Disconnect notification raced the permit waiter"
+    );
 }
 
 #[test]
@@ -138,12 +202,15 @@ fn stalled_git_status_times_out_after_progress_and_allows_retry() {
 
     let root = tempfile::tempdir().unwrap();
     let session = 42;
-    let hello = super::super::service::Service::new(root.path()).unwrap().hello(session);
+    let hello = super::super::service::Service::new(root.path())
+        .unwrap()
+        .hello(session);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let stream = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     let (mut peer, _) = listener.accept().unwrap();
     peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    let client = Client::attach(BufReader::new(stream.try_clone().unwrap()), stream, hello).unwrap();
+    let client =
+        Client::attach(BufReader::new(stream.try_clone().unwrap()), stream, hello).unwrap();
     let peer = std::thread::spawn(move || {
         let mut reader = BufReader::new(peer.try_clone().unwrap());
         let mut line = Vec::new();
@@ -159,20 +226,31 @@ fn stalled_git_status_times_out_after_progress_and_allows_retry() {
         let status = request();
         assert!(matches!(status.command, Command::GitStatus { .. }));
         let mut send = |id, reply| {
-            let response = wire::encode(&Response { id, result: Ok(reply) }).unwrap();
+            let response = wire::encode(&Response {
+                id,
+                result: Ok(reply),
+            })
+            .unwrap();
             let frame = if id == 0 { wire::EVENT_ID | 1 } else { id };
             wire::write_message(&mut peer, 'S', session, frame, &response).unwrap();
         };
-        send(0, Reply::GitStatusProgress {
-            request: status.id,
-            progress: git::StatusProgress::Repository {
-                root: RemotePath::default(),
-                branch: "main".into(),
+        send(
+            0,
+            Reply::GitStatusProgress {
+                request: status.id,
+                progress: git::StatusProgress::Repository {
+                    root: RemotePath::default(),
+                    branch: "main".into(),
+                },
             },
-        });
+        );
         assert!(matches!(request().command, Command::Cancel { request } if request == status.id));
         let status_reply = |roots| Reply::GitStatus {
-            discovery: git::Discovery { roots, parent: None, errors: Vec::new() },
+            discovery: git::Discovery {
+                roots,
+                parent: None,
+                errors: Vec::new(),
+            },
             scans: Vec::new(),
         };
         send(status.id, status_reply(Vec::new()));
@@ -191,15 +269,21 @@ fn stalled_git_status_times_out_after_progress_and_allows_retry() {
     };
     let cancel = crate::background::CancellationToken::new();
     let mut updates = 0;
-    let error = client.git_status_with_timeout(command(), &cancel, Duration::from_secs(1), |_| {
-        updates += 1;
-        Ok(())
-    }).unwrap_err();
+    let error = client
+        .git_status_with_timeout(command(), &cancel, Duration::from_secs(1), |_| {
+            updates += 1;
+            Ok(())
+        })
+        .unwrap_err();
     assert_eq!(error.kind(), io::ErrorKind::TimedOut, "{error}");
     assert_eq!(updates, 1);
     assert!(client.0.shared.pending.lock().unwrap().is_empty());
-    let retry = client.git_status_with_timeout(command(), &cancel, Duration::from_secs(5), |_| Ok(())).unwrap();
-    assert!(matches!(retry, Reply::GitStatus { discovery, .. } if discovery.roots == vec![RemotePath::default()]));
+    let retry = client
+        .git_status_with_timeout(command(), &cancel, Duration::from_secs(5), |_| Ok(()))
+        .unwrap();
+    assert!(
+        matches!(retry, Reply::GitStatus { discovery, .. } if discovery.roots == vec![RemotePath::default()])
+    );
     peer.join().unwrap();
 }
 

@@ -67,7 +67,9 @@ impl LspClient {
     pub(crate) fn install_capabilities(&mut self, capabilities: ServerCapabilities) {
         let sync = match &capabilities.text_document_sync {
             Some(TextDocumentSyncCapability::Kind(kind)) => *kind,
-            Some(TextDocumentSyncCapability::Options(options)) => options.change.unwrap_or(TextDocumentSyncKind::NONE),
+            Some(TextDocumentSyncCapability::Options(options)) => {
+                options.change.unwrap_or(TextDocumentSyncKind::NONE)
+            }
             None => TextDocumentSyncKind::NONE,
         };
         let _ = self.outbound_tx.send(LspOutbound::SyncKind(sync));
@@ -93,7 +95,9 @@ impl LspClient {
     }
 
     pub(super) fn document_language(&self, path: &Path) -> String {
-        if let Some((_, language)) = crate::file_associations::resolve(&self.file_associations, path) {
+        if let Some((_, language)) =
+            crate::file_associations::resolve(&self.file_associations, path)
+        {
             return language.into();
         }
         if matches!(self.language.as_str(), "c" | "cpp" | "c++") {

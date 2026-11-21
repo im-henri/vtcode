@@ -76,18 +76,33 @@ pub(crate) fn draw_button(
     let hovered = area.contains((app.mouse_col, app.mouse_row).into());
     let fallback = if scope == SearchScope::File {
         app.colors.ui.widget_background_color(app.colors.bg_editor)
-    } else { app.colors.bg_sidebar };
-    let bg = f.buffer_mut().cell((area.x, area.y)).map(|cell| cell.bg)
-        .filter(|color| *color != ratatui::style::Color::Reset).unwrap_or(fallback);
+    } else {
+        app.colors.bg_sidebar
+    };
+    let bg = f
+        .buffer_mut()
+        .cell((area.x, area.y))
+        .map(|cell| cell.bg)
+        .filter(|color| *color != ratatui::style::Color::Reset)
+        .unwrap_or(fallback);
     let fg = if scope == SearchScope::File {
         app.colors.ui.widget_text_color(bg)
-    } else { app.colors.ui.sidebar_text_color(bg) };
+    } else {
+        app.colors.ui.sidebar_text_color(bg)
+    };
     let mut style = app.colors.ui.input_option_style(fg, bg, active, hovered);
     if disabled {
         let background = style.bg.unwrap_or(bg);
         style = style.fg(crate::ui_colors::disabled_text_color(
-            app.colors.ui.disabled_foreground.over(background).unwrap_or(app.colors.fg_dim),
-            style.fg.unwrap_or(fg), background, app.colors.ui.contrast_colors()));
+            app.colors
+                .ui
+                .disabled_foreground
+                .over(background)
+                .unwrap_or(app.colors.fg_dim),
+            style.fg.unwrap_or(fg),
+            background,
+            app.colors.ui.contrast_colors(),
+        ));
     }
     // Centering the label leaves padding cells untouched, including any
     // border or text already drawn behind this button.
@@ -99,7 +114,9 @@ pub(crate) fn draw_button(
         area,
     );
     app.search_control_regions.push(SearchControlRegion {
-        owner: (scope == SearchScope::File).then(|| app.file_search_owner()).flatten(),
+        owner: (scope == SearchScope::File)
+            .then(|| app.file_search_owner())
+            .flatten(),
         scope,
         control,
         area,
@@ -111,7 +128,9 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App, scope: SearchScope) {
     let Some(button) = control_at(app, scope, app.mouse_col, app.mouse_row) else {
         return;
     };
-    if scope == SearchScope::File && button.owner != app.file_search_owner() { return; }
+    if scope == SearchScope::File && button.owner != app.file_search_owner() {
+        return;
+    }
     let text = match button.control {
         SearchControl::ToggleReplace => {
             let expanded = match scope {
@@ -138,8 +157,12 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App, scope: SearchScope) {
         SearchControl::Refresh => "Refresh Search",
         SearchControl::Stop => "Stop Search (Escape)",
         SearchControl::Clear => "Clear Search Results",
-        SearchControl::DismissResult(crate::search_results::SearchRow::Header(_), _) => "Dismiss File from Results",
-        SearchControl::DismissResult(crate::search_results::SearchRow::Result(_), _) => "Dismiss Match (Delete)",
+        SearchControl::DismissResult(crate::search_results::SearchRow::Header(_), _) => {
+            "Dismiss File from Results"
+        }
+        SearchControl::DismissResult(crate::search_results::SearchRow::Result(_), _) => {
+            "Dismiss Match (Delete)"
+        }
         SearchControl::CollapseResults => {
             if app.global_search_all_files_toggle_label() == "⊞" {
                 "Expand All Results"
@@ -157,8 +180,8 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App, scope: SearchScope) {
         button.area.y
     };
     Tooltip::hover(vec![Line::raw(text)], &app.colors)
-    .prefer_below()
-    .render(f, button.area.x, anchor_y);
+        .prefer_below()
+        .render(f, button.area.x, anchor_y);
 }
 
 pub(crate) fn handle_click(app: &mut App, scope: SearchScope, col: u16, row: u16) -> bool {
@@ -168,7 +191,10 @@ pub(crate) fn handle_click(app: &mut App, scope: SearchScope, col: u16, row: u16
     if button.disabled {
         return true;
     }
-    if matches!(button.control, SearchControl::DismissResult(_, _) | SearchControl::ReplaceResult(_, _)) {
+    if matches!(
+        button.control,
+        SearchControl::DismissResult(_, _) | SearchControl::ReplaceResult(_, _)
+    ) {
         app.global_search_active = false;
         activate(app, scope, button.control);
         return true;
@@ -208,12 +234,22 @@ pub(crate) fn activate(app: &mut App, scope: SearchScope, control: SearchControl
         | SearchControl::Regex
         | SearchControl::InSelection => {
             match (scope, control) {
-                (SearchScope::File, SearchControl::MatchCase) => app.search_case_sensitive = !app.search_case_sensitive,
-                (SearchScope::File, SearchControl::WholeWord) => app.search_whole_word = !app.search_whole_word,
+                (SearchScope::File, SearchControl::MatchCase) => {
+                    app.search_case_sensitive = !app.search_case_sensitive
+                }
+                (SearchScope::File, SearchControl::WholeWord) => {
+                    app.search_whole_word = !app.search_whole_word
+                }
                 (SearchScope::File, SearchControl::Regex) => app.search_regex = !app.search_regex,
-                (SearchScope::Workspace, SearchControl::MatchCase) => app.global_search_case_sensitive = !app.global_search_case_sensitive,
-                (SearchScope::Workspace, SearchControl::WholeWord) => app.global_search_whole_word = !app.global_search_whole_word,
-                (SearchScope::Workspace, SearchControl::Regex) => app.global_search_regex = !app.global_search_regex,
+                (SearchScope::Workspace, SearchControl::MatchCase) => {
+                    app.global_search_case_sensitive = !app.global_search_case_sensitive
+                }
+                (SearchScope::Workspace, SearchControl::WholeWord) => {
+                    app.global_search_whole_word = !app.global_search_whole_word
+                }
+                (SearchScope::Workspace, SearchControl::Regex) => {
+                    app.global_search_regex = !app.global_search_regex
+                }
                 (SearchScope::File, SearchControl::InSelection) => {
                     app.search_in_selection = !app.search_in_selection;
                     app.search_selection_range = if app.search_in_selection {
@@ -231,7 +267,9 @@ pub(crate) fn activate(app: &mut App, scope: SearchScope, control: SearchControl
         }
         SearchControl::PreserveCase => match scope {
             SearchScope::File => app.search_preserve_case = !app.search_preserve_case,
-            SearchScope::Workspace => app.global_search_preserve_case = !app.global_search_preserve_case,
+            SearchScope::Workspace => {
+                app.global_search_preserve_case = !app.global_search_preserve_case
+            }
         },
         SearchControl::Previous | SearchControl::Next => {
             app.search_focus_replace = false;
@@ -275,9 +313,13 @@ pub(crate) fn activate(app: &mut App, scope: SearchScope, control: SearchControl
             }
         }
     }
-    if matches!(control, SearchControl::MatchCase | SearchControl::WholeWord
-        | SearchControl::Regex | SearchControl::PreserveCase)
-    {
+    if matches!(
+        control,
+        SearchControl::MatchCase
+            | SearchControl::WholeWord
+            | SearchControl::Regex
+            | SearchControl::PreserveCase
+    ) {
         app.flush_live_settings();
     }
 }

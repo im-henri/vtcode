@@ -301,7 +301,8 @@ fn gptcomplete_status_suffix(app: &App) -> Option<&'static str> {
 
 pub(crate) fn gptcomplete_menu_open(app: &App) -> bool {
     app.context_menu_active
-        && app.context_menu_items
+        && app
+            .context_menu_items
             .first()
             .is_some_and(|item| item.id.starts_with("gptcomplete_"))
 }
@@ -312,7 +313,11 @@ fn open_gptcomplete_menu(app: &mut App) {
             ("Snooze for 1 Minute", "gptcomplete_snooze_1", false),
             ("Snooze for 5 Minutes", "gptcomplete_snooze_5", false),
             ("Snooze for 10 Minutes", "gptcomplete_snooze_10", false),
-            ("Snooze Until Resumed", "gptcomplete_snooze_until_resumed", false),
+            (
+                "Snooze Until Resumed",
+                "gptcomplete_snooze_until_resumed",
+                false,
+            ),
             ("Turn Off GPTComplete", "gptcomplete_disable", true),
         ],
         Availability::Snoozed => &[
@@ -325,11 +330,15 @@ fn open_gptcomplete_menu(app: &mut App) {
         || app.viewport_area.bottom().saturating_sub(1),
         |area| area.y,
     );
-    let button = app.status_bar_items
+    let button = app
+        .status_bar_items
         .iter()
         .find(|&&(_, _, id)| id == GPTCOMPLETE_STATUS_ITEM)
         .map(|&(x, width, _)| Rect::new(x, y, width, 1));
-    let x = button.map_or_else(|| app.viewport_area.right().saturating_sub(1), |area| area.x);
+    let x = button.map_or_else(
+        || app.viewport_area.right().saturating_sub(1),
+        |area| area.x,
+    );
     let current_eagerness = app.completion_preferences.inline_eagerness;
     app.context_menu_items = choices
         .iter()
@@ -340,7 +349,11 @@ fn open_gptcomplete_menu(app: &mut App) {
             shortcut: String::new(),
         })
         .chain(InlineEagerness::ALL.into_iter().map(|level| {
-            let marker = if level == current_eagerness { '✓' } else { ' ' };
+            let marker = if level == current_eagerness {
+                '✓'
+            } else {
+                ' '
+            };
             ContextMenuItem {
                 label: format!("{marker} Eagerness · {}", level.display_label()),
                 id: level.menu_command(),
@@ -610,12 +623,30 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
         items.push(StatusItem::new("● REC", "macro", app.colors.fg_error, 0, true).compact("REC"));
     }
     if app.is_formatting() {
-        items.push(StatusItem::new("Formatting…", "formatting", app.colors.fg_accent, 0, true));
+        items.push(StatusItem::new(
+            "Formatting…",
+            "formatting",
+            app.colors.fg_accent,
+            0,
+            true,
+        ));
     } else if let Some((message, _)) = &app.formatting.feedback {
-        items.push(StatusItem::new(message, "formatting", app.colors.fg_success, 0, true));
+        items.push(StatusItem::new(
+            message,
+            "formatting",
+            app.colors.fg_success,
+            0,
+            true,
+        ));
     }
     if let Some(label) = file_activity {
-        items.push(StatusItem::new(label, "file_details", app.colors.fg_accent, 0, false));
+        items.push(StatusItem::new(
+            label,
+            "file_details",
+            app.colors.fg_accent,
+            0,
+            false,
+        ));
     }
     if let Some(editor) = editor(app) {
         if editor.read_only {
@@ -656,7 +687,11 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
         if is_pinned(app, "word_count") {
             let count = if background {
                 background_word_count.map(|words| {
-                    format!("{words}W {}C {}L", editor.rope.len_chars(), editor.line_count())
+                    format!(
+                        "{words}W {}C {}L",
+                        editor.rope.len_chars(),
+                        editor.line_count()
+                    )
                 })
             } else {
                 app.cached_word_count.clone()
@@ -665,7 +700,8 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
                 items.push(StatusItem::new(count, "word_count", fg, 6, true));
             }
         }
-        if !background && is_pinned(app, "word_occ")
+        if !background
+            && is_pinned(app, "word_occ")
             && let Some(occurrences) = &app.cached_word_occ
         {
             items.push(StatusItem::new(occurrences, "word_occ", fg, 6, true));
@@ -719,13 +755,18 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
     {
         let text = match row.id {
             "word_wrap" => format!("Wrap: {}", row.value),
-            "line_count" => format!("{} {}", row.value, if row.value == "1" { "line" } else { "lines" }),
+            "line_count" => format!(
+                "{} {}",
+                row.value,
+                if row.value == "1" { "line" } else { "lines" }
+            ),
             "language_server" => match row.value.as_str() {
                 "Connected" => "LSP ✓",
                 "Starting…" => "LSP …",
                 "Failed to start" => "LSP !",
                 _ => "LSP —",
-            }.into(),
+            }
+            .into(),
             _ => row.value,
         };
         items.push(StatusItem::new(text, row.id, fg, 6, true));
@@ -741,8 +782,12 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let mut candidates: Vec<usize> = (0..items.len())
-        .filter(|&index| matches!(items[index].action, "formatting" | "file_details" | "vim_mode")
-            || is_pinned(app, items[index].action))
+        .filter(|&index| {
+            matches!(
+                items[index].action,
+                "formatting" | "file_details" | "vim_mode"
+            ) || is_pinned(app, items[index].action)
+        })
         .collect();
     candidates.sort_by_key(|&index| items[index].priority);
     let mut visible = vec![false; items.len()];
@@ -796,7 +841,8 @@ pub(crate) fn draw_bar(f: &mut Frame, app: &mut App, area: Rect) {
     }
     if let Some(badge) = badge {
         if !background {
-            app.status_bar_items.push((badge_area.x, badge_area.width, "performance"));
+            app.status_bar_items
+                .push((badge_area.x, badge_area.width, "performance"));
         }
         crate::ui_performance::draw_badge(f, app, badge_area, badge);
     }
@@ -962,17 +1008,20 @@ fn file_detail_row(app: &App, id: &'static str) -> Option<DetailRow> {
                 Some("scroll"),
             )
         }
-        "language_server" => {
-            (
-                if !app.lsp_enabled {
-                    "Disabled"
-                } else {
-                    editor.file_path.as_deref().map_or("Save a file to connect", |path| app.lsp_manager.file_status(path))
-                }
-                .into(),
-                Some("language_server"),
-            )
-        }
+        "language_server" => (
+            if !app.lsp_enabled {
+                "Disabled"
+            } else {
+                editor
+                    .file_path
+                    .as_deref()
+                    .map_or("Save a file to connect", |path| {
+                        app.lsp_manager.file_status(path)
+                    })
+            }
+            .into(),
+            Some("language_server"),
+        ),
         _ => return None,
     };
     Some(DetailRow::new(id, value, action))
@@ -1355,7 +1404,14 @@ fn draw_details(f: &mut Frame, app: &mut App) {
     let subtitle = if customize {
         "Pinned items show when available."
     } else {
-        editor(app).map_or(if app.has_open_folder() { "Folder status" } else { "Editor status" }, Editor::file_name)
+        editor(app).map_or(
+            if app.has_open_folder() {
+                "Folder status"
+            } else {
+                "Editor status"
+            },
+            Editor::file_name,
+        )
     };
     f.render_widget(
         Paragraph::new(clip_middle(
@@ -1520,7 +1576,10 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
         .map(|&(_, _, action)| HoverTarget::Status(action))
         .or_else(|| {
             app.hovered_activity
-                .filter(|&index| crate::ui_chrome::activity_item_at(app, app.mouse_col, app.mouse_row) == Some(index))
+                .filter(|&index| {
+                    crate::ui_chrome::activity_item_at(app, app.mouse_col, app.mouse_row)
+                        == Some(index)
+                })
                 .map(HoverTarget::Activity)
         })
         .or_else(|| {
@@ -1570,7 +1629,9 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
         HoverTarget::Status("overwrite_mode") => {
             "Overwrite mode · Click to return to Insert".into()
         }
-        HoverTarget::Status("language") => "Change language mode or configure file associations".into(),
+        HoverTarget::Status("language") => {
+            "Change language mode or configure file associations".into()
+        }
         HoverTarget::Status("tab_size") => "Change indentation · Right-click to customize".into(),
         HoverTarget::Status("encoding") => "Change file encoding · Right-click to customize".into(),
         HoverTarget::Status("line_ending") => {
@@ -1582,7 +1643,8 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
             "Document line count · Right-click to customize".into()
         }
         HoverTarget::Status("language_server") => {
-            "Configure language servers · Click to open LSP settings · Right-click to customize".into()
+            "Configure language servers · Click to open LSP settings · Right-click to customize"
+                .into()
         }
         HoverTarget::Status(GPTCOMPLETE_STATUS_ITEM) => {
             format!(
@@ -1604,7 +1666,9 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
             let (label, command) = match index {
                 0 => ("Explorer".into(), "toggle_explorer"),
                 1 => ("Search".into(), "global_search"),
-                2 if !app.has_open_folder() => ("Source Control · No folder open".into(), "source_control"),
+                2 if !app.has_open_folder() => {
+                    ("Source Control · No folder open".into(), "source_control")
+                }
                 2 => (
                     format!(
                         "Source Control · {} changes",
@@ -1614,8 +1678,11 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
                 ),
                 4 => {
                     let errors = app.extension_manager.error_count();
-                    let label = if errors > 0 { format!("Extensions · {errors} errors") }
-                        else { "Extensions".into() };
+                    let label = if errors > 0 {
+                        format!("Extensions · {errors} errors")
+                    } else {
+                        "Extensions".into()
+                    };
                     (label, "extensions")
                 }
                 3 => ("Remote".into(), "remote"),
@@ -1632,7 +1699,11 @@ fn draw_hover(f: &mut Frame, app: &mut App) {
         HoverTarget::Remote(action) => crate::ui_remote_targets::hover_text(app, action),
     };
     app.chrome_hover.shown = true;
-    let lines = text.lines().flat_map(|line| App::wrap_setting_text_for_width(line, 60)).map(Line::raw).collect();
+    let lines = text
+        .lines()
+        .flat_map(|line| App::wrap_setting_text_for_width(line, 60))
+        .map(Line::raw)
+        .collect();
     crate::ui_widgets::Tooltip::hover(lines, &app.colors)
         .max_width(64)
         .render(f, app.mouse_col.saturating_add(1), app.mouse_row);

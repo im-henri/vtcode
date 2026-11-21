@@ -47,7 +47,10 @@ pub(crate) fn marker_color(colors: &ThemeColors, surface: Color) -> Color {
 
 pub(crate) fn marker_badge(colors: &ThemeColors, background: Color) -> Style {
     let ink = ensure_contrast(colors.bg_editor, background, 4.5, &MARKER_CONTRAST);
-    Style::new().fg(ink).bg(background).add_modifier(Modifier::BOLD)
+    Style::new()
+        .fg(ink)
+        .bg(background)
+        .add_modifier(Modifier::BOLD)
 }
 
 pub(crate) fn has_conflict(index: &Index, lines: Range<usize>, had_conflicts: bool) -> bool {
@@ -350,9 +353,12 @@ impl App {
                             ))
                             .into();
                         let incoming_text = incoming.to_string();
-                        let lines = crate::diff_algorithm::file_diff(&current, &incoming_text, algorithm);
-                        let mut cache = crate::app::DiffRenderCache::with_algorithm(&lines, algorithm);
-                        cache.missing_final_newline = crate::diff_algorithm::missing_final_newline(&current, &incoming_text);
+                        let lines =
+                            crate::diff_algorithm::file_diff(&current, &incoming_text, algorithm);
+                        let mut cache =
+                            crate::app::DiffRenderCache::with_algorithm(&lines, algorithm);
+                        cache.missing_final_newline =
+                            crate::diff_algorithm::missing_final_newline(&current, &incoming_text);
                         let _ = sender.send(crate::background::BackgroundResult::MergeComparison(
                             Comparison {
                                 view,

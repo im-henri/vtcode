@@ -164,8 +164,10 @@ fn cursor_smear_runs_on_navigation_and_only_animates_typing_when_enabled() {
         app.tabs[0].editor.word_wrap = wrapped;
         app.tabs[0].editor.large_file_mode = large;
         app.animation_settings.set(AnimationEffect::TabSlide, false);
-        app.animation_settings.set(AnimationEffect::CursorSmear, true);
-        app.animation_settings.set_duration(AnimationEffect::CursorSmear, 1500);
+        app.animation_settings
+            .set(AnimationEffect::CursorSmear, true);
+        app.animation_settings
+            .set_duration(AnimationEffect::CursorSmear, 1500);
         let id = app.tabs[0].editor.navigation_id;
         render(&mut app, width, 20);
 
@@ -182,12 +184,24 @@ fn cursor_smear_runs_on_navigation_and_only_animates_typing_when_enabled() {
             let probe = Instant::now();
             let frame = render(&mut app, width, 20);
             let settings = &app.animation_settings;
-            assert_eq!(app.animations.cursor_smear_active(id, settings, probe), should_animate, "{key:?}");
-            assert_eq!(app.animations.next_frame_wait(settings, probe).is_some(), should_animate, "{key:?}");
+            assert_eq!(
+                app.animations.cursor_smear_active(id, settings, probe),
+                should_animate,
+                "{key:?}"
+            );
+            assert_eq!(
+                app.animations.next_frame_wait(settings, probe).is_some(),
+                should_animate,
+                "{key:?}"
+            );
             if !should_animate {
                 let area = app.code_area.unwrap();
                 let col = app.tabs[0].editor.cursor_col as u16;
-                assert_eq!(frame[(area.x + col, area.y)].bg, app.colors.bg_cursor, "{key:?}");
+                assert_eq!(
+                    frame[(area.x + col, area.y)].bg,
+                    app.colors.bg_cursor,
+                    "{key:?}"
+                );
             }
         }
 
@@ -195,7 +209,10 @@ fn cursor_smear_runs_on_navigation_and_only_animates_typing_when_enabled() {
         crate::input::handle_editor_key(&mut app, KeyCode::Char('z'), KeyModifiers::NONE);
         let probe = Instant::now();
         render(&mut app, width, 20);
-        assert!(app.animations.cursor_smear_active(id, &app.animation_settings, probe));
+        assert!(
+            app.animations
+                .cursor_smear_active(id, &app.animation_settings, probe)
+        );
     }
 }
 
@@ -726,8 +743,12 @@ fn scope_connector_and_brace_colors_stay_fixed_while_scrolling() {
             }
             render(&mut app, width, 18);
             if select_endpoints {
-                assert!(app.animations.take_events(app.tabs[0].editor.navigation_id).is_empty(),
-                    "multiple cursors suspend the scope until the next single-cursor frame");
+                assert!(
+                    app.animations
+                        .take_events(app.tabs[0].editor.navigation_id)
+                        .is_empty(),
+                    "multiple cursors suspend the scope until the next single-cursor frame"
+                );
                 continue;
             }
             app.animations.advance_frame(

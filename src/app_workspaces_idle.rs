@@ -1,7 +1,7 @@
 //! Park passive filesystem/UI services without suspending live user jobs.
 use crate::app::App;
-use std::path::{Path, PathBuf};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::path::{Path, PathBuf};
 
 #[derive(Default)]
 pub(super) struct DeferredWork {
@@ -21,7 +21,12 @@ struct Status {
     passive: bool,
 }
 
-pub(crate) enum GitWork { Branch, Lines, History, MoreHistory }
+pub(crate) enum GitWork {
+    Branch,
+    Lines,
+    History,
+    MoreHistory,
+}
 
 impl App {
     pub(crate) fn workspace_is_displayed(&self) -> bool {
@@ -42,19 +47,30 @@ impl App {
     }
 
     pub(crate) fn defer_explorer_refresh(&mut self, full: bool) -> bool {
-        if !self.has_open_folder() { return true; }
-        if self.workspace_is_displayed() { return false; }
+        if !self.has_open_folder() {
+            return true;
+        }
+        if self.workspace_is_displayed() {
+            return false;
+        }
         let work = &mut self.workspace_observation.work;
         work.explorer_full |= full;
         work.explorer_tree = true;
-        if full { work.explorer_paths.clear(); }
+        if full {
+            work.explorer_paths.clear();
+        }
         true
     }
 
-    pub(crate) fn defer_explorer_paths<'a>(&mut self,
-        paths: impl IntoIterator<Item = (&'a Path, Option<bool>)>, structural: bool) {
+    pub(crate) fn defer_explorer_paths<'a>(
+        &mut self,
+        paths: impl IntoIterator<Item = (&'a Path, Option<bool>)>,
+        structural: bool,
+    ) {
         let work = &mut self.workspace_observation.work;
-        if work.explorer_full { return; }
+        if work.explorer_full {
+            return;
+        }
         work.explorer_structure |= structural;
         for (path, is_dir) in paths {
             work.explorer_paths.insert(path.to_path_buf(), is_dir);
@@ -66,27 +82,54 @@ impl App {
         }
     }
 
-    pub(crate) fn defer_git_status(&mut self, paths: Option<&FxHashSet<PathBuf>>, passive: bool) -> bool {
-        if !self.has_open_folder() { return true; }
-        if self.workspace_is_displayed() { return false; }
-        let pending = self.workspace_observation.work.status.get_or_insert_with(|| Status {
-            paths: Some(FxHashSet::default()), passive: true,
-        });
+    pub(crate) fn defer_git_status(
+        &mut self,
+        paths: Option<&FxHashSet<PathBuf>>,
+        passive: bool,
+    ) -> bool {
+        if !self.has_open_folder() {
+            return true;
+        }
+        if self.workspace_is_displayed() {
+            return false;
+        }
+        let pending = self
+            .workspace_observation
+            .work
+            .status
+            .get_or_insert_with(|| Status {
+                paths: Some(FxHashSet::default()),
+                passive: true,
+            });
         pending.passive &= passive;
         match (&mut pending.paths, paths) {
-            (Some(pending), Some(paths)) => for path in paths {
-                pending.insert(path.clone());
-                if pending.len() > 1024 { break; }
-            },
+            (Some(pending), Some(paths)) => {
+                for path in paths {
+                    pending.insert(path.clone());
+                    if pending.len() > 1024 {
+                        break;
+                    }
+                }
+            }
             (pending, _) => *pending = None,
         }
-        if pending.paths.as_ref().is_some_and(|paths| paths.len() > 1024) { pending.paths = None; }
+        if pending
+            .paths
+            .as_ref()
+            .is_some_and(|paths| paths.len() > 1024)
+        {
+            pending.paths = None;
+        }
         true
     }
 
     pub(crate) fn defer_git_work(&mut self, kind: GitWork) -> bool {
-        if !self.has_open_folder() { return true; }
-        if self.workspace_is_displayed() { return false; }
+        if !self.has_open_folder() {
+            return true;
+        }
+        if self.workspace_is_displayed() {
+            return false;
+        }
         let work = &mut self.workspace_observation.work;
         match kind {
             GitWork::Branch => work.branch = true,
@@ -117,10 +160,20 @@ impl App {
         if !self.workspace_observation.assets_started {
             self.workspace_observation.assets_started = true;
             self.request_external_themes_async();
-            if self.has_open_folder() { self.request_syntax_assets_async(); }
+            if self.has_open_folder() {
+                self.request_syntax_assets_async();
+            }
         }
-        if self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
-            .any(|tab| matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::ExtensionView))
+        if self
+            .tabs
+            .iter()
+            .chain(self.groups.iter().flat_map(|group| &group.tabs))
+            .any(|tab| {
+                matches!(
+                    tab.kind,
+                    crate::app::TabKind::File | crate::app::TabKind::ExtensionView
+                )
+            })
             || !self.pending_custom_recoveries.is_empty()
         {
             self.start_empty_window_document_services();
@@ -129,14 +182,18 @@ impl App {
     }
 
     pub(crate) fn start_empty_window_document_services(&mut self) {
-        if self.has_open_folder() || self.workspace_observation.document_services_started { return; }
+        if self.has_open_folder() || self.workspace_observation.document_services_started {
+            return;
+        }
         self.workspace_observation.document_services_started = true;
         self.request_syntax_assets_async();
         self.start_empty_window_extension_services();
     }
 
     pub(crate) fn start_empty_window_extension_services(&mut self) {
-        if self.has_open_folder() || self.workspace_observation.extension_services_started { return; }
+        if self.has_open_folder() || self.workspace_observation.extension_services_started {
+            return;
+        }
         self.workspace_observation.extension_services_started = true;
         self.initialize_extensions();
     }
@@ -164,28 +221,47 @@ impl App {
         let pending = std::mem::take(&mut self.workspace_observation.pending);
         let mut work = std::mem::take(&mut self.workspace_observation.work);
         if pending.rescan || pending.structure || pending.git || !pending.paths.is_empty() {
-            self.apply_workspace_file_changes(self.explorer.root.clone(), pending.paths.into_values().collect(),
-                pending.structure, pending.rescan, pending.git);
+            self.apply_workspace_file_changes(
+                self.explorer.root.clone(),
+                pending.paths.into_values().collect(),
+                pending.structure,
+                pending.rescan,
+                pending.git,
+            );
         }
         let checks = std::mem::take(&mut self.workspace_observation.checks);
         if !pending.rescan {
             let checks = if check_all {
-                self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
+                self.tabs
+                    .iter()
+                    .chain(self.groups.iter().flat_map(|group| &group.tabs))
                     .filter(|tab| tab.kind == crate::app::TabKind::File)
-                    .filter_map(|tab| tab.editor.file_path.clone()).collect::<FxHashSet<_>>()
-            } else { checks };
-            for path in checks { self.queue_workspace_file_check(path); }
+                    .filter_map(|tab| tab.editor.file_path.clone())
+                    .collect::<FxHashSet<_>>()
+            } else {
+                checks
+            };
+            for path in checks {
+                self.queue_workspace_file_check(path);
+            }
         }
         // A reader finishing in the background, a search, or an agent's known
         // path edit must not invalidate unrelated files, Git history and caches.
         if !pending.rescan {
-            if work.explorer_full { self.refresh_explorer_async(); }
-            else {
+            if work.explorer_full {
+                self.refresh_explorer_async();
+            } else {
                 if !work.explorer_paths.is_empty() {
-                    self.refresh_explorer_changed_path_states(work.explorer_paths.iter()
-                        .map(|(path, is_dir)| (path.as_path(), *is_dir)), work.explorer_structure);
+                    self.refresh_explorer_changed_path_states(
+                        work.explorer_paths
+                            .iter()
+                            .map(|(path, is_dir)| (path.as_path(), *is_dir)),
+                        work.explorer_structure,
+                    );
                 }
-                if work.explorer_tree { self.refresh_explorer_tree_async(); }
+                if work.explorer_tree {
+                    self.refresh_explorer_tree_async();
+                }
             }
         }
         if let Some(mut status) = work.status {
@@ -194,11 +270,19 @@ impl App {
             work.history |= metadata;
             self.start_source_control_status_refresh_with_feedback(status.paths, status.passive);
         }
-        if work.history { self.refresh_git_log_async(); }
-        else if work.more_history { self.load_more_git_history(); }
-        else { self.resume_visible_git_history(); }
-        if work.branch { self.refresh_git_branch_async(); }
-        if work.lines { self.refresh_git_line_status_async(); }
+        if work.history {
+            self.refresh_git_log_async();
+        } else if work.more_history {
+            self.load_more_git_history();
+        } else {
+            self.resume_visible_git_history();
+        }
+        if work.branch {
+            self.refresh_git_branch_async();
+        }
+        if work.lines {
+            self.refresh_git_line_status_async();
+        }
         self.sync_diff_tab();
         if let Some(path) = self.pending_git_compare_path.clone() {
             self.start_pending_git_compare_for_path(&path);
@@ -211,7 +295,9 @@ impl App {
     }
 
     pub(crate) fn defer_workspace_file_check(&mut self, path: &std::path::Path) -> bool {
-        if self.workspace_is_displayed() { return false; }
+        if self.workspace_is_displayed() {
+            return false;
+        }
         let observation = &mut self.workspace_observation;
         if !observation.check_all_files {
             observation.checks.insert(path.to_path_buf());

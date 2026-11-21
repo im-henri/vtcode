@@ -96,7 +96,11 @@ fn acp_chat_tabs_keep_drafts_attachments_scroll_and_terminal_input_separate() {
             truncated: false,
             exit_status: None,
             released: false,
-            cwd: Default::default(), history: None, history_version: 0, killed: false, error: None,
+            cwd: Default::default(),
+            history: None,
+            history_version: 0,
+            killed: false,
+            error: None,
         });
     app.chat_action(ChatAction::Terminal("shell".into()));
     app.paste_into_focused_text_input("terminal command");
@@ -118,7 +122,11 @@ fn acp_chat_tabs_keep_drafts_attachments_scroll_and_terminal_input_separate() {
         truncated: false,
         exit_status: Some(p::TerminalExitStatus::new().exit_code(0)),
         released: true,
-        cwd: Default::default(), history: None, history_version: 0, killed: false, error: None,
+        cwd: Default::default(),
+        history: None,
+        history_version: 0,
+        killed: false,
+        error: None,
     }));
     app.chat_action(ChatAction::Switch(first));
     assert!(app.chat.terminal_input.is_none());
@@ -244,10 +252,21 @@ fn acp_chat_tabs_scroll_reveal_active_and_follow_tab_theme_colors() {
                 .find(|h| h.action == ChatAction::Switch(first.clone()))
                 .unwrap()
                 .area;
-            assert!((0..width).all(|x| terminal.backend().buffer()[(x, tab.y)].symbol() != "+"),
-                "disconnected conversations remain visible without a new-conversation button at width {width}");
-            let history = app.chat.hits.iter().find(|hit| hit.action == ChatAction::Picker(Picker::Sessions)).unwrap().area;
-            assert!(history.right() <= width, "history remains reachable in narrow panes");
+            assert!(
+                (0..width).all(|x| terminal.backend().buffer()[(x, tab.y)].symbol() != "+"),
+                "disconnected conversations remain visible without a new-conversation button at width {width}"
+            );
+            let history = app
+                .chat
+                .hits
+                .iter()
+                .find(|hit| hit.action == ChatAction::Picker(Picker::Sessions))
+                .unwrap()
+                .area;
+            assert!(
+                history.right() <= width,
+                "history remains reachable in narrow panes"
+            );
             let cell = terminal
                 .backend()
                 .buffer()
@@ -256,7 +275,9 @@ fn acp_chat_tabs_scroll_reveal_active_and_follow_tab_theme_colors() {
             assert_eq!(cell.bg, app.colors.bg_tab_active);
             assert_eq!(
                 cell.fg,
-                app.colors.ui.readable_foreground(app.colors.ui.fg_tab_active, cell.bg, 4.5)
+                app.colors
+                    .ui
+                    .readable_foreground(app.colors.ui.fg_tab_active, cell.bg, 4.5)
             );
             app.mouse_col = tab.x;
             app.mouse_row = tab.y;
@@ -341,7 +362,8 @@ fn acp_chat_sdk_round_trip_multiple_tabs_stream_and_cancel_independently() {
     app.explorer.root = root.path().to_path_buf();
     let mut config = vtcode::acp::AgentConfig::new(
         "Official SDK scenario agent",
-        std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
+        std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
     );
     config.args = vec![
         "-u".into(),
@@ -366,10 +388,25 @@ fn acp_chat_sdk_round_trip_multiple_tabs_stream_and_cancel_independently() {
     app.paste_into_focused_text_input("Next task for first chat");
     let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
     render(&mut app, &mut terminal);
-    let new = app.chat.hits.iter().find(|hit| hit.action == ChatAction::New).unwrap().area;
-    let last_tab_end = app.chat.hits.iter().filter(|hit| matches!(hit.action, ChatAction::Switch(_)))
-        .map(|hit| hit.area.right()).max().unwrap();
-    assert_eq!(new.x, last_tab_end, "new conversation follows the last visible tab when connected");
+    let new = app
+        .chat
+        .hits
+        .iter()
+        .find(|hit| hit.action == ChatAction::New)
+        .unwrap()
+        .area;
+    let last_tab_end = app
+        .chat
+        .hits
+        .iter()
+        .filter(|hit| matches!(hit.action, ChatAction::Switch(_)))
+        .map(|hit| hit.area.right())
+        .max()
+        .unwrap();
+    assert_eq!(
+        new.x, last_tab_end,
+        "new conversation follows the last visible tab when connected"
+    );
     click(&mut app, &mut terminal, ChatAction::New);
     until(&mut app, |a| a.chat.open_tabs.len() == 2);
     let second = app.chat.selected.clone().unwrap();
@@ -400,7 +437,16 @@ fn acp_chat_sdk_round_trip_multiple_tabs_stream_and_cancel_independently() {
     });
     assert!(app.chat.permission().is_none());
     render(&mut app, &mut terminal);
-    assert!(terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect::<String>().contains("Queue up"));
+    assert!(
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+            .contains("Queue up")
+    );
     app.chat.focus = None;
     app.handle_chat_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()));
     until(&mut app, |a| !a.chat.sessions[&first].busy);

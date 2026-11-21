@@ -46,7 +46,11 @@ pub(crate) enum Lookup {
     None,
     /// `seq` is a strict prefix of a mapping: wait for more keys.
     Prefix,
-    Match { len: usize, rhs: Vec<Key>, noremap: bool },
+    Match {
+        len: usize,
+        rhs: Vec<Key>,
+        noremap: bool,
+    },
 }
 
 /// The modes a `:map` command name applies to.
@@ -97,13 +101,17 @@ impl Maps {
     }
 
     pub(crate) fn lookup(&self, mode: MapMode, seq: &[Key]) -> Lookup {
-        if seq.is_empty() { return Lookup::None; }
+        if seq.is_empty() {
+            return Lookup::None;
+        }
         let mut exact: Option<(usize, &Mapping)> = None;
         let mut longer = false;
         // Candidates share the first key.
         let lo = (mode, vec![seq[0]]);
         for ((m, lhs), mapping) in self.maps.range(lo..) {
-            if *m != mode || lhs.first() != Some(&seq[0]) { break; }
+            if *m != mode || lhs.first() != Some(&seq[0]) {
+                break;
+            }
             if lhs.len() <= seq.len() {
                 if seq.starts_with(lhs) && exact.is_none_or(|(l, _)| lhs.len() > l) {
                     exact = Some((lhs.len(), mapping));
@@ -115,7 +123,11 @@ impl Maps {
         // A longer mapping may still match: wait, unless the complete one
         // is `<nowait>`.
         match exact {
-            Some((len, m)) if !longer || m.nowait => Lookup::Match { len, rhs: m.rhs.clone(), noremap: m.noremap },
+            Some((len, m)) if !longer || m.nowait => Lookup::Match {
+                len,
+                rhs: m.rhs.clone(),
+                noremap: m.noremap,
+            },
             _ if longer => Lookup::Prefix,
             _ => Lookup::None,
         }
@@ -124,7 +136,9 @@ impl Maps {
     /// The longest mapping that matches a prefix of `seq` (after a timeout).
     pub(crate) fn longest(&self, mode: MapMode, seq: &[Key]) -> Option<(usize, Vec<Key>, bool)> {
         (1..=seq.len()).rev().find_map(|n| {
-            self.maps.get(&(mode, seq[..n].to_vec())).map(|m| (n, m.rhs.clone(), m.noremap))
+            self.maps
+                .get(&(mode, seq[..n].to_vec()))
+                .map(|m| (n, m.rhs.clone(), m.noremap))
         })
     }
 
@@ -132,14 +146,24 @@ impl Maps {
     pub(crate) fn list(&self, modes: &[MapMode], prefix: &[Key]) -> Vec<String> {
         let mut rows: BTreeMap<(Vec<Key>, String), Vec<char>> = BTreeMap::new();
         for ((mode, lhs), m) in &self.maps {
-            if !modes.contains(mode) || !lhs.starts_with(prefix) { continue; }
+            if !modes.contains(mode) || !lhs.starts_with(prefix) {
+                continue;
+            }
             let rhs = format!("{}{}", if m.noremap { "*" } else { " " }, m.source);
-            rows.entry((lhs.clone(), rhs)).or_default().push(mode.letter());
+            rows.entry((lhs.clone(), rhs))
+                .or_default()
+                .push(mode.letter());
         }
-        rows.into_iter().map(|((lhs, rhs), letters)| {
-            let mode = if letters.len() >= 4 { " ".to_string() } else { letters.iter().collect() };
-            format!("{mode:<3}{:<12} {rhs}", keys::format(&lhs))
-        }).collect()
+        rows.into_iter()
+            .map(|((lhs, rhs), letters)| {
+                let mode = if letters.len() >= 4 {
+                    " ".to_string()
+                } else {
+                    letters.iter().collect()
+                };
+                format!("{mode:<3}{:<12} {rhs}", keys::format(&lhs))
+            })
+            .collect()
     }
 }
 
@@ -150,12 +174,25 @@ pub(crate) fn parse_args(args: &str) -> (bool, bool, &str, &str) {
     let mut nowait = false;
     loop {
         let lower = rest.get(..10).unwrap_or(rest).to_ascii_lowercase();
-        let special = ["<silent>", "<buffer>", "<nowait>", "<unique>", "<special>", "<script>", "<expr>"]
-            .into_iter().find(|s| lower.starts_with(s));
+        let special = [
+            "<silent>",
+            "<buffer>",
+            "<nowait>",
+            "<unique>",
+            "<special>",
+            "<script>",
+            "<expr>",
+        ]
+        .into_iter()
+        .find(|s| lower.starts_with(s));
         match special {
             Some(s) => {
-                if s == "<silent>" { silent = true; }
-                if s == "<nowait>" { nowait = true; }
+                if s == "<silent>" {
+                    silent = true;
+                }
+                if s == "<nowait>" {
+                    nowait = true;
+                }
                 rest = rest[s.len()..].trim_start();
             }
             None => break,
@@ -165,7 +202,10 @@ pub(crate) fn parse_args(args: &str) -> (bool, bool, &str, &str) {
     let mut end = rest.len();
     let mut prev_bs = false;
     for (i, c) in rest.char_indices() {
-        if (c == ' ' || c == '\t') && !prev_bs { end = i; break; }
+        if (c == ' ' || c == '\t') && !prev_bs {
+            end = i;
+            break;
+        }
         prev_bs = c == '\\' && !prev_bs;
     }
     let lhs = &rest[..end];
@@ -184,7 +224,13 @@ mod tests {
     use super::*;
 
     fn m(rhs: &str, noremap: bool) -> Mapping {
-        Mapping { rhs: keys::parse(rhs, &[]), noremap, nowait: false, silent: false, source: rhs.into() }
+        Mapping {
+            rhs: keys::parse(rhs, &[]),
+            noremap,
+            nowait: false,
+            silent: false,
+            source: rhs.into(),
+        }
     }
 
     #[test]
@@ -194,13 +240,31 @@ mod tests {
         maps.define(&[MapMode::Insert], lhs("jk"), m("<Esc>", true));
         maps.define(&[MapMode::Normal], lhs("<Space>f"), m(":find ", true));
         maps.define(&[MapMode::Normal], lhs("<Space>"), m("l", false));
-        assert!(matches!(maps.lookup(MapMode::Insert, &lhs("j")), Lookup::Prefix));
-        assert!(matches!(maps.lookup(MapMode::Insert, &lhs("jk")), Lookup::Match { len: 2, .. }));
-        assert!(matches!(maps.lookup(MapMode::Insert, &lhs("x")), Lookup::None));
-        assert!(matches!(maps.lookup(MapMode::Normal, &lhs("<Space>")), Lookup::Prefix));
-        assert!(matches!(maps.lookup(MapMode::Normal, &lhs("<Space>x")), Lookup::Match { len: 1, .. }));
+        assert!(matches!(
+            maps.lookup(MapMode::Insert, &lhs("j")),
+            Lookup::Prefix
+        ));
+        assert!(matches!(
+            maps.lookup(MapMode::Insert, &lhs("jk")),
+            Lookup::Match { len: 2, .. }
+        ));
+        assert!(matches!(
+            maps.lookup(MapMode::Insert, &lhs("x")),
+            Lookup::None
+        ));
+        assert!(matches!(
+            maps.lookup(MapMode::Normal, &lhs("<Space>")),
+            Lookup::Prefix
+        ));
+        assert!(matches!(
+            maps.lookup(MapMode::Normal, &lhs("<Space>x")),
+            Lookup::Match { len: 1, .. }
+        ));
         assert_eq!(maps.longest(MapMode::Normal, &lhs("<Space>")).unwrap().0, 1);
-        assert!(matches!(maps.lookup(MapMode::Visual, &lhs("jk")), Lookup::None));
+        assert!(matches!(
+            maps.lookup(MapMode::Visual, &lhs("jk")),
+            Lookup::None
+        ));
     }
 
     #[test]

@@ -6,11 +6,16 @@ use std::fmt::Write;
 
 pub(super) fn win32_key_sequence(key: KeyEvent) -> Option<Vec<u8>> {
     let mut output = String::new();
-    for_each_win32_key(key, |vk, unit, down, state| { write!(&mut output, "\x1b[{vk};0;{unit};{down};{state};1_").unwrap(); })?;
+    for_each_win32_key(key, |vk, unit, down, state| {
+        write!(&mut output, "\x1b[{vk};0;{unit};{down};{state};1_").unwrap();
+    })?;
     Some(output.into_bytes())
 }
 
-pub(crate) fn for_each_win32_key(key: KeyEvent, mut emit: impl FnMut(u16, u16, u8, u32)) -> Option<()> {
+pub(crate) fn for_each_win32_key(
+    key: KeyEvent,
+    mut emit: impl FnMut(u16, u16, u8, u32),
+) -> Option<()> {
     let mut modifiers = key.modifiers;
     let (vk, character) = match key.code {
         KeyCode::Char(character) => {

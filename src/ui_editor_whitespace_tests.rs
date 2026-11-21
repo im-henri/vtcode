@@ -238,13 +238,19 @@ fn indent_guides_preserve_each_whitespace_mode_in_one_column() {
                 editor.cursor_col = 6;
             }
             let buffer = draw(&mut app, 80);
-            assert_eq!(row(&app, &buffer, 0).trim_end(), expected, "{mode:?}, wrapped={wrapped}");
+            assert_eq!(
+                row(&app, &buffer, 0).trim_end(),
+                expected,
+                "{mode:?}, wrapped={wrapped}"
+            );
             let area = app.code_area.unwrap();
             assert_eq!(buffer[(area.x + 8, area.y)].symbol(), "v");
             assert_eq!(app.editor().unwrap().rope.to_string(), source);
         }
     }
-    for symbol in ['│', '┆', '↦'] { assert_eq!(unicode_width::UnicodeWidthChar::width(symbol), Some(1)); }
+    for symbol in ['│', '┆', '↦'] {
+        assert_eq!(unicode_width::UnicodeWidthChar::width(symbol), Some(1));
+    }
 }
 
 #[test]
@@ -260,8 +266,15 @@ fn tab_and_mixed_indentation_share_visual_guide_columns() {
             app.show_indent_guides = true;
             app.editor_mut().unwrap().whitespace_mode = WhitespaceMode::All;
             let buffer = draw(&mut app, 80);
-            assert_eq!(row(&app, &buffer, 0).trim_end(), expected, "{indent:?}, wrapped={wrapped}");
-            crate::ui_control_visibility_tests::snapshot(&buffer, &format!("tab-indent-guides-{}-wrapped-{wrapped}", indent.len()));
+            assert_eq!(
+                row(&app, &buffer, 0).trim_end(),
+                expected,
+                "{indent:?}, wrapped={wrapped}"
+            );
+            crate::ui_control_visibility_tests::snapshot(
+                &buffer,
+                &format!("tab-indent-guides-{}-wrapped-{wrapped}", indent.len()),
+            );
             app.editor_mut().unwrap().whitespace_mode = WhitespaceMode::None;
             let buffer = draw(&mut app, 80);
             assert_eq!(row(&app, &buffer, 0).trim_end(), "│   │   value");
@@ -285,14 +298,23 @@ fn every_builtin_draws_visible_guides_and_marks_the_closest_level_active() {
             for (depth, column) in [0, 4, 8].into_iter().enumerate() {
                 let cell = &buffer[(area.x + column, area.y)];
                 assert_eq!(cell.symbol(), "│", "{key} wrapped={wrapped} col={column}");
-                assert_eq!(cell.fg, app.colors.ui.indent_guide_color(depth, column == 4));
+                assert_eq!(
+                    cell.fg,
+                    app.colors.ui.indent_guide_color(depth, column == 4)
+                );
                 assert_ne!(cell.fg, cell.bg, "{key} wrapped={wrapped} col={column}");
                 assert!(!cell.modifier.contains(Modifier::DIM));
             }
-            crate::ui_control_visibility_tests::snapshot(&buffer, &format!("indent-guides-{key}-wrapped-{wrapped}"));
+            crate::ui_control_visibility_tests::snapshot(
+                &buffer,
+                &format!("indent-guides-{key}-wrapped-{wrapped}"),
+            );
             app.editor_mut().unwrap().whitespace_mode = WhitespaceMode::All;
             let buffer = draw(&mut app, 80);
-            crate::ui_control_visibility_tests::snapshot(&buffer, &format!("indent-and-whitespace-{key}-wrapped-{wrapped}"));
+            crate::ui_control_visibility_tests::snapshot(
+                &buffer,
+                &format!("indent-and-whitespace-{key}-wrapped-{wrapped}"),
+            );
             app.editor_mut().unwrap().whitespace_mode = WhitespaceMode::None;
         }
     }
@@ -300,15 +322,27 @@ fn every_builtin_draws_visible_guides_and_marks_the_closest_level_active() {
 
 #[test]
 fn whitespace_only_rows_wrap_and_scroll_without_losing_or_repeating_guides() {
-    let source = format!("{}value {}\n{}\nroot\n", " ".repeat(24), "word ".repeat(20), " ".repeat(8));
+    let source = format!(
+        "{}value {}\n{}\nroot\n",
+        " ".repeat(24),
+        "word ".repeat(20),
+        " ".repeat(8)
+    );
     for wrapped in [false, true] {
         let mut app = fixture(&source, "txt", wrapped);
         app.show_indent_guides = true;
         app.editor_mut().unwrap().whitespace_mode = WhitespaceMode::All;
         if wrapped {
             let buffer = draw(&mut app, 20);
-            let guides = buffer.content.iter().filter(|cell| cell.symbol() == "┆").count();
-            assert_eq!(guides, 8, "six guides in the code indentation and two in the blank row");
+            let guides = buffer
+                .content
+                .iter()
+                .filter(|cell| cell.symbol() == "┆")
+                .count();
+            assert_eq!(
+                guides, 8,
+                "six guides in the code indentation and two in the blank row"
+            );
         } else {
             app.editor_mut().unwrap().horizontal_scroll = 6;
             let buffer = draw(&mut app, 40);

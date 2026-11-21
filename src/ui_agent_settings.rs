@@ -651,10 +651,20 @@ fn button(f: &mut Frame, app: &mut App, area: Rect, label: &str, action: Action)
     let focused = action == app.agent_settings.focus;
     let hovered = area.contains((app.mouse_col, app.mouse_row).into());
     let bg = crate::ui_widgets::surface_background(f, area, app.colors.ui.bg_widget);
-    let mut style = app.colors.ui.button_style(bg,
-        matches!(action, Action::Save | Action::Add), hovered, true).add_modifier(Modifier::BOLD);
+    let mut style = app
+        .colors
+        .ui
+        .button_style(
+            bg,
+            matches!(action, Action::Save | Action::Add),
+            hovered,
+            true,
+        )
+        .add_modifier(Modifier::BOLD);
     if focused && let Some(border) = app.colors.ui.focus_border.border(style.bg.unwrap_or(bg)) {
-        style = style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+        style = style
+            .add_modifier(Modifier::UNDERLINED)
+            .underline_color(border);
     }
     f.render_widget(Paragraph::new(format!(" {label} ")).style(style), area);
     app.agent_settings.hits.push((area, action));
@@ -685,9 +695,8 @@ fn draw_row(f: &mut Frame, app: &mut App, row: &Row, area: Rect) {
             let input_area = Rect::new(area.x, area.y, field_width, 1);
             let focused = app.agent_settings.focus == Action::Field(*id);
             let field = &app.agent_settings.draft.as_ref().unwrap().fields[*id];
-            let input_style = crate::ui_settings::settings_control_style(
-                &app.colors, "text", bg, focused,
-            );
+            let input_style =
+                crate::ui_settings::settings_control_style(&app.colors, "text", bg, focused);
             let input_bg = input_style.bg.unwrap_or(bg);
             let input = InputField::new(&field.text)
                 .viewport(app.text_input_viewport(TextInputId::AgentSetting(*id)))
@@ -697,9 +706,7 @@ fn draw_row(f: &mut Frame, app: &mut App, row: &Row, area: Rect) {
                 .placeholder_text(placeholder)
                 .cursor_marker(if focused { "█" } else { "" })
                 .cursor_pos(field.cursor)
-                .selection_range(
-                    App::inline_selection_range(field.cursor, field.anchor),
-                );
+                .selection_range(App::inline_selection_range(field.cursor, field.anchor));
             let hit = input.render(f, input_area);
             crate::ui_settings::underline_field(f, input_area, input_style);
             app.register_text_input(TextInputId::AgentSetting(*id), hit);
@@ -770,11 +777,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(app.colors.ui.widget_border.border(bg).unwrap_or(bg)))
-            .style(
-                Style::default()
-                    .fg(fg)
-                    .bg(bg),
-            ),
+            .style(Style::default().fg(fg).bg(bg)),
         area,
     );
     if width < 12 || height < 8 {
@@ -914,20 +917,39 @@ mod tests {
     #[test]
     fn agent_controls_use_button_roles_instead_of_list_or_link_colors() {
         let mut app = App::test_new();
-        app.colors = crate::ui_control_visibility_tests::theme_with_popup_and_control_roles().to_theme_colors();
+        app.colors = crate::ui_control_visibility_tests::theme_with_popup_and_control_roles()
+            .to_theme_colors();
         let mut terminal = Terminal::new(TestBackend::new(40, 5)).unwrap();
         let area = Rect::new(2, 2, 20, 1);
         for (action, label, normal_bg, hover_bg, foreground) in [
-            (Action::Add, "Add agent", Color::Rgb(32, 59, 112), Color::Rgb(50, 75, 128), Color::Rgb(255, 244, 187)),
-            (Action::Cancel, "Cancel", Color::Rgb(48, 53, 32), Color::Rgb(72, 73, 42), Color::Rgb(221, 238, 255)),
+            (
+                Action::Add,
+                "Add agent",
+                Color::Rgb(32, 59, 112),
+                Color::Rgb(50, 75, 128),
+                Color::Rgb(255, 244, 187),
+            ),
+            (
+                Action::Cancel,
+                "Cancel",
+                Color::Rgb(48, 53, 32),
+                Color::Rgb(72, 73, 42),
+                Color::Rgb(221, 238, 255),
+            ),
         ] {
             for (focused, hovered) in [(false, false), (true, false), (false, true)] {
                 app.agent_settings.focus = if focused { action } else { Action::Close };
                 app.mouse_col = if hovered { area.x + 1 } else { 0 };
                 app.mouse_row = if hovered { area.y } else { 0 };
-                terminal.draw(|frame| button(frame, &mut app, area, label, action)).unwrap();
+                terminal
+                    .draw(|frame| button(frame, &mut app, area, label, action))
+                    .unwrap();
                 let cell = &terminal.backend().buffer()[(area.x + 1, area.y)];
-                assert_eq!(cell.bg, if hovered { hover_bg } else { normal_bg }, "{label}, focused={focused}");
+                assert_eq!(
+                    cell.bg,
+                    if hovered { hover_bg } else { normal_bg },
+                    "{label}, focused={focused}"
+                );
                 assert_eq!(cell.fg, foreground);
             }
         }

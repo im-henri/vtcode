@@ -98,7 +98,9 @@ impl Snapshot {
         let mut indices = FxHashMap::default();
         let mut watched_parent: Option<PathBuf> = None;
         for entry in entries {
-            if source_control_cancel.is_cancelled() || cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+            if source_control_cancel.is_cancelled()
+                || cancel.is_some_and(|cancel| cancel.is_cancelled())
+            {
                 break;
             }
             let ignored = if let Some(cached) = self
@@ -114,7 +116,8 @@ impl Snapshot {
                     && watched_parent.as_deref() != Some(parent)
                 {
                     // Siblings share the answer; check each parent once.
-                    self.unwatched = !crate::background::workspace_path_is_watched(&self.root, parent);
+                    self.unwatched =
+                        !crate::background::workspace_path_is_watched(&self.root, parent);
                     watched_parent = Some(parent.to_owned());
                 }
                 let ignored = self.matcher.ignored(
@@ -194,11 +197,15 @@ impl IgnoreCache {
     pub(super) fn set_enabled(&self, enabled: bool) {
         let retired = {
             let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-            if state.disabled == !enabled { return; }
+            if state.disabled == !enabled {
+                return;
+            }
             state.disabled = !enabled;
             state.cancel.cancel();
             state.cancel = crate::background::CancellationToken::new();
-            if !enabled { state.cancel.cancel(); }
+            if !enabled {
+                state.cancel.cancel();
+            }
             state.ticket = state.ticket.wrapping_add(1);
             state.pending = Pending::default();
             state.snapshot.take()
@@ -212,7 +219,9 @@ impl IgnoreCache {
 
     pub(super) fn invalidate(&self) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state.disabled { return; }
+        if state.disabled {
+            return;
+        }
         state.pending.all = true;
         state.pending.paths.clear();
     }
@@ -243,7 +252,9 @@ impl IgnoreCache {
 
     fn checkout(&self) -> Option<Checkout> {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if state.disabled { return None; }
+        if state.disabled {
+            return None;
+        }
         state.ticket = state.ticket.wrapping_add(1);
         Some(Checkout {
             cancel: state.cancel.clone(),
@@ -278,8 +289,12 @@ impl IgnoreCache {
         if entries.is_empty() || cancel.is_some_and(|cancel| cancel.is_cancelled()) {
             return;
         }
-        let Some(checkout) = self.checkout() else { return; };
-        if checkout.cancel.is_cancelled() { return; }
+        let Some(checkout) = self.checkout() else {
+            return;
+        };
+        if checkout.cancel.is_cancelled() {
+            return;
+        }
         let mut metrics = Metrics::default();
         let mut snapshot = checkout
             .snapshot
@@ -336,7 +351,9 @@ pub(super) struct Metrics {
 impl Metrics {
     pub(super) fn boundary(&mut self) {
         #[cfg(test)]
-        { self.boundary_checks += 1; }
+        {
+            self.boundary_checks += 1;
+        }
     }
     pub(super) fn repository(&mut self) {
         #[cfg(test)]

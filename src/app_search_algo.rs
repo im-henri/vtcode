@@ -6,18 +6,33 @@ pub(crate) const MAX_SEARCH_MATCHES: usize = 19_999;
 mod search_performance_tests {
     /// Frozen old literal path for a selection in one line: materialize the
     /// full line, clip afterward, then convert byte positions incrementally.
-    fn reference_selected_literal(rope: &ropey::Rope, query: &str, row: usize,
-        first: usize, last: usize, whole_word: bool) -> Vec<(usize, usize, usize)>
-    {
+    fn reference_selected_literal(
+        rope: &ropey::Rope,
+        query: &str,
+        row: usize,
+        first: usize,
+        last: usize,
+        whole_word: bool,
+    ) -> Vec<(usize, usize, usize)> {
         let line = rope.line(row);
         let text = line.to_string();
         let clean = text.trim_end_matches(['\n', '\r']);
         let clean_chars = line.len_chars() - (text.len() - clean.len());
         let first = first.min(line.len_chars());
         let last = last.min(clean_chars);
-        if first > last { return Vec::new(); }
-        let begin = if first == 0 { 0 } else { line.char_to_byte(first) };
-        let end = if last == clean_chars { clean.len() } else { line.char_to_byte(last) };
+        if first > last {
+            return Vec::new();
+        }
+        let begin = if first == 0 {
+            0
+        } else {
+            line.char_to_byte(first)
+        };
+        let end = if last == clean_chars {
+            clean.len()
+        } else {
+            line.char_to_byte(last)
+        };
         let selected = &clean[begin..end];
         let finder = memchr::memmem::Finder::new(query.as_bytes());
         let query_chars = query.chars().count();
@@ -39,7 +54,11 @@ mod search_performance_tests {
 
     #[test]
     fn clipped_literal_rope_slices_match_original_on_fragmented_lines() {
-        let text = format!("{}xfoo café界foo\r\n{}tail", "界é ".repeat(2_000), "é".repeat(2_000));
+        let text = format!(
+            "{}xfoo café界foo\r\n{}tail",
+            "界é ".repeat(2_000),
+            "é".repeat(2_000)
+        );
         let rope = ropey::Rope::from_str(&text);
         let cancel = crate::background::CancellationToken::new();
         for row in 0..rope.len_lines() {
@@ -48,10 +67,21 @@ mod search_performance_tests {
                 for last in [first, first + 1, first + 9, len, len + 100] {
                     for query in ["foo", "é", "界", "café", "tail", "\r"] {
                         for whole in [false, true] {
-                            let expected = reference_selected_literal(&rope, query, row, first, last, whole);
-                            let (actual, truncated, error) = super::scan_search_matches(&rope, query, true,
-                                false, whole, Some((row, first, row, last)), &cancel);
-                            assert_eq!(actual, expected, "row={row} range={first}..{last} query={query} whole={whole}");
+                            let expected =
+                                reference_selected_literal(&rope, query, row, first, last, whole);
+                            let (actual, truncated, error) = super::scan_search_matches(
+                                &rope,
+                                query,
+                                true,
+                                false,
+                                whole,
+                                Some((row, first, row, last)),
+                                &cancel,
+                            );
+                            assert_eq!(
+                                actual, expected,
+                                "row={row} range={first}..{last} query={query} whole={whole}"
+                            );
                             assert!(!truncated && error.is_none());
                         }
                     }
@@ -65,7 +95,10 @@ mod search_performance_tests {
     fn benchmark_tiny_find_selection_in_long_line() {
         let prefix = "界é ".repeat(1_000_000);
         let first = prefix.chars().count();
-        let rope = ropey::Rope::from_str(&format!("{prefix}needle café needle{}\r\n", "z".repeat(1_000_000)));
+        let rope = ropey::Rope::from_str(&format!(
+            "{prefix}needle café needle{}\r\n",
+            "z".repeat(1_000_000)
+        ));
         let last = first + 18;
         let expected = reference_selected_literal(&rope, "needle", 0, first, last, false);
         let cancel = crate::background::CancellationToken::new();
@@ -74,18 +107,29 @@ mod search_performance_tests {
             for clipped in [sample % 2 == 0, sample % 2 != 0] {
                 let started = std::time::Instant::now();
                 let actual = if clipped {
-                    let (matches, truncated, error) = super::scan_search_matches(&rope, "needle", true,
-                        false, false, Some((0, first, 0, last)), &cancel);
+                    let (matches, truncated, error) = super::scan_search_matches(
+                        &rope,
+                        "needle",
+                        true,
+                        false,
+                        false,
+                        Some((0, first, 0, last)),
+                        &cancel,
+                    );
                     assert!(!truncated && error.is_none());
                     matches
-                } else { reference_selected_literal(&rope, "needle", 0, first, last, false) };
+                } else {
+                    reference_selected_literal(&rope, "needle", 0, first, last, false)
+                };
                 samples[usize::from(clipped)].push(started.elapsed());
                 assert_eq!(std::hint::black_box(actual), expected);
             }
         }
         samples.iter_mut().for_each(|samples| samples.sort());
-        eprintln!("Find 18 selected characters in a seven-million-byte Unicode line: original={:?}, clipped={:?}",
-            samples[0][3], samples[1][3]);
+        eprintln!(
+            "Find 18 selected characters in a seven-million-byte Unicode line: original={:?}, clipped={:?}",
+            samples[0][3], samples[1][3]
+        );
     }
 
     #[test]
@@ -130,13 +174,27 @@ mod search_performance_tests {
     fn literal_selection_fast_path_preserves_clipped_word_boundaries_and_unicode_columns() {
         let rope = ropey::Rope::from_str("😀xfoo äfoo x\r\nfoo界foo\r\n");
         let cancel = crate::background::CancellationToken::new();
-        for selection in [Some((0, 2, 0, 5)), Some((0, 1, 1, 7)), Some((0, 99, 0, 100)), Some((1, 0, 1, 3))] {
+        for selection in [
+            Some((0, 2, 0, 5)),
+            Some((0, 1, 1, 7)),
+            Some((0, 99, 0, 100)),
+            Some((1, 0, 1, 3)),
+        ] {
             for query in ["foo", "界", "äfoo", "x"] {
                 for whole_word in [false, true] {
-                    let expected = crate::search_regex::SearchRegex::editor(query, true, whole_word, false).unwrap().scan(&rope, selection, super::MAX_SEARCH_MATCHES, &cancel);
-                    let (matches, truncated, error) = super::scan_search_matches(&rope, query, true, false, whole_word, selection, &cancel);
+                    let expected =
+                        crate::search_regex::SearchRegex::editor(query, true, whole_word, false)
+                            .unwrap()
+                            .scan(&rope, selection, super::MAX_SEARCH_MATCHES, &cancel);
+                    let (matches, truncated, error) = super::scan_search_matches(
+                        &rope, query, true, false, whole_word, selection, &cancel,
+                    );
                     assert!(error.is_none());
-                    assert_eq!((matches, truncated), expected, "{query:?} {selection:?} whole={whole_word}");
+                    assert_eq!(
+                        (matches, truncated),
+                        expected,
+                        "{query:?} {selection:?} whole={whole_word}"
+                    );
                 }
             }
         }
@@ -151,21 +209,35 @@ mod search_performance_tests {
         let cancel = crate::background::CancellationToken::new();
         let regex = crate::search_regex::SearchRegex::editor("needle", true, false, false).unwrap();
         let expected = regex.scan(&rope, selection, super::MAX_SEARCH_MATCHES, &cancel);
-        let mut before = Vec::new(); let mut after = Vec::new();
+        let mut before = Vec::new();
+        let mut after = Vec::new();
         for sample in 0..7 {
             for literal in [sample % 2 == 0, sample % 2 != 0] {
                 let started = std::time::Instant::now();
                 let results = if literal {
-                    let (matches, truncated, error) = super::scan_search_matches(&rope, "needle", true, false, false, selection, &cancel);
-                    assert!(error.is_none()); (matches, truncated)
-                } else { regex.scan(&rope, selection, super::MAX_SEARCH_MATCHES, &cancel) };
+                    let (matches, truncated, error) = super::scan_search_matches(
+                        &rope, "needle", true, false, false, selection, &cancel,
+                    );
+                    assert!(error.is_none());
+                    (matches, truncated)
+                } else {
+                    regex.scan(&rope, selection, super::MAX_SEARCH_MATCHES, &cancel)
+                };
                 let elapsed = started.elapsed();
                 assert_eq!(std::hint::black_box(results), expected);
-                if literal { after.push(elapsed); } else { before.push(elapsed); }
+                if literal {
+                    after.push(elapsed);
+                } else {
+                    before.push(elapsed);
+                }
             }
         }
-        before.sort(); after.sort();
-        eprintln!("Find in selection / 10,000 Unicode matches (regex compilation excluded): regex={:?} literal={:?}", before[3], after[3]);
+        before.sort();
+        after.sort();
+        eprintln!(
+            "Find in selection / 10,000 Unicode matches (regex compilation excluded): regex={:?} literal={:?}",
+            before[3], after[3]
+        );
     }
     #[test]
     fn selection_on_dense_line_does_not_exhaust_capacity_before_selection() {
@@ -195,10 +267,7 @@ mod search_performance_tests {
         let scan = |query, case, whole| {
             super::scan_search_matches(&rope, query, case, false, whole, None, &cancel).0
         };
-        assert_eq!(
-            scan("aba", true, false),
-            vec![(0, 2000, 2003)]
-        );
+        assert_eq!(scan("aba", true, false), vec![(0, 2000, 2003)]);
         assert_eq!(scan("needle", false, true), vec![(1, 2, 8), (1, 9, 15)]);
         assert_eq!(scan("é", false, false).last(), Some(&(1, 0, 1)));
         cancel.cancel();
@@ -310,9 +379,20 @@ pub(crate) fn regex_replace_with_groups(
     replacement: &str,
     case_sensitive: bool,
 ) -> String {
-    let Ok(regex) = crate::search_regex::SearchRegex::editor(pattern, case_sensitive, false, true) else { return matched_text.to_owned(); };
-    regex.captures_at(matched_text, 0).map_or_else(|| matched_text.to_owned(), |captures|
-        crate::search_replace::Replacement::new(replacement, true).expand(matched_text, &captures, false))
+    let Ok(regex) = crate::search_regex::SearchRegex::editor(pattern, case_sensitive, false, true)
+    else {
+        return matched_text.to_owned();
+    };
+    regex.captures_at(matched_text, 0).map_or_else(
+        || matched_text.to_owned(),
+        |captures| {
+            crate::search_replace::Replacement::new(replacement, true).expand(
+                matched_text,
+                &captures,
+                false,
+            )
+        },
+    )
 }
 
 pub(crate) fn scan_search_matches(
@@ -364,9 +444,21 @@ fn scan_search_matches_in_lines(
     }
     let mut line_buf = String::new();
     if use_regex || !case_sensitive || query.contains('\n') {
-        return match crate::search_regex::SearchRegex::cached_editor(query, case_sensitive, whole_word, use_regex) {
+        return match crate::search_regex::SearchRegex::cached_editor(
+            query,
+            case_sensitive,
+            whole_word,
+            use_regex,
+        ) {
             Ok(regex) => {
-                let (matches, truncated) = regex.scan_lines(rope, selection, start_line, end_line, MAX_SEARCH_MATCHES, cancel);
+                let (matches, truncated) = regex.scan_lines(
+                    rope,
+                    selection,
+                    start_line,
+                    end_line,
+                    MAX_SEARCH_MATCHES,
+                    cancel,
+                );
                 (matches, truncated, None)
             }
             Err(error) => (Vec::new(), false, Some(error)),
@@ -383,17 +475,33 @@ fn scan_search_matches_in_lines(
             // A tiny selection in a multi-megabyte logical line should only
             // copy its selected bytes, rather than the entire hidden prefix.
             let clean_chars = if selection.is_some() {
-                line.len_chars() - line.chars_at(line.len_chars()).reversed()
-                    .take_while(|&ch| matches!(ch, '\n' | '\r')).count()
-            } else { line.len_chars() };
+                line.len_chars()
+                    - line
+                        .chars_at(line.len_chars())
+                        .reversed()
+                        .take_while(|&ch| matches!(ch, '\n' | '\r'))
+                        .count()
+            } else {
+                line.len_chars()
+            };
             let (base_col, end_col) = selection.map_or((0, clean_chars), |(sl, sc, el, ec)| {
-                (if i == sl { sc.min(line.len_chars()) } else { 0 },
-                 if i == el { ec.min(clean_chars) } else { clean_chars })
+                (
+                    if i == sl { sc.min(line.len_chars()) } else { 0 },
+                    if i == el {
+                        ec.min(clean_chars)
+                    } else {
+                        clean_chars
+                    },
+                )
             });
-            if base_col > end_col { continue; }
+            if base_col > end_col {
+                continue;
+            }
             let selected = if base_col == 0 && end_col == line.len_chars() {
                 line
-            } else { line.slice(base_col..end_col) };
+            } else {
+                line.slice(base_col..end_col)
+            };
             let search_text = if let Some(text) = selected.as_str() {
                 text
             } else {
@@ -408,7 +516,9 @@ fn scan_search_matches_in_lines(
             };
             let search_text = if selection.is_none() {
                 search_text.trim_end_matches(['\n', '\r'])
-            } else { search_text };
+            } else {
+                search_text
+            };
             let mut start_byte = 0;
             let mut prev_byte = 0;
             let mut prev_col = base_col;
@@ -430,7 +540,9 @@ fn scan_search_matches_in_lines(
                 }
                 start_byte = end_byte;
             }
-            if truncated { break; }
+            if truncated {
+                break;
+            }
         }
     }
 
@@ -602,8 +714,11 @@ impl App {
         if let Some(error) = error {
             self.status_message = format!("Invalid regex: {error}");
         }
-        if self.search_active && self.search_input_focused && !self.search_focus_replace
-            && !self.rendering_inactive_editor {
+        if self.search_active
+            && self.search_input_focused
+            && !self.search_focus_replace
+            && !self.rendering_inactive_editor
+        {
             self.jump_to_current_match();
         }
     }
@@ -750,17 +865,25 @@ impl App {
     /// Revalidate a visible view after tab moves, external reloads, or a shared
     /// search preference change. Pending edit scans still keep their debounce.
     pub(crate) fn refresh_file_search_view(&mut self, group: usize) {
-        if self.rendering_background_window || !self.file_search_visible() || self.search_query.is_empty()
-            || (self.file_search_refresh_pending && !self.rendering_inactive_editor) {
+        if self.rendering_background_window
+            || !self.file_search_visible()
+            || self.search_query.is_empty()
+            || (self.file_search_refresh_pending && !self.rendering_inactive_editor)
+        {
             return;
         }
         let saved_group = self.active_group;
         self.active_group = group;
         let _ = self.editor_mut();
         let target = self.editor_content_target();
-        if self.file_search_refresh_pending || self.file_search_key.as_ref().is_some_and(|key|
-            Some(&key.target) != target.as_ref() || key.case_sensitive != self.search_case_sensitive
-                || key.use_regex != self.search_regex || key.whole_word != self.search_whole_word) {
+        if self.file_search_refresh_pending
+            || self.file_search_key.as_ref().is_some_and(|key| {
+                Some(&key.target) != target.as_ref()
+                    || key.case_sensitive != self.search_case_sensitive
+                    || key.use_regex != self.search_regex
+                    || key.whole_word != self.search_whole_word
+            })
+        {
             self.update_search();
         }
         self.active_group = saved_group;
@@ -768,7 +891,9 @@ impl App {
 
     pub(crate) fn update_search(&mut self) {
         let _ = self.editor_mut();
-        if self.status_message.starts_with("Invalid regex:") { self.status_message.clear(); }
+        if self.status_message.starts_with("Invalid regex:") {
+            self.status_message.clear();
+        }
         if self.search_query.is_empty() {
             self.clear_file_search_results();
             return;
@@ -781,9 +906,17 @@ impl App {
         };
         // FindModel.research expands a multiline scope to complete lines,
         // excluding the final line when the selection ends at its start.
-        if let Some((start, _, end, end_col)) = self.search_selection_range.filter(|(start, _, end, _)| self.search_in_selection && start != end) {
+        if let Some((start, _, end, end_col)) = self
+            .search_selection_range
+            .filter(|(start, _, end, _)| self.search_in_selection && start != end)
+        {
             if let Some(editor) = self.editor() {
-                let end = if end_col == 0 { end.saturating_sub(1) } else { end }.min(editor.rope.len_lines() - 1);
+                let end = if end_col == 0 {
+                    end.saturating_sub(1)
+                } else {
+                    end
+                }
+                .min(editor.rope.len_lines() - 1);
                 self.search_selection_range = Some((start.min(end), 0, end, editor.line_len(end)));
             }
         }
@@ -806,11 +939,13 @@ impl App {
         self.cancel_file_search_request();
         self.file_search_refresh_pending = false;
         self.search_error = None;
-        if self.file_search_key.as_ref().is_some_and(|previous|
-            previous.query != key.query || previous.case_sensitive != key.case_sensitive
-                || previous.use_regex != key.use_regex || previous.whole_word != key.whole_word
-                || previous.selection != key.selection)
-        {
+        if self.file_search_key.as_ref().is_some_and(|previous| {
+            previous.query != key.query
+                || previous.case_sensitive != key.case_sensitive
+                || previous.use_regex != key.use_regex
+                || previous.whole_word != key.whole_word
+                || previous.selection != key.selection
+        }) {
             self.search_matches.clear();
             self.search_current = 0;
         }
@@ -849,7 +984,10 @@ impl App {
             let owner = self.file_search_owner().unwrap();
             self.bg_file_search_running = true;
             let sender = self.background.sender.clone();
-            let activity = self.background.activity.start("Searching", target.file_path.as_deref());
+            let activity = self
+                .background
+                .activity
+                .start("Searching", target.file_path.as_deref());
             let token = self.background.submit_interactive(move |cancel| {
                 let _activity = activity.cancellable(cancel.clone()).running();
                 let (matches, truncated, error) = scan_search_matches(

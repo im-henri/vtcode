@@ -87,12 +87,15 @@ fn benchmark_scoped_workspace_search() {
     let mut samples = Vec::new();
     for sample in 0..9 {
         let started = Instant::now();
-        let Reply::Search { hits, truncated, .. } = search::execute(
+        let Reply::Search {
+            hits, truncated, ..
+        } = search::execute(
             workspace.path(),
             query("./cores/*/src/"),
             &CancellationToken::new(),
         )
-        .unwrap() else {
+        .unwrap()
+        else {
             panic!("search response");
         };
         let elapsed = started.elapsed();
@@ -183,9 +186,10 @@ fn benchmark_complex_workspace_includes() {
                 filters.push(elapsed);
             }
             let started = Instant::now();
-            let Reply::Search { hits, truncated, .. } =
-                search::execute(workspace.path(), query(&include), &CancellationToken::new())
-                    .unwrap()
+            let Reply::Search {
+                hits, truncated, ..
+            } = search::execute(workspace.path(), query(&include), &CancellationToken::new())
+                .unwrap()
             else {
                 panic!("search response");
             };
@@ -307,11 +311,20 @@ fn overlapping_root_aliases_search_each_closed_file_once_after_filtering() {
 
     for (include, expected) in [
         (
-            format!("{}/*.txt, {}/shared.*, {}/*.rs", sources.display(), alias.display(), alias.display()),
+            format!(
+                "{}/*.txt, {}/shared.*, {}/*.rs",
+                sources.display(),
+                alias.display(),
+                alias.display()
+            ),
             ["left.txt", "right.rs", "shared.txt"],
         ),
         (
-            format!("{}/**/*.txt, {}/nested/*.txt", sources.display(), alias.display()),
+            format!(
+                "{}/**/*.txt, {}/nested/*.txt",
+                sources.display(),
+                alias.display()
+            ),
             ["deep.txt", "left.txt", "shared.txt"],
         ),
     ] {
@@ -321,23 +334,34 @@ fn overlapping_root_aliases_search_each_closed_file_once_after_filtering() {
         app.search_include_pattern = include.clone();
         app.update_global_search();
         app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
-        assert!(app.global_search_error.is_none(), "{:?}", app.global_search_error);
-        let mut local: Vec<_> = app.global_search_results.iter()
+        assert!(
+            app.global_search_error.is_none(),
+            "{:?}",
+            app.global_search_error
+        );
+        let mut local: Vec<_> = app
+            .global_search_results
+            .iter()
             .map(|hit| hit.file_path.file_name().unwrap().to_str().unwrap())
             .collect();
         local.sort_unstable();
         assert_eq!(local, expected, "local scope {include}");
 
         let mut streamed = Vec::new();
-        let Reply::Search { hits, truncated, .. } = search::execute_streaming(
-            root, query(&include), &CancellationToken::new(), |batch| {
-                streamed.extend(batch);
-                Ok(())
-            },
-        ).unwrap() else { panic!("search response"); };
+        let Reply::Search {
+            hits, truncated, ..
+        } = search::execute_streaming(root, query(&include), &CancellationToken::new(), |batch| {
+            streamed.extend(batch);
+            Ok(())
+        })
+        .unwrap()
+        else {
+            panic!("search response");
+        };
         assert!(!truncated);
         streamed.extend(hits);
-        let mut remote: Vec<_> = streamed.into_iter()
+        let mut remote: Vec<_> = streamed
+            .into_iter()
             .map(|hit| hit.path.display().rsplit('/').next().unwrap().to_owned())
             .collect();
         remote.sort_unstable();
@@ -355,7 +379,11 @@ fn overlapping_root_check_keeps_case_distinct_sources_separate() {
     }
     let upper = write(root, "Sources/file.txt", "CoreProperty upper\n");
     let lower = write(root, "sources/file.txt", "CoreProperty lower\n");
-    let include = format!("{}, {}", upper.parent().unwrap().display(), lower.parent().unwrap().display());
+    let include = format!(
+        "{}, {}",
+        upper.parent().unwrap().display(),
+        lower.parent().unwrap().display()
+    );
     let paths = optimized_paths(root, &query(&include), &CancellationToken::new());
     assert_eq!(paths, [upper, lower].into_iter().collect());
 }
@@ -380,11 +408,18 @@ fn workspace_search_finds_existing_and_generated_files_without_implicit_exclusio
         }
         write(root.path(), ".gitignore", "build/\nnode_modules/\n");
         write(root.path(), ".ignore", "cache/\n");
-        let remote = use_remote.then(|| remote::workspace::Workspace::new(
-            remote::tests::connection(root.path(), Arc::default(), Arc::default()),
-        ));
-        let mut app = App::new_deferred(remote.as_ref()
-            .map_or_else(|| root.path().to_owned(), |remote| remote.view_root.clone()));
+        let remote = use_remote.then(|| {
+            remote::workspace::Workspace::new(remote::tests::connection(
+                root.path(),
+                Arc::default(),
+                Arc::default(),
+            ))
+        });
+        let mut app = App::new_deferred(
+            remote
+                .as_ref()
+                .map_or_else(|| root.path().to_owned(), |remote| remote.view_root.clone()),
+        );
         app.source_control_enabled = false;
         app.remote_workspace = remote.clone();
         app.global_search_query = "mysearch".into();
@@ -392,32 +427,61 @@ fn workspace_search_finds_existing_and_generated_files_without_implicit_exclusio
         app.settings_workspace.search_use_ignore_files = Some(true);
         app.settings_workspace.search_use_parent_ignore_files = Some(true);
         app.settings_workspace.search_use_global_ignore_files = Some(true);
-        app.settings_workspace.files_exclude.insert("**/cache".into(), serde_json::json!(true));
-        app.settings_workspace.search_exclude.insert("**/build".into(), serde_json::json!(true));
+        app.settings_workspace
+            .files_exclude
+            .insert("**/cache".into(), serde_json::json!(true));
+        app.settings_workspace
+            .search_exclude
+            .insert("**/build".into(), serde_json::json!(true));
         let search = |app: &mut App, expected: &[&str]| {
             app.update_global_search();
             app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
             assert!(!app.bg_global_search_running);
-            assert!(app.global_search_error.is_none(), "{:?}", app.global_search_error);
+            assert!(
+                app.global_search_error.is_none(),
+                "{:?}",
+                app.global_search_error
+            );
             assert!(!app.global_search_truncated);
-            let mut actual = app.global_search_results.iter().map(|hit| {
-                remote.as_ref().map_or_else(
-                    || hit.file_path.strip_prefix(root.path()).unwrap().to_string_lossy().replace('\\', "/"),
-                    |remote| remote.remote_path(&hit.file_path).unwrap().display(),
-                )
-            }).collect::<Vec<_>>();
+            let mut actual = app
+                .global_search_results
+                .iter()
+                .map(|hit| {
+                    remote.as_ref().map_or_else(
+                        || {
+                            hit.file_path
+                                .strip_prefix(root.path())
+                                .unwrap()
+                                .to_string_lossy()
+                                .replace('\\', "/")
+                        },
+                        |remote| remote.remote_path(&hit.file_path).unwrap().display(),
+                    )
+                })
+                .collect::<Vec<_>>();
             actual.sort();
             let mut expected = expected.to_vec();
             expected.sort();
-            assert_eq!(actual, expected, "remote={use_remote}, include={:?}", app.search_include_pattern);
+            assert_eq!(
+                actual, expected,
+                "remote={use_remote}, include={:?}",
+                app.search_include_pattern
+            );
         };
         search(&mut app, &[initial[1], initial[4]]);
         for pattern in ["**/cache", "**/build", "**/node_modules", "**/.git"] {
-            app.settings_workspace.search_exclude.insert(pattern.into(), serde_json::json!(false));
+            app.settings_workspace
+                .search_exclude
+                .insert(pattern.into(), serde_json::json!(false));
         }
         search(&mut app, &initial);
-        let generated = ["my/first/path/build/generated.txt", "my/new/path/build/generated.txt"];
-        for relative in generated { write(root.path(), relative, "mysearch generated\n"); }
+        let generated = [
+            "my/first/path/build/generated.txt",
+            "my/new/path/build/generated.txt",
+        ];
+        for relative in generated {
+            write(root.path(), relative, "mysearch generated\n");
+        }
         app.global_search_query = "no such match".into();
         search(&mut app, &[]);
         app.global_search_query = "mysearch".into();
@@ -427,8 +491,16 @@ fn workspace_search_finds_existing_and_generated_files_without_implicit_exclusio
         search(&mut app, &initial[1..]);
         app.search_exclude_pattern.clear();
         app.search_include_pattern.clear();
-        search(&mut app, &expected.into_iter().chain(["outside/existing.txt"]).collect::<Vec<_>>());
-        if let Some(remote) = remote { remote.client.call(remote::Command::Shutdown).unwrap(); }
+        search(
+            &mut app,
+            &expected
+                .into_iter()
+                .chain(["outside/existing.txt"])
+                .collect::<Vec<_>>(),
+        );
+        if let Some(remote) = remote {
+            remote.client.call(remote::Command::Shutdown).unwrap();
+        }
     }
 }
 
@@ -448,8 +520,9 @@ fn cached_include_plans_keep_file_discovery_and_sibling_checks_live_without_igno
     let hits = |request: &Query| {
         let mut current = query(&request.include);
         current.search_exclude = request.search_exclude.clone();
-        let Reply::Search { hits, truncated, .. } =
-            search::execute(workspace.path(), current, &CancellationToken::new()).unwrap()
+        let Reply::Search {
+            hits, truncated, ..
+        } = search::execute(workspace.path(), current, &CancellationToken::new()).unwrap()
         else {
             panic!("search response");
         };
@@ -513,7 +586,10 @@ fn workspace_search_skips_copy_staging_even_when_explicitly_included() {
     let staged = "src/.vtcode-copy-ABcd12345678/item/partial.cps";
     write(root, staged, "search text\n");
     for (include, expected) in [
-        (String::new(), BTreeSet::from([root.join("src/visible.cps")])),
+        (
+            String::new(),
+            BTreeSet::from([root.join("src/visible.cps")]),
+        ),
         (format!("./{staged}"), BTreeSet::new()),
     ] {
         assert_eq!(

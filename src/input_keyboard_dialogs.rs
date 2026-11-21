@@ -5,15 +5,23 @@ use crate::app::App;
 
 /// Handle source control commit message keyboard input.
 /// Returns `Some(false)` if handled, `None` if not applicable.
-pub(crate) fn handle_commit_input_key(app: &mut App, key: crossterm::event::KeyEvent) -> Option<bool> {
-    if app.current_git_operation().is_some() { app.source_control_input_mode = false; return None; }
+pub(crate) fn handle_commit_input_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+) -> Option<bool> {
+    if app.current_git_operation().is_some() {
+        app.source_control_input_mode = false;
+        return None;
+    }
     if !app.source_control_has_focus() || !app.source_control_input_mode {
         return None;
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let shift = key.modifiers.contains(KeyModifiers::SHIFT);
     match key.code {
-        KeyCode::Esc => { app.source_control_input_mode = false; }
+        KeyCode::Esc => {
+            app.source_control_input_mode = false;
+        }
         KeyCode::Tab | KeyCode::BackTab => {
             app.source_control_input_mode = false;
             app.sc_graph_focused = key.code == KeyCode::BackTab || shift;
@@ -35,7 +43,10 @@ pub(crate) fn handle_commit_input_key(app: &mut App, key: crossterm::event::KeyE
 
 /// Commit tabs own their browsing keys while workbench shortcuts still run.
 /// Returns `Some(false)` if handled, `None` if not applicable.
-pub(crate) fn handle_commit_details_key(app: &mut App, key: crossterm::event::KeyEvent) -> Option<bool> {
+pub(crate) fn handle_commit_details_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+) -> Option<bool> {
     if !crate::ui_commit_details::owns_key(app, key) {
         return None;
     }
@@ -50,15 +61,14 @@ pub(crate) fn handle_rename_key(app: &mut App, key: crossterm::event::KeyEvent) 
         return None;
     }
     match key.code {
-        KeyCode::Esc => { app.cancel_rename(); }
-        KeyCode::Enter => { app.execute_rename(); }
+        KeyCode::Esc => {
+            app.cancel_rename();
+        }
+        KeyCode::Enter => {
+            app.execute_rename();
+        }
         _ => {
-            app.edit_text_input(
-                TextInputId::ExplorerRename,
-                key.code,
-                key.modifiers,
-                None,
-            );
+            app.edit_text_input(TextInputId::ExplorerRename, key.code, key.modifiers, None);
         }
     }
     Some(false)
@@ -71,15 +81,14 @@ pub(crate) fn handle_save_as_key(app: &mut App, key: crossterm::event::KeyEvent)
         return None;
     }
     match key.code {
-        KeyCode::Esc => { app.save_as_active = false; }
-        KeyCode::Enter => { app.execute_save_as(); }
+        KeyCode::Esc => {
+            app.save_as_active = false;
+        }
+        KeyCode::Enter => {
+            app.execute_save_as();
+        }
         _ => {
-            app.edit_text_input(
-                TextInputId::SaveAs,
-                key.code,
-                key.modifiers,
-                None,
-            );
+            app.edit_text_input(TextInputId::SaveAs, key.code, key.modifiers, None);
         }
     }
     Some(false)
@@ -87,20 +96,22 @@ pub(crate) fn handle_save_as_key(app: &mut App, key: crossterm::event::KeyEvent)
 
 /// Handle rename-symbol dialog keyboard input.
 /// Returns `Some(false)` if handled, `None` if not applicable.
-pub(crate) fn handle_rename_symbol_key(app: &mut App, key: crossterm::event::KeyEvent) -> Option<bool> {
+pub(crate) fn handle_rename_symbol_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+) -> Option<bool> {
     if !app.rename.symbol_active {
         return None;
     }
     match key.code {
-        KeyCode::Esc => { app.rename.symbol_active = false; }
-        KeyCode::Enter => { app.execute_rename_symbol(); }
+        KeyCode::Esc => {
+            app.rename.symbol_active = false;
+        }
+        KeyCode::Enter => {
+            app.execute_rename_symbol();
+        }
         _ => {
-            app.edit_text_input(
-                TextInputId::RenameSymbol,
-                key.code,
-                key.modifiers,
-                None,
-            );
+            app.edit_text_input(TextInputId::RenameSymbol, key.code, key.modifiers, None);
         }
     }
     Some(false)
@@ -108,7 +119,10 @@ pub(crate) fn handle_rename_symbol_key(app: &mut App, key: crossterm::event::Key
 
 /// Handle binary open prompt keyboard input.
 /// Returns `Some(false)` if handled, `None` if not applicable.
-pub(crate) fn handle_binary_open_prompt_key(app: &mut App, key: crossterm::event::KeyEvent) -> Option<bool> {
+pub(crate) fn handle_binary_open_prompt_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+) -> Option<bool> {
     if !app.binary_open_prompt_active {
         return None;
     }
@@ -144,7 +158,10 @@ pub(crate) fn handle_binary_open_prompt_key(app: &mut App, key: crossterm::event
 
 /// Handle delete confirmation dialog keyboard input.
 /// Returns `Some(false)` if handled, `None` if not applicable.
-pub(crate) fn handle_confirm_delete_key(app: &mut App, key: crossterm::event::KeyEvent) -> Option<bool> {
+pub(crate) fn handle_confirm_delete_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+) -> Option<bool> {
     if !app.confirm_delete_active {
         return None;
     }
@@ -160,7 +177,10 @@ pub(crate) fn handle_confirm_delete_key(app: &mut App, key: crossterm::event::Ke
 }
 
 /// Handle drag-and-drop move confirmation dialog keyboard input.
-pub(crate) fn handle_confirm_move_key(app: &mut App, key: crossterm::event::KeyEvent) -> Option<bool> {
+pub(crate) fn handle_confirm_move_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+) -> Option<bool> {
     if !app.confirm_move_active {
         return None;
     }
@@ -405,7 +425,9 @@ mod tests {
         app.active_pane = crate::app::ActivePane::Editor;
         app.commit_details.active = true;
         app.commit_details.selected = 2;
-        app.commit_details.data.files = (0..3).map(|i| crate::commit_details::CommitFile::new('M', format!("{i}.rs"))).collect();
+        app.commit_details.data.files = (0..3)
+            .map(|i| crate::commit_details::CommitFile::new('M', format!("{i}.rs")))
+            .collect();
         app.commit_details.loading = true;
         handle_commit_details_key(&mut app, key(KeyCode::Up));
         assert_eq!(app.commit_details.selected, 1);

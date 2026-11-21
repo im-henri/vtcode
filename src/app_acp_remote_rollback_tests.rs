@@ -47,8 +47,15 @@ fn wait_agent(app: &mut App, condition: impl Fn(&App) -> bool) {
     loop {
         app.poll_acp();
         app.poll_background_results();
-        if condition(app) { return; }
-        assert!(Instant::now() < deadline, "No progress: status={}, error={:?}", app.chat.status, app.chat.error);
+        if condition(app) {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "No progress: status={}, error={:?}",
+            app.chat.status,
+            app.chat.error
+        );
         std::thread::sleep(Duration::from_millis(2));
     }
 }
@@ -56,14 +63,18 @@ fn connect_agent(app: &mut App) {
     app.settings_effective.acp_agents = Some(vec![remote::agent::test_config()]);
     app.focus_chat();
     app.chat_action(ChatAction::Connect(0));
-    wait_agent(app, |app| app.chat.selected.is_some() && !app.chat.control_busy && !app.chat.rollback.busy());
+    wait_agent(app, |app| {
+        app.chat.selected.is_some() && !app.chat.control_busy && !app.chat.rollback.busy()
+    });
     assert!(app.chat.error.is_none(), "{:?}", app.chat.error);
 }
 fn send_agent(app: &mut App, text: &str) {
     app.chat.input = text.into();
     app.chat.cursor = text.len();
     app.chat_action(ChatAction::Send);
-    wait_agent(app, |app| !app.chat.busy() && !app.chat.rollback.busy() && !app.background.has_active_jobs());
+    wait_agent(app, |app| {
+        !app.chat.busy() && !app.chat.rollback.busy() && !app.background.has_active_jobs()
+    });
     assert!(app.chat.error.is_none(), "{:?}", app.chat.error);
 }
 
@@ -87,7 +98,10 @@ fn remote_first_prompt_and_file_edits_work_with_a_tracked_linked_agent_config() 
     {
         let output = std::process::Command::new("cmd.exe")
             .args(["/d", "/c", "mklink", "/J"])
-            .arg(&config).arg(outside.path()).output().unwrap();
+            .arg(&config)
+            .arg(outside.path())
+            .output()
+            .unwrap();
         assert!(output.status.success(), "{output:?}");
     }
     #[cfg(unix)]
@@ -96,17 +110,47 @@ fn remote_first_prompt_and_file_edits_work_with_a_tracked_linked_agent_config() 
 
     connect_agent(&mut app);
     send_agent(&mut app, "hello");
-    assert!(app.chat.session().unwrap().entries.iter().any(|entry|
-        matches!(entry, ChatEntry::Agent(text) if text.contains("echo:5:hello"))));
+    assert!(
+        app.chat
+            .session()
+            .unwrap()
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, ChatEntry::Agent(text) if text.contains("echo:5:hello")))
+    );
     send_agent(&mut app, "write");
-    assert!(app.chat.session().unwrap().entries.iter().any(|entry|
-        matches!(entry, ChatEntry::Agent(text) if text.contains("write-ok"))));
-    assert_eq!(std::fs::read_to_string(root.path().join("agent.txt")).unwrap(), "node edit λ\nsecond\n");
+    assert!(
+        app.chat
+            .session()
+            .unwrap()
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, ChatEntry::Agent(text) if text.contains("write-ok")))
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("agent.txt")).unwrap(),
+        "node edit λ\nsecond\n"
+    );
     let session = app.chat.session().unwrap();
     assert_eq!(session.checkpoints.len(), 2);
-    assert!(session.rollback.edits.iter().any(|edit| edit.path == Path::new("agent.txt")));
-    assert!(!session.rollback.edits.iter().any(|edit| edit.path.starts_with(".claude")));
-    assert_eq!(std::fs::read_to_string(outside.path().join("settings.json")).unwrap(), "external config\n");
+    assert!(
+        session
+            .rollback
+            .edits
+            .iter()
+            .any(|edit| edit.path == Path::new("agent.txt"))
+    );
+    assert!(
+        !session
+            .rollback
+            .edits
+            .iter()
+            .any(|edit| edit.path.starts_with(".claude"))
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.path().join("settings.json")).unwrap(),
+        "external config\n"
+    );
     drop(app);
     workspace.client.call(remote::Command::Shutdown).unwrap();
     #[cfg(windows)]
@@ -122,7 +166,9 @@ fn remote_agent_uses_unsaved_buffers_in_hidden_desks_and_writes_reload_with_undo
     std::fs::write(root.path().join("agent.txt"), "disk one\ndisk two\n").unwrap();
     let path = workspace.target_key("agent.txt").unwrap();
     app.open_file(&path);
-    app.wait_for_background(Duration::from_secs(10), |app| app.editor().is_some_and(|editor| !editor.bg_loading));
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.editor().is_some_and(|editor| !editor.bg_loading)
+    });
     app.editor_mut().unwrap().cursor_line = 1;
     app.editor_mut().unwrap().cursor_col = 0;
     app.editor_mut().unwrap().paste_with_text("unsaved ");
@@ -131,13 +177,33 @@ fn remote_agent_uses_unsaved_buffers_in_hidden_desks_and_writes_reload_with_undo
     app.new_desk("Other", false);
     connect_agent(&mut app);
     send_agent(&mut app, "read");
-    assert!(app.chat.session().unwrap().entries.iter().any(|entry| matches!(entry, ChatEntry::Agent(text) if text.contains("unsaved disk two"))));
+    assert!(
+        app.chat.session().unwrap().entries.iter().any(
+            |entry| matches!(entry, ChatEntry::Agent(text) if text.contains("unsaved disk two"))
+        )
+    );
     send_agent(&mut app, "write");
-    assert!(app.chat.session().unwrap().entries.iter().any(|entry| matches!(entry, ChatEntry::Agent(text) if text.contains("write-denied"))));
+    assert!(
+        app.chat
+            .session()
+            .unwrap()
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, ChatEntry::Agent(text) if text.contains("write-denied")))
+    );
     send_agent(&mut app, "write-burst");
-    assert!(app.chat.session().unwrap().entries.iter().any(|entry| matches!(entry, ChatEntry::Agent(text) if text.contains("all-64-replies-received"))));
-    assert!(!app.chat.session().unwrap().entries.iter().any(|entry| matches!(entry, ChatEntry::Agent(text) if text.contains("unexpected-write"))));
-    assert_eq!(std::fs::read_to_string(root.path().join("agent.txt")).unwrap(), "disk one\ndisk two\n");
+    assert!(app.chat.session().unwrap().entries.iter().any(
+        |entry| matches!(entry, ChatEntry::Agent(text) if text.contains("all-64-replies-received"))
+    ));
+    assert!(
+        !app.chat.session().unwrap().entries.iter().any(
+            |entry| matches!(entry, ChatEntry::Agent(text) if text.contains("unexpected-write"))
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("agent.txt")).unwrap(),
+        "disk one\ndisk two\n"
+    );
     let session = app.chat.selected.clone();
     app.switch_desk(main);
     app.chat.selected = session;
@@ -145,10 +211,16 @@ fn remote_agent_uses_unsaved_buffers_in_hidden_desks_and_writes_reload_with_undo
     app.editor_mut().unwrap().undo();
     assert!(!app.editor().unwrap().modified);
     send_agent(&mut app, "write");
-    wait_agent(&mut app, |app| app.editor().is_some_and(|editor| editor.rope.to_string() == "node edit λ\nsecond\n"));
+    wait_agent(&mut app, |app| {
+        app.editor()
+            .is_some_and(|editor| editor.rope.to_string() == "node edit λ\nsecond\n")
+    });
     assert!(!app.editor().unwrap().modified);
     app.editor_mut().unwrap().undo();
-    assert_eq!(app.editor().unwrap().rope.to_string(), "disk one\ndisk two\n");
+    assert_eq!(
+        app.editor().unwrap().rope.to_string(),
+        "disk one\ndisk two\n"
+    );
     assert!(app.editor().unwrap().modified);
     app.editor_mut().unwrap().redo();
     assert!(!app.editor().unwrap().modified);
@@ -166,17 +238,31 @@ fn remote_agent_revalidates_retargeted_aliases_before_reading_or_writing_buffers
     std::os::unix::fs::symlink("other.txt", root.path().join("alias.txt")).unwrap();
     let path = workspace.target_key("alias.txt").unwrap();
     app.open_file(&path);
-    app.wait_for_background(Duration::from_secs(10), |app| app.editor().is_some_and(|editor| !editor.bg_loading));
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.editor().is_some_and(|editor| !editor.bg_loading)
+    });
     app.editor_mut().unwrap().cursor_line = 1;
     app.editor_mut().unwrap().paste_with_text("unsaved ");
     std::fs::remove_file(root.path().join("alias.txt")).unwrap();
     std::os::unix::fs::symlink("agent.txt", root.path().join("alias.txt")).unwrap();
     connect_agent(&mut app);
     send_agent(&mut app, "read");
-    assert!(app.chat.session().unwrap().entries.iter().any(|entry| matches!(entry, ChatEntry::Agent(text) if text.contains("unsaved other two"))));
+    assert!(app.chat.session().unwrap().entries.iter().any(
+        |entry| matches!(entry, ChatEntry::Agent(text) if text.contains("unsaved other two"))
+    ));
     send_agent(&mut app, "write");
-    assert_eq!(std::fs::read_to_string(root.path().join("agent.txt")).unwrap(), "disk one\ndisk two\n");
-    assert!(app.chat.session().unwrap().entries.iter().any(|entry| matches!(entry, ChatEntry::Agent(text) if text.contains("write-denied"))));
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("agent.txt")).unwrap(),
+        "disk one\ndisk two\n"
+    );
+    assert!(
+        app.chat
+            .session()
+            .unwrap()
+            .entries
+            .iter()
+            .any(|entry| matches!(entry, ChatEntry::Agent(text) if text.contains("write-denied")))
+    );
     drop(app);
     workspace.client.call(remote::Command::Shutdown).unwrap();
 }

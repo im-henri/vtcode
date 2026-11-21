@@ -72,7 +72,9 @@ pub(crate) const TEMP_DIR_PREFIX: &str = ".vtcode-format-";
 
 pub(crate) fn is_temporary_path(path: &Path) -> bool {
     path.components().any(|part| {
-        part.as_os_str().to_str().is_some_and(|name| name.starts_with(TEMP_DIR_PREFIX))
+        part.as_os_str()
+            .to_str()
+            .is_some_and(|name| name.starts_with(TEMP_DIR_PREFIX))
     })
 }
 
@@ -186,15 +188,29 @@ pub(crate) fn run_output_tracked(
     // beneath its parent so formatters can discover project configuration.
     // No open handle is retained: tools may replace their input atomically.
     let temporary = if has_file_argument(config) {
-        let parent = std::path::absolute(path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(root))
-            .map_err(|error| format!("Could not resolve the document folder: {error}"))?;
-        let directory = tempfile::Builder::new().prefix(TEMP_DIR_PREFIX).tempdir_in(&parent)
-            .map_err(|error| format!("Could not create a formatter working copy beside {}: {error}", path.display()))?;
-        let copy = directory.path().join(path.file_name().ok_or("The document has no filename.")?);
+        let parent = std::path::absolute(
+            path.parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(root),
+        )
+        .map_err(|error| format!("Could not resolve the document folder: {error}"))?;
+        let directory = tempfile::Builder::new()
+            .prefix(TEMP_DIR_PREFIX)
+            .tempdir_in(&parent)
+            .map_err(|error| {
+                format!(
+                    "Could not create a formatter working copy beside {}: {error}",
+                    path.display()
+                )
+            })?;
+        let copy = directory
+            .path()
+            .join(path.file_name().ok_or("The document has no filename.")?);
         let file = std::fs::File::create(&copy)
             .map_err(|error| format!("Could not create the formatter working copy: {error}"))?;
-        write_source(source, file)
-            .map_err(|error| format!("Could not write the current document for formatting: {error}"))?;
+        write_source(source, file).map_err(|error| {
+            format!("Could not write the current document for formatting: {error}")
+        })?;
         Some((directory, copy))
     } else {
         None
@@ -225,13 +241,19 @@ pub(crate) fn run_output_tracked(
         command.arg(expanded);
     }
     command
-        .stdin(if config.mode == CommandMode::Stdin { Stdio::piped() } else { Stdio::null() })
+        .stdin(if config.mode == CommandMode::Stdin {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     vtcode::acp::without_controlling_terminal(&mut command);
     let mut process = vtcode::acp::LocalProcess::spawn(&mut command)
         .map_err(|error| format!("Could not start {program}: {error}. Install it or change its executable in Formatter settings."))?;
-    if let Some(started) = started { started(process.killer()); }
+    if let Some(started) = started {
+        started(process.killer());
+    }
     let stdin = process.child.stdin.take();
     let stdout = process.child.stdout.take().unwrap();
     let stderr = process.child.stderr.take().unwrap();
@@ -255,7 +277,10 @@ pub(crate) fn run_output_tracked(
                 break Err("Formatter output exceeded the size limit.".into());
             }
             if start.elapsed() >= timeout {
-                break Err(format!("The formatter did not finish within {} seconds.", timeout.as_secs_f64()));
+                break Err(format!(
+                    "The formatter did not finish within {} seconds.",
+                    timeout.as_secs_f64()
+                ));
             }
             match process.try_wait() {
                 Ok(Some(status)) => break Ok(status),
@@ -265,8 +290,12 @@ pub(crate) fn run_output_tracked(
         };
         // Also close pipes held by descendants before joining the reader threads.
         process.kill();
-        let written = writer.map(|writer| writer.join()
-            .map_err(|_| "Formatter input writer failed".to_string()))
+        let written = writer
+            .map(|writer| {
+                writer
+                    .join()
+                    .map_err(|_| "Formatter input writer failed".to_string())
+            })
             .transpose()?;
         let output = output
             .join()
@@ -277,7 +306,9 @@ pub(crate) fn run_output_tracked(
             .map_err(|_| "Formatter error reader failed".to_string())?
             .map_err(|error| error.to_string())?;
         let status = status?;
-        if status.success() && let Some(written) = written {
+        if status.success()
+            && let Some(written) = written
+        {
             written.map_err(|error| {
                 format!("Could not send the document to the formatter: {error}")
             })?;

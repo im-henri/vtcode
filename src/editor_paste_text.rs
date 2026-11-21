@@ -100,8 +100,8 @@ mod tests {
             format!("    {}\r\n    tail\r", "界🙂é".repeat(5000)),
         ] {
             for line_copy in [false, true] {
-                let result = prepare(&body, line_copy)
-                    .map_or_else(|| body.clone(), |rope| rope.to_string());
+                let result =
+                    prepare(&body, line_copy).map_or_else(|| body.clone(), |rope| rope.to_string());
                 assert_eq!(result, reference(&body, line_copy));
             }
         }

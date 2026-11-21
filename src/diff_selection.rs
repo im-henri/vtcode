@@ -92,9 +92,15 @@ impl<'a> SourceLine<'a> {
     }
 
     fn window(&self, domain: Domain, geometry: Geometry, display: Row) -> (&'a str, usize, usize) {
-        self.row.map_or(("", geometry.pan, 0), |row| display.window(
-            row, self.original, domain != Domain::Inline, geometry.pan, geometry.area.width as usize,
-        ))
+        self.row.map_or(("", geometry.pan, 0), |row| {
+            display.window(
+                row,
+                self.original,
+                domain != Domain::Inline,
+                geometry.pan,
+                geometry.area.width as usize,
+            )
+        })
     }
 }
 
@@ -123,9 +129,17 @@ pub(crate) struct DiffSelection {
 impl DiffSelection {
     pub(crate) fn copy_animation_key(&self) -> Option<(usize, u8, usize, usize, usize, usize)> {
         let focus = self.focus?;
-        if self.anchor == self.cursor { return None; }
-        Some((self.cache.as_ptr() as usize, focus as u8,
-            self.anchor.row, self.anchor.column, self.cursor.row, self.cursor.column))
+        if self.anchor == self.cursor {
+            return None;
+        }
+        Some((
+            self.cache.as_ptr() as usize,
+            focus as u8,
+            self.anchor.row,
+            self.anchor.column,
+            self.cursor.row,
+            self.cursor.column,
+        ))
     }
 
     pub(crate) fn cancel_drag(&mut self) {
@@ -178,7 +192,9 @@ impl DiffSelection {
         };
         let code = app.code_area.unwrap_or_default();
         let target_inset = if aligned && !app.compare_diff_lines.is_empty() {
-            app.diff_render_cache.change_marker_width().min(code.width as usize) as u16
+            app.diff_render_cache
+                .change_marker_width()
+                .min(code.width as usize) as u16
         } else {
             0
         };
@@ -342,15 +358,27 @@ impl DiffSelection {
     }
 
     fn visible_line<'a>(
-        &self, cache: &'a DiffRenderCache, wrap: &Layout, domain: Domain, visual: usize,
+        &self,
+        cache: &'a DiffRenderCache,
+        wrap: &Layout,
+        domain: Domain,
+        visual: usize,
     ) -> Option<(Row, SourceLine<'a>)> {
         let display = wrap.row_at(visual);
         let line = self.line(cache, domain, display.logical)?;
         (!display.padding(line.original)).then_some((display, line))
     }
 
-    fn visual_row(&self, cache: &DiffRenderCache, wrap: &Layout, domain: Domain, position: Position) -> usize {
-        let original = self.line(cache, domain, position.row).is_some_and(|line| line.original);
+    fn visual_row(
+        &self,
+        cache: &DiffRenderCache,
+        wrap: &Layout,
+        domain: Domain,
+        position: Position,
+    ) -> usize {
+        let original = self
+            .line(cache, domain, position.row)
+            .is_some_and(|line| line.original);
         wrap.row_for_column(position.row, original, position.column)
     }
 
@@ -800,58 +828,104 @@ impl App {
             let display = wrap.row_at(geometry.first + screen as usize);
             let entry = cache.inline_rows.get(display.logical)?;
             let original = entry.kind == '-';
-            let number_width = crate::ui_diff_display::inline_number_width(cache, self.editor()?.line_count()) as u16;
+            let number_width =
+                crate::ui_diff_display::inline_number_width(cache, self.editor()?.line_count())
+                    as u16;
             let slot = number_width + 1;
             let start = self.diff_inline_scroll.area.x + if original { slot } else { 0 };
             if display.continuation != 0 || !(start..start + slot).contains(&col) {
                 return None;
             }
             let row = &cache.rows[entry.aligned_row];
-            let id = if original { row.left_move } else if entry.kind == '+' { row.right_move } else { None };
+            let id = if original {
+                row.left_move
+            } else if entry.kind == '+' {
+                row.right_move
+            } else {
+                None
+            };
             return id.map(|id| (id, original));
         }
         for (original, geometry) in [(true, state.original), (false, state.target)] {
             let area = geometry.area;
-            let marker = Rect::new(area.x.saturating_sub(marker_width), area.y, marker_width, area.height);
-            let target_gutter = !original && self.gutter_area.is_some_and(|gutter| {
-                col == gutter.x && gutter.contains((col, row).into())
-            });
+            let marker = Rect::new(
+                area.x.saturating_sub(marker_width),
+                area.y,
+                marker_width,
+                area.height,
+            );
+            let target_gutter = !original
+                && self
+                    .gutter_area
+                    .is_some_and(|gutter| col == gutter.x && gutter.contains((col, row).into()));
             if area.is_empty() || !marker.contains((col, row).into()) && !target_gutter {
                 continue;
             }
             let display = wrap.row_at(geometry.first + (row - area.y) as usize);
-            if display.continuation > 0 { return None; }
+            if display.continuation > 0 {
+                return None;
+            }
             let row = cache.rows.get(display.logical)?;
-            let id = if original { row.left_move } else { row.right_move };
+            let id = if original {
+                row.left_move
+            } else {
+                row.right_move
+            };
             return id.map(|id| (id, original));
         }
         None
     }
 
     pub(crate) fn move_at_diff_cursor(&self) -> Option<(MoveId, bool)> {
-        if !self.should_render_diff_for_active_editor() { return None; }
+        if !self.should_render_diff_for_active_editor() {
+            return None;
+        }
         let cache = &self.diff_render_cache;
         let state = &self.diff_selection;
-        if state.fresh(self) && let Some(domain) = state.focus {
+        if state.fresh(self)
+            && let Some(domain) = state.focus
+        {
             let line = state.line(cache, domain, state.cursor.row)?;
             let row = line.row?;
-            let id = if line.original { row.left_move } else { row.right_move };
+            let id = if line.original {
+                row.left_move
+            } else {
+                row.right_move
+            };
             return id.map(|id| (id, line.original));
         }
         let line = self.editor()?.cursor_line;
         let row = cache.rows.get(cache.aligned_row_for_target_line(line))?;
-        row.right_move.filter(|_| row.right_line == Some(line)).map(|id| (id, false))
+        row.right_move
+            .filter(|_| row.right_line == Some(line))
+            .map(|id| (id, false))
     }
 
     pub(crate) fn follow_diff_move(&mut self, id: MoveId, from_original: bool) -> bool {
-        if !self.should_render_diff_for_active_editor() { return false; }
+        if !self.should_render_diff_for_active_editor() {
+            return false;
+        }
         let original = !from_original;
-        let Some(end) = self.diff_render_cache.move_block(id).and_then(|block| block.end(original)) else {
+        let Some(end) = self
+            .diff_render_cache
+            .move_block(id)
+            .and_then(|block| block.end(original))
+        else {
             return false;
         };
         let aligned = self.diff_mode == DiffMode::SideBySide;
-        let domain = if !aligned { Domain::Inline } else if original { Domain::Original } else { Domain::Target };
-        let row = if aligned { end.aligned_row } else { end.inline_row };
+        let domain = if !aligned {
+            Domain::Inline
+        } else if original {
+            Domain::Original
+        } else {
+            Domain::Target
+        };
+        let row = if aligned {
+            end.aligned_row
+        } else {
+            end.inline_row
+        };
         let visual = self.diff_inline_scroll.wrap.first_row(row);
         let mut state = std::mem::take(&mut self.diff_selection);
         state.refresh(self, aligned);
@@ -876,11 +950,16 @@ impl App {
         }
         self.diff_inline_scroll = scroll;
         if self.is_commit_details_tab()
-            && let Some(card) = self.commit_details.review.visible.iter()
+            && let Some(card) = self
+                .commit_details
+                .review
+                .visible
+                .iter()
                 .find(|card| Some(card.file) == self.commit_details.diff_file)
         {
             if !(card.first_row..card.first_row + usize::from(card.body.height)).contains(&visual) {
-                self.commit_details.review.scroll = card.start.saturating_add(visual.saturating_sub(2));
+                self.commit_details.review.scroll =
+                    card.start.saturating_add(visual.saturating_sub(2));
                 self.commit_details.review.reveal = false;
             }
             self.commit_details.review.caret = None;
@@ -1082,7 +1161,14 @@ impl App {
         } else {
             Domain::Target
         };
-        let Some(position) = state.hit(&self.diff_render_cache, &self.diff_inline_scroll.wrap, domain, col, row, false) else {
+        let Some(position) = state.hit(
+            &self.diff_render_cache,
+            &self.diff_inline_scroll.wrap,
+            domain,
+            col,
+            row,
+            false,
+        ) else {
             let consumed = state.geometry(domain).area.contains((col, row).into());
             if consumed {
                 // A spacer/omitted-context-only viewport has no source
@@ -1191,7 +1277,14 @@ impl App {
             }
             state.refresh(self, domain != Domain::Inline);
         }
-        if let Some(position) = state.hit(&self.diff_render_cache, &self.diff_inline_scroll.wrap, domain, col, row, true) {
+        if let Some(position) = state.hit(
+            &self.diff_render_cache,
+            &self.diff_inline_scroll.wrap,
+            domain,
+            col,
+            row,
+            true,
+        ) {
             state.drag_position(&self.diff_render_cache, domain, position);
             state.sync_target(self);
         }
@@ -1344,9 +1437,12 @@ impl App {
             KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
                 let wrap = &self.diff_inline_scroll.wrap;
                 let mut visual = state.visual_row(cache, wrap, domain, cursor);
-                let desired = state.desired.unwrap_or_else(|| line.row.map_or(0, |row| {
-                    wrap.row_at(visual).cell_column(row, line.original, cursor.column)
-                }));
+                let desired = state.desired.unwrap_or_else(|| {
+                    line.row.map_or(0, |row| {
+                        wrap.row_at(visual)
+                            .cell_column(row, line.original, cursor.column)
+                    })
+                });
                 let count = if matches!(key, KeyCode::PageUp | KeyCode::PageDown) {
                     state.geometry(domain).area.height.max(1) as usize
                 } else {
@@ -1355,7 +1451,8 @@ impl App {
                 let down = matches!(key, KeyCode::Down | KeyCode::PageDown);
                 for _ in 0..count {
                     let neighbor = visual.saturating_add_signed(if down { 1 } else { -1 });
-                    if neighbor != visual && wrap.row_at(neighbor).logical == cursor.row
+                    if neighbor != visual
+                        && wrap.row_at(neighbor).logical == cursor.row
                         && state.visible_line(cache, wrap, domain, neighbor).is_some()
                     {
                         visual = neighbor;
@@ -1367,7 +1464,10 @@ impl App {
                         break;
                     }
                     cursor.column = state.line(cache, domain, cursor.row).map_or(0, |line| {
-                        line.row.map_or(0, |row| wrap.row_at(visual).column_at_cell(row, line.original, desired))
+                        line.row.map_or(0, |row| {
+                            wrap.row_at(visual)
+                                .column_at_cell(row, line.original, desired)
+                        })
                     });
                 }
                 state.desired = Some(desired);
@@ -1543,7 +1643,9 @@ mod tests {
         let state = DiffSelection::default();
         for cache in [full.clone(), full.with_context(0), full.with_context(1)] {
             for line in 1..=2 {
-                let position = state.source_position(&cache, Domain::Inline, line, 3).unwrap();
+                let position = state
+                    .source_position(&cache, Domain::Inline, line, 3)
+                    .unwrap();
                 let selected = state.line(&cache, Domain::Inline, position.row).unwrap();
                 assert_eq!(selected.source, Some(line));
                 assert!(!selected.original);
@@ -1602,14 +1704,32 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            state.hit(&cache, &Layout::default(), Domain::Target, 10, 2 + row as u16, false),
+            state.hit(
+                &cache,
+                &Layout::default(),
+                Domain::Target,
+                10,
+                2 + row as u16,
+                false
+            ),
             Some(Position { row, column: 1 })
         );
         assert_eq!(
-            state.hit(&cache, &Layout::default(), Domain::Target, 11, 2 + row as u16, false),
+            state.hit(
+                &cache,
+                &Layout::default(),
+                Domain::Target,
+                11,
+                2 + row as u16,
+                false
+            ),
             Some(Position { row, column: 3 })
         );
-        assert!(state.hit(&cache, &Layout::default(), Domain::Target, 7, 2, false).is_none());
+        assert!(
+            state
+                .hit(&cache, &Layout::default(), Domain::Target, 7, 2, false)
+                .is_none()
+        );
     }
 
     #[test]
@@ -1664,7 +1784,10 @@ mod tests {
                         Some(Position { row, column: 3 })
                     );
                     assert_eq!(line.chars(2, 1), "b");
-                    assert_eq!(caret_column(&line, domain, geometry, Row::default(), 2), Some((1, 1)));
+                    assert_eq!(
+                        caret_column(&line, domain, geometry, Row::default(), 2),
+                        Some((1, 1))
+                    );
                 }
             }
             let only_control =
@@ -1802,8 +1925,12 @@ mod tests {
 
     #[test]
     fn indexed_cell_to_source_columns_keep_wide_and_combining_graphemes_intact() {
-        for text in ["".to_owned(), "ascii".repeat(300), "\t\u{7}".repeat(300),
-            "界e\u{301}\tz\u{7}👩‍💻 ".repeat(180)] {
+        for text in [
+            "".to_owned(),
+            "ascii".repeat(300),
+            "\t\u{7}".repeat(300),
+            "界e\u{301}\tz\u{7}👩‍💻 ".repeat(180),
+        ] {
             let cache = DiffRenderCache::new(&[(' ', text.clone())]);
             let row = &cache.rows[0];
             let mut source = 0;

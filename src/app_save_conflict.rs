@@ -218,7 +218,10 @@ impl App {
                         encoding,
                         missing,
                         diff: PreparedDiffRefresh::new(
-                            disk_text, &source.to_string(), source.len_lines(), algorithm,
+                            disk_text,
+                            &source.to_string(),
+                            source.len_lines(),
+                            algorithm,
                         ),
                     })
                 })()
@@ -296,7 +299,12 @@ impl App {
             "{} (Save conflict)",
             crate::remote::workspace::display_name(&result.target.path)
                 .map(std::borrow::Cow::Owned)
-                .unwrap_or_else(|| result.target.path.file_name().unwrap_or_default().to_string_lossy())
+                .unwrap_or_else(|| result
+                    .target
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy())
         ));
         self.diff_mode = self.preferred_diff_mode;
         self.apply_prepared_compare_diff(

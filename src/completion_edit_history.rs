@@ -69,7 +69,9 @@ fn code_at(rope: &Rope, at: usize, cancelled: &impl Fn() -> bool) -> Option<bool
     let start = start.max(at.saturating_sub(48 * 1024));
     let mut analyzer = Analyzer::at(start);
     for text in rope.slice(start..at).chunks() {
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         analyzer.feed(text, |_| {});
     }
     analyzer.flush(|_| {});
@@ -293,7 +295,11 @@ impl Cache {
         };
         let document = &mut self.documents[index];
         document.used = self.clock;
-        let (old, new) = crate::rope_changes::changed_chars_cancellable(&document.rope, &snapshot.rope, cancelled)?;
+        let (old, new) = crate::rope_changes::changed_chars_cancellable(
+            &document.rope,
+            &snapshot.rope,
+            cancelled,
+        )?;
         if cancelled() {
             return None;
         }

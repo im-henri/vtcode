@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use lsp_types::*;
 use serde_json::Value;
@@ -21,14 +21,21 @@ pub(crate) fn markup_content_to_string(mc: MarkedString) -> String {
 }
 
 impl LspClient {
-    pub(crate) fn reader_loop_mapped(stdout: Box<dyn std::io::Read + Send>, tx: mpsc::Sender<LspEvent>, pending_requests: Arc<Mutex<HashMap<i64, PendingRequest>>>, wake: crate::background::UiWake,
-        remote: Option<crate::remote::workspace::Workspace>) {
+    pub(crate) fn reader_loop_mapped(
+        stdout: Box<dyn std::io::Read + Send>,
+        tx: mpsc::Sender<LspEvent>,
+        pending_requests: Arc<Mutex<HashMap<i64, PendingRequest>>>,
+        wake: crate::background::UiWake,
+        remote: Option<crate::remote::workspace::Workspace>,
+    ) {
         let mut reader = BufReader::new(stdout);
         loop {
             match Self::read_message(&mut reader) {
                 Ok(Some(msg)) => {
                     let event = serde_json::from_str(&msg).ok().and_then(|mut message| {
-                        if let Some(remote) = &remote { remote.rewrite_lsp(&mut message, false); }
+                        if let Some(remote) = &remote {
+                            remote.rewrite_lsp(&mut message, false);
+                        }
                         Self::parse_value(message, &pending_requests)
                     });
                     if let Some(event) = event {
@@ -64,14 +71,18 @@ impl LspClient {
         // Read headers
         loop {
             let mut header = String::new();
-            match std::io::Read::take(&mut *reader,(MAX_HEADERS - header_bytes + 1) as u64).read_line(&mut header) {
+            match std::io::Read::take(&mut *reader, (MAX_HEADERS - header_bytes + 1) as u64)
+                .read_line(&mut header)
+            {
                 Ok(0) if header_bytes == 0 => return Ok(None),
                 Ok(0) => return Err("Truncated LSP headers".into()),
                 Err(e) => return Err(format!("Read error: {}", e)),
                 _ => {}
             }
             header_bytes += header.len();
-            if header_bytes > MAX_HEADERS { return Err("LSP headers exceed the size limit".into()); }
+            if header_bytes > MAX_HEADERS {
+                return Err("LSP headers exceed the size limit".into());
+            }
             let header = header.trim();
             if header.is_empty() {
                 break; // End of headers
@@ -79,9 +90,16 @@ impl LspClient {
             if let Some((name, value)) = header.split_once(':')
                 && name.eq_ignore_ascii_case("Content-Length")
             {
-                let length = value.trim().parse::<usize>().map_err(|_| "Invalid LSP Content-Length")?;
-                if length > MAX_BODY { return Err("LSP message exceeds the size limit".into()); }
-                if content_length.replace(length).is_some() { return Err("Duplicate LSP Content-Length".into()); }
+                let length = value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|_| "Invalid LSP Content-Length")?;
+                if length > MAX_BODY {
+                    return Err("LSP message exceeds the size limit".into());
+                }
+                if content_length.replace(length).is_some() {
+                    return Err("Duplicate LSP Content-Length".into());
+                }
             }
         }
 
@@ -89,9 +107,13 @@ impl LspClient {
 
         // Read body
         let mut body = vec![0u8; len];
-        reader.read_exact(&mut body).map_err(|e| format!("Body read error: {}", e))?;
+        reader
+            .read_exact(&mut body)
+            .map_err(|e| format!("Body read error: {}", e))?;
 
-        String::from_utf8(body).map(Some).map_err(|e| format!("UTF-8 error: {}", e))
+        String::from_utf8(body)
+            .map(Some)
+            .map_err(|e| format!("UTF-8 error: {}", e))
     }
 
     pub(crate) fn parameter_label_offsets(offsets: &[u32]) -> (usize, usize) {
@@ -104,13 +126,19 @@ impl LspClient {
 
     /// Parse a JSON-RPC message into an LspEvent
     #[cfg(test)]
-    pub(crate) fn parse_message(json: &str, pending_requests: &Arc<Mutex<HashMap<i64, PendingRequest>>>) -> Option<LspEvent> {
+    pub(crate) fn parse_message(
+        json: &str,
+        pending_requests: &Arc<Mutex<HashMap<i64, PendingRequest>>>,
+    ) -> Option<LspEvent> {
         Self::parse_value(serde_json::from_str(json).ok()?, pending_requests)
     }
-    fn parse_value(mut msg: Value, pending_requests: &Arc<Mutex<HashMap<i64, PendingRequest>>>) -> Option<LspEvent> {
-
+    fn parse_value(
+        mut msg: Value,
+        pending_requests: &Arc<Mutex<HashMap<i64, PendingRequest>>>,
+    ) -> Option<LspEvent> {
         // Check if it's a notification (no id)
-        if let Some("textDocument/publishDiagnostics") = msg.get("method").and_then(|m| m.as_str()) {
+        if let Some("textDocument/publishDiagnostics") = msg.get("method").and_then(|m| m.as_str())
+        {
             if let Some(params) = msg.get_mut("params").map(Value::take) {
                 let pd: PublishDiagnosticsParams = serde_json::from_value(params).ok()?;
                 return Some(LspEvent::Diagnostics {
@@ -122,12 +150,19 @@ impl LspClient {
         }
 
         // Handle server-to-client requests (has both method and id)
-        if let (Some(method), Some(id)) = (msg.get("method").and_then(|m| m.as_str()), msg.get("id").filter(|id| id.is_i64() || id.is_string())) {
+        if let (Some(method), Some(id)) = (
+            msg.get("method").and_then(|m| m.as_str()),
+            msg.get("id").filter(|id| id.is_i64() || id.is_string()),
+        ) {
             let method = method.to_owned();
             let request_id = id.clone();
-            if method == "workspace/configuration" && let Some(id) = request_id.as_i64() {
+            if method == "workspace/configuration"
+                && let Some(id) = request_id.as_i64()
+            {
                 if let Some(params) = msg.get_mut("params").map(Value::take) {
-                    if let Ok(config_params) = serde_json::from_value::<lsp_types::ConfigurationParams>(params) {
+                    if let Ok(config_params) =
+                        serde_json::from_value::<lsp_types::ConfigurationParams>(params)
+                    {
                         return Some(LspEvent::WorkspaceConfigurationRequest {
                             request_id: id,
                             items: config_params.items,
@@ -143,22 +178,33 @@ impl LspClient {
             return Some(LspEvent::ServerRequest {
                 request_id,
                 method,
-                params: msg.get_mut("params").map(Value::take).unwrap_or(Value::Null),
+                params: msg
+                    .get_mut("params")
+                    .map(Value::take)
+                    .unwrap_or(Value::Null),
             });
         }
 
         // Check if it's a response (has id)
         if let Some(id) = msg.get("id").and_then(|id| id.as_i64()) {
             // Look up the method for this request ID
-            let request = pending_requests.lock().ok().and_then(|mut map| map.remove(&id));
-            let completion_prefix = request.as_ref().and_then(|request| request.completion_prefix.as_deref());
+            let request = pending_requests
+                .lock()
+                .ok()
+                .and_then(|mut map| map.remove(&id));
+            let completion_prefix = request
+                .as_ref()
+                .and_then(|request| request.completion_prefix.as_deref());
             let method = request.as_ref().map(|request| request.method.as_str());
 
             if let Some(result) = msg.get_mut("result").map(Value::take) {
                 match method {
                     Some("textDocument/completion") => {
                         if result.is_null() {
-                            return Some(LspEvent::CompletionResponse { request_id: id, items: Vec::new() });
+                            return Some(LspEvent::CompletionResponse {
+                                request_id: id,
+                                items: Vec::new(),
+                            });
                         }
                         return Some(match serde_json::from_value::<CompletionResponse>(result) {
                             Ok(response) => {
@@ -168,51 +214,85 @@ impl LspClient {
                                 };
                                 LspEvent::CompletionResponse {
                                     request_id: id,
-                                    items: crate::lsp::completion::prepare_completions(items, completion_prefix),
+                                    items: crate::lsp::completion::prepare_completions(
+                                        items,
+                                        completion_prefix,
+                                    ),
                                 }
                             }
                             Err(error) => LspEvent::RequestError {
-                                request_id: id, method: "textDocument/completion".into(),
-                                message: format!("The language server returned an invalid completion response: {error}"),
+                                request_id: id,
+                                method: "textDocument/completion".into(),
+                                message: format!(
+                                    "The language server returned an invalid completion response: {error}"
+                                ),
                             },
                         });
                     }
                     Some("textDocument/signatureHelp") => {
-                        if result.is_null() || result.get("signatures").and_then(Value::as_array).is_some_and(Vec::is_empty) {
-                            return Some(LspEvent::SignatureHelpResponse { request_id: id, signatures: Vec::new(), active_signature: 0, active_parameter: 0 });
+                        if result.is_null()
+                            || result
+                                .get("signatures")
+                                .and_then(Value::as_array)
+                                .is_some_and(Vec::is_empty)
+                        {
+                            return Some(LspEvent::SignatureHelpResponse {
+                                request_id: id,
+                                signatures: Vec::new(),
+                                active_signature: 0,
+                                active_parameter: 0,
+                            });
                         }
                         if let Ok(sig_help) = serde_json::from_value::<SignatureHelp>(result) {
                             if !sig_help.signatures.is_empty() {
                                 let active_sig = sig_help.active_signature.unwrap_or(0) as usize;
-                                let active_param = sig_help.signatures.get(active_sig).and_then(|sig| sig.active_parameter).or(sig_help.active_parameter).unwrap_or(0) as usize;
-                                let signatures = sig_help.signatures.into_iter().map(|sig| {
-                                    let params: Vec<(usize, usize)> = sig.parameters.unwrap_or_default().into_iter().map(|p| {
-                                        match p.label {
-                                            ParameterLabel::LabelOffsets(offsets) => {
-                                                let (start, end) = Self::parameter_label_offsets(&offsets);
-                                                let label = ropey::Rope::from_str(&sig.label);
-                                                let byte = |units: usize| label.char_to_byte(label.utf16_cu_to_char(units.min(label.len_utf16_cu())));
-                                                (byte(start), byte(end))
-                                            },
-                                            ParameterLabel::Simple(s) => {
-                                                if let Some(start) = sig.label.find(&s) {
-                                                    (start, start + s.len())
-                                                } else {
-                                                    (0, 0)
+                                let active_param = sig_help
+                                    .signatures
+                                    .get(active_sig)
+                                    .and_then(|sig| sig.active_parameter)
+                                    .or(sig_help.active_parameter)
+                                    .unwrap_or(0)
+                                    as usize;
+                                let signatures = sig_help
+                                    .signatures
+                                    .into_iter()
+                                    .map(|sig| {
+                                        let params: Vec<(usize, usize)> = sig
+                                            .parameters
+                                            .unwrap_or_default()
+                                            .into_iter()
+                                            .map(|p| match p.label {
+                                                ParameterLabel::LabelOffsets(offsets) => {
+                                                    let (start, end) =
+                                                        Self::parameter_label_offsets(&offsets);
+                                                    let label = ropey::Rope::from_str(&sig.label);
+                                                    let byte = |units: usize| {
+                                                        label.char_to_byte(label.utf16_cu_to_char(
+                                                            units.min(label.len_utf16_cu()),
+                                                        ))
+                                                    };
+                                                    (byte(start), byte(end))
                                                 }
-                                            }
+                                                ParameterLabel::Simple(s) => {
+                                                    if let Some(start) = sig.label.find(&s) {
+                                                        (start, start + s.len())
+                                                    } else {
+                                                        (0, 0)
+                                                    }
+                                                }
+                                            })
+                                            .collect();
+                                        let doc = sig.documentation.map(|d| match d {
+                                            Documentation::String(s) => s,
+                                            Documentation::MarkupContent(mc) => mc.value,
+                                        });
+                                        LspSignatureInfo {
+                                            label: sig.label,
+                                            parameters: params,
+                                            documentation: doc,
                                         }
-                                    }).collect();
-                                    let doc = sig.documentation.map(|d| match d {
-                                        Documentation::String(s) => s,
-                                        Documentation::MarkupContent(mc) => mc.value,
-                                    });
-                                    LspSignatureInfo {
-                                        label: sig.label,
-                                        parameters: params,
-                                        documentation: doc,
-                                    }
-                                }).collect();
+                                    })
+                                    .collect();
                                 return Some(LspEvent::SignatureHelpResponse {
                                     request_id: id,
                                     signatures,
@@ -229,13 +309,21 @@ impl LspClient {
                                 edits: Vec::new(),
                             });
                         }
-                        return Some(match serde_json::from_value::<Vec<lsp_types::TextEdit>>(result) {
-                            Ok(edits) => LspEvent::FormatResponse { request_id: id, edits },
-                            Err(error) => LspEvent::RequestError {
-                                request_id: id, method: method.into(),
-                                message: format!("The language server returned an invalid formatting response: {error}"),
+                        return Some(
+                            match serde_json::from_value::<Vec<lsp_types::TextEdit>>(result) {
+                                Ok(edits) => LspEvent::FormatResponse {
+                                    request_id: id,
+                                    edits,
+                                },
+                                Err(error) => LspEvent::RequestError {
+                                    request_id: id,
+                                    method: method.into(),
+                                    message: format!(
+                                        "The language server returned an invalid formatting response: {error}"
+                                    ),
+                                },
                             },
-                        });
+                        );
                     }
                     Some("textDocument/onTypeFormatting") => {
                         if result.is_null() {
@@ -244,7 +332,9 @@ impl LspClient {
                                 edits: Vec::new(),
                             });
                         }
-                        if let Ok(edits) = serde_json::from_value::<Vec<lsp_types::TextEdit>>(result) {
+                        if let Ok(edits) =
+                            serde_json::from_value::<Vec<lsp_types::TextEdit>>(result)
+                        {
                             return Some(LspEvent::OnTypeFormattingResponse {
                                 request_id: id,
                                 edits,
@@ -252,7 +342,8 @@ impl LspClient {
                         }
                     }
                     Some("textDocument/rename") => {
-                        if let Ok(edit) = serde_json::from_value::<lsp_types::WorkspaceEdit>(result) {
+                        if let Ok(edit) = serde_json::from_value::<lsp_types::WorkspaceEdit>(result)
+                        {
                             return Some(LspEvent::RenameResponse {
                                 request_id: id,
                                 edit: Some(edit),
@@ -267,10 +358,18 @@ impl LspClient {
                         });
                     }
                     Some("textDocument/codeAction") => {
-                        if result.is_null() { return Some(LspEvent::CodeActionResponse { request_id:id, actions:Vec::new() }); }
-                        if let Ok(actions) = serde_json::from_value::<Vec<CodeActionOrCommand>>(result) {
-                            let lsp_actions: Vec<LspCodeAction> = actions.into_iter().map(|a| {
-                                match a {
+                        if result.is_null() {
+                            return Some(LspEvent::CodeActionResponse {
+                                request_id: id,
+                                actions: Vec::new(),
+                            });
+                        }
+                        if let Ok(actions) =
+                            serde_json::from_value::<Vec<CodeActionOrCommand>>(result)
+                        {
+                            let lsp_actions: Vec<LspCodeAction> = actions
+                                .into_iter()
+                                .map(|a| match a {
                                     CodeActionOrCommand::CodeAction(ca) => LspCodeAction {
                                         title: ca.title,
                                         edit: ca.edit,
@@ -283,8 +382,8 @@ impl LspClient {
                                         kind: None,
                                         command: Some(cmd),
                                     },
-                                }
-                            }).collect();
+                                })
+                                .collect();
                             return Some(LspEvent::CodeActionResponse {
                                 request_id: id,
                                 actions: lsp_actions,
@@ -292,16 +391,26 @@ impl LspClient {
                         }
                     }
                     Some("textDocument/hover") => {
-                        if result.is_null() { return Some(LspEvent::HoverResponse { request_id:id, contents:None }); }
+                        if result.is_null() {
+                            return Some(LspEvent::HoverResponse {
+                                request_id: id,
+                                contents: None,
+                            });
+                        }
                         if let Ok(hover) = serde_json::from_value::<Hover>(result) {
                             let contents = match hover.contents {
                                 HoverContents::Scalar(mc) => Some(markup_content_to_string(mc)),
                                 HoverContents::Array(mcs) => {
-                                    let joined = mcs.into_iter().enumerate().fold(String::new(), |mut acc, (i, mc)| {
-                                        if i > 0 { acc.push('\n'); }
-                                        acc.push_str(&markup_content_to_string(mc));
-                                        acc
-                                    });
+                                    let joined = mcs.into_iter().enumerate().fold(
+                                        String::new(),
+                                        |mut acc, (i, mc)| {
+                                            if i > 0 {
+                                                acc.push('\n');
+                                            }
+                                            acc.push_str(&markup_content_to_string(mc));
+                                            acc
+                                        },
+                                    );
                                     Some(joined)
                                 }
                                 HoverContents::Markup(mc) => Some(mc.value),
@@ -312,15 +421,32 @@ impl LspClient {
                             });
                         }
                     }
-                    Some("textDocument/definition" | "textDocument/typeDefinition" | "textDocument/implementation" | "textDocument/declaration" | "textDocument/references") => {
-                        let locations = if result.is_null() { Vec::new() } else {
+                    Some(
+                        "textDocument/definition"
+                        | "textDocument/typeDefinition"
+                        | "textDocument/implementation"
+                        | "textDocument/declaration"
+                        | "textDocument/references",
+                    ) => {
+                        let locations = if result.is_null() {
+                            Vec::new()
+                        } else {
                             match serde_json::from_value::<GotoDefinitionResponse>(result).ok()? {
                                 GotoDefinitionResponse::Scalar(location) => vec![location],
                                 GotoDefinitionResponse::Array(locations) => locations,
-                                GotoDefinitionResponse::Link(links) => links.into_iter().map(|link| Location { uri:link.target_uri, range:link.target_selection_range }).collect(),
+                                GotoDefinitionResponse::Link(links) => links
+                                    .into_iter()
+                                    .map(|link| Location {
+                                        uri: link.target_uri,
+                                        range: link.target_selection_range,
+                                    })
+                                    .collect(),
                             }
                         };
-                        return Some(LspEvent::DefinitionResponse { request_id:id, locations });
+                        return Some(LspEvent::DefinitionResponse {
+                            request_id: id,
+                            locations,
+                        });
                     }
                     Some("textDocument/inlayHint") => {
                         if result.is_null() {
@@ -340,7 +466,10 @@ impl LspClient {
                         if let Ok(result) = serde_json::from_value::<SemanticTokensResult>(result) {
                             let tokens = match result {
                                 SemanticTokensResult::Tokens(t) => t,
-                                SemanticTokensResult::Partial(p) => SemanticTokens { result_id: None, data: p.data },
+                                SemanticTokensResult::Partial(p) => SemanticTokens {
+                                    result_id: None,
+                                    data: p.data,
+                                },
                             };
                             return Some(LspEvent::SemanticTokensResponse {
                                 request_id: id,
@@ -355,7 +484,9 @@ impl LspClient {
                                 highlights: Vec::new(),
                             });
                         }
-                        if let Ok(highlights) = serde_json::from_value::<Vec<DocumentHighlight>>(result) {
+                        if let Ok(highlights) =
+                            serde_json::from_value::<Vec<DocumentHighlight>>(result)
+                        {
                             return Some(LspEvent::DocumentHighlightResponse {
                                 request_id: id,
                                 highlights,
@@ -383,7 +514,8 @@ impl LspClient {
                                 items: Vec::new(),
                             });
                         }
-                        if let Ok(items) = serde_json::from_value::<Vec<CallHierarchyItem>>(result) {
+                        if let Ok(items) = serde_json::from_value::<Vec<CallHierarchyItem>>(result)
+                        {
                             return Some(LspEvent::CallHierarchyPrepareResponse {
                                 request_id: id,
                                 items,
@@ -397,7 +529,9 @@ impl LspClient {
                                 calls: Vec::new(),
                             });
                         }
-                        if let Ok(calls) = serde_json::from_value::<Vec<CallHierarchyIncomingCall>>(result) {
+                        if let Ok(calls) =
+                            serde_json::from_value::<Vec<CallHierarchyIncomingCall>>(result)
+                        {
                             return Some(LspEvent::CallHierarchyIncomingResponse {
                                 request_id: id,
                                 calls,
@@ -411,7 +545,9 @@ impl LspClient {
                                 calls: Vec::new(),
                             });
                         }
-                        if let Ok(calls) = serde_json::from_value::<Vec<CallHierarchyOutgoingCall>>(result) {
+                        if let Ok(calls) =
+                            serde_json::from_value::<Vec<CallHierarchyOutgoingCall>>(result)
+                        {
                             return Some(LspEvent::CallHierarchyOutgoingResponse {
                                 request_id: id,
                                 calls,
@@ -461,7 +597,9 @@ impl LspClient {
                                 items: Vec::new(),
                             });
                         }
-                        if let Ok(items) = serde_json::from_value::<Vec<lsp_types::TypeHierarchyItem>>(result) {
+                        if let Ok(items) =
+                            serde_json::from_value::<Vec<lsp_types::TypeHierarchyItem>>(result)
+                        {
                             return Some(LspEvent::TypeHierarchyPrepareResponse {
                                 request_id: id,
                                 items,
@@ -475,7 +613,9 @@ impl LspClient {
                                 items: Vec::new(),
                             });
                         }
-                        if let Ok(items) = serde_json::from_value::<Vec<lsp_types::TypeHierarchyItem>>(result) {
+                        if let Ok(items) =
+                            serde_json::from_value::<Vec<lsp_types::TypeHierarchyItem>>(result)
+                        {
                             return Some(LspEvent::TypeHierarchySupertypesResponse {
                                 request_id: id,
                                 items,
@@ -489,7 +629,9 @@ impl LspClient {
                                 items: Vec::new(),
                             });
                         }
-                        if let Ok(items) = serde_json::from_value::<Vec<lsp_types::TypeHierarchyItem>>(result) {
+                        if let Ok(items) =
+                            serde_json::from_value::<Vec<lsp_types::TypeHierarchyItem>>(result)
+                        {
                             return Some(LspEvent::TypeHierarchySubtypesResponse {
                                 request_id: id,
                                 items,
@@ -497,7 +639,8 @@ impl LspClient {
                         }
                     }
                     Some("initialize") => {
-                        if let Ok(init_result) = serde_json::from_value::<InitializeResult>(result) {
+                        if let Ok(init_result) = serde_json::from_value::<InitializeResult>(result)
+                        {
                             return Some(LspEvent::Initialized {
                                 capabilities: Box::new(Some(init_result.capabilities)),
                             });
@@ -537,33 +680,40 @@ impl LspClient {
                                 symbols: Vec::new(),
                             });
                         }
-                        if let Ok(symbols) = serde_json::from_value::<Vec<SymbolInformation>>(result.clone()) {
+                        if let Ok(symbols) =
+                            serde_json::from_value::<Vec<SymbolInformation>>(result.clone())
+                        {
                             return Some(LspEvent::WorkspaceSymbolResponse {
                                 request_id: id,
                                 symbols,
                             });
                         }
                         // Try WorkspaceSymbolResponse format (newer LSP)
-                        if let Ok(symbols) = serde_json::from_value::<Vec<lsp_types::WorkspaceSymbol>>(result) {
-                            let converted: Vec<SymbolInformation> = symbols.into_iter().map(|ws| {
-                                let location = match ws.location {
-                                    lsp_types::OneOf::Left(loc) => loc,
-                                    lsp_types::OneOf::Right(wsl) => Location {
-                                        uri: wsl.uri,
-                                        range: Range::default(),
-                                    },
-                                };
-                                // See flatten_doc_symbols: deprecated but still the common type.
-                                #[allow(deprecated)]
-                                SymbolInformation {
-                                    name: ws.name,
-                                    kind: ws.kind,
-                                    tags: ws.tags,
-                                    deprecated: None,
-                                    location,
-                                    container_name: ws.container_name,
-                                }
-                            }).collect();
+                        if let Ok(symbols) =
+                            serde_json::from_value::<Vec<lsp_types::WorkspaceSymbol>>(result)
+                        {
+                            let converted: Vec<SymbolInformation> = symbols
+                                .into_iter()
+                                .map(|ws| {
+                                    let location = match ws.location {
+                                        lsp_types::OneOf::Left(loc) => loc,
+                                        lsp_types::OneOf::Right(wsl) => Location {
+                                            uri: wsl.uri,
+                                            range: Range::default(),
+                                        },
+                                    };
+                                    // See flatten_doc_symbols: deprecated but still the common type.
+                                    #[allow(deprecated)]
+                                    SymbolInformation {
+                                        name: ws.name,
+                                        kind: ws.kind,
+                                        tags: ws.tags,
+                                        deprecated: None,
+                                        location,
+                                        container_name: ws.container_name,
+                                    }
+                                })
+                                .collect();
                             return Some(LspEvent::WorkspaceSymbolResponse {
                                 request_id: id,
                                 symbols: converted,
@@ -581,7 +731,9 @@ impl LspClient {
                         // Try PrepareRenameResponse variants:
                         // 1. { range, placeholder }
                         if let Some(obj) = result.as_object() {
-                            if let (Some(range_val), Some(placeholder_val)) = (obj.get("range"), obj.get("placeholder")) {
+                            if let (Some(range_val), Some(placeholder_val)) =
+                                (obj.get("range"), obj.get("placeholder"))
+                            {
                                 if let (Ok(range), Some(placeholder)) = (
                                     serde_json::from_value::<lsp_types::Range>(range_val.clone()),
                                     placeholder_val.as_str(),
@@ -594,7 +746,11 @@ impl LspClient {
                                 }
                             }
                             // 2. { defaultBehavior: true } - use word at cursor
-                            if obj.get("defaultBehavior").and_then(|v: &serde_json::Value| v.as_bool()) == Some(true) {
+                            if obj
+                                .get("defaultBehavior")
+                                .and_then(|v: &serde_json::Value| v.as_bool())
+                                == Some(true)
+                            {
                                 return Some(LspEvent::PrepareRenameResponse {
                                     request_id: id,
                                     range: None,
@@ -624,8 +780,12 @@ impl LspClient {
                 return method.map(|method| LspEvent::RequestError {
                     request_id: id,
                     method: method.into(),
-                    message: msg.get("error").and_then(|error| error.get("message"))
-                        .and_then(Value::as_str).unwrap_or("The language server rejected the request").into(),
+                    message: msg
+                        .get("error")
+                        .and_then(|error| error.get("message"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("The language server rejected the request")
+                        .into(),
                 });
             }
         }
@@ -728,7 +888,10 @@ mod tests {
         let pending = make_pending(&[(2, "textDocument/hover")]);
         let event = LspClient::parse_message(json, &pending).unwrap();
         match event {
-            LspEvent::HoverResponse { request_id, contents } => {
+            LspEvent::HoverResponse {
+                request_id,
+                contents,
+            } => {
                 assert_eq!(request_id, 2);
                 assert_eq!(contents.unwrap(), "Some hover text");
             }
@@ -748,7 +911,10 @@ mod tests {
         let pending = make_pending(&[(3, "textDocument/hover")]);
         let event = LspClient::parse_message(json, &pending).unwrap();
         match event {
-            LspEvent::HoverResponse { request_id, contents } => {
+            LspEvent::HoverResponse {
+                request_id,
+                contents,
+            } => {
                 assert_eq!(request_id, 3);
                 assert_eq!(contents.unwrap(), "**bold** docs");
             }
@@ -774,7 +940,10 @@ mod tests {
         let pending = make_pending(&[(4, "textDocument/definition")]);
         let event = LspClient::parse_message(json, &pending).unwrap();
         match event {
-            LspEvent::DefinitionResponse { request_id, locations } => {
+            LspEvent::DefinitionResponse {
+                request_id,
+                locations,
+            } => {
                 assert_eq!(request_id, 4);
                 assert_eq!(locations.len(), 1);
                 assert_eq!(locations[0].range.start.line, 5);
@@ -816,7 +985,9 @@ mod tests {
         }"#;
         let event = LspClient::parse_message(json, &empty_pending()).unwrap();
         match event {
-            LspEvent::Diagnostics { uri, diagnostics, .. } => {
+            LspEvent::Diagnostics {
+                uri, diagnostics, ..
+            } => {
                 assert!(uri.path().ends_with("/foo.rs"));
                 assert_eq!(diagnostics.len(), 2);
                 assert_eq!(diagnostics[0].message, "unused variable");
@@ -849,7 +1020,10 @@ mod tests {
         let pending = make_pending(&[(6, "textDocument/codeAction")]);
         let event = LspClient::parse_message(json, &pending).unwrap();
         match event {
-            LspEvent::CodeActionResponse { request_id, actions } => {
+            LspEvent::CodeActionResponse {
+                request_id,
+                actions,
+            } => {
                 assert_eq!(request_id, 6);
                 assert_eq!(actions.len(), 2);
                 assert_eq!(actions[0].title, "Add import");

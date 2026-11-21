@@ -112,15 +112,15 @@ impl State {
 impl Query {
     fn contains(&self, path: &Path) -> bool {
         // The boundary itself remains an ancestor row, never a name match.
-        self.directory.as_ref().is_none_or(|directory| {
-            path != directory && path.starts_with(directory)
-        })
+        self.directory
+            .as_ref()
+            .is_none_or(|directory| path != directory && path.starts_with(directory))
     }
 
     pub(crate) fn searches_directory(&self, path: &Path) -> bool {
-        self.directory.as_ref().is_none_or(|directory| {
-            path.starts_with(directory) || directory.starts_with(path)
-        })
+        self.directory
+            .as_ref()
+            .is_none_or(|directory| path.starts_with(directory) || directory.starts_with(path))
     }
 }
 
@@ -274,7 +274,11 @@ pub(crate) fn project(
         if entry.is_dir {
             stack.push(i);
         }
-        let indices = if query.contains(&entry.path) { matcher.indices(&entry.name) } else { None };
+        let indices = if query.contains(&entry.path) {
+            matcher.indices(&entry.name)
+        } else {
+            None
+        };
         count += usize::from(indices.is_some());
         matches.push(Match {
             matched: indices.is_some(),
@@ -571,7 +575,11 @@ mod tests {
 
     #[test]
     fn scoped_substring_fuzzy_and_regex_matching_preserves_ancestors() {
-        for (text, fuzzy, regex) in [("app", false, false), ("aip", true, false), (r"^app.*\.rs$", false, true)] {
+        for (text, fuzzy, regex) in [
+            ("app", false, false),
+            ("aip", true, false),
+            (r"^app.*\.rs$", false, true),
+        ] {
             for filter in [false, true] {
                 let (workspace, mut explorer) = fixture();
                 let scope = workspace.path().join("src/deep");
@@ -588,16 +596,27 @@ mod tests {
                 assert!(!src.matched);
                 assert_eq!(src.descendants, 1);
                 if filter {
-                    assert_eq!(explorer.entries.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(),
-                        ["src", "deep", "app_input.rs"]);
-                    assert_eq!(explorer.entries[explorer.selected].path, scope.join("app_input.rs"));
+                    assert_eq!(
+                        explorer
+                            .entries
+                            .iter()
+                            .map(|entry| entry.name.as_str())
+                            .collect::<Vec<_>>(),
+                        ["src", "deep", "app_input.rs"]
+                    );
+                    assert_eq!(
+                        explorer.entries[explorer.selected].path,
+                        scope.join("app_input.rs")
+                    );
                 }
                 // The selected directory is a search boundary, not a result.
                 explorer.find.query = "deep".into();
                 explorer.prepare_find();
                 refresh(&mut explorer);
                 assert_eq!(explorer.find.results.count, 0);
-                if filter { assert!(explorer.entries.is_empty()); }
+                if filter {
+                    assert!(explorer.entries.is_empty());
+                }
             }
         }
     }

@@ -130,7 +130,9 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
     if let Some((index, action, area)) = hit(app, app.mouse_col, app.mouse_row) {
         let label = if action == FileAction::Open && app.source_control_files[index].directory {
             "Reveal in Explorer"
-        } else { action.label() };
+        } else {
+            action.label()
+        };
         crate::ui_widgets::Tooltip::hover(vec![Line::raw(label)], &app.colors)
             .prefer_below()
             .render(f, area.x, area.y);

@@ -271,12 +271,19 @@ impl OutputQueue {
     pub(crate) fn discard_obsolete_search(&mut self, current: u64) -> io::Result<()> {
         // A partially transmitted message must finish reassembly. Unstarted
         // batches can be dropped as soon as a newer query or Stop arrives.
-        self.packets.retain(|packet| !packet.search || packet.offset != 0
-            || !packet.event || packet.order == Some(Order::Request(current)));
+        self.packets.retain(|packet| {
+            !packet.search
+                || packet.offset != 0
+                || !packet.event
+                || packet.order == Some(Order::Request(current))
+        });
         for packet in &mut self.packets {
-            if packet.search && packet.offset == 0 && packet.order != Some(Order::Request(current)) {
-                packet.data = encode(&Response { id: packet.id,
-                    result: Err(io::Error::from(io::ErrorKind::Interrupted).into()) })?;
+            if packet.search && packet.offset == 0 && packet.order != Some(Order::Request(current))
+            {
+                packet.data = encode(&Response {
+                    id: packet.id,
+                    result: Err(io::Error::from(io::ErrorKind::Interrupted).into()),
+                })?;
                 packet.search = false;
             }
         }
@@ -289,19 +296,36 @@ impl OutputQueue {
         }
         // Progress and its terminal reply share an ordering barrier.
         // A small final reply must not overtake a partially written batch.
-        let order = if response.id != 0 { Some(Order::Request(response.id)) } else {
+        let order = if response.id != 0 {
+            Some(Order::Request(response.id))
+        } else {
             match &response.result {
-                Ok(Reply::SearchProgress { request, .. } | Reply::GitStatusProgress { request, .. }) => Some(Order::Request(*request)),
+                Ok(
+                    Reply::SearchProgress { request, .. }
+                    | Reply::GitStatusProgress { request, .. },
+                ) => Some(Order::Request(*request)),
                 // Larger process chunks can span frames. A short final chunk
                 // or EOF must never overtake older output from the same PTY.
-                Ok(Reply::ProcessData { process, .. } | Reply::ProcessEnd { process, .. }) => Some(Order::Process(*process)),
+                Ok(Reply::ProcessData { process, .. } | Reply::ProcessEnd { process, .. }) => {
+                    Some(Order::Process(*process))
+                }
                 _ => None,
             }
         };
-        let interactive = matches!(response.result, Ok(Reply::ProcessData { .. }
-            | Reply::ProcessEnd { .. } | Reply::ProcessInputConsumed { .. }));
-        let search = matches!(response.result, Ok(Reply::SearchProgress { .. } | Reply::Search { .. }));
-        let failure_id = match order { Some(Order::Request(id)) => id, _ => response.id };
+        let interactive = matches!(
+            response.result,
+            Ok(Reply::ProcessData { .. }
+                | Reply::ProcessEnd { .. }
+                | Reply::ProcessInputConsumed { .. })
+        );
+        let search = matches!(
+            response.result,
+            Ok(Reply::SearchProgress { .. } | Reply::Search { .. })
+        );
+        let failure_id = match order {
+            Some(Order::Request(id)) => id,
+            _ => response.id,
+        };
         let mut response = response;
         let mut data = match encode(&response) {
             Ok(data) => data,
@@ -311,7 +335,10 @@ impl OutputQueue {
             }
         };
         if data.len() > (MAX_MESSAGE * 2).saturating_sub(self.bytes) {
-            response.fail_encoding(failure_id, "Remote transfer queue is full; retry after current transfers finish".into());
+            response.fail_encoding(
+                failure_id,
+                "Remote transfer queue is full; retry after current transfers finish".into(),
+            );
             data = encode(&response)?;
         }
         self.bytes += data.len();
@@ -340,17 +367,31 @@ impl OutputQueue {
         self.orders.clear();
         for packet in &self.packets {
             if let Some(order) = packet.order {
-                self.orders.entry(order).and_modify(|first| *first = (*first).min(packet.serial)).or_insert(packet.serial);
+                self.orders
+                    .entry(order)
+                    .and_modify(|first| *first = (*first).min(packet.serial))
+                    .or_insert(packet.serial);
             }
         }
-        let ready = |packet: &Packet| packet.order.is_none_or(|order| self.orders.get(&order) == Some(&packet.serial));
-        let can_start = |p: &Packet| p.offset != 0 || begun < MAX_PENDING - 1 || p.data.len() <= CHUNK;
+        let ready = |packet: &Packet| {
+            packet
+                .order
+                .is_none_or(|order| self.orders.get(&order) == Some(&packet.serial))
+        };
+        let can_start =
+            |p: &Packet| p.offset != 0 || begun < MAX_PENDING - 1 || p.data.len() <= CHUNK;
         let interactive = self
             .packets
             .iter()
             .position(|p| ready(p) && p.interactive && p.data.len() <= CHUNK * 4)
-            .or_else(|| self.packets.iter().position(|p| ready(p) && p.interactive && can_start(p)));
-        let ordinary = self.packets.iter()
+            .or_else(|| {
+                self.packets
+                    .iter()
+                    .position(|p| ready(p) && p.interactive && can_start(p))
+            });
+        let ordinary = self
+            .packets
+            .iter()
             .position(|p| ready(p) && !p.interactive && p.event && p.data.len() <= CHUNK * 4)
             .or_else(|| {
                 self.packets
@@ -363,9 +404,14 @@ impl OutputQueue {
             interactive.or(ordinary)
         } else {
             ordinary.or(interactive)
-        }.unwrap();
+        }
+        .unwrap();
         let mut packet = self.packets.remove(index).unwrap();
-        self.interactive_turns = if packet.interactive { self.interactive_turns.saturating_add(1) } else { 0 };
+        self.interactive_turns = if packet.interactive {
+            self.interactive_turns.saturating_add(1)
+        } else {
+            0
+        };
         // Small process events finish promptly. Larger notifications (such as
         // a history page) have unique transfer IDs and rotate with file replies.
         loop {
@@ -426,17 +472,25 @@ impl Decoder {
     }
     /// The observer runs only on the existing non-protocol branch. Valid,
     /// fragmented, echoed and malformed protocol records never reach it.
-    pub(crate) fn line_with_output(&mut self, line: &[u8], mut output: impl FnMut(&[u8])) -> io::Result<Option<(u64, Vec<u8>)>> {
+    pub(crate) fn line_with_output(
+        &mut self,
+        line: &[u8],
+        mut output: impl FnMut(&[u8]),
+    ) -> io::Result<Option<(u64, Vec<u8>)>> {
         if line.len() > MAX_LINE {
             return Err(io::Error::other("Remote frame exceeds limit"));
         }
         let record = record(line);
         let Some(body) = record.strip_prefix(self.prefix.as_bytes()) else {
-            if !record.starts_with(b"VTCR") { output(line); }
+            if !record.starts_with(b"VTCR") {
+                output(line);
+            }
             return Ok(None);
         };
         let invalid = || io::Error::other("Invalid remote frame sequence");
-        let body = std::str::from_utf8(body).map_err(|_| invalid())?.trim_end_matches(['\r', '\n']);
+        let body = std::str::from_utf8(body)
+            .map_err(|_| invalid())?
+            .trim_end_matches(['\r', '\n']);
         let mut parts = body.splitn(4, ':');
         let id =
             u64::from_str_radix(parts.next().ok_or_else(invalid)?, 16).map_err(|_| invalid())?;
@@ -474,7 +528,14 @@ impl Decoder {
                 return Err(invalid());
             }
             self.bytes += count;
-            self.pending.insert(id, PendingMessage { expected: 1, encoding, data });
+            self.pending.insert(
+                id,
+                PendingMessage {
+                    expected: 1,
+                    encoding,
+                    data,
+                },
+            );
             return Ok(None);
         }
         let pending = self.pending.get_mut(&id).ok_or_else(invalid)?;

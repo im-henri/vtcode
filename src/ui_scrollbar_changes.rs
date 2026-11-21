@@ -133,9 +133,12 @@ mod tests {
 
     #[test]
     fn all_coverage_patterns_use_single_cell_glyphs() {
-        for (coverage, symbol, narrow) in [([0, 0], ' ', ' '), ([3, 0], '▀', '▝'),
-            ([0, 2], '▄', '▗'), ([3, 2], '█', '▐')]
-        {
+        for (coverage, symbol, narrow) in [
+            ([0, 0], ' ', ' '),
+            ([3, 0], '▀', '▝'),
+            ([0, 2], '▄', '▗'),
+            ([3, 2], '█', '▐'),
+        ] {
             let row = ChangeRow(coverage.map(LineChanges::from_bits));
             assert_eq!(row.symbol(), symbol);
             assert_eq!(row.narrow_symbol(), narrow);
@@ -158,7 +161,9 @@ mod tests {
                     changes
                         .iter()
                         .filter(|&&(line, _)| (start..end).contains(&line.min(total - 1)))
-                        .fold(LineChanges::default(), |combined, &(_, status)| combined.merge(status.into()))
+                        .fold(LineChanges::default(), |combined, &(_, status)| {
+                            combined.merge(status.into())
+                        })
                 });
                 assert_eq!(
                     actual,
@@ -227,9 +232,14 @@ mod tests {
                                     assert_eq!(cell.bg, surface);
                                     continue;
                                 }
-                                assert_eq!(cell.symbol(), if width == 1 {
-                                    if symbol == "▀" { "▝" } else { "▗" }
-                                } else { symbol });
+                                assert_eq!(
+                                    cell.symbol(),
+                                    if width == 1 {
+                                        if symbol == "▀" { "▝" } else { "▗" }
+                                    } else {
+                                        symbol
+                                    }
+                                );
                                 assert_eq!(cell.fg, color);
                                 assert_eq!(cell.bg, if width == 1 { surface } else { track });
                             }

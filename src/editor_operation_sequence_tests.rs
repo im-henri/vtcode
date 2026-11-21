@@ -42,17 +42,31 @@ fn paste_at_column_zero_preserves_copied_indentation() {
                 ("", 0, 0, None, "", ""),
                 ("before\n", 1, 0, None, "before\n", ""),
                 ("before\n\nafter", 1, 0, None, "before\n", "\nafter"),
-                ("before\nold\nafter", 1, 3, Some((1, 0)), "before\n", "\nafter"),
+                (
+                    "before\nold\nafter",
+                    1,
+                    3,
+                    Some((1, 0)),
+                    "before\n",
+                    "\nafter",
+                ),
             ] {
                 let mut editor = Editor::test_with_text(source);
                 (editor.cursor_line, editor.cursor_col) = (row, col);
                 editor.selection_anchor = anchor;
                 editor.paste_with_text(&payload);
                 let expected = format!("{before}{normalized}{after}");
-                assert_eq!(editor.rope.to_string(), expected, "{body:?}, repeats={repeats}, source={source:?}");
+                assert_eq!(
+                    editor.rope.to_string(),
+                    expected,
+                    "{body:?}, repeats={repeats}, source={source:?}"
+                );
                 let end = before.chars().count() + normalized.chars().count();
                 let line = editor.rope.char_to_line(end);
-                assert_eq!((editor.cursor_line, editor.cursor_col), (line, end - editor.rope.line_to_char(line)));
+                assert_eq!(
+                    (editor.cursor_line, editor.cursor_col),
+                    (line, end - editor.rope.line_to_char(line))
+                );
                 editor.undo();
                 assert_eq!(editor.rope.to_string(), source);
                 assert_eq!((editor.cursor_line, editor.cursor_col), (row, col));
@@ -391,7 +405,12 @@ fn synchronized_history_reuses_existing_cursor_storage_and_handles_history_limit
             );
         }
         assert_eq!(source.undo_history_key(), peer.undo_history_key());
-        for (a, b) in source.undo_stack.read().iter().zip(peer.undo_stack.read().iter()) {
+        for (a, b) in source
+            .undo_stack
+            .read()
+            .iter()
+            .zip(peer.undo_stack.read().iter())
+        {
             assert!(a.rope.is_instance(&b.rope));
             assert_eq!(a.modified, b.modified);
         }
@@ -563,8 +582,7 @@ fn mixed_edit_paste_selection_and_history_sequences_match_a_plain_text_model() {
                 "seed={seed} step={step}"
             );
             assert_eq!(
-                editor.modified,
-                current.modified,
+                editor.modified, current.modified,
                 "checkpoint seed={seed} step={step}"
             );
             assert_eq!(

@@ -11,11 +11,15 @@ pub(crate) struct Automatic {
 
 impl std::fmt::Debug for Automatic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Automatic").field("profiles", &self.profiles).finish()
+        f.debug_struct("Automatic")
+            .field("profiles", &self.profiles)
+            .finish()
     }
 }
 impl PartialEq for Automatic {
-    fn eq(&self, other: &Self) -> bool { Arc::ptr_eq(&self.registry, &other.registry) }
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.registry, &other.registry)
+    }
 }
 impl Eq for Automatic {}
 
@@ -27,10 +31,14 @@ impl Automatic {
             // Injection grammars describe embedded fragments, not file syntax.
             if Syntax::for_language(&source.id).is_some()
                 || Syntax::for_language(&source.name).is_some()
-                || !source.grammar["scopeName"].as_str().is_some_and(|scope| scope.starts_with("source."))
+                || !source.grammar["scopeName"]
+                    .as_str()
+                    .is_some_and(|scope| scope.starts_with("source."))
                 || source.grammar.get("injectionSelector").is_some()
                 || source.grammar.get("injectTo").is_some()
-            { continue; }
+            {
+                continue;
+            }
             let mut features = Features::default();
             features.visit(&source.grammar);
             if features.braces && features.line_comments && features.block_comments {
@@ -40,11 +48,22 @@ impl Automatic {
         (!profiles.is_empty()).then(|| Arc::new(Self { registry, profiles }))
     }
 
-    pub(crate) fn for_editor(&self, editor: &crate::editor::Editor) -> Option<(&GrammarSource, Syntax)> {
+    pub(crate) fn for_editor(
+        &self,
+        editor: &crate::editor::Editor,
+    ) -> Option<(&GrammarSource, Syntax)> {
         // Use the highlighting resolver so language overrides/associations win
         // over extensions, and overlapping custom file types stay consistent.
-        let syntax = crate::highlight::select_syntax(&self.registry, editor.syntax_file_path(), editor.syntax_language_token(), "");
-        Some((self.registry.sources.get(&syntax.id)?, *self.profiles.get(&syntax.id)?))
+        let syntax = crate::highlight::select_syntax(
+            &self.registry,
+            editor.syntax_file_path(),
+            editor.syntax_language_token(),
+            "",
+        );
+        Some((
+            self.registry.sources.get(&syntax.id)?,
+            *self.profiles.get(&syntax.id)?,
+        ))
     }
 
     pub(crate) fn for_language(&self, language: &str) -> Option<Syntax> {
@@ -68,11 +87,16 @@ impl Features {
                 let end = value["end"].as_str().unwrap_or_default();
                 self.braces |= matches!(begin, "\\{" | "{") && matches!(end, "\\}" | "}");
                 self.line_comments |= name.starts_with("comment.line.") && begin == "//";
-                self.block_comments |= name.starts_with("comment.block.") && begin == "/\\*" && end == "\\*/";
-                for child in object.values() { self.visit(child); }
+                self.block_comments |=
+                    name.starts_with("comment.block.") && begin == "/\\*" && end == "\\*/";
+                for child in object.values() {
+                    self.visit(child);
+                }
             }
             serde_json::Value::Array(array) => {
-                for child in array { self.visit(child); }
+                for child in array {
+                    self.visit(child);
+                }
             }
             _ => {}
         }

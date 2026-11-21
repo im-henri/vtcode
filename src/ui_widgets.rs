@@ -1,14 +1,14 @@
 use std::fmt::Write as FmtWrite;
 
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
-use unicode_width::UnicodeWidthStr;
 use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::helpers::len_as_u16;
 use crate::text_input::TextInputHitMap;
@@ -113,19 +113,32 @@ impl DropdownScrollbar {
     pub(crate) fn new(inner: Rect, rows: usize, offset: usize) -> Option<Self> {
         let height = inner.height as usize;
         let width = 2.min(inner.width.saturating_sub(1));
-        if height == 0 || width == 0 || rows <= height { return None; }
+        if height == 0 || width == 0 || rows <= height {
+            return None;
+        }
         let thumb_height = (height * height / rows).max(1).min(height);
         let max_scroll = rows - height;
         let thumb_top = offset.min(max_scroll) * (height - thumb_height) / max_scroll;
         let area = Rect::new(inner.right() - width, inner.y, width, inner.height);
-        let thumb = Rect::new(area.x, area.y + thumb_top as u16, width, thumb_height as u16);
-        Some(Self { area, thumb, max_scroll })
+        let thumb = Rect::new(
+            area.x,
+            area.y + thumb_top as u16,
+            width,
+            thumb_height as u16,
+        );
+        Some(Self {
+            area,
+            thumb,
+            max_scroll,
+        })
     }
 
     pub(crate) fn drag_offset(&self, start_row: u16, start_offset: usize, row: u16) -> usize {
         let travel = (self.area.height - self.thumb.height).max(1) as usize;
-        let distance = (row.abs_diff(start_row) as usize).saturating_mul(self.max_scroll)
-            .saturating_add(travel / 2) / travel;
+        let distance = (row.abs_diff(start_row) as usize)
+            .saturating_mul(self.max_scroll)
+            .saturating_add(travel / 2)
+            / travel;
         if row >= start_row {
             start_offset.saturating_add(distance).min(self.max_scroll)
         } else {
@@ -311,19 +324,38 @@ impl<'a> DropdownMenu<'a> {
         if let Some(layers) = &self.colors.layers {
             let owner = surface_background(f, dropdown_area, layers.fallback_surface);
             let background = layers.normal.background.over(owner).unwrap_or(owner);
-            let foreground = layers.normal.foreground.over(background).unwrap_or(self.colors.fg);
-            let selected = layers.selected.background.over(background).unwrap_or(background);
+            let foreground = layers
+                .normal
+                .foreground
+                .over(background)
+                .unwrap_or(self.colors.fg);
+            let selected = layers
+                .selected
+                .background
+                .over(background)
+                .unwrap_or(background);
             self.colors.bg = background;
             self.colors.fg = foreground;
             self.colors.bg_selected = selected;
-            self.colors.fg_selected = layers.selected.foreground.over(selected).unwrap_or(foreground);
-            self.colors.border = layers.normal.border.border(background).unwrap_or(background);
+            self.colors.fg_selected = layers
+                .selected
+                .foreground
+                .over(selected)
+                .unwrap_or(foreground);
+            self.colors.border = layers
+                .normal
+                .border
+                .border(background)
+                .unwrap_or(background);
             self.colors.border_selected = layers.selected.border.border(selected);
             self.colors.fg_separator = layers.separator.over(background).unwrap_or(background);
             self.colors.fg_disabled = layers.disabled.over(background).unwrap_or(foreground);
             self.colors.fg_shortcut = layers.shortcut.over(background).unwrap_or(foreground);
             self.colors.scrollbar_bg = layers.track.over(background).unwrap_or(background);
-            self.colors.scrollbar_fg = layers.slider.over(self.colors.scrollbar_bg).unwrap_or(self.colors.scrollbar_bg);
+            self.colors.scrollbar_fg = layers
+                .slider
+                .over(self.colors.scrollbar_bg)
+                .unwrap_or(self.colors.scrollbar_bg);
         }
         f.render_widget(Clear, dropdown_area);
         let block = Block::default()
@@ -339,16 +371,24 @@ impl<'a> DropdownMenu<'a> {
 
         if let Some(scroll) = scroll {
             let selected = self.selected.min(self.items.len() - 1);
-            let selected_row = selected + self.items[..selected].iter().filter(|item| item.separator_after).count();
+            let selected_row = selected
+                + self.items[..selected]
+                    .iter()
+                    .filter(|item| item.separator_after)
+                    .count();
             let mut offset = (*scroll).min(visual_rows.saturating_sub(inner.height as usize));
-            if selected_row < offset { offset = selected_row; }
-            else if selected_row >= offset + inner.height as usize {
+            if selected_row < offset {
+                offset = selected_row;
+            } else if selected_row >= offset + inner.height as usize {
                 offset = selected_row + 1 - inner.height as usize;
             }
             // Begin on an item, keeping separator rows and pointer hits aligned.
             let mut row = 0;
             for item in self.items {
-                if row >= offset { offset = row; break; }
+                if row >= offset {
+                    offset = row;
+                    break;
+                }
                 row += 1 + usize::from(item.separator_after);
             }
             self.scroll_offset = offset;
@@ -365,14 +405,18 @@ impl<'a> DropdownMenu<'a> {
         let palette = crate::ui_colors::contrast_colors(&self.colors.contrast_palette);
         let fg = crate::ui_colors::ensure_contrast(self.colors.fg, self.colors.bg, 4.5, &palette);
         let fg_disabled = crate::ui_colors::disabled_text_color(
-            self.colors.fg_disabled, fg, self.colors.bg, palette,
+            self.colors.fg_disabled,
+            fg,
+            self.colors.bg,
+            palette,
         );
         let bg_selected = if !palette.is_empty() && self.colors.bg_selected == self.colors.bg {
             crate::app_theme::lerp_color(self.colors.bg, fg, 0.18)
         } else {
             self.colors.bg_selected
         };
-        let fg_selected = crate::ui_colors::ensure_contrast(self.colors.fg_selected, bg_selected, 4.5, &palette);
+        let fg_selected =
+            crate::ui_colors::ensure_contrast(self.colors.fg_selected, bg_selected, 4.5, &palette);
 
         let mut row_y = inner.y;
         let mut visual_idx: usize = 0;
@@ -441,10 +485,7 @@ impl<'a> DropdownMenu<'a> {
                 let pad = label_max.saturating_sub(label_w);
                 let mut spans = Vec::new();
                 if has_icon {
-                    spans.push(Span::styled(
-                        item.icon,
-                        Style::default().fg(icon_fg).bg(bg),
-                    ));
+                    spans.push(Span::styled(item.icon, Style::default().fg(icon_fg).bg(bg)));
                 }
                 spans.push(Span::styled(
                     {
@@ -470,10 +511,7 @@ impl<'a> DropdownMenu<'a> {
                 let pad = (item_width as usize)
                     .saturating_sub(UnicodeWidthStr::width(item.label) + icon_w);
                 Line::from(vec![
-                    Span::styled(
-                        item.icon,
-                        Style::default().fg(icon_fg).bg(bg),
-                    ),
+                    Span::styled(item.icon, Style::default().fg(icon_fg).bg(bg)),
                     Span::styled(
                         {
                             fmt_buf.clear();
@@ -503,10 +541,13 @@ impl<'a> DropdownMenu<'a> {
             };
 
             let mut row_style = Style::default().bg(bg);
-            if !item.disabled && (is_selected || is_hovered)
+            if !item.disabled
+                && (is_selected || is_hovered)
                 && let Some(border) = self.colors.border_selected
             {
-                row_style = row_style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+                row_style = row_style
+                    .add_modifier(Modifier::UNDERLINED)
+                    .underline_color(border);
             }
             f.render_widget(
                 Paragraph::new(line).style(row_style),
@@ -604,14 +645,23 @@ pub(crate) fn draw_button_content(
 /// Read a surface before replacing its contents. Unpainted test/empty frames
 /// fall back to the view that owns the control.
 pub(crate) fn surface_background(f: &mut Frame, area: Rect, fallback: Color) -> Color {
-    f.buffer_mut().cell((area.x, area.y)).map(|cell| cell.bg)
-        .filter(|color| *color != Color::Reset).unwrap_or(fallback)
+    f.buffer_mut()
+        .cell((area.x, area.y))
+        .map(|cell| cell.bg)
+        .filter(|color| *color != Color::Reset)
+        .unwrap_or(fallback)
 }
 
 /// Resolve a floating widget's fill before clearing the underlying view. The
 /// same widget can open over an editor, terminal, or sidebar surface.
-pub(crate) fn widget_background(f: &mut Frame, colors: &crate::app_theme::ThemeColors, area: Rect) -> Color {
-    colors.ui.widget_background_color(surface_background(f, area, colors.bg_editor))
+pub(crate) fn widget_background(
+    f: &mut Frame,
+    colors: &crate::app_theme::ThemeColors,
+    area: Rect,
+) -> Color {
+    colors
+        .ui
+        .widget_background_color(surface_background(f, area, colors.bg_editor))
 }
 
 /// Primary and secondary workbench actions share readable colors and the
@@ -626,8 +676,12 @@ pub(crate) fn draw_action_button(
     enabled: bool,
 ) {
     let hovered = hovered && enabled;
-    let surface = f.buffer_mut().cell((area.x, area.y)).map(|cell| cell.bg)
-        .filter(|color| *color != Color::Reset).unwrap_or(colors.ui.bg_widget);
+    let surface = f
+        .buffer_mut()
+        .cell((area.x, area.y))
+        .map(|cell| cell.bg)
+        .filter(|color| *color != Color::Reset)
+        .unwrap_or(colors.ui.bg_widget);
     draw_button_content(
         f,
         area,
@@ -650,7 +704,17 @@ pub(crate) fn draw_dialog_button(
     destructive: bool,
     enabled: bool,
 ) {
-    draw_dialog_button_with_hover(f, area, label, colors, primary, focused, false, destructive, enabled);
+    draw_dialog_button_with_hover(
+        f,
+        area,
+        label,
+        colors,
+        primary,
+        focused,
+        false,
+        destructive,
+        enabled,
+    );
 }
 
 /// Keep pointer feedback independent of the action Enter will activate.
@@ -667,16 +731,24 @@ pub(crate) fn draw_dialog_button_with_hover(
 ) {
     let focused = focused && enabled;
     let hovered = hovered && enabled;
-    let surface = f.buffer_mut().cell((area.x, area.y)).map(|cell| cell.bg)
-        .filter(|color| *color != Color::Reset).unwrap_or(colors.ui.bg_widget);
-    let mut style = colors.ui.button_style(surface, primary, focused || hovered, enabled);
+    let surface = f
+        .buffer_mut()
+        .cell((area.x, area.y))
+        .map(|cell| cell.bg)
+        .filter(|color| *color != Color::Reset)
+        .unwrap_or(colors.ui.bg_widget);
+    let mut style = colors
+        .ui
+        .button_style(surface, primary, focused || hovered, enabled);
     if destructive && enabled {
         style = style.fg(colors.ui.error_text_color(style.bg.unwrap()));
     }
     if focused {
         style = style.add_modifier(Modifier::BOLD);
         if let Some(border) = colors.ui.focus_border.border(style.bg.unwrap()) {
-            style = style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+            style = style
+                .add_modifier(Modifier::UNDERLINED)
+                .underline_color(border);
         }
     }
     draw_button_content(f, area, label, style, focused || hovered, false);
@@ -757,7 +829,11 @@ impl<'a> PopupDialog<'a> {
         Rect::new(term.x.saturating_add(x), term.y.saturating_add(y), w, h).intersection(term)
     }
 
-    pub(crate) fn widget_background(&self, f: &mut Frame, colors: &crate::app_theme::ThemeColors) -> Color {
+    pub(crate) fn widget_background(
+        &self,
+        f: &mut Frame,
+        colors: &crate::app_theme::ThemeColors,
+    ) -> Color {
         let area = self.area(f.area());
         widget_background(f, colors, area)
     }
@@ -801,11 +877,16 @@ pub(crate) fn themed_dropdown_colors(c: &crate::app_theme::ThemeColors) -> Dropd
             // defaultMenuStyles inherits editorWidget.border when menu.border
             // is unset. Explicit transparent borders still suppress it.
             normal: crate::theme_workbench::ControlColors {
-                border: c.ui.menu_colors.border.or(c.ui.widget_border), ..c.ui.menu_colors
-            }, selected: c.ui.menu_selection_colors,
-            separator: c.ui.menu_separator, disabled: c.ui.disabled_foreground,
-            shortcut: c.ui.menu_colors.foreground, slider: c.ui.scrollbar_slider,
-            track: c.ui.scrollbar_background, fallback_surface: c.bg_editor,
+                border: c.ui.menu_colors.border.or(c.ui.widget_border),
+                ..c.ui.menu_colors
+            },
+            selected: c.ui.menu_selection_colors,
+            separator: c.ui.menu_separator,
+            disabled: c.ui.disabled_foreground,
+            shortcut: c.ui.menu_colors.foreground,
+            slider: c.ui.scrollbar_slider,
+            track: c.ui.scrollbar_background,
+            fallback_surface: c.bg_editor,
         }),
         contrast_palette: c.ui.contrast_fallbacks(),
         bg: c.bg_menu,
@@ -827,24 +908,38 @@ pub(crate) fn themed_dropdown_colors(c: &crate::app_theme::ThemeColors) -> Dropd
 pub(crate) fn settings_dropdown_colors(c: &crate::app_theme::ThemeColors) -> DropdownColors {
     let control = c.ui.settings_dropdown_list;
     let bg = control.background.over(c.bg_editor).unwrap_or(c.bg_editor);
-    let fg = c.ui.readable_foreground(control.foreground.over(bg).unwrap_or(c.fg_input), bg, 4.5);
-    let selection = if c.ui.preserve_theme_colors { crate::theme_workbench::ControlColors {
-        background: c.ui.quick_focus_background, foreground: c.ui.quick_focus_foreground, border: c.ui.active_contrast_border,
-    } } else { crate::theme_workbench::ControlColors {
-        background: c.ui.list_active_background, foreground: c.ui.list_active_foreground, border: c.ui.list_focus_outline,
-    } };
+    let fg =
+        c.ui.readable_foreground(control.foreground.over(bg).unwrap_or(c.fg_input), bg, 4.5);
+    let selection = if c.ui.preserve_theme_colors {
+        crate::theme_workbench::ControlColors {
+            background: c.ui.quick_focus_background,
+            foreground: c.ui.quick_focus_foreground,
+            border: c.ui.active_contrast_border,
+        }
+    } else {
+        crate::theme_workbench::ControlColors {
+            background: c.ui.list_active_background,
+            foreground: c.ui.list_active_foreground,
+            border: c.ui.list_focus_outline,
+        }
+    };
     let bg_selected = selection.background.over(bg).unwrap_or(bg);
     let fg_selected = c.ui.readable_foreground(
-        selection.foreground.over(bg_selected).unwrap_or(fg), bg_selected, 4.5,
+        selection.foreground.over(bg_selected).unwrap_or(fg),
+        bg_selected,
+        4.5,
     );
     let (scrollbar_bg, scrollbar_fg) = c.ui.scrollbar_colors(bg, false, false);
     DropdownColors {
         layers: c.ui.preserve_theme_colors.then_some(DropdownLayers {
             normal: control,
             selected: selection,
-            separator: control.border, disabled: c.ui.disabled_foreground,
-            shortcut: c.ui.description_foreground, slider: c.ui.scrollbar_slider,
-            track: c.ui.scrollbar_background, fallback_surface: c.bg_editor,
+            separator: control.border,
+            disabled: c.ui.disabled_foreground,
+            shortcut: c.ui.description_foreground,
+            slider: c.ui.scrollbar_slider,
+            track: c.ui.scrollbar_background,
+            fallback_surface: c.bg_editor,
         }),
         contrast_palette: c.ui.contrast_fallbacks(),
         bg,
@@ -887,7 +982,10 @@ pub(crate) struct InputField<'a> {
     viewport: Option<crate::text_input::InputViewport>,
     selection_color: Color,
     selection_bg: Color,
-    selection_layers: Option<(crate::theme_workbench::ColorLayer, crate::theme_workbench::ColorLayer)>,
+    selection_layers: Option<(
+        crate::theme_workbench::ColorLayer,
+        crate::theme_workbench::ColorLayer,
+    )>,
     suffix: &'a str,
     suffix_color: Color,
     placeholder: &'a str,
@@ -949,8 +1047,12 @@ impl<'a> InputField<'a> {
         self.theme_control(colors, colors.ui.input_colors, colors.bg_sidebar)
     }
 
-    pub(crate) fn theme_control(mut self, colors: &crate::app_theme::ThemeColors,
-        control: crate::theme_workbench::ControlColors, surface: Color) -> Self {
+    pub(crate) fn theme_control(
+        mut self,
+        colors: &crate::app_theme::ThemeColors,
+        control: crate::theme_workbench::ControlColors,
+        surface: Color,
+    ) -> Self {
         self.contrast_palette = Some(colors.ui.contrast_palette);
         self.preserve_theme_colors = colors.ui.preserve_theme_colors;
         self.prefix_color = colors.fg_input;
@@ -1022,10 +1124,21 @@ impl<'a> InputField<'a> {
         // the text to one glyph and clipping the suffix mid-word.
         let fixed = UnicodeWidthStr::width(self.prefix) + usize::from(cursor_needs_cell);
         let suffix = if fixed + UnicodeWidthStr::width(self.suffix) + MIN_TEXT_BESIDE_SUFFIX
-            <= area.width as usize { self.suffix } else { "" };
+            <= area.width as usize
+        {
+            self.suffix
+        } else {
+            ""
+        };
         let reserved = fixed + UnicodeWidthStr::width(suffix);
         let max_text_width = (area.width as usize).saturating_sub(reserved).max(1);
-        let signature = crate::text_input::InputViewport::new(self.text, cursor_pos, self.selection_byte_range, 0, 0);
+        let signature = crate::text_input::InputViewport::new(
+            self.text,
+            cursor_pos,
+            self.selection_byte_range,
+            0,
+            0,
+        );
         let manual = self.viewport.filter(|view| view.matches(signature));
         let (view_start, view_end) = if UnicodeWidthStr::width(self.text) <= max_text_width {
             (0, self.text.len())
@@ -1035,7 +1148,9 @@ impl<'a> InputField<'a> {
             let mut end = start;
             let mut used = 0;
             for (byte, glyph) in self.text[start..].grapheme_indices(true) {
-                if used + glyph.width() > budget { break; }
+                if used + glyph.width() > budget {
+                    break;
+                }
                 end = start + byte + glyph.len();
                 used += glyph.width();
             }
@@ -1076,28 +1191,65 @@ impl<'a> InputField<'a> {
             (start, end)
         };
 
-        let own_colors = [self.text_color, self.selection_color, self.cursor_color, self.bg, self.selection_bg];
-        let palette = if self.preserve_theme_colors { &[] }
-            else { self.contrast_palette.as_ref().map_or(own_colors.as_slice(), |palette| palette.as_slice()) };
+        let own_colors = [
+            self.text_color,
+            self.selection_color,
+            self.cursor_color,
+            self.bg,
+            self.selection_bg,
+        ];
+        let palette = if self.preserve_theme_colors {
+            &[]
+        } else {
+            self.contrast_palette
+                .as_ref()
+                .map_or(own_colors.as_slice(), |palette| palette.as_slice())
+        };
         if !self.prefix.is_empty() {
-            let prefix_color = self.prefix_layer.and_then(|color| color.over(self.bg)).unwrap_or(self.prefix_color);
+            let prefix_color = self
+                .prefix_layer
+                .and_then(|color| color.over(self.bg))
+                .unwrap_or(self.prefix_color);
             spans.push(Span::styled(
                 self.prefix,
-                Style::default().fg(if self.prefix_is_decoration { prefix_color }
-                    else { crate::ui_colors::ensure_contrast(prefix_color, self.bg, 4.5, palette) }),
+                Style::default().fg(if self.prefix_is_decoration {
+                    prefix_color
+                } else {
+                    crate::ui_colors::ensure_contrast(prefix_color, self.bg, 4.5, palette)
+                }),
             ));
         }
 
-        let text_color = self.foreground_layer.and_then(|color| color.over(self.bg)).unwrap_or(self.text_color);
+        let text_color = self
+            .foreground_layer
+            .and_then(|color| color.over(self.bg))
+            .unwrap_or(self.text_color);
         let text_color = crate::ui_colors::ensure_contrast(text_color, self.bg, 4.5, palette);
-        let placeholder_color = self.placeholder_layer.and_then(|color| color.over(self.bg)).unwrap_or(self.placeholder_color);
-        let placeholder_color = crate::ui_colors::ensure_contrast(placeholder_color, self.bg, 4.5, palette);
+        let placeholder_color = self
+            .placeholder_layer
+            .and_then(|color| color.over(self.bg))
+            .unwrap_or(self.placeholder_color);
+        let placeholder_color =
+            crate::ui_colors::ensure_contrast(placeholder_color, self.bg, 4.5, palette);
         let selection_style = if let Some((foreground, fill)) = self.selection_layers {
-            crate::ui_colors::input_selection_from_layers(foreground, fill, self.bg, text_color, palette)
-        } else { crate::ui_colors::input_selection_style(self.selection_color, self.selection_bg, self.bg, palette) };
-        let cursor_color = self.cursor_layer.and_then(|color| color.over(self.bg)).unwrap_or(self.cursor_color);
-        let cursor_style = crate::ui_colors::block_cursor_style(cursor_color, self.bg, self.bg, palette)
-            .add_modifier(Modifier::BOLD);
+            crate::ui_colors::input_selection_from_layers(
+                foreground, fill, self.bg, text_color, palette,
+            )
+        } else {
+            crate::ui_colors::input_selection_style(
+                self.selection_color,
+                self.selection_bg,
+                self.bg,
+                palette,
+            )
+        };
+        let cursor_color = self
+            .cursor_layer
+            .and_then(|color| color.over(self.bg))
+            .unwrap_or(self.cursor_color);
+        let cursor_style =
+            crate::ui_colors::block_cursor_style(cursor_color, self.bg, self.bg, palette)
+                .add_modifier(Modifier::BOLD);
         if self.text.is_empty() && !self.placeholder.is_empty() {
             if cursor_visible {
                 let mut placeholder_chars = self.placeholder.chars();
@@ -1105,10 +1257,7 @@ impl<'a> InputField<'a> {
                     spans.push(Span::styled(first.to_string(), cursor_style));
                     let rest = placeholder_chars.collect::<String>();
                     if !rest.is_empty() {
-                        spans.push(Span::styled(
-                            rest,
-                            Style::default().fg(placeholder_color),
-                        ));
+                        spans.push(Span::styled(rest, Style::default().fg(placeholder_color)));
                     }
                 }
             } else {
@@ -1127,10 +1276,7 @@ impl<'a> InputField<'a> {
                 )
             });
             if view_start > 0 {
-                spans.push(Span::styled(
-                    "…",
-                    Style::default().fg(placeholder_color),
-                ));
+                spans.push(Span::styled("…", Style::default().fg(placeholder_color)));
             }
             let mut batch = String::new();
             let mut batch_style: Option<Style> = None;
@@ -1158,27 +1304,31 @@ impl<'a> InputField<'a> {
                 spans.push(Span::styled(batch, batch_style.unwrap_or_default()));
             }
             if cursor_pos == Some(self.text.len()) && view_end == self.text.len() {
-                spans.push(Span::styled(" ", if cursor_visible {
-                    cursor_style
-                } else { Style::default().fg(text_color) }));
-            }
-            if view_end < self.text.len() {
                 spans.push(Span::styled(
-                    "…",
-                    Style::default().fg(placeholder_color),
+                    " ",
+                    if cursor_visible {
+                        cursor_style
+                    } else {
+                        Style::default().fg(text_color)
+                    },
                 ));
             }
+            if view_end < self.text.len() {
+                spans.push(Span::styled("…", Style::default().fg(placeholder_color)));
+            }
         } else {
-            spans.push(Span::styled(
-                self.text,
-                Style::default().fg(text_color),
-            ));
+            spans.push(Span::styled(self.text, Style::default().fg(text_color)));
         }
 
         if !suffix.is_empty() {
             spans.push(Span::styled(
                 suffix,
-                Style::default().fg(crate::ui_colors::ensure_contrast(self.suffix_color, self.bg, 4.5, palette)),
+                Style::default().fg(crate::ui_colors::ensure_contrast(
+                    self.suffix_color,
+                    self.bg,
+                    4.5,
+                    palette,
+                )),
             ));
         }
 
@@ -1282,10 +1432,17 @@ impl<'a> Tooltip<'a> {
         }
     }
 
-    pub(crate) fn themed(lines: Vec<Line<'a>>, control: crate::theme_workbench::ControlColors,
-        colors: &crate::app_theme::ThemeColors) -> Self {
+    pub(crate) fn themed(
+        lines: Vec<Line<'a>>,
+        control: crate::theme_workbench::ControlColors,
+        colors: &crate::app_theme::ThemeColors,
+    ) -> Self {
         let mut tooltip = Self::new(lines, Color::Reset, Color::Reset);
-        tooltip.theme = Some(TooltipTheme { colors: control, palette: colors.ui.contrast_fallbacks(), fallback: colors.bg_editor });
+        tooltip.theme = Some(TooltipTheme {
+            colors: control,
+            palette: colors.ui.contrast_fallbacks(),
+            fallback: colors.bg_editor,
+        });
         tooltip
     }
 
@@ -1294,14 +1451,28 @@ impl<'a> Tooltip<'a> {
     }
 
     /// Keep semantic colors raw until the tooltip's final placement is known.
-    pub(crate) fn span_foreground(mut self, line: usize, span: usize, foreground: crate::theme_workbench::ColorLayer) -> Self {
-        self.layers.push((line, Some(span), crate::theme_workbench::ControlColors {
-            foreground, ..Default::default()
-        }));
+    pub(crate) fn span_foreground(
+        mut self,
+        line: usize,
+        span: usize,
+        foreground: crate::theme_workbench::ColorLayer,
+    ) -> Self {
+        self.layers.push((
+            line,
+            Some(span),
+            crate::theme_workbench::ControlColors {
+                foreground,
+                ..Default::default()
+            },
+        ));
         self
     }
 
-    pub(crate) fn line_colors(mut self, line: usize, colors: crate::theme_workbench::ControlColors) -> Self {
+    pub(crate) fn line_colors(
+        mut self,
+        line: usize,
+        colors: crate::theme_workbench::ControlColors,
+    ) -> Self {
         self.layers.push((line, None, colors));
         self
     }
@@ -1348,8 +1519,12 @@ impl<'a> Tooltip<'a> {
                     .sum::<usize>()
             })
             .max()
-            .map(len_as_u16).unwrap_or(20);
-        let popup_width = content_w.saturating_add(4).min(self.max_width).min(area.width);
+            .map(len_as_u16)
+            .unwrap_or(20);
+        let popup_width = content_w
+            .saturating_add(4)
+            .min(self.max_width)
+            .min(area.width);
         let popup_height = (len_as_u16(self.lines.len()) + 2)
             .min(self.max_height)
             .min(area.height);
@@ -1366,14 +1541,26 @@ impl<'a> Tooltip<'a> {
         } else {
             area.bottom().saturating_sub(popup_height).max(area.y)
         };
-        let x = anchor_x.max(area.x).min(area.right().saturating_sub(popup_width));
+        let x = anchor_x
+            .max(area.x)
+            .min(area.right().saturating_sub(popup_width));
         let mut popup_area = Rect::new(x, y, popup_width, popup_height);
-        if let Some(avoid) = self.avoid_area.filter(|avoid| !avoid.intersection(popup_area).is_empty()) {
-            let alternative = [anchor_y.checked_sub(popup_height), Some(below_y)].into_iter().flatten()
+        if let Some(avoid) = self
+            .avoid_area
+            .filter(|avoid| !avoid.intersection(popup_area).is_empty())
+        {
+            let alternative = [anchor_y.checked_sub(popup_height), Some(below_y)]
+                .into_iter()
+                .flatten()
                 .map(|y| Rect::new(x, y, popup_width, popup_height))
-                .find(|candidate| candidate.y >= area.y && candidate.bottom() <= area.bottom()
-                    && candidate.intersection(avoid).is_empty());
-            let Some(alternative) = alternative else { return Rect::default(); };
+                .find(|candidate| {
+                    candidate.y >= area.y
+                        && candidate.bottom() <= area.bottom()
+                        && candidate.intersection(avoid).is_empty()
+                });
+            let Some(alternative) = alternative else {
+                return Rect::default();
+            };
             popup_area = alternative;
         }
 
@@ -1382,26 +1569,48 @@ impl<'a> Tooltip<'a> {
             let surface = surface_background(f, popup_area, theme.fallback);
             self.bg = theme.colors.background.over(surface).unwrap_or(surface);
             let foreground = theme.colors.foreground.over(self.bg).unwrap_or(surface);
-            let foreground = crate::ui_colors::ensure_contrast(foreground, self.bg, 4.5, crate::ui_colors::contrast_colors(&theme.palette));
+            let foreground = crate::ui_colors::ensure_contrast(
+                foreground,
+                self.bg,
+                4.5,
+                crate::ui_colors::contrast_colors(&theme.palette),
+            );
             normal = Style::default().fg(foreground).bg(self.bg);
             self.border_color = theme.colors.border.border(self.bg).unwrap_or(self.bg);
             for &(line_index, span_index, colors) in &self.layers {
-                let Some(line) = self.lines.get_mut(line_index) else { continue; };
+                let Some(line) = self.lines.get_mut(line_index) else {
+                    continue;
+                };
                 let line_surface = line.style.bg.unwrap_or(self.bg);
                 let target = match span_index {
                     Some(index) => {
-                        let Some(span) = line.spans.get_mut(index) else { continue; };
+                        let Some(span) = line.spans.get_mut(index) else {
+                            continue;
+                        };
                         &mut span.style
                     }
                     None => &mut line.style,
                 };
                 let surface = target.bg.unwrap_or(line_surface);
                 let background = colors.background.over(surface).unwrap_or(surface);
-                let foreground = colors.foreground.or(theme.colors.foreground).over(background).unwrap_or(foreground);
-                let mut style = Style::default().bg(background)
-                    .fg(crate::ui_colors::ensure_contrast(foreground, background, 4.5, crate::ui_colors::contrast_colors(&theme.palette)));
+                let foreground = colors
+                    .foreground
+                    .or(theme.colors.foreground)
+                    .over(background)
+                    .unwrap_or(foreground);
+                let mut style =
+                    Style::default()
+                        .bg(background)
+                        .fg(crate::ui_colors::ensure_contrast(
+                            foreground,
+                            background,
+                            4.5,
+                            crate::ui_colors::contrast_colors(&theme.palette),
+                        ));
                 if let Some(border) = colors.border.border(background) {
-                    style = style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+                    style = style
+                        .add_modifier(Modifier::UNDERLINED)
+                        .underline_color(border);
                 }
                 *target = target.patch(style);
             }
@@ -1413,7 +1622,10 @@ impl<'a> Tooltip<'a> {
             .style(normal);
 
         if let Some(t) = self.title {
-            block = block.title(Span::styled(format!(" {t} "), normal.patch(self.title_style)));
+            block = block.title(Span::styled(
+                format!(" {t} "),
+                normal.patch(self.title_style),
+            ));
         }
 
         let inner = block.inner(popup_area);
@@ -1439,11 +1651,22 @@ pub(crate) fn toggle_button_style(
     palette: &[Color],
 ) -> Style {
     if active {
-        Style::default().fg(crate::ui_colors::ensure_contrast(selected_fg, accent, 4.5, &palette)).bg(accent)
+        Style::default()
+            .fg(crate::ui_colors::ensure_contrast(
+                selected_fg,
+                accent,
+                4.5,
+                &palette,
+            ))
+            .bg(accent)
     } else if hovered {
         // Selection foreground belongs on the selected background, not the
         // hover surface (which is often very pale in light themes).
-        Style::default().fg(crate::ui_colors::ensure_contrast(dim_fg, hover_bg, 4.5, &palette)).bg(hover_bg)
+        Style::default()
+            .fg(crate::ui_colors::ensure_contrast(
+                dim_fg, hover_bg, 4.5, &palette,
+            ))
+            .bg(hover_bg)
     } else {
         Style::default().fg(dim_fg)
     }
@@ -1578,7 +1801,9 @@ impl VerticalScrollbar {
         for i in 0..self.height {
             let sy = self.top_y + i;
             for x in self.x..self.x.saturating_add(self.width) {
-                let Some(cell) = buf.cell_mut((x, sy)) else { continue; };
+                let Some(cell) = buf.cell_mut((x, sy)) else {
+                    continue;
+                };
                 if i >= thumb_pos && i < thumb_pos + thumb_size {
                     cell.set_char(self.thumb_symbol)
                         .set_fg(self.thumb_fg)
@@ -1596,12 +1821,15 @@ impl VerticalScrollbar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn test_colors() -> DropdownColors {
         DropdownColors {
             layers: None,
-            contrast_palette: crate::app_theme::load_builtin_themes()[0].to_theme_colors().ui.contrast_fallbacks(),
+            contrast_palette: crate::app_theme::load_builtin_themes()[0]
+                .to_theme_colors()
+                .ui
+                .contrast_fallbacks(),
             bg: Color::Black,
             bg_selected: Color::Blue,
             fg: Color::White,
@@ -1652,21 +1880,28 @@ mod tests {
 
     #[test]
     fn dropdown_menu_tiny_frames_and_stale_anchors_do_not_panic() {
-        let items = [DropdownItem::new("Copy").separator(), DropdownItem::new("Paste")];
+        let items = [
+            DropdownItem::new("Copy").separator(),
+            DropdownItem::new("Paste"),
+        ];
         for (width, height) in [(0, 0), (1, 1), (2, 2), (1, 40), (80, 1), (3, 3), (80, 24)] {
             for layered in [false, true] {
                 let colors = if layered {
-                    themed_dropdown_colors(&crate::app_theme::load_builtin_themes()[0].to_theme_colors())
+                    themed_dropdown_colors(
+                        &crate::app_theme::load_builtin_themes()[0].to_theme_colors(),
+                    )
                 } else {
                     test_colors()
                 };
                 let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-                terminal.draw(|frame| {
-                    let inner = DropdownMenu::new(&items, colors)
-                        .anchor(u16::MAX, u16::MAX)
-                        .render(frame);
-                    assert_eq!(inner.intersection(frame.area()), inner);
-                }).unwrap();
+                terminal
+                    .draw(|frame| {
+                        let inner = DropdownMenu::new(&items, colors)
+                            .anchor(u16::MAX, u16::MAX)
+                            .render(frame);
+                        assert_eq!(inner.intersection(frame.area()), inner);
+                    })
+                    .unwrap();
             }
         }
     }
@@ -1710,25 +1945,41 @@ mod tests {
     #[test]
     fn input_field_default_prompt_and_text_render_with_input_theme_colors() {
         for (foreground, background) in [
-            (Color::Rgb(190,230,210), Color::Rgb(20,32,28)),
-            (Color::Rgb(24,36,48), Color::Rgb(240,244,248)),
+            (Color::Rgb(190, 230, 210), Color::Rgb(20, 32, 28)),
+            (Color::Rgb(24, 36, 48), Color::Rgb(240, 244, 248)),
         ] {
             let mut theme = crate::app_theme::load_builtin_themes().remove(0);
-            for (id, color) in [("input.foreground", foreground), ("input.background", background)] {
-                let Color::Rgb(r, g, b) = color else { unreachable!() };
-                theme.workbench_colors.insert(id.into(), format!("#{r:02x}{g:02x}{b:02x}").into());
+            for (id, color) in [
+                ("input.foreground", foreground),
+                ("input.background", background),
+            ] {
+                let Color::Rgb(r, g, b) = color else {
+                    unreachable!()
+                };
+                theme
+                    .workbench_colors
+                    .insert(id.into(), format!("#{r:02x}{g:02x}{b:02x}").into());
             }
             let colors = theme.to_theme_colors();
-            let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(16,1)).unwrap();
-            terminal.draw(|frame| {
-                InputField::new("query").theme_colors(&colors).render(frame, Rect::new(0,0,16,1));
-            }).unwrap();
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(16, 1)).unwrap();
+            terminal
+                .draw(|frame| {
+                    InputField::new("query")
+                        .theme_colors(&colors)
+                        .render(frame, Rect::new(0, 0, 16, 1));
+                })
+                .unwrap();
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer[(0,0)].symbol(), ">");
-            assert_eq!(buffer[(2,0)].symbol(), "q");
-            for x in [0,2,3,4,5,6] {
-                assert_eq!(buffer[(x,0)].fg, foreground, "adornment or text bypassed the input theme");
-                assert_eq!(buffer[(x,0)].bg, background);
+            assert_eq!(buffer[(0, 0)].symbol(), ">");
+            assert_eq!(buffer[(2, 0)].symbol(), "q");
+            for x in [0, 2, 3, 4, 5, 6] {
+                assert_eq!(
+                    buffer[(x, 0)].fg,
+                    foreground,
+                    "adornment or text bypassed the input theme"
+                );
+                assert_eq!(buffer[(x, 0)].bg, background);
             }
         }
     }
@@ -1737,16 +1988,28 @@ mod tests {
     fn input_field_hides_a_suffix_that_would_squeeze_the_text_and_clip_itself() {
         let colors = crate::app_theme::EditorTheme::Dark.colors();
         let row = |width: u16| {
-            let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 1)).unwrap();
-            terminal.draw(|frame| {
-                InputField::new("wörld").theme_colors(&colors).cursor_marker("│").cursor_pos(6)
-                    .suffix(" No results", Color::Gray).render(frame, Rect::new(0, 0, width, 1));
-            }).unwrap();
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 1)).unwrap();
+            terminal
+                .draw(|frame| {
+                    InputField::new("wörld")
+                        .theme_colors(&colors)
+                        .cursor_marker("│")
+                        .cursor_pos(6)
+                        .suffix(" No results", Color::Gray)
+                        .render(frame, Rect::new(0, 0, width, 1));
+                })
+                .unwrap();
             let buffer = terminal.backend().buffer();
-            (0..width).map(|x| buffer[(x, 0)].symbol()).collect::<String>()
+            (0..width)
+                .map(|x| buffer[(x, 0)].symbol())
+                .collect::<String>()
         };
         let wide = row(40);
-        assert!(wide.contains("wörld") && wide.contains("No results"), "{wide}");
+        assert!(
+            wide.contains("wörld") && wide.contains("No results"),
+            "{wide}"
+        );
         // Too narrow for both: keep the query readable and omit the suffix
         // rather than rendering a fragment such as "…d N".
         let narrow = row(9);
@@ -1813,21 +2076,35 @@ mod tests {
         for width in [7, 30] {
             let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
             let mut hit_map = None;
-            terminal.draw(|frame| {
-                hit_map = Some(InputField::new(text)
-                    .prefix("", Color::White)
-                    .cursor_marker("│")
-                    .cursor_pos(text.find(" xyz").unwrap())
-                    .render(frame, Rect::new(0, 0, width, 1)));
-            }).unwrap();
+            terminal
+                .draw(|frame| {
+                    hit_map = Some(
+                        InputField::new(text)
+                            .prefix("", Color::White)
+                            .cursor_marker("│")
+                            .cursor_pos(text.find(" xyz").unwrap())
+                            .render(frame, Rect::new(0, 0, width, 1)),
+                    );
+                })
+                .unwrap();
             let hit_map = hit_map.unwrap();
             for x in 0..width {
                 let byte = hit_map.byte_at(x, 0);
-                assert_eq!(byte, crate::app::App::clamp_to_grapheme_boundary(text, byte));
+                assert_eq!(
+                    byte,
+                    crate::app::App::clamp_to_grapheme_boundary(text, byte)
+                );
             }
             let buffer = terminal.backend().buffer();
-            assert!((0..width).any(|x| buffer.cell((x, 0)).is_some_and(|cell| cell.symbol() == "👩‍💻")),
-                "width={width}, cells={:?}", (0..width).map(|x| buffer.cell((x, 0)).unwrap().symbol()).collect::<Vec<_>>());
+            assert!(
+                (0..width).any(|x| buffer
+                    .cell((x, 0))
+                    .is_some_and(|cell| cell.symbol() == "👩‍💻")),
+                "width={width}, cells={:?}",
+                (0..width)
+                    .map(|x| buffer.cell((x, 0)).unwrap().symbol())
+                    .collect::<Vec<_>>()
+            );
         }
     }
 
@@ -1852,8 +2129,12 @@ mod tests {
     #[test]
     fn input_field_block_cursor_overlays_text_without_shifting_it() {
         let mut theme = crate::app_theme::load_builtin_themes().remove(0);
-        theme.workbench_colors.insert("input.foreground".into(), "#ffffff".into());
-        theme.workbench_colors.insert("input.background".into(), "#000000".into());
+        theme
+            .workbench_colors
+            .insert("input.foreground".into(), "#ffffff".into());
+        theme
+            .workbench_colors
+            .insert("input.background".into(), "#000000".into());
         let colors = theme.to_theme_colors();
         let mut terminal = Terminal::new(TestBackend::new(8, 1)).unwrap();
         let mut hit_map = None;
@@ -1875,14 +2156,22 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect::<String>();
         assert_eq!(rendered, "abcd");
-        assert_eq!(buffer.cell((2, 0)).map(|cell| cell.bg), Some(Color::Rgb(255, 255, 255)));
+        assert_eq!(
+            buffer.cell((2, 0)).map(|cell| cell.bg),
+            Some(Color::Rgb(255, 255, 255))
+        );
         assert_eq!(hit_map.unwrap().byte_at(2, 0), 2);
     }
 
     #[test]
     fn input_field_blink_preserves_text_viewport_and_pointer_targets() {
         let colors = crate::app_theme::EditorTheme::Dark.colors();
-        for text in ["", "12345678", "abcdefghijklmnopqrstuvwxyz0123456789", "ab界e\u{301}👩‍💻uvwxyz"] {
+        for text in [
+            "",
+            "12345678",
+            "abcdefghijklmnopqrstuvwxyz0123456789",
+            "ab界e\u{301}👩‍💻uvwxyz",
+        ] {
             for width in [1, 2, 8, 16, 48] {
                 for cursor in [0, text.len() / 2, text.len()] {
                     for (prefix, suffix, placeholder) in [("", "", ""), ("> ", " 2/7", "Find")] {
@@ -1890,24 +2179,37 @@ mod tests {
                         let mut baseline = None;
                         for visible in [true, false, true, false] {
                             let mut hit_map = None;
-                            terminal.draw(|frame| {
-                                hit_map = Some(InputField::new(text)
-                                    .theme_colors(&colors)
-                                    .prefix(prefix, colors.fg_input)
-                                    .suffix(suffix, colors.fg_dim)
-                                    .placeholder_text(placeholder)
-                                    .cursor_pos(cursor)
-                                    .selection_range(Some((0, cursor)))
-                                    .cursor_marker(if visible { "│" } else { "" })
-                                    .render(frame, Rect::new(0, 0, width, 1)));
-                            }).unwrap();
-                            let symbols: Vec<_> = terminal.backend().buffer().content.iter()
-                                .map(|cell| cell.symbol().to_string()).collect();
+                            terminal
+                                .draw(|frame| {
+                                    hit_map = Some(
+                                        InputField::new(text)
+                                            .theme_colors(&colors)
+                                            .prefix(prefix, colors.fg_input)
+                                            .suffix(suffix, colors.fg_dim)
+                                            .placeholder_text(placeholder)
+                                            .cursor_pos(cursor)
+                                            .selection_range(Some((0, cursor)))
+                                            .cursor_marker(if visible { "│" } else { "" })
+                                            .render(frame, Rect::new(0, 0, width, 1)),
+                                    );
+                                })
+                                .unwrap();
+                            let symbols: Vec<_> = terminal
+                                .backend()
+                                .buffer()
+                                .content
+                                .iter()
+                                .map(|cell| cell.symbol().to_string())
+                                .collect();
                             let snapshot = (symbols, hit_map.unwrap());
                             if let Some(expected) = &baseline {
-                                assert_eq!(&snapshot, expected,
-                                    "blink moved text or pointer targets: text={text:?}, width={width}, cursor={cursor}, prefix={prefix:?}, suffix={suffix:?}");
-                            } else { baseline = Some(snapshot); }
+                                assert_eq!(
+                                    &snapshot, expected,
+                                    "blink moved text or pointer targets: text={text:?}, width={width}, cursor={cursor}, prefix={prefix:?}, suffix={suffix:?}"
+                                );
+                            } else {
+                                baseline = Some(snapshot);
+                            }
                         }
                     }
                 }
@@ -1918,28 +2220,36 @@ mod tests {
     #[test]
     fn input_field_end_cursor_blinks_without_moving_its_suffix() {
         let mut theme = crate::app_theme::load_builtin_themes().remove(0);
-        theme.workbench_colors.insert("input.foreground".into(), "#ffffff".into());
-        theme.workbench_colors.insert("input.background".into(), "#000000".into());
+        theme
+            .workbench_colors
+            .insert("input.foreground".into(), "#ffffff".into());
+        theme
+            .workbench_colors
+            .insert("input.background".into(), "#000000".into());
         let colors = theme.to_theme_colors();
         let mut terminal = Terminal::new(TestBackend::new(16, 1)).unwrap();
         let mut buffers = Vec::new();
         for visible in [true, false] {
-            terminal.draw(|frame| {
-                InputField::new("a界b")
-                    .theme_colors(&colors)
-                    .prefix("> ", colors.fg_input)
-                    .cursor_pos("a界b".len())
-                    .cursor_marker(if visible { "│" } else { "" })
-                    .suffix(" [3]", colors.fg_dim)
-                    .render(frame, Rect::new(0, 0, 16, 1));
-            }).unwrap();
+            terminal
+                .draw(|frame| {
+                    InputField::new("a界b")
+                        .theme_colors(&colors)
+                        .prefix("> ", colors.fg_input)
+                        .cursor_pos("a界b".len())
+                        .cursor_marker(if visible { "│" } else { "" })
+                        .suffix(" [3]", colors.fg_dim)
+                        .render(frame, Rect::new(0, 0, 16, 1));
+                })
+                .unwrap();
             buffers.push(terminal.backend().buffer().clone());
         }
         assert_eq!(buffers[0][(6, 0)].bg, Color::Rgb(255, 255, 255));
         assert_eq!(buffers[1][(6, 0)].bg, Color::Rgb(0, 0, 0));
         for x in 0..16 {
             assert_eq!(buffers[0][(x, 0)].symbol(), buffers[1][(x, 0)].symbol());
-            if x != 6 { assert_eq!(buffers[0][(x, 0)], buffers[1][(x, 0)]); }
+            if x != 6 {
+                assert_eq!(buffers[0][(x, 0)], buffers[1][(x, 0)]);
+            }
         }
         assert_eq!(buffers[1][(8, 0)].symbol(), "[");
     }
@@ -1956,7 +2266,9 @@ mod tests {
             Color::Gray,
             Color::Blue,
             Color::White,
-            Color::DarkGray, &[Color::White, Color::Black]);
+            Color::DarkGray,
+            &[Color::White, Color::Black],
+        );
         assert_eq!(s.fg.unwrap(), Color::White);
         assert_eq!(s.bg.unwrap(), Color::Blue);
     }
@@ -1969,7 +2281,9 @@ mod tests {
             Color::Gray,
             Color::Blue,
             Color::White,
-            Color::DarkGray, &[Color::White, Color::Black]);
+            Color::DarkGray,
+            &[Color::White, Color::Black],
+        );
         assert_eq!(s.fg.unwrap(), Color::Gray);
         assert_eq!(s.bg.unwrap(), Color::DarkGray);
     }
@@ -1982,7 +2296,9 @@ mod tests {
             Color::Gray,
             Color::Blue,
             Color::White,
-            Color::DarkGray, &[Color::White, Color::Black]);
+            Color::DarkGray,
+            &[Color::White, Color::Black],
+        );
         assert_eq!(s.fg.unwrap(), Color::Gray);
         assert!(s.bg.is_none());
     }
@@ -2014,5 +2330,4 @@ mod tests {
         let line = header.to_line();
         assert_eq!(line.spans.len(), 2); // arrow + label, no count span
     }
-
 }

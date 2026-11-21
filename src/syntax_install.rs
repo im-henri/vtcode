@@ -1,10 +1,10 @@
 //! Local syntax installation. Parsing and disk access run on a worker.
+use crate::textmate::SyntaxRegistry;
 use std::{
     fs::File,
     io::{Read, Write},
     path::{Path, PathBuf},
 };
-use crate::textmate::SyntaxRegistry;
 
 const MAX_SYNTAX_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -34,10 +34,11 @@ pub(crate) fn source_path(input: &str, workspace: &Path) -> Result<PathBuf, Stri
         return Err("Use a local syntax file path. Web links are not supported.".into());
     }
     let path = Path::new(input);
-    if !path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("tmLanguage") || e.eq_ignore_ascii_case("json") || e.eq_ignore_ascii_case("plist"))
-    {
+    if !path.extension().is_some_and(|e| {
+        e.eq_ignore_ascii_case("tmLanguage")
+            || e.eq_ignore_ascii_case("json")
+            || e.eq_ignore_ascii_case("plist")
+    }) {
         return Err("Choose a TextMate .tmLanguage.json or .tmLanguage file.".into());
     }
     Ok(if path.is_absolute() {
@@ -68,13 +69,19 @@ pub(crate) fn install(
     if bytes.len() as u64 > MAX_SYNTAX_BYTES {
         return Err("Syntax file exceeds 16 MiB.".into());
     }
-    let definition = crate::textmate_grammar::parse_source(&bytes,source.file_stem().and_then(|s|s.to_str()).unwrap_or("TextMate"))
-        .map_err(|e|format!("Invalid TextMate grammar: {e}"))?;
-    let name=definition.name.clone();
-    let mut builder=syntaxes.clone().into_builder();
+    let definition = crate::textmate_grammar::parse_source(
+        &bytes,
+        source
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("TextMate"),
+    )
+    .map_err(|e| format!("Invalid TextMate grammar: {e}"))?;
+    let name = definition.name.clone();
+    let mut builder = syntaxes.clone().into_builder();
     builder.add(definition.clone());
-    let validated=builder.build()?;
-    crate::textmate_grammar::validate_references(&definition,&validated)?;
+    let validated = builder.build()?;
+    crate::textmate_grammar::validate_references(&definition, &validated)?;
 
     let filename = source
         .file_name()
@@ -84,9 +91,7 @@ pub(crate) fn install(
     // Validate before replacing anything, and publish one complete file. A
     // failed install leaves the existing grammar and source file untouched.
     let mut staging = tempfile::NamedTempFile::new_in(root).map_err(|e| e.to_string())?;
-    staging
-        .write_all(&bytes)
-        .map_err(|e| e.to_string())?;
+    staging.write_all(&bytes).map_err(|e| e.to_string())?;
     staging.flush().map_err(|e| e.to_string())?;
     staging
         .persist(&destination)

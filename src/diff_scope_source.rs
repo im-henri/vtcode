@@ -93,11 +93,9 @@ impl DiffScopeSource {
     }
 
     fn invalidate_animation_source(&mut self, source: Option<SourceRef<'_>>) -> Option<u64> {
-        if self
-            .original_animation
-            .as_ref()
-            .is_some_and(|(key, _)| source.is_none_or(|source| !key.matches(source.base, source.path, source.language)))
-        {
+        if self.original_animation.as_ref().is_some_and(|(key, _)| {
+            source.is_none_or(|source| !key.matches(source.base, source.path, source.language))
+        }) {
             return self.original_animation.take().map(|(_, id)| id);
         }
         None
@@ -126,7 +124,10 @@ impl DiffScopeSource {
     }
 
     pub(crate) fn editor_and_index_for_rules(
-        &self, base: &Arc<str>, path: Option<&Path>, language: Option<&str>,
+        &self,
+        base: &Arc<str>,
+        path: Option<&Path>,
+        language: Option<&str>,
         rules: &Arc<crate::scope_bubble_config::Rules>,
     ) -> Option<(&Editor, Option<&StructuralScopeIndex>)> {
         let (editor, index) = self.editor_and_index(base, path, language)?;
@@ -268,7 +269,8 @@ fn animation_source(app: &App) -> Option<SourceRef<'_>> {
 }
 
 fn source(app: &App) -> Option<SourceRef<'_>> {
-    app.editor().is_some_and(|editor| app.animation_settings.scope_enabled_for(editor))
+    app.editor()
+        .is_some_and(|editor| app.animation_settings.scope_enabled_for(editor))
         .then(|| animation_source(app))
         .flatten()
 }
@@ -333,8 +335,19 @@ fn build_source_with_rules(
 }
 
 #[cfg(test)]
-fn build_source(base: &str, path: Option<PathBuf>, language: Option<String>, cancelled: impl Fn() -> bool) -> Option<BuiltSource> {
-    build_source_with_rules(base, path, language, crate::scope_bubble_config::Rules::empty(), cancelled)
+fn build_source(
+    base: &str,
+    path: Option<PathBuf>,
+    language: Option<String>,
+    cancelled: impl Fn() -> bool,
+) -> Option<BuiltSource> {
+    build_source_with_rules(
+        base,
+        path,
+        language,
+        crate::scope_bubble_config::Rules::empty(),
+        cancelled,
+    )
 }
 
 /// Poll every event-loop wake, since this private channel has no BackgroundResult.
@@ -390,7 +403,9 @@ pub(crate) fn refresh(app: &mut App) {
         let (sender, receiver) = mpsc::channel();
         let wake = app.background.wake_handle();
         let queued = app.background.pool_sender().send(Box::new(move || {
-            let built = build_source_with_rules(&base, path, language, rules, || worker_cancel.is_cancelled());
+            let built = build_source_with_rules(&base, path, language, rules, || {
+                worker_cancel.is_cancelled()
+            });
             let _ = sender.send(built);
             wake.notify();
         }));
@@ -422,7 +437,8 @@ mod tests {
     const BASE: &str = "fn original() {\n    if ready {\n        work();\n    }\n}\n";
 
     fn test_rules() -> &'static Arc<crate::scope_bubble_config::Rules> {
-        static RULES: std::sync::OnceLock<Arc<crate::scope_bubble_config::Rules>> = std::sync::OnceLock::new();
+        static RULES: std::sync::OnceLock<Arc<crate::scope_bubble_config::Rules>> =
+            std::sync::OnceLock::new();
         RULES.get_or_init(crate::scope_bubble_config::Rules::empty)
     }
 
@@ -430,25 +446,63 @@ mod tests {
     fn custom_scope_rules_apply_to_original_diff_and_retire_stale_workers() {
         use crate::scope_bubble_config::{Config, Delimiter, Rules, Syntax};
         let base: Arc<str> = "{\n call(\n value\n );\n}\n".into();
-        let make_rules = |pairs| Rules::compile(&[("Custom".into(), Config {
-            syntax: Syntax::Cpp, delimiters: Some(pairs), language_blocks: false,
-        })].into());
+        let make_rules = |pairs| {
+            Rules::compile(
+                &[(
+                    "Custom".into(),
+                    Config {
+                        syntax: Syntax::Cpp,
+                        delimiters: Some(pairs),
+                        language_blocks: false,
+                    },
+                )]
+                .into(),
+            )
+        };
         let braces = make_rules(vec![Delimiter::Braces]);
         let all = make_rules(Delimiter::ALL.to_vec());
-        let original = SourceRef { base: &base, path: Some(Path::new("no-extension")), language: Some("Custom"), rules: &braces };
-        let changed = SourceRef { rules: &all, ..original };
+        let original = SourceRef {
+            base: &base,
+            path: Some(Path::new("no-extension")),
+            language: Some("Custom"),
+            rules: &braces,
+        };
+        let changed = SourceRef {
+            rules: &all,
+            ..original
+        };
         let mut state = DiffScopeSource::default();
         let id = state.original_animation_id(&base, original.path, original.language);
-        let built = |rules: Arc<Rules>| build_source_with_rules(&base, original.path.map(Path::to_path_buf), original.language.map(str::to_owned), rules, || false);
+        let built = |rules: Arc<Rules>| {
+            build_source_with_rules(
+                &base,
+                original.path.map(Path::to_path_buf),
+                original.language.map(str::to_owned),
+                rules,
+                || false,
+            )
+        };
         let (sender, _) = pending(&mut state, original);
         sender.send(built(braces.clone())).unwrap();
         assert!(state.poll(Some(original)));
         state.set_cursor((2, 2));
-        let (editor, index) = state.editor_and_index_for_rules(&base, original.path, original.language, &braces).unwrap();
-        assert_eq!(index.unwrap().enclosing_scope(editor), Some(((0, 0), (4, 0))));
-        assert!(state.editor_and_index_for_rules(&base, original.path, original.language, &all).is_none());
+        let (editor, index) = state
+            .editor_and_index_for_rules(&base, original.path, original.language, &braces)
+            .unwrap();
+        assert_eq!(
+            index.unwrap().enclosing_scope(editor),
+            Some(((0, 0), (4, 0)))
+        );
+        assert!(
+            state
+                .editor_and_index_for_rules(&base, original.path, original.language, &all)
+                .is_none()
+        );
         assert!(state.invalidate_animation_source(Some(changed)).is_none());
-        assert_eq!(state.original_animation_id(&base, original.path, original.language), id);
+        assert_eq!(
+            state.original_animation_id(&base, original.path, original.language),
+            id
+        );
         let (sender, cancel) = pending(&mut state, original);
         state.invalidate(Some(changed));
         assert!(state.cached.is_none() && cancel.is_cancelled());
@@ -459,8 +513,13 @@ mod tests {
         sender.send(built(all.clone())).unwrap();
         assert!(state.poll(Some(changed)));
         state.set_cursor((2, 2));
-        let (editor, index) = state.editor_and_index_for_rules(&base, original.path, original.language, &all).unwrap();
-        assert_eq!(index.unwrap().enclosing_scope(editor), Some(((1, 5), (3, 1))));
+        let (editor, index) = state
+            .editor_and_index_for_rules(&base, original.path, original.language, &all)
+            .unwrap();
+        assert_eq!(
+            index.unwrap().enclosing_scope(editor),
+            Some(((1, 5), (3, 1)))
+        );
     }
     fn original<'a>(base: &'a Arc<str>) -> SourceRef<'a> {
         SourceRef {
@@ -510,15 +569,22 @@ mod tests {
         app.active_tab = 0;
         app.diff_mode = crate::app::DiffMode::SideBySide;
         app.compare_base_content = Some(Arc::clone(&base));
-        app.animation_settings.set(AnimationEffect::ScopeConnector, true);
+        app.animation_settings
+            .set(AnimationEffect::ScopeConnector, true);
         complete(&mut app.diff_scope_source, source);
         let (sender, cancel) = pending(&mut app.diff_scope_source, source);
         app.animation_settings.scope_disabled_languages = vec!["rust".into()];
         refresh(&mut app);
         assert!(cancel.is_cancelled());
         assert!(app.diff_scope_source.cached.is_none());
-        sender.send(build_source(BASE, source.path.map(Path::to_path_buf),
-            source.language.map(str::to_owned), || false)).ok();
+        sender
+            .send(build_source(
+                BASE,
+                source.path.map(Path::to_path_buf),
+                source.language.map(str::to_owned),
+                || false,
+            ))
+            .ok();
         poll(&mut app);
         assert!(app.diff_scope_source.cached.is_none());
         assert!(app.diff_scope_source.pending.is_none());

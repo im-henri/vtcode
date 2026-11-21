@@ -27,7 +27,13 @@ pub struct TerminalHistory {
 }
 
 pub trait HistorySource: Send + Sync {
-    fn page(&self, first: Option<usize>, column: usize, width: usize, height: usize) -> io::Result<TerminalPage>;
+    fn page(
+        &self,
+        first: Option<usize>,
+        column: usize,
+        width: usize,
+        height: usize,
+    ) -> io::Result<TerminalPage>;
 }
 enum Backend {
     Local(Mutex<State>),
@@ -53,12 +59,17 @@ struct State {
 
 impl TerminalHistory {
     pub fn hosted(source: std::sync::Arc<dyn HistorySource>) -> Self {
-        Self { backend: Backend::Hosted(source) }
+        Self {
+            backend: Backend::Hosted(source),
+        }
     }
     fn local(&self) -> io::Result<&Mutex<State>> {
         match &self.backend {
             Backend::Local(state) => Ok(state),
-            Backend::Hosted(_) => Err(io::Error::new(io::ErrorKind::Unsupported, "Hosted terminal history is read-only")),
+            Backend::Hosted(_) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Hosted terminal history is read-only",
+            )),
         }
     }
     pub fn new(directory: &Path) -> io::Result<Self> {

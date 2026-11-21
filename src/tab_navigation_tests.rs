@@ -7,8 +7,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 fn fixture() -> App {
     let mut app = App::test_new();
-    app.tabs = ["first", "middle", "last"].into_iter()
-        .map(|text| Tab::new_file(Editor::test_with_text(text))).collect();
+    app.tabs = ["first", "middle", "last"]
+        .into_iter()
+        .map(|text| Tab::new_file(Editor::test_with_text(text)))
+        .collect();
     app.active_tab = 0;
     app.active_pane = ActivePane::Editor;
     app.tab_mru_order = vec![0, 2, 1];
@@ -34,10 +36,19 @@ fn ctrl_shift_t_reopens_closed_tabs_without_editing_the_current_file() {
         assert_eq!(app.tabs.len(), 1);
         assert_eq!(app.closed_tab_paths.len(), 1);
 
-        handle_keyboard_event(&mut app, KeyEvent::new(
-            KeyCode::Char(code), KeyModifiers::CONTROL | KeyModifiers::SHIFT));
+        handle_keyboard_event(
+            &mut app,
+            KeyEvent::new(
+                KeyCode::Char(code),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+        );
 
-        assert_eq!(app.tabs.len(), 2, "Ctrl+Shift+{code} must reopen the closed tab");
+        assert_eq!(
+            app.tabs.len(),
+            2,
+            "Ctrl+Shift+{code} must reopen the closed tab"
+        );
         assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&path));
         assert!(app.closed_tab_paths.is_empty());
         app.wait_for_background(std::time::Duration::from_secs(5), |app| {
@@ -57,7 +68,10 @@ fn ctrl_t_preserves_text_cursor_and_undo_history() {
         let mut app = fixture();
         app.editor_mut().unwrap().set_cursor(0, 1);
 
-        handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Char(code), KeyModifiers::CONTROL));
+        handle_keyboard_event(
+            &mut app,
+            KeyEvent::new(KeyCode::Char(code), KeyModifiers::CONTROL),
+        );
 
         let editor = app.editor().unwrap();
         assert_eq!(editor.rope.to_string(), "first");
@@ -80,14 +94,20 @@ fn tab_navigation_follows_strip_order_and_wraps_for_all_key_encodings() {
     ] {
         let mut app = fixture();
         for (index, tab) in expected.into_iter().enumerate() {
-            let kind = if index == 0 { KeyEventKind::Press } else { KeyEventKind::Repeat };
+            let kind = if index == 0 {
+                KeyEventKind::Press
+            } else {
+                KeyEventKind::Repeat
+            };
             handle_keyboard_event(&mut app, KeyEvent::new_with_kind(code, modifiers, kind));
             assert_eq!(app.active_tab, tab, "{code:?} {modifiers:?}");
             assert_eq!(app.active_pane, ActivePane::Editor);
             assert!(!app.quick_open_active && !app.palette.active);
         }
-        handle_keyboard_event(&mut app,
-            KeyEvent::new_with_kind(code, modifiers, KeyEventKind::Release));
+        handle_keyboard_event(
+            &mut app,
+            KeyEvent::new_with_kind(code, modifiers, KeyEventKind::Release),
+        );
         assert_eq!(app.active_tab, 0, "key release must not switch again");
     }
 }
@@ -139,8 +159,10 @@ fn tab_navigation_includes_terminal_and_settings_tabs() {
 fn tab_navigation_stays_in_the_focused_split_and_uses_reordered_tabs() {
     let mut app = fixture();
     let mut other = EditorGroup::new();
-    other.tabs = ["other left", "other right"].into_iter()
-        .map(|text| Tab::new_file(Editor::test_with_text(text))).collect();
+    other.tabs = ["other left", "other right"]
+        .into_iter()
+        .map(|text| Tab::new_file(Editor::test_with_text(text)))
+        .collect();
     other.active_tab = 1;
     app.groups = vec![EditorGroup::new(), other];
     app.switch_group(1);
@@ -159,22 +181,34 @@ fn tab_navigation_stays_in_the_focused_split_and_uses_reordered_tabs() {
 #[test]
 fn tab_navigation_accepts_custom_backtab_bindings_in_both_encodings() {
     let mut app = fixture();
-    let previous = app.keybindings.iter_mut().find(|binding| binding.id == "prev_tab").unwrap();
+    let previous = app
+        .keybindings
+        .iter_mut()
+        .find(|binding| binding.id == "prev_tab")
+        .unwrap();
     previous.code = KeyCode::BackTab;
     previous.modifiers = KeyModifiers::CONTROL;
     app.keybindings = App::keybindings_for_settings(&app.current_settings()).into();
-    handle_keyboard_event(&mut app,
-        KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT));
+    handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+    );
     assert_eq!(app.active_tab, 2);
-    handle_keyboard_event(&mut app,
-        KeyEvent::new(KeyCode::BackTab, KeyModifiers::CONTROL));
+    handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::CONTROL),
+    );
     assert_eq!(app.active_tab, 1);
 }
 
 #[test]
 fn tab_navigation_bindings_can_be_reassigned_and_restored_independently() {
     let mut app = fixture();
-    let page = app.keybindings.iter_mut().find(|binding| binding.id == "next_tab_page").unwrap();
+    let page = app
+        .keybindings
+        .iter_mut()
+        .find(|binding| binding.id == "next_tab_page")
+        .unwrap();
     page.code = KeyCode::F(6);
     page.modifiers = KeyModifiers::NONE;
     app.keybindings = App::keybindings_for_settings(&app.current_settings()).into();

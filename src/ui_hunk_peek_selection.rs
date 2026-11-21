@@ -117,7 +117,9 @@ impl HunkPeek {
     }
 
     pub(super) fn has_old_lines_in(&self, index: usize) -> bool {
-        let Some(hunk) = self.hunks.get(index) else { return false; };
+        let Some(hunk) = self.hunks.get(index) else {
+            return false;
+        };
         self.rows[hunk.start_row..hunk.end_row]
             .iter()
             .any(|row| row.kind == '-')
@@ -299,9 +301,19 @@ pub(super) fn copy_with(
 }
 
 pub(super) fn copy_old_line(app: &mut App, index: usize) {
-    let Some(row) = app.hunk_peek.as_ref().and_then(|peek| peek.rows.get(index))
-        .filter(|row| row.kind == '-') else { return; };
-    let text = if row.text.is_empty() { row.line_ending } else { &row.text };
+    let Some(row) = app
+        .hunk_peek
+        .as_ref()
+        .and_then(|peek| peek.rows.get(index))
+        .filter(|row| row.kind == '-')
+    else {
+        return;
+    };
+    let text = if row.text.is_empty() {
+        row.line_ending
+    } else {
+        &row.text
+    };
     match crate::clipboard::set_text(text) {
         Ok(()) => app.notify("Copied old line"),
         Err(error) => app.notify_error(format!("Unable to copy: {error}")),

@@ -195,21 +195,17 @@ fn current_layout(app: &App) -> InspectorLayout {
 }
 
 fn actions(view: &InspectorLayout) -> impl Iterator<Item = (usize, Rect)> + '_ {
-    view.buttons
-        .iter()
-        .copied()
-        .enumerate()
-        .chain([
-            (9, view.diff_toggle),
-            (6, view.hunk_previous),
-            (7, view.hunk_next),
-            (11, view.diff_changes),
-            (12, view.context_less),
-            (14, view.context_count),
-            (13, view.context_more),
-            (15, view.expand_all),
-            (16, view.collapse_all),
-        ])
+    view.buttons.iter().copied().enumerate().chain([
+        (9, view.diff_toggle),
+        (6, view.hunk_previous),
+        (7, view.hunk_next),
+        (11, view.diff_changes),
+        (12, view.context_less),
+        (14, view.context_count),
+        (13, view.context_more),
+        (15, view.expand_all),
+        (16, view.collapse_all),
+    ])
 }
 
 fn obscured(app: &App) -> bool {
@@ -690,7 +686,11 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
             {
                 activate(
                     app,
-                    if key.modifiers.contains(KeyModifiers::SHIFT) { 3 } else { 2 },
+                    if key.modifiers.contains(KeyModifiers::SHIFT) {
+                        3
+                    } else {
+                        2
+                    },
                 );
             }
         }
@@ -927,10 +927,20 @@ pub(crate) fn scroll(app: &mut App, kind: MouseEventKind, col: u16, row: u16) {
     }
     let view = current_layout(app);
     let point = (col, row).into();
-    if app.commit_details.query_hit.as_ref().is_some_and(|hit| hit.contains(col, row)) {
-        let viewport = app.commit_details.query_viewport
-            .or_else(|| app.commit_details.query_hit.as_ref().and_then(|hit| hit.viewport()));
-        app.commit_details.query_viewport = viewport.and_then(|view| view.scrolled(kind, app.scroll_speed));
+    if app
+        .commit_details
+        .query_hit
+        .as_ref()
+        .is_some_and(|hit| hit.contains(col, row))
+    {
+        let viewport = app.commit_details.query_viewport.or_else(|| {
+            app.commit_details
+                .query_hit
+                .as_ref()
+                .and_then(|hit| hit.viewport())
+        });
+        app.commit_details.query_viewport =
+            viewport.and_then(|view| view.scrolled(kind, app.scroll_speed));
         return;
     }
     let pane = if view.overview.contains(point) {
@@ -1110,9 +1120,8 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
         )
     {
-        let active = focused(app)
-            && app.commit_details.focus == Focus::Message
-            && !view.overview.is_empty();
+        let active =
+            focused(app) && app.commit_details.focus == Focus::Message && !view.overview.is_empty();
         let details = &mut app.commit_details;
         if !active {
             details.message_selection.dragging = false;
@@ -1606,7 +1615,9 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
     }
     let message_rows = overview.len();
     let visible_rows = usize::from(view.overview.height);
-    let message_scroll = details.message_scroll.min(message_rows.saturating_sub(visible_rows));
+    let message_scroll = details
+        .message_scroll
+        .min(message_rows.saturating_sub(visible_rows));
     let lines: Vec<_> = overview
         .into_iter()
         .skip(message_scroll)
@@ -1687,8 +1698,16 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
     let budget = filter_area.width.saturating_sub(prefix.len() as u16 + 1) as usize;
     let before = &details.query[..details.query_cursor.min(details.query.len())];
     let selected = App::inline_selection_range(details.query_cursor, details.query_anchor);
-    let signature = crate::text_input::InputViewport::new(&details.query, Some(details.query_cursor), selected, 0, 0);
-    let manual = details.query_viewport.filter(|view| view.matches(signature));
+    let signature = crate::text_input::InputViewport::new(
+        &details.query,
+        Some(details.query_cursor),
+        selected,
+        0,
+        0,
+    );
+    let manual = details
+        .query_viewport
+        .filter(|view| view.matches(signature));
     let mut start = manual.map_or(0, |view| view.resolve(&details.query, budget.max(1)));
     while manual.is_none() && UnicodeWidthStr::width(&before[start..]) >= budget.max(1) {
         let Some((offset, g)) = before[start..].grapheme_indices(true).next() else {
@@ -1725,7 +1744,10 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
             hits.extend(std::iter::repeat_n(byte, w));
             used += w;
         }
-        if filter_focused && details.query_cursor == details.query.len() && visible_end == details.query.len() {
+        if filter_focused
+            && details.query_cursor == details.query.len()
+            && visible_end == details.query.len()
+        {
             spans.push(Span::styled(
                 " ",
                 app.colors.ui.input_caret_style(filter_bg),
@@ -1738,11 +1760,10 @@ pub(crate) fn draw_in_area(f: &mut Frame, app: &mut App, area: Rect) {
     );
     let viewport = signature.window(&details.query, start, visible_end);
     app.commit_details.query_viewport = manual.map(|_| viewport);
-    app.commit_details.query_hit = Some(crate::text_input::TextInputHitMap::new(
-        filter_area,
-        hits,
-        app.commit_details.query.len(),
-    ).with_viewport(viewport));
+    app.commit_details.query_hit = Some(
+        crate::text_input::TextInputHitMap::new(filter_area, hits, app.commit_details.query.len())
+            .with_viewport(viewport),
+    );
     if show_clear {
         row(
             f,

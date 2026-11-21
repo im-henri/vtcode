@@ -82,20 +82,43 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
         if source_line < total_lines {
             spans.clear();
             raster.clear();
-            raster.resize(width, cache::MiniCell { glyph: Glyph::Blank, dots: 0 });
+            raster.resize(
+                width,
+                cache::MiniCell {
+                    glyph: Glyph::Blank,
+                    dots: 0,
+                },
+            );
             for (source, dots) in minimap_samples(source_row, end_row) {
-                if source >= visible_total { continue; }
-                cache::MinimapCache::decode(&mut glyphs, &editor.rope,
-                    editor.line_for_visible_row(source), width, editor.tab_size);
-                for (cell, &glyph) in raster.iter_mut().zip(&glyphs) { cell.add(glyph, dots); }
+                if source >= visible_total {
+                    continue;
+                }
+                cache::MinimapCache::decode(
+                    &mut glyphs,
+                    &editor.rope,
+                    editor.line_for_visible_row(source),
+                    width,
+                    editor.tab_size,
+                );
+                for (cell, &glyph) in raster.iter_mut().zip(&glyphs) {
+                    cell.add(glyph, dots);
+                }
             }
             let has_conflict = conflicts.is_some_and(|index| {
                 merge_conflict_ui::has_conflict(
-                    index, source_line..row_end_line, editor.merge_conflicts.had_conflicts,
+                    index,
+                    source_line..row_end_line,
+                    editor.merge_conflicts.had_conflicts,
                 )
             });
             let markers = minimap_row_markers(
-                changes, diag_severity, has_search_match, has_conflict, width, bg, &colors,
+                changes,
+                diag_severity,
+                has_search_match,
+                has_conflict,
+                width,
+                bg,
+                &colors,
             );
             let row_bg = markers.background;
             let content_width = width - markers.width;
@@ -103,16 +126,22 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
             batch_buf.clear();
             let mut rendered_cols = 0usize;
             for cell in raster.iter().take(content_width) {
-                let style = if cell.glyph == Glyph::Blank { Style::default().bg(row_bg) } else {
-                    let fg = if has_search_match { colors.ui.fg_minimap_find }
-                    else if has_bookmark { colors.fg_bookmark }
-                    else { match cell.glyph {
-                        Glyph::String => dim_color(colors.fg_text, 150, row_bg),
-                        Glyph::Number => dim_color(colors.fg_text, 160, row_bg),
-                        Glyph::Punctuation => dim_color(colors.fg_text, 140, row_bg),
-                        _ if in_viewport => colors.fg_text,
-                        _ => colors.fg_dim,
-                    }};
+                let style = if cell.glyph == Glyph::Blank {
+                    Style::default().bg(row_bg)
+                } else {
+                    let fg = if has_search_match {
+                        colors.ui.fg_minimap_find
+                    } else if has_bookmark {
+                        colors.fg_bookmark
+                    } else {
+                        match cell.glyph {
+                            Glyph::String => dim_color(colors.fg_text, 150, row_bg),
+                            Glyph::Number => dim_color(colors.fg_text, 160, row_bg),
+                            Glyph::Punctuation => dim_color(colors.fg_text, 140, row_bg),
+                            _ if in_viewport => colors.fg_text,
+                            _ => colors.fg_dim,
+                        }
+                    };
                     Style::default().fg(fg).bg(row_bg)
                 };
                 if style != batch_style && !batch_buf.is_empty() {
@@ -132,7 +161,11 @@ pub(super) fn draw_minimap_reference(f: &mut Frame, p: MinimapParams) {
                     Style::default().bg(row_bg),
                 ));
             }
-            spans.extend(markers.cells[..markers.width].iter().map(|&(symbol, style)| Span::styled(symbol, style)));
+            spans.extend(
+                markers.cells[..markers.width]
+                    .iter()
+                    .map(|&(symbol, style)| Span::styled(symbol, style)),
+            );
             lines.push(Line::from(std::mem::take(&mut spans)));
         } else {
             lines.push(Line::from(Span::styled(
@@ -248,10 +281,19 @@ pub(super) fn draw_scrollbar_reference(
         };
         // Share the visual rules while retaining Paragraph allocation and
         // painting as the independent direct-cell performance reference.
-        let cells = scrollbar_row_cells(width, in_thumb, is_cursor, marker, change, &colors, track, thumb);
-        let spans: Vec<_> = cells.into_iter().zip([width / 2, width - width / 2])
+        let cells = scrollbar_row_cells(
+            width, in_thumb, is_cursor, marker, change, &colors, track, thumb,
+        );
+        let spans: Vec<_> = cells
+            .into_iter()
+            .zip([width / 2, width - width / 2])
             .filter(|&(_, length)| length > 0)
-            .map(|((symbol, style), length)| Span::styled(std::iter::repeat_n(symbol, length).collect::<String>(), style))
+            .map(|((symbol, style), length)| {
+                Span::styled(
+                    std::iter::repeat_n(symbol, length).collect::<String>(),
+                    style,
+                )
+            })
             .collect();
         lines.push(Line::from(spans));
     }

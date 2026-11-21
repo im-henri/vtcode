@@ -16,16 +16,16 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{app::App, app_git_display::GitFilePatch};
 
-#[path = "ui_hunk_peek_selection.rs"]
-mod selection;
 #[path = "ui_hunk_peek_context.rs"]
 mod context;
 #[cfg(test)]
-#[path = "ui_hunk_peek_selection_tests.rs"]
-mod selection_tests;
-#[cfg(test)]
 #[path = "ui_hunk_peek_context_tests.rs"]
 mod context_tests;
+#[path = "ui_hunk_peek_selection.rs"]
+mod selection;
+#[cfg(test)]
+#[path = "ui_hunk_peek_selection_tests.rs"]
+mod selection_tests;
 
 pub(crate) struct PeekRow {
     pub kind: char,
@@ -99,13 +99,19 @@ struct CopyFeedback {
 
 impl CopyFeedback {
     fn message(self) -> &'static str {
-        if self.copied { "Copied old lines" } else { "Could not copy old lines" }
+        if self.copied {
+            "Copied old lines"
+        } else {
+            "Could not copy old lines"
+        }
     }
 
     fn style(self, style: Style, surface: Color, colors: &crate::app_theme::ThemeColors) -> Style {
         let background = style.bg.unwrap_or(surface);
         let foreground = if self.copied {
-            colors.ui.readable_foreground(colors.fg_success, background, 4.5)
+            colors
+                .ui
+                .readable_foreground(colors.fg_success, background, 4.5)
         } else {
             colors.ui.error_text_color(background)
         };
@@ -176,22 +182,34 @@ fn text_width(text: &str, tab_size: usize) -> usize {
 }
 
 fn line_ending(text: &str) -> &'static str {
-    if text.ends_with("\r\n") { "\r\n" }
-    else if text.ends_with('\n') { "\n" }
-    else if text.ends_with('\r') { "\r" }
-    else { "" }
+    if text.ends_with("\r\n") {
+        "\r\n"
+    } else if text.ends_with('\n') {
+        "\n"
+    } else if text.ends_with('\r') {
+        "\r"
+    } else {
+        ""
+    }
 }
 
 impl HunkPeek {
     pub(crate) fn for_target(
-        patch: &GitFilePatch, target: &str, selection: PeekTarget, tab_size: usize,
+        patch: &GitFilePatch,
+        target: &str,
+        selection: PeekTarget,
+        tab_size: usize,
     ) -> Result<Option<Self>, String> {
-        if patch.hunks.is_empty() { return Ok(None); }
+        if patch.hunks.is_empty() {
+            return Ok(None);
+        }
         let (selected, action_line) = match selection {
             PeekTarget::Line(line) | PeekTarget::InsertedLine(line) => {
                 let exact = patch.hunks.iter().position(|hunk| {
                     crate::app_git_display::line_number_in_hunk(
-                        line.saturating_add(1), hunk.new_start, hunk.new_count,
+                        line.saturating_add(1),
+                        hunk.new_start,
+                        hunk.new_count,
                     )
                 });
                 if let Some(index) = exact {
@@ -200,16 +218,28 @@ impl HunkPeek {
                     // Git may put an insertion at a different row in the
                     // same run of equal text. Keep actions on its patch row.
                     let lines = target.tokenize_lines();
-                    let Some(content) = lines.get(line).map(|text| text.trim_end_matches(['\r', '\n'])) else {
+                    let Some(content) = lines
+                        .get(line)
+                        .map(|text| text.trim_end_matches(['\r', '\n']))
+                    else {
                         return Ok(None);
                     };
-                    let Some((index, anchor)) = patch.hunks.iter().enumerate().find_map(|(index, hunk)| {
-                        if hunk.old_count != 0 || hunk.new_count == 0 { return None; }
-                        let start = range_start(hunk.new_start, hunk.new_count);
-                        let span = start.min(line)..(start + hunk.new_count).max(line + 1);
-                        lines.get(span)?.iter().all(|text| text.trim_end_matches(['\r', '\n']) == content)
-                            .then_some((index, start))
-                    }) else { return Ok(None); };
+                    let Some((index, anchor)) =
+                        patch.hunks.iter().enumerate().find_map(|(index, hunk)| {
+                            if hunk.old_count != 0 || hunk.new_count == 0 {
+                                return None;
+                            }
+                            let start = range_start(hunk.new_start, hunk.new_count);
+                            let span = start.min(line)..(start + hunk.new_count).max(line + 1);
+                            lines
+                                .get(span)?
+                                .iter()
+                                .all(|text| text.trim_end_matches(['\r', '\n']) == content)
+                                .then_some((index, start))
+                        })
+                    else {
+                        return Ok(None);
+                    };
                     (index, Some(anchor))
                 } else {
                     return Ok(None);
@@ -220,7 +250,9 @@ impl HunkPeek {
             PeekTarget::Hunk(index) => (if index < patch.hunks.len() { index } else { 0 }, None),
         };
         let mut peek = Self::with_tab_size(patch, target, selected, tab_size);
-        if action_line.is_some() { peek.hunks[selected].action_line = action_line; }
+        if action_line.is_some() {
+            peek.hunks[selected].action_line = action_line;
+        }
         Ok(Some(peek))
     }
 
@@ -230,39 +262,69 @@ impl HunkPeek {
         line: usize,
         tab_size: usize,
     ) -> Result<Self, String> {
-        Self::from_texts_at(saved, current, PeekTarget::Line(line), tab_size)?
-            .ok_or_else(|| if saved == current { "No changes found" } else { "No change found at this line" }.into())
+        Self::from_texts_at(saved, current, PeekTarget::Line(line), tab_size)?.ok_or_else(|| {
+            if saved == current {
+                "No changes found"
+            } else {
+                "No change found at this line"
+            }
+            .into()
+        })
     }
 
     pub(crate) fn from_texts_at(
-        saved: &str, current: &str, target: PeekTarget, tab_size: usize,
+        saved: &str,
+        current: &str,
+        target: PeekTarget,
+        tab_size: usize,
     ) -> Result<Option<Self>, String> {
         let diff = similar::TextDiff::configure()
             .timeout(std::time::Duration::from_millis(50))
             .diff_lines(saved, current);
         // Retain the diff's ranges directly instead of serializing and parsing
         // a patch. Lone-CR files also need one display row per diff line.
-        let hunks = diff.grouped_ops(0).into_iter().map(|ops| {
-            let old = ops.first().unwrap().old_range().start..ops.last().unwrap().old_range().end;
-            let new = ops.first().unwrap().new_range().start..ops.last().unwrap().new_range().end;
-            let old_start = old.start + usize::from(!old.is_empty());
-            let new_start = new.start + usize::from(!new.is_empty());
-            let mut text = format!("@@ -{},{} +{},{} @@\n", old_start, old.len(), new_start, new.len());
-            for change in ops.iter().flat_map(|op| diff.iter_changes(op)) {
-                text.push(match change.tag() {
-                    similar::ChangeTag::Delete => '-',
-                    similar::ChangeTag::Insert => '+',
-                    similar::ChangeTag::Equal => ' ',
-                });
-                text.push_str(change.value().trim_end_matches(['\r', '\n']));
-                text.push('\n');
-            }
-            crate::app_git_display::GitDiffHunk {
-                old_start, old_count: old.len(), new_start, new_count: new.len(), text,
-            }
-        }).collect::<Vec<_>>();
-        let patch = GitFilePatch { header: String::new(), hunks };
-        let Some(mut peek) = Self::for_target(&patch, current, target, tab_size)? else { return Ok(None); };
+        let hunks = diff
+            .grouped_ops(0)
+            .into_iter()
+            .map(|ops| {
+                let old =
+                    ops.first().unwrap().old_range().start..ops.last().unwrap().old_range().end;
+                let new =
+                    ops.first().unwrap().new_range().start..ops.last().unwrap().new_range().end;
+                let old_start = old.start + usize::from(!old.is_empty());
+                let new_start = new.start + usize::from(!new.is_empty());
+                let mut text = format!(
+                    "@@ -{},{} +{},{} @@\n",
+                    old_start,
+                    old.len(),
+                    new_start,
+                    new.len()
+                );
+                for change in ops.iter().flat_map(|op| diff.iter_changes(op)) {
+                    text.push(match change.tag() {
+                        similar::ChangeTag::Delete => '-',
+                        similar::ChangeTag::Insert => '+',
+                        similar::ChangeTag::Equal => ' ',
+                    });
+                    text.push_str(change.value().trim_end_matches(['\r', '\n']));
+                    text.push('\n');
+                }
+                crate::app_git_display::GitDiffHunk {
+                    old_start,
+                    old_count: old.len(),
+                    new_start,
+                    new_count: new.len(),
+                    text,
+                }
+            })
+            .collect::<Vec<_>>();
+        let patch = GitFilePatch {
+            header: String::new(),
+            hunks,
+        };
+        let Some(mut peek) = Self::for_target(&patch, current, target, tab_size)? else {
+            return Ok(None);
+        };
         // The display patch normalizes its row separators. Retain the actual
         // source endings for clipboard operations, including lone CR and EOF.
         let saved = saved.tokenize_lines();
@@ -275,7 +337,10 @@ impl HunkPeek {
             };
             row.line_ending = source.map_or("", |text| line_ending(text));
             if let Some(text) = source {
-                row.text = text.strip_suffix(row.line_ending).unwrap_or(text).to_string();
+                row.text = text
+                    .strip_suffix(row.line_ending)
+                    .unwrap_or(text)
+                    .to_string();
             }
         }
         Ok(Some(peek))
@@ -340,7 +405,9 @@ impl HunkPeek {
                     }
                     push(&mut rows, kind, &line[1..], &mut old, &mut new);
                 } else if line.starts_with("\\ No newline at end of file") {
-                    if let Some(row) = rows.last_mut() { row.line_ending = ""; }
+                    if let Some(row) = rows.last_mut() {
+                        row.line_ending = "";
+                    }
                 }
             }
             // Pair rows now, but defer character diffing until a row is visible.
@@ -399,7 +466,10 @@ impl HunkPeek {
     }
 
     pub(crate) fn expire_copy_feedback(&mut self, now: Instant) -> bool {
-        if self.copy_feedback_deadline().is_some_and(|deadline| now >= deadline) {
+        if self
+            .copy_feedback_deadline()
+            .is_some_and(|deadline| now >= deadline)
+        {
             self.copy_feedback = None;
             true
         } else {
@@ -479,7 +549,11 @@ pub(crate) fn peek_rect(app: &App, width: u16, height: u16) -> Rect {
         return Rect::new(editor.x.min(width), editor.y.min(height), 0, 0);
     }
     let rows = app.hunk_peek.as_ref().map_or_else(
-        || app.hunk_preview_feedback.as_ref().map_or(1, |feedback| if feedback.loading() { 3 } else { 4 }),
+        || {
+            app.hunk_preview_feedback
+                .as_ref()
+                .map_or(1, |feedback| if feedback.loading() { 3 } else { 4 })
+        },
         |peek| peek.rows.len(),
     );
     let panel_height = (rows.saturating_add(3).min(18) as u16)
@@ -495,13 +569,24 @@ pub(crate) fn peek_rect(app: &App, width: u16, height: u16) -> Rect {
 
 fn make_layout(app: &App, panel: Rect) -> PeekLayout {
     let Some(peek) = &app.hunk_peek else {
-        return PeekLayout { panel, ..PeekLayout::default() };
+        return PeekLayout {
+            panel,
+            ..PeekLayout::default()
+        };
     };
     let numbers = (peek.digits * 2 + 3).min(panel.width as usize) as u16;
     // Reserve the buttons on one row, including for one-line additions and
     // deletions. Tiny panes retain the existing toolbar instead of hiding code.
-    let action_width = if matches!(app.hunk_popup_status, 'N' | 'S') { 6 } else { 9 };
-    let quick_width = if panel.width >= numbers + action_width + 2 { action_width } else { 0 };
+    let action_width = if matches!(app.hunk_popup_status, 'N' | 'S') {
+        6
+    } else {
+        9
+    };
+    let quick_width = if panel.width >= numbers + action_width + 2 {
+        action_width
+    } else {
+        0
+    };
     let gutter = numbers + quick_width;
     let code_width = panel.width.saturating_sub(gutter + 1);
     let horizontal = code_width > 0 && peek.max_width > code_width as usize && panel.height > 4;
@@ -537,7 +622,12 @@ fn input_layout(app: &App) -> PeekLayout {
     app.hunk_peek
         .as_ref()
         .and_then(|p| p.layout)
-        .or_else(|| app.hunk_preview_feedback.as_ref()?.area.map(|panel| make_layout(app, panel)))
+        .or_else(|| {
+            app.hunk_preview_feedback
+                .as_ref()?
+                .area
+                .map(|panel| make_layout(app, panel))
+        })
         .unwrap_or_else(|| make_layout(app, peek_rect(app, u16::MAX, u16::MAX)))
 }
 
@@ -702,8 +792,11 @@ fn buttons(app: &App) -> &'static [(&'static str, &'static str)] {
 
 fn button_label(area: Rect, index: usize, actions: &[(&'static str, &str)]) -> &'static str {
     let total: usize = actions.iter().map(|(label, _)| label.width() + 2).sum();
-    if actions[index].1 == "Copy Old Lines" && total + 8 > area.width as usize { "Copy" }
-    else { actions[index].0 }
+    if actions[index].1 == "Copy Old Lines" && total + 8 > area.width as usize {
+        "Copy"
+    } else {
+        actions[index].0
+    }
 }
 
 fn button_rect(app: &App, area: Rect, index: usize, actions: &[(&'static str, &str)]) -> Rect {
@@ -711,16 +804,31 @@ fn button_rect(app: &App, area: Rect, index: usize, actions: &[(&'static str, &s
     // only when the pane is too narrow to show that complete control group.
     let local_copy = !make_layout(app, area).quick_actions.is_empty();
     let visible = |i: usize| !local_copy || actions[i].1 != "Copy Old Lines";
-    if !visible(index) { return Rect::default(); }
-    let trailing: usize = (index + 1..actions.len()).filter(|&i| visible(i))
-        .map(|i| button_label(area, i, actions).width() + 2).sum();
+    if !visible(index) {
+        return Rect::default();
+    }
+    let trailing: usize = (index + 1..actions.len())
+        .filter(|&i| visible(i))
+        .map(|i| button_label(area, i, actions).width() + 2)
+        .sum();
     let right = area.right().saturating_sub(trailing as u16).max(area.x);
-    let x = right.saturating_sub((button_label(area, index, actions).width() + 2) as u16).max(area.x);
-    Rect::new(x, area.y.saturating_add(1), right - x, u16::from(area.height > 1))
+    let x = right
+        .saturating_sub((button_label(area, index, actions).width() + 2) as u16)
+        .max(area.x);
+    Rect::new(
+        x,
+        area.y.saturating_add(1),
+        right - x,
+        u16::from(area.height > 1),
+    )
 }
 
 fn button_enabled(app: &App, index: usize) -> bool {
-    button_enabled_for_hunk(app, index, app.hunk_peek.as_ref().map_or(0, |peek| peek.selected))
+    button_enabled_for_hunk(
+        app,
+        index,
+        app.hunk_peek.as_ref().map_or(0, |peek| peek.selected),
+    )
 }
 
 fn button_enabled_for_hunk(app: &App, index: usize, hunk: usize) -> bool {
@@ -729,7 +837,10 @@ fn button_enabled_for_hunk(app: &App, index: usize, hunk: usize) -> bool {
         return false;
     }
     label != "Copy Old Lines"
-        || app.hunk_peek.as_ref().is_some_and(|peek| peek.has_old_lines_in(hunk))
+        || app
+            .hunk_peek
+            .as_ref()
+            .is_some_and(|peek| peek.has_old_lines_in(hunk))
 }
 
 fn button_at(app: &App, area: Rect, col: u16, row: u16) -> Option<usize> {
@@ -745,10 +856,20 @@ fn button_at(app: &App, area: Rect, col: u16, row: u16) -> Option<usize> {
 }
 
 fn feedback_button_rect(area: Rect, index: usize, actions: &[(&str, &str)]) -> Rect {
-    let trailing: u16 = actions[index + 1..].iter().map(|(label, _)| (label.width() + 2) as u16).sum();
+    let trailing: u16 = actions[index + 1..]
+        .iter()
+        .map(|(label, _)| (label.width() + 2) as u16)
+        .sum();
     let right = area.right().saturating_sub(trailing).max(area.x);
-    let x = right.saturating_sub((actions[index].0.width() + 2) as u16).max(area.x);
-    Rect::new(x, area.y.saturating_add(1), right - x, u16::from(area.height >= 4))
+    let x = right
+        .saturating_sub((actions[index].0.width() + 2) as u16)
+        .max(area.x);
+    Rect::new(
+        x,
+        area.y.saturating_add(1),
+        right - x,
+        u16::from(area.height >= 4),
+    )
 }
 
 fn quick_actions(
@@ -763,31 +884,50 @@ fn quick_actions(
     } else {
         3
     };
-    let end = peek.scroll.saturating_add(layout.body.height as usize).min(peek.rows.len());
-    let first = peek.hunks.partition_point(|hunk| hunk.end_row <= peek.scroll);
+    let end = peek
+        .scroll
+        .saturating_add(layout.body.height as usize)
+        .min(peek.rows.len());
+    let first = peek
+        .hunks
+        .partition_point(|hunk| hunk.end_row <= peek.scroll);
     // Inspect only visible hunks/rows. A partially scrolled hunk keeps its
     // controls on its first visible changed row, beside the code they affect.
-    peek.hunks.iter().enumerate().skip(first)
+    peek.hunks
+        .iter()
+        .enumerate()
+        .skip(first)
         .take_while(move |(_, hunk)| count > 0 && hunk.start_row < end)
         .filter_map(move |(index, hunk)| {
             let start = hunk.start_row.max(peek.scroll);
-            let offset = peek.rows[start..hunk.end_row.min(end)].iter()
+            let offset = peek.rows[start..hunk.end_row.min(end)]
+                .iter()
                 .position(|row| row.kind != ' ')?;
             Some((index, layout.body.y + (start + offset - peek.scroll) as u16))
         })
-        .flat_map(move |(hunk, y)| (0..count).map(move |slot| QuickAction {
-            area: Rect::new(layout.quick_actions.x + slot as u16 * 3, y, 3, 1),
-            hunk,
-            button: if slot + 1 == count { if revert_only { 3 } else { 4 } } else { slot },
-        }))
+        .flat_map(move |(hunk, y)| {
+            (0..count).map(move |slot| QuickAction {
+                area: Rect::new(layout.quick_actions.x + slot as u16 * 3, y, 3, 1),
+                hunk,
+                button: if slot + 1 == count {
+                    if revert_only { 3 } else { 4 }
+                } else {
+                    slot
+                },
+            })
+        })
 }
 
 fn quick_action_at(app: &App, layout: PeekLayout, col: u16, row: u16) -> Option<QuickAction> {
     if !layout.quick_actions.contains((col, row).into()) {
         return None;
     }
-    quick_actions(app.hunk_peek.as_ref()?, layout, matches!(app.hunk_popup_status, 'N' | 'S'))
-        .find(|action| action.area.contains((col, row).into()))
+    quick_actions(
+        app.hunk_peek.as_ref()?,
+        layout,
+        matches!(app.hunk_popup_status, 'N' | 'S'),
+    )
+    .find(|action| action.area.contains((col, row).into()))
 }
 
 fn hover_target(app: &App, layout: PeekLayout, col: u16, row: u16) -> Option<HoverTarget> {
@@ -822,15 +962,21 @@ fn draw_frame(f: &mut Frame, area: Rect, normal: Style, border: Color, pointer_x
 }
 
 fn preview_filename(path: Option<&std::path::Path>) -> std::borrow::Cow<'_, str> {
-    let Some(path) = path else { return "Untitled".into(); };
+    let Some(path) = path else {
+        return "Untitled".into();
+    };
     if let Some(name) = crate::remote::workspace::display_name(path) {
         return name.into();
     }
-    path.file_name().map(|name| name.to_string_lossy()).unwrap_or_else(|| "Untitled".into())
+    path.file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "Untitled".into())
 }
 
 fn draw_feedback(f: &mut Frame, app: &mut App, area: Rect) {
-    let Some(feedback) = &app.hunk_preview_feedback else { return; };
+    let Some(feedback) = &app.hunk_preview_feedback else {
+        return;
+    };
     let loading = feedback.loading();
     let message = match &feedback.state {
         crate::hunk_preview::FeedbackState::Loading(_) => {
@@ -840,13 +986,18 @@ fn draw_feedback(f: &mut Frame, app: &mut App, area: Rect) {
                 "Loading changes…".to_string()
             }
         }
-        crate::hunk_preview::FeedbackState::Failed(error) => format!("Unable to load change preview.\n{error}"),
+        crate::hunk_preview::FeedbackState::Failed(error) => {
+            format!("Unable to load change preview.\n{error}")
+        }
     };
     let focused = feedback.focused_button;
     let colors = app.colors;
     let bg = colors.bg_editor;
     let border = colors.ui.peek_border.border(bg).unwrap_or(bg);
-    let normal = Style::default().bg(bg).fg(colors.fg_text).remove_modifier(Modifier::DIM);
+    let normal = Style::default()
+        .bg(bg)
+        .fg(colors.fg_text)
+        .remove_modifier(Modifier::DIM);
     let pointer_x = app.code_area.map_or(area.x, |code| code.x);
     draw_frame(f, area, normal, border, pointer_x);
     if area.height < 4 {
@@ -855,7 +1006,10 @@ fn draw_feedback(f: &mut Frame, app: &mut App, area: Rect) {
         let actions = buttons(app);
         let first = feedback_button_rect(area, 0, actions);
         let filename = preview_filename(app.hunk_popup_file.as_deref());
-        let title = format!(" {filename}:{} · Change Preview", app.hunk_popup_line.saturating_add(1));
+        let title = format!(
+            " {filename}:{} · Change Preview",
+            app.hunk_popup_line.saturating_add(1)
+        );
         let (title_bg, title_fg, _) = colors.ui.peek_title_colors(bg);
         let title_style = normal.bg(title_bg).fg(title_fg);
         f.render_widget(
@@ -864,23 +1018,48 @@ fn draw_feedback(f: &mut Frame, app: &mut App, area: Rect) {
         );
         let hovered = button_at(app, area, app.mouse_col, app.mouse_row);
         for (index, (icon, _)) in actions.iter().enumerate() {
-            let style = colors.ui.toolbar_style(title_fg, title_bg, hovered == Some(index),
-                focused == Some(index), false).remove_modifier(Modifier::DIM);
+            let style = colors
+                .ui
+                .toolbar_style(
+                    title_fg,
+                    title_bg,
+                    hovered == Some(index),
+                    focused == Some(index),
+                    false,
+                )
+                .remove_modifier(Modifier::DIM);
             f.render_widget(
                 Paragraph::new(format!(" {icon} ")).style(style),
                 feedback_button_rect(area, index, actions),
             );
         }
         f.render_widget(
-            Paragraph::new(message).style(normal).wrap(Wrap { trim: false }),
-            Rect::new(area.x + 1, area.y + 2, area.width.saturating_sub(2), area.height - 4),
+            Paragraph::new(message)
+                .style(normal)
+                .wrap(Wrap { trim: false }),
+            Rect::new(
+                area.x + 1,
+                area.y + 2,
+                area.width.saturating_sub(2),
+                area.height - 4,
+            ),
         );
         let hint = hovered.or(focused).map_or_else(
             || "Esc to close preview",
-            |index| if actions[index].1 == "Close Preview" { "Close Preview (Esc)" } else { "Retry Preview" },
+            |index| {
+                if actions[index].1 == "Close Preview" {
+                    "Close Preview (Esc)"
+                } else {
+                    "Retry Preview"
+                }
+            },
         );
         f.render_widget(
-            Paragraph::new(format!(" {hint}")).style(normal.fg(colors.ui.readable_foreground(colors.fg_dim, bg, 4.5))),
+            Paragraph::new(format!(" {hint}")).style(normal.fg(colors.ui.readable_foreground(
+                colors.fg_dim,
+                bg,
+                4.5,
+            ))),
             Rect::new(area.x, area.bottom() - 2, area.width, 1),
         );
     }
@@ -895,7 +1074,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         feedback.area = Some(area);
     }
     if area.is_empty() {
-        if let Some(peek) = app.hunk_peek.as_mut() { peek.context_menu = None; }
+        if let Some(peek) = app.hunk_peek.as_mut() {
+            peek.context_menu = None;
+        }
         return;
     }
     if app.hunk_preview_feedback.is_some() {
@@ -965,7 +1146,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     let actions = buttons(app);
-    let copy_button = actions.iter().position(|(_, label)| *label == "Copy Old Lines");
+    let copy_button = actions
+        .iter()
+        .position(|(_, label)| *label == "Copy Old Lines");
     let first = button_rect(app, area, 0, actions);
     let title_area = Rect::new(area.x, area.y + 1, first.x.saturating_sub(area.x), 1);
     let filename = preview_filename(app.hunk_popup_file.as_deref());
@@ -981,7 +1164,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     let focus = hovered.or(peek.focused_button);
     let current_copy_feedback = peek.copy_feedback_for(peek.selected);
     let title_feedback = if let Some(action) = quick_hovered {
-        peek.copy_feedback_for(action.hunk).filter(|_| Some(action.button) == copy_button)
+        peek.copy_feedback_for(action.hunk)
+            .filter(|_| Some(action.button) == copy_button)
     } else {
         current_copy_feedback.filter(|_| focus.is_none() || focus == copy_button)
     };
@@ -993,7 +1177,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         } else {
             actions[action.button].1
         };
-        format!("  {label} · change {} of {}", action.hunk + 1, peek.hunks.len())
+        format!(
+            "  {label} · change {} of {}",
+            action.hunk + 1,
+            peek.hunks.len()
+        )
     } else {
         focus.map_or_else(
             || {
@@ -1003,7 +1191,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
                 if app.hunk_popup_status == 'N' {
                     return format!(
                         " Unsaved Changes (since last save) - {} of {} changes",
-                        peek.selected + 1, peek.hunks.len(),
+                        peek.selected + 1,
+                        peek.hunks.len(),
                     );
                 }
                 format!(
@@ -1015,7 +1204,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             |i| format!("  {}", actions[i].1),
         )
     };
-    if focus.is_none() && quick_hovered.is_none() && !peek.selection.has_text()
+    if focus.is_none()
+        && quick_hovered.is_none()
+        && !peek.selection.has_text()
         && filename.width() + detail.width() + 1 > title_area.width as usize
     {
         let label = match app.hunk_popup_status {
@@ -1023,28 +1214,49 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             'S' => "Git Index Changes",
             _ => "Git Local Changes",
         };
-        detail = format!(" {label} · {} of {} changes", peek.selected + 1, peek.hunks.len());
+        detail = format!(
+            " {label} · {} of {} changes",
+            peek.selected + 1,
+            peek.hunks.len()
+        );
     }
     let (title_bg, title_fg, title_dim) = colors.ui.peek_title_colors(bg);
     let title_style = normal.bg(title_bg).fg(title_fg);
     let title = if let Some(feedback) = title_feedback {
-        Line::styled(format!(" {}", feedback.message()), feedback.style(title_style, title_bg, &colors))
+        Line::styled(
+            format!(" {}", feedback.message()),
+            feedback.style(title_style, title_bg, &colors),
+        )
     } else {
         Line::from(vec![
-            Span::styled(format!(" {filename}"), title_style.add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" {filename}"),
+                title_style.add_modifier(Modifier::BOLD),
+            ),
             Span::styled(detail, title_style.fg(title_dim)),
         ])
     };
-    f.render_widget(
-        Paragraph::new(title).style(title_style),
-        title_area,
-    );
+    f.render_widget(Paragraph::new(title).style(title_style), title_area);
     for (index, _) in actions.iter().enumerate() {
-        let foreground = if button_enabled(app, index) { title_fg } else { title_dim };
-        let style = colors.ui.toolbar_style(foreground, title_bg, hovered == Some(index),
-            peek.focused_button == Some(index), false).remove_modifier(Modifier::DIM);
+        let foreground = if button_enabled(app, index) {
+            title_fg
+        } else {
+            title_dim
+        };
+        let style = colors
+            .ui
+            .toolbar_style(
+                foreground,
+                title_bg,
+                hovered == Some(index),
+                peek.focused_button == Some(index),
+                false,
+            )
+            .remove_modifier(Modifier::DIM);
         let button_area = button_rect(app, area, index, actions);
-        if Some(index) == copy_button && let Some(feedback) = current_copy_feedback {
+        if Some(index) == copy_button
+            && let Some(feedback) = current_copy_feedback
+        {
             feedback.draw_button(f, button_area, style, title_bg, &colors);
         } else {
             f.render_widget(
@@ -1082,12 +1294,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             Paragraph::new(gutter).style(normal.fg(colors.fg_dim)),
             Rect::new(body.x, y, gutter_width, 1),
         );
-        let code = Rect::new(
-            layout.code.x,
-            y,
-            layout.code.width,
-            1,
-        );
+        let code = Rect::new(layout.code.x, y, layout.code.width, 1);
         let spans = row_spans(
             row,
             peek.horizontal_scroll,
@@ -1107,7 +1314,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         let copy = Some(action.button) == copy_button;
         let stage = !matches!(app.hunk_popup_status, 'N' | 'S') && action.button == 0;
         let fg = if (!copy && peek.hunks[action.hunk].action_line.is_none())
-            || !button_enabled_for_hunk(app, action.button, action.hunk) {
+            || !button_enabled_for_hunk(app, action.button, action.hunk)
+        {
             colors.fg_dim
         } else if copy {
             colors.fg_accent_blue
@@ -1116,18 +1324,41 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         } else {
             colors.ui.fg_gutter_deleted
         };
-        let style = colors.ui.toolbar_style(
-            fg, bg, quick_hovered == Some(action),
-            peek.selected == action.hunk && peek.focused_button == Some(action.button), false,
-        ).add_modifier(Modifier::BOLD).remove_modifier(Modifier::DIM);
+        let style = colors
+            .ui
+            .toolbar_style(
+                fg,
+                bg,
+                quick_hovered == Some(action),
+                peek.selected == action.hunk && peek.focused_button == Some(action.button),
+                false,
+            )
+            .add_modifier(Modifier::BOLD)
+            .remove_modifier(Modifier::DIM);
         if copy && let Some(feedback) = peek.copy_feedback_for(action.hunk) {
             feedback.draw_button(f, action.area, style, bg, &colors);
         } else {
-            f.render_widget(Paragraph::new(if copy { " ⧉ " } else if stage { " + " } else { " − " }).style(style), action.area);
+            f.render_widget(
+                Paragraph::new(if copy {
+                    " ⧉ "
+                } else if stage {
+                    " + "
+                } else {
+                    " − "
+                })
+                .style(style),
+                action.area,
+            );
         }
     }
-    let vertical_hovered = layout.vertical.contains((app.mouse_col, app.mouse_row).into());
-    let (vertical_track, vertical_thumb) = colors.ui.scrollbar_colors(bg, vertical_hovered, peek.drag.is_some_and(|drag| !drag.horizontal));
+    let vertical_hovered = layout
+        .vertical
+        .contains((app.mouse_col, app.mouse_row).into());
+    let (vertical_track, vertical_thumb) = colors.ui.scrollbar_colors(
+        bg,
+        vertical_hovered,
+        peek.drag.is_some_and(|drag| !drag.horizontal),
+    );
     draw_scrollbar(
         f,
         layout.vertical,
@@ -1139,8 +1370,14 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         vertical_thumb,
         vertical_track,
     );
-    let horizontal_hovered = layout.horizontal.contains((app.mouse_col, app.mouse_row).into());
-    let (horizontal_track, horizontal_thumb) = colors.ui.scrollbar_colors(bg, horizontal_hovered, peek.drag.is_some_and(|drag| drag.horizontal));
+    let horizontal_hovered = layout
+        .horizontal
+        .contains((app.mouse_col, app.mouse_row).into());
+    let (horizontal_track, horizontal_thumb) = colors.ui.scrollbar_colors(
+        bg,
+        horizontal_hovered,
+        peek.drag.is_some_and(|drag| drag.horizontal),
+    );
     draw_scrollbar(
         f,
         layout.horizontal,
@@ -1155,7 +1392,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     // Scrolling/resizing can put a control under a stationary pointer. Track
     // the hover actually drawn so the next move always clears its highlight.
     if let Some(peek) = &mut app.hunk_peek {
-        peek.hovered = hovered.map(HoverTarget::Toolbar)
+        peek.hovered = hovered
+            .map(HoverTarget::Toolbar)
             .or(quick_hovered.map(HoverTarget::QuickAction))
             .or(vertical_hovered.then_some(HoverTarget::VerticalScroll))
             .or(horizontal_hovered.then_some(HoverTarget::HorizontalScroll));
@@ -1185,25 +1423,44 @@ fn row_spans(
     });
     let mut segment = segments.next();
     for (byte, glyph) in row.text.grapheme_indices(true) {
-        if col >= scroll + width { break; }
-        while segment.is_some_and(|(end, _)| byte >= end) { segment = segments.next(); }
+        if col >= scroll + width {
+            break;
+        }
+        while segment.is_some_and(|(end, _)| byte >= end) {
+            segment = segments.next();
+        }
         let fg = segment.map_or(fallback_fg, |(_, color)| {
             crate::ui_colors::syntax_color(color, normal.bg.unwrap_or(Color::Reset))
         });
-        let w = if glyph == "\t" { tab_size - col % tab_size } else { glyph.width() };
+        let w = if glyph == "\t" {
+            tab_size - col % tab_size
+        } else {
+            glyph.width()
+        };
         let end = col + w;
         let count = glyph.chars().count();
         let emphasized = row.emphasis.as_ref().map_or(row.kind != ' ', |mask| {
-            mask.get(index..index + count).is_some_and(|slice| slice.iter().any(|v| *v))
+            mask.get(index..index + count)
+                .is_some_and(|slice| slice.iter().any(|v| *v))
         });
-        let background = if emphasized { emphasis_bg } else { normal.bg.unwrap_or(Color::Reset) };
-        let style = normal.fg(contrast.foreground(fg, background)).bg(background);
+        let background = if emphasized {
+            emphasis_bg
+        } else {
+            normal.bg.unwrap_or(Color::Reset)
+        };
+        let style = normal
+            .fg(contrast.foreground(fg, background))
+            .bg(background);
         if end > scroll || (w == 0 && col > scroll) {
             if style != batch_style && !batch.is_empty() {
                 spans.push(Span::styled(std::mem::take(&mut batch), batch_style));
             }
             batch_style = style;
-            if glyph == "\t" || glyph.chars().any(char::is_control) || col < scroll || end > scroll + width {
+            if glyph == "\t"
+                || glyph.chars().any(char::is_control)
+                || col < scroll
+                || end > scroll + width
+            {
                 let shown = end.min(scroll + width).saturating_sub(col.max(scroll));
                 batch.extend(std::iter::repeat_n(' ', shown));
             } else {
@@ -1223,7 +1480,9 @@ fn activate(app: &mut App, button: usize) {
     let Some((_, label)) = buttons(app).get(button).copied() else {
         return;
     };
-    if !button_enabled(app, button) { return; }
+    if !button_enabled(app, button) {
+        return;
+    }
     match label {
         "Copy Old Lines" => selection::copy(app, true),
         "Next Change" | "Previous Change" => {
@@ -1261,8 +1520,13 @@ fn activate(app: &mut App, button: usize) {
 }
 
 pub(crate) fn reveal_current_change(app: &mut App) {
-    let Some(line) = app.hunk_peek.as_ref()
-        .and_then(|peek| peek.hunks.get(peek.selected)?.action_line) else { return; };
+    let Some(line) = app
+        .hunk_peek
+        .as_ref()
+        .and_then(|peek| peek.hunks.get(peek.selected)?.action_line)
+    else {
+        return;
+    };
     app.hunk_popup_line = line;
     let gutter_y = app.gutter_area.map_or(0, |area| area.y);
     if let Some(editor) = app.editor_mut() {
@@ -1274,7 +1538,9 @@ pub(crate) fn reveal_current_change(app: &mut App) {
             let row = editor.wrapped_row_for_position(line, 0, editor.effective_wrap_width());
             editor.set_wrap_scroll_offset(row.saturating_sub(2));
             row
-        } else { line };
+        } else {
+            line
+        };
         app.hunk_popup_pos.1 = gutter_y.saturating_add(row.min(2) as u16);
     }
 }
@@ -1302,20 +1568,31 @@ fn scroll(app: &mut App, down: bool, amount: usize, horizontal: bool) {
 }
 
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
-    if context::handle_key(app, key) { return; }
+    if context::handle_key(app, key) {
+        return;
+    }
     if key.code == KeyCode::F(10) && key.modifiers.contains(KeyModifiers::SHIFT) {
         let layout = input_layout(app);
-        let row = app.hunk_peek.as_ref().map_or(layout.body.y, |peek|
-            layout.body.y + peek.hunks[peek.selected].start_row.saturating_sub(peek.scroll)
-                .min(layout.body.height.saturating_sub(1) as usize) as u16);
+        let row = app.hunk_peek.as_ref().map_or(layout.body.y, |peek| {
+            layout.body.y
+                + peek.hunks[peek.selected]
+                    .start_row
+                    .saturating_sub(peek.scroll)
+                    .min(layout.body.height.saturating_sub(1) as usize) as u16
+        });
         context::open(app, layout.quick_actions.x, row);
         return;
     }
     if key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) {
         match key.code {
-            KeyCode::Char('c' | 'C') | KeyCode::Insert => { selection::copy(app, false); return; }
+            KeyCode::Char('c' | 'C') | KeyCode::Insert => {
+                selection::copy(app, false);
+                return;
+            }
             KeyCode::Char('a' | 'A') => {
-                if let Some(peek) = app.hunk_peek.as_mut() { peek.select_all(); }
+                if let Some(peek) = app.hunk_peek.as_mut() {
+                    peek.select_all();
+                }
                 return;
             }
             _ => {}
@@ -1326,7 +1603,8 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
         KeyCode::Tab | KeyCode::BackTab => {
             let count = buttons(app).len();
             let enabled: Vec<_> = (0..count).map(|i| button_enabled(app, i)).collect();
-            let backwards = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
+            let backwards =
+                key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
             let focus = if let Some(feedback) = &mut app.hunk_preview_feedback {
                 &mut feedback.focused_button
             } else if let Some(peek) = &mut app.hunk_peek {
@@ -1340,11 +1618,16 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) {
                 None if backwards => count - 1,
                 None => 0,
             };
-            while !enabled[next] { next = (next + if backwards { count - 1 } else { 1 }) % count; }
+            while !enabled[next] {
+                next = (next + if backwards { count - 1 } else { 1 }) % count;
+            }
             *focus = Some(next);
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
-            let focused = app.hunk_preview_feedback.as_ref().and_then(|feedback| feedback.focused_button)
+            let focused = app
+                .hunk_preview_feedback
+                .as_ref()
+                .and_then(|feedback| feedback.focused_button)
                 .or_else(|| app.hunk_peek.as_ref().and_then(|peek| peek.focused_button));
             if let Some(i) = focused {
                 activate(app, i);
@@ -1374,19 +1657,35 @@ pub(crate) fn click(app: &mut App, col: u16, row: u16, width: u16, height: u16) 
     click_with_modifiers(app, col, row, width, height, KeyModifiers::NONE);
 }
 
-fn click_with_modifiers(app: &mut App, col: u16, row: u16, width: u16, height: u16, modifiers: KeyModifiers) {
+fn click_with_modifiers(
+    app: &mut App,
+    col: u16,
+    row: u16,
+    width: u16,
+    height: u16,
+    modifiers: KeyModifiers,
+) {
     let layout = app
         .hunk_peek
         .as_ref()
         .and_then(|p| p.layout)
-        .or_else(|| app.hunk_preview_feedback.as_ref()?.area.map(|panel| make_layout(app, panel)))
+        .or_else(|| {
+            app.hunk_preview_feedback
+                .as_ref()?
+                .area
+                .map(|panel| make_layout(app, panel))
+        })
         .unwrap_or_else(|| make_layout(app, peek_rect(app, width, height)));
-    if let Some(peek) = app.hunk_peek.as_mut() { peek.selection.cancel_drag(); }
+    if let Some(peek) = app.hunk_peek.as_mut() {
+        peek.selection.cancel_drag();
+    }
     if scrollbar_down(app, layout, col, row) {
         return;
     }
     if let Some(action) = quick_action_at(app, layout, col, row) {
-        if !button_enabled_for_hunk(app, action.button, action.hunk) { return; }
+        if !button_enabled_for_hunk(app, action.button, action.hunk) {
+            return;
+        }
         if let Some(peek) = app.hunk_peek.as_mut() {
             peek.selected = action.hunk;
             if let Some(line) = peek.hunks[action.hunk].action_line {
@@ -1399,14 +1698,18 @@ fn click_with_modifiers(app: &mut App, col: u16, row: u16, width: u16, height: u
     if let Some(i) = button_at(app, layout.panel, col, row) {
         activate(app, i);
     } else if layout.code.contains((col, row).into()) {
-        if let Some(peek) = app.hunk_peek.as_mut() { peek.begin_selection(layout, col, row, modifiers); }
+        if let Some(peek) = app.hunk_peek.as_mut() {
+            peek.begin_selection(layout, col, row, modifiers);
+        }
     } else if !layout.panel.contains((col, row).into()) {
         app.close_hunk_popup();
     }
 }
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) {
-    if context::handle_mouse(app, mouse) { return; }
+    if context::handle_mouse(app, mouse) {
+        return;
+    }
     let layout = input_layout(app);
     match mouse.kind {
         MouseEventKind::Moved => {
@@ -1442,7 +1745,11 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) {
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            if app.hunk_peek.as_ref().is_some_and(|peek| peek.selection.dragging()) {
+            if app
+                .hunk_peek
+                .as_ref()
+                .is_some_and(|peek| peek.selection.dragging())
+            {
                 selection::drag(app, layout, mouse.column, mouse.row);
             } else {
                 drag_scrollbar(app, layout, mouse.column, mouse.row);
@@ -1463,7 +1770,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                     MouseEventKind::ScrollDown | MouseEventKind::ScrollRight
                 );
                 scroll(app, down, app.scroll_speed.max(1), horizontal);
-                if let Some(peek) = app.hunk_peek.as_mut() { peek.extend_selection(layout, mouse.column, mouse.row); }
+                if let Some(peek) = app.hunk_peek.as_mut() {
+                    peek.extend_selection(layout, mouse.column, mouse.row);
+                }
             }
         }
         _ => {}
@@ -1504,20 +1813,38 @@ mod tests {
             "peekViewTitleLabel.foreground":"#eeffffe0", "peekViewTitleDescription.foreground":"#ddffbbc0",
             "focusBorder":"#00ffaa", "textLink.foreground":"#ff8800"
         });
-        app.colors.ui = WorkbenchColors::resolve(roles.as_object().unwrap(), &app.colors, false, false);
+        app.colors.ui =
+            WorkbenchColors::resolve(roles.as_object().unwrap(), &app.colors, false, false);
         let mut terminal = Terminal::new(TestBackend::new(110, 32)).unwrap();
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let area = peek_rect(&app, 110, 32);
         let buffer = terminal.backend().buffer();
-        assert_eq!(buffer[(area.x, area.y)].fg,
-            ColorLayer::rgba(255, 153, 204, 128).over(app.colors.bg_editor).unwrap());
+        assert_eq!(
+            buffer[(area.x, area.y)].fg,
+            ColorLayer::rgba(255, 153, 204, 128)
+                .over(app.colors.bg_editor)
+                .unwrap()
+        );
         let title = &buffer[(area.x + 1, area.y + 1)];
         assert_eq!(title.symbol(), "e");
-        assert_eq!(title.bg, ColorLayer::rgba(16, 30, 50, 192).over(app.colors.bg_editor).unwrap());
-        assert_eq!(title.fg, ColorLayer::rgba(238, 255, 255, 224).over(title.bg).unwrap());
+        assert_eq!(
+            title.bg,
+            ColorLayer::rgba(16, 30, 50, 192)
+                .over(app.colors.bg_editor)
+                .unwrap()
+        );
+        assert_eq!(
+            title.fg,
+            ColorLayer::rgba(238, 255, 255, 224).over(title.bg).unwrap()
+        );
         let description = &buffer[(area.x + 12, area.y + 1)];
         assert_eq!(description.symbol(), "G");
-        assert_eq!(description.fg, ColorLayer::rgba(221, 255, 187, 192).over(description.bg).unwrap());
+        assert_eq!(
+            description.fg,
+            ColorLayer::rgba(221, 255, 187, 192)
+                .over(description.bg)
+                .unwrap()
+        );
         let title_fg = title.fg;
         crate::ui_control_visibility_tests::snapshot(buffer, "independent peek title roles");
 
@@ -1553,7 +1880,9 @@ mod tests {
         app.colors.ui.scrollbar_slider = ColorLayer::rgba(240, 240, 240, 128);
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let layout = app.hunk_peek.as_ref().unwrap().layout.unwrap();
-        let track = ColorLayer::rgba(80, 100, 120, 128).over(app.colors.bg_editor).unwrap();
+        let track = ColorLayer::rgba(80, 100, 120, 128)
+            .over(app.colors.bg_editor)
+            .unwrap();
         let thumb = ColorLayer::rgba(240, 240, 240, 128).over(track).unwrap();
         for area in [layout.vertical, layout.horizontal] {
             assert!(!area.is_empty());
@@ -1569,7 +1898,13 @@ mod tests {
         }
     }
 
-    pub(super) fn mouse(app: &mut App, kind: MouseEventKind, x: u16, y: u16, modifiers: KeyModifiers) {
+    pub(super) fn mouse(
+        app: &mut App,
+        kind: MouseEventKind,
+        x: u16,
+        y: u16,
+        modifiers: KeyModifiers,
+    ) {
         crate::mouse::handle_mouse(
             app,
             MouseEvent {
@@ -1736,14 +2071,30 @@ mod tests {
             prepared: false,
         };
         assert_eq!(text_width(&row.text, 8), 14);
-        let spans = row_spans(&row, 0, 80, Style::default(), Color::Red, 8, &crate::theme_workbench::WorkbenchColors::default());
+        let spans = row_spans(
+            &row,
+            0,
+            80,
+            Style::default(),
+            Color::Red,
+            8,
+            &crate::theme_workbench::WorkbenchColors::default(),
+        );
         assert_eq!(
             spans.len(),
             1,
             "One span per style run, rather than one allocation per character"
         );
         assert_eq!(spans[0].content, "a       界e\u{301}xyz");
-        let clipped = row_spans(&row, 9, 3, Style::default(), Color::Red, 8, &crate::theme_workbench::WorkbenchColors::default());
+        let clipped = row_spans(
+            &row,
+            9,
+            3,
+            Style::default(),
+            Color::Red,
+            8,
+            &crate::theme_workbench::WorkbenchColors::default(),
+        );
         assert_eq!(clipped[0].content, " e\u{301}x");
     }
 
@@ -1783,18 +2134,44 @@ mod tests {
             ("removed\n", "", 0, Some("removed"), None),
             ("first\nremoved\n", "first\n", 1, Some("removed"), None),
             ("removed\nfirst\n", "first\n", 0, Some("removed"), None),
-            ("first\r\nold_界\r\n", "first\r\nnew_界\r\n", 1, Some("old_界"), Some("new_界")),
+            (
+                "first\r\nold_界\r\n",
+                "first\r\nnew_界\r\n",
+                1,
+                Some("old_界"),
+                Some("new_界"),
+            ),
         ] {
             let peek = HunkPeek::from_texts(saved, current, line, 4).unwrap();
             assert_eq!(peek.hunks.len(), 1);
             assert_eq!(peek.hunks[0].action_line, Some(line));
-            let old: Vec<_> = peek.rows.iter().filter(|row| row.kind == '-').map(|row| row.text.as_str()).collect();
-            let new: Vec<_> = peek.rows.iter().filter(|row| row.kind == '+').map(|row| row.text.as_str()).collect();
+            let old: Vec<_> = peek
+                .rows
+                .iter()
+                .filter(|row| row.kind == '-')
+                .map(|row| row.text.as_str())
+                .collect();
+            let new: Vec<_> = peek
+                .rows
+                .iter()
+                .filter(|row| row.kind == '+')
+                .map(|row| row.text.as_str())
+                .collect();
             assert_eq!(old, removed.into_iter().collect::<Vec<_>>());
             assert_eq!(new, added.into_iter().collect::<Vec<_>>());
         }
-        assert_eq!(HunkPeek::from_texts("same\n", "same\n", 0, 4).err().as_deref(), Some("No changes found"));
-        assert_eq!(HunkPeek::from_texts("same\nold\n", "same\nnew\n", 0, 4).err().as_deref(), Some("No change found at this line"));
+        assert_eq!(
+            HunkPeek::from_texts("same\n", "same\n", 0, 4)
+                .err()
+                .as_deref(),
+            Some("No changes found")
+        );
+        assert_eq!(
+            HunkPeek::from_texts("same\nold\n", "same\nnew\n", 0, 4)
+                .err()
+                .as_deref(),
+            Some("No change found at this line")
+        );
     }
 
     #[test]
@@ -1807,10 +2184,24 @@ mod tests {
         let actions: Vec<_> = quick_actions(peek, peek.layout.unwrap(), true).collect();
         assert_eq!(actions.len(), 4, "revert and copy buttons per unsaved hunk");
         for action in actions.iter().filter(|action| action.button == 0) {
-            assert_eq!(terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(), "−");
+            assert_eq!(
+                terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(),
+                "−"
+            );
         }
-        assert_eq!(buttons(&app).iter().map(|(_, label)| *label).collect::<Vec<_>>(),
-            ["Revert Unsaved Hunk", "Next Change", "Previous Change", "Copy Old Lines", "Close Preview"]);
+        assert_eq!(
+            buttons(&app)
+                .iter()
+                .map(|(_, label)| *label)
+                .collect::<Vec<_>>(),
+            [
+                "Revert Unsaved Hunk",
+                "Next Change",
+                "Previous Change",
+                "Copy Old Lines",
+                "Close Preview"
+            ]
+        );
         let next = button_rect(&app, peek.layout.unwrap().panel, 1, buttons(&app));
         click(&mut app, next.x + 1, next.y, 110, 32);
         assert_eq!(app.hunk_peek.as_ref().unwrap().selected, 1);
@@ -1870,7 +2261,11 @@ mod tests {
             ("@@ -1 +0,0 @@\n-removed\n", "", Some(1), None),
         ] {
             let mut app = app_with_peek();
-            app.hunk_peek = Some(HunkPeek::from_patch(&parse_git_file_patch(patch).unwrap(), target, 0));
+            app.hunk_peek = Some(HunkPeek::from_patch(
+                &parse_git_file_patch(patch).unwrap(),
+                target,
+                0,
+            ));
             let mut terminal = Terminal::new(TestBackend::new(110, 32)).unwrap();
             terminal.draw(|frame| draw(frame, &mut app)).unwrap();
             let peek = app.hunk_peek.as_ref().unwrap();
@@ -1879,14 +2274,20 @@ mod tests {
             assert_eq!(actions.len(), 3);
             assert_eq!(actions[0].area.y, actions[1].area.y);
             for (action, symbol) in actions.iter().zip(["+", "−", "⧉"]) {
-                assert_eq!(terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(), symbol);
+                assert_eq!(
+                    terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(),
+                    symbol
+                );
                 assert_eq!(action.area.intersection(layout.body), action.area);
                 assert!(action.area.intersection(layout.code).is_empty());
             }
             let digits = peek.digits;
-            let number = |n: Option<usize>| n.map_or_else(|| " ".repeat(digits), |n| format!("{n:>digits$}"));
+            let number = |n: Option<usize>| {
+                n.map_or_else(|| " ".repeat(digits), |n| format!("{n:>digits$}"))
+            };
             let shown: String = (layout.body.x..layout.quick_actions.x)
-                .map(|x| terminal.backend().buffer()[(x, layout.body.y)].symbol()).collect();
+                .map(|x| terminal.backend().buffer()[(x, layout.body.y)].symbol())
+                .collect();
             assert_eq!(shown, format!(" {} {} ", number(old), number(new)));
         }
     }
@@ -1902,7 +2303,10 @@ mod tests {
         let layout = peek.layout.unwrap();
         let actions: Vec<_> = quick_actions(peek, layout, false).collect();
         assert_eq!(actions.len(), 3);
-        assert_eq!(actions[0].area.y, layout.body.y, "partial hunk retains its actions");
+        assert_eq!(
+            actions[0].area.y, layout.body.y,
+            "partial hunk retains its actions"
+        );
         let stage = actions[0].area;
         let discard = actions[1].area;
         for (x, y, redraw) in [
@@ -1916,19 +2320,39 @@ mod tests {
         }
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let title: String = (layout.panel.x..layout.panel.right())
-            .map(|x| terminal.backend().buffer()[(x, layout.panel.y + 1)].symbol()).collect();
+            .map(|x| terminal.backend().buffer()[(x, layout.panel.y + 1)].symbol())
+            .collect();
         assert!(title.contains("Discard Hunk"));
         app.mouse_hover_changed = false;
-        mouse(&mut app, MouseEventKind::Moved, layout.code.x, layout.body.y, KeyModifiers::NONE);
-        assert!(app.mouse_hover_changed, "leaving removes the hover highlight and label");
+        mouse(
+            &mut app,
+            MouseEventKind::Moved,
+            layout.code.x,
+            layout.body.y,
+            KeyModifiers::NONE,
+        );
+        assert!(
+            app.mouse_hover_changed,
+            "leaving removes the hover highlight and label"
+        );
         app.mouse_hover_changed = false;
-        mouse(&mut app, MouseEventKind::Moved, layout.code.x + 1, layout.body.y, KeyModifiers::NONE);
+        mouse(
+            &mut app,
+            MouseEventKind::Moved,
+            layout.code.x + 1,
+            layout.body.y,
+            KeyModifiers::NONE,
+        );
         assert!(!app.mouse_hover_changed);
 
         app.hunk_peek.as_mut().unwrap().scroll = first + 3;
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let peek = app.hunk_peek.as_ref().unwrap();
-        assert_eq!(quick_actions(peek, peek.layout.unwrap(), false).count(), 0, "context has no actions");
+        assert_eq!(
+            quick_actions(peek, peek.layout.unwrap(), false).count(),
+            0,
+            "context has no actions"
+        );
         app.hunk_peek.as_mut().unwrap().scroll = app.hunk_peek.as_ref().unwrap().hunks[1].start_row;
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let peek = app.hunk_peek.as_ref().unwrap();
@@ -1940,8 +2364,17 @@ mod tests {
         app.mouse_row = actions[0].area.y;
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         app.mouse_hover_changed = false;
-        mouse(&mut app, MouseEventKind::Moved, layout.code.x, layout.body.y, KeyModifiers::NONE);
-        assert!(app.mouse_hover_changed, "hover painted after scrolling clears on the next move");
+        mouse(
+            &mut app,
+            MouseEventKind::Moved,
+            layout.code.x,
+            layout.body.y,
+            KeyModifiers::NONE,
+        );
+        assert!(
+            app.mouse_hover_changed,
+            "hover painted after scrolling clears on the next move"
+        );
     }
 
     #[test]
@@ -1953,17 +2386,52 @@ mod tests {
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let peek = app.hunk_peek.as_ref().unwrap();
         let actions: Vec<_> = quick_actions(peek, peek.layout.unwrap(), true).collect();
-        assert_eq!(actions.len(), 4, "unstage and copy actions per visible staged hunk");
-        let action = *actions.iter().find(|action| action.hunk == 1 && action.button == 0).unwrap();
-        assert_eq!(terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(), "−");
-        mouse(&mut app, MouseEventKind::Moved, action.area.x + 1, action.area.y, KeyModifiers::NONE);
+        assert_eq!(
+            actions.len(),
+            4,
+            "unstage and copy actions per visible staged hunk"
+        );
+        let action = *actions
+            .iter()
+            .find(|action| action.hunk == 1 && action.button == 0)
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(action.area.x + 1, action.area.y)].symbol(),
+            "−"
+        );
+        mouse(
+            &mut app,
+            MouseEventKind::Moved,
+            action.area.x + 1,
+            action.area.y,
+            KeyModifiers::NONE,
+        );
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-        let text: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
         assert!(text.contains("Unstage Hunk"));
-        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), action.area.x + 1, action.area.y, KeyModifiers::NONE);
-        assert!(app.hunk_popup_active, "unmappable hunk must not use another hunk's action line");
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            action.area.x + 1,
+            action.area.y,
+            KeyModifiers::NONE,
+        );
+        assert!(
+            app.hunk_popup_active,
+            "unmappable hunk must not use another hunk's action line"
+        );
         assert_eq!(app.hunk_popup_line, 1);
-        assert!(app.notification_history.iter().any(|note| note.0.contains("covered by working tree edits")));
+        assert!(
+            app.notification_history
+                .iter()
+                .any(|note| note.0.contains("covered by working tree edits"))
+        );
     }
 
     #[test]
@@ -2021,7 +2489,14 @@ mod tests {
             buffer[(area.right() - 2, area.y + 5)].bg,
             app.colors.bg_diff_added
         );
-        assert_eq!(buffer[(area.x, area.y)].fg, app.colors.ui.peek_border.border(app.colors.bg_editor).unwrap_or(app.colors.bg_editor));
+        assert_eq!(
+            buffer[(area.x, area.y)].fg,
+            app.colors
+                .ui
+                .peek_border
+                .border(app.colors.bg_editor)
+                .unwrap_or(app.colors.bg_editor)
+        );
         assert_eq!(buffer[(95, area.y + 3)].symbol(), "M");
         crate::ui_control_visibility_tests::snapshot(buffer, "Hunk peek quick actions");
         if let Ok(path) = std::env::var("VTCODE_HUNK_PEEK_SNAPSHOT") {

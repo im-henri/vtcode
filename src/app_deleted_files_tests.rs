@@ -16,7 +16,8 @@ fn loaded(path: &Path) -> Tab {
 }
 
 fn missing(path: &Path) -> WorkspacePathChange {
-    WorkspacePathChange { is_dir: false,
+    WorkspacePathChange {
+        is_dir: false,
         path: path.into(),
         observed_at: Instant::now(),
         exists: false,
@@ -160,7 +161,7 @@ fn delayed_load_and_reload_results_cannot_reopen_deleted_tabs() {
             workspace_generation: 0,
             path,
             result: Ok(crate::editor::LoadedTextFile {
-            remote_checkpoint: None,
+                remote_checkpoint: None,
                 rope: ropey::Rope::from_str("old read\n"),
                 encoding: "UTF-8",
                 file_size: 9,
@@ -177,7 +178,8 @@ fn a_missing_probe_during_a_save_waits_and_a_failed_save_rechecks_deletion() {
     let path = root.path().join("deleted-during-save.txt");
     let mut app = App::test_new();
     app.tabs.push(loaded(&path));
-    app.pending_file_saves.insert(path.clone(), (app.workspace_generation, 0.into()));
+    app.pending_file_saves
+        .insert(path.clone(), (app.workspace_generation, 0.into()));
     send(&mut app, BackgroundResult::FileDiskState(missing(&path)));
     assert_eq!(app.tabs.len(), 1);
     send(

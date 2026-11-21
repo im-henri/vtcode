@@ -5,12 +5,12 @@
 //! panes and terminals that already report these buttons use normal input.
 //! Ordinary left clicks and drags retain the terminal's own coordinates.
 
+use crate::terminal_input_batch::Sender;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU8, Ordering};
-use crate::terminal_input_batch::Sender;
+use std::sync::{Arc, Mutex};
 
 use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use windows_sys::Win32::System::Threading::GetCurrentThreadId;
@@ -21,11 +21,11 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, VK_CONTROL, VK_MENU, VK_SHIFT,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DefWindowProcW, DispatchMessageW, GA_ROOT, GetAncestor, GetClassNameW, GetForegroundWindow,
-    GetMessageW, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, PeekMessageW, PostThreadMessageW,
-    TranslateMessage, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL,
-    WM_QUIT, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP, WindowFromPoint,
+    CallNextHookEx, DefWindowProcW, DispatchMessageW, GA_ROOT, GetAncestor, GetClassNameW,
+    GetForegroundWindow, GetMessageW, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, PeekMessageW,
+    PostThreadMessageW, TranslateMessage, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN,
+    WM_MBUTTONUP, WM_MOUSEHWHEEL, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_QUIT, WM_RBUTTONDOWN,
+    WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP, WindowFromPoint,
 };
 
 #[path = "windows_mouse_geometry.rs"]
@@ -93,7 +93,9 @@ impl MouseFocus {
                 return;
             }
             terminal_window(foreground)
-        } else { 0 };
+        } else {
+            0
+        };
         if self.host.swap(host, Ordering::AcqRel) != host {
             self.geometry.invalidate();
             self.reset_native_pointer();
@@ -116,7 +118,8 @@ impl MouseFocus {
 
     fn reset_native_pointer(&self) {
         self.native_left_down.store(false, Ordering::Release);
-        self.native_reference_pending.store(false, Ordering::Release);
+        self.native_reference_pending
+            .store(false, Ordering::Release);
         if let Ok(mut pointer) = self.native_pointer.lock() {
             pointer.pressed = None;
             pointer.pending.clear();
@@ -181,7 +184,9 @@ impl MouseFocus {
         if continuing_native && pointer.pressed != Some(press.id) {
             return None;
         }
-        if continuing_native && !pointer.reference_ordered { return None; }
+        if continuing_native && !pointer.reference_ordered {
+            return None;
+        }
         press
             .grid
             .and_then(|reference| grid.with_native_reference(reference, press.point, position))
@@ -218,8 +223,8 @@ impl MouseFocus {
                     // An earlier click on Terminal's own chrome may never
                     // produce a console press. Do not label that stale FIFO
                     // entry as the current press's delivery latency.
-                    pointer.decoded_press_at = (physical.id == pointer.next_id)
-                        .then_some(physical.observed_at);
+                    pointer.decoded_press_at =
+                        (physical.id == pointer.next_id).then_some(physical.observed_at);
                     self.native_reference_pending.store(true, Ordering::Release);
                     if pointer.pressed == Some(physical.id) && physical.modifiers == event.modifiers
                     {
@@ -247,7 +252,9 @@ impl MouseFocus {
     }
 
     pub(crate) fn order_native_mouse(&self) -> Option<std::time::Instant> {
-        if !self.native_reference_pending.swap(false, Ordering::AcqRel) { return None; }
+        if !self.native_reference_pending.swap(false, Ordering::AcqRel) {
+            return None;
+        }
         let mut pointer = self.native_pointer.lock().ok()?;
         pointer.reference_ordered = true;
         pointer.decoded_press_at.take()
@@ -273,8 +280,14 @@ pub(crate) fn terminal_window(window: isize) -> isize {
         let mut class = [0u16; 128];
         let len = GetClassNameW(window as _, class.as_mut_ptr(), class.len() as i32);
         let class = &class[..len.max(0) as usize];
-        if class.iter().copied().eq("CASCADIA_HOSTING_WINDOW_CLASS".encode_utf16())
-            || class.iter().copied().eq("WindowsTerminalDesktopWindow".encode_utf16())
+        if class
+            .iter()
+            .copied()
+            .eq("CASCADIA_HOSTING_WINDOW_CLASS".encode_utf16())
+            || class
+                .iter()
+                .copied()
+                .eq("WindowsTerminalDesktopWindow".encode_utf16())
         {
             window
         } else {
@@ -352,7 +365,11 @@ impl HookContext {
         if self.pointer.active {
             for button in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
                 if self.pointer.buttons & pointer_mask(button) != 0 {
-                    self.send_mouse(MouseEventKind::Up(button), self.pointer.position, KeyModifiers::NONE);
+                    self.send_mouse(
+                        MouseEventKind::Up(button),
+                        self.pointer.position,
+                        KeyModifiers::NONE,
+                    );
                 }
             }
             self.pointer.active = false;
@@ -574,7 +591,8 @@ impl HookContext {
             self.focus.enabled.load(Ordering::Acquire),
             self.focus.host.load(Ordering::Acquire),
             foreground,
-        ) || !self.focus.geometry.permits_capture() {
+        ) || !self.focus.geometry.permits_capture()
+        {
             return false;
         }
         if self.captured_buttons & mask == 0 {
@@ -618,7 +636,10 @@ unsafe extern "system" fn mouse_hook(code: i32, message: usize, data: isize) -> 
                 let Some(context) = context else { return false };
                 // SAFETY: this only reads the foreground window's handle.
                 let foreground = unsafe { GetForegroundWindow() as isize };
-                context.focus.tab_drag.observe_windows(message as u32, event.pt, &context.wake);
+                context
+                    .focus
+                    .tab_drag
+                    .observe_windows(message as u32, event.pt, &context.wake);
                 if matches!(message as u32, WM_XBUTTONDOWN | WM_XBUTTONUP) {
                     context.handle_event(message as u32, event, foreground)
                 } else {
@@ -630,7 +651,9 @@ unsafe extern "system" fn mouse_hook(code: i32, message: usize, data: isize) -> 
                         && context.focus.host.load(Ordering::Acquire) == foreground
                         && foreground != 0
                     {
-                        if message as u32 == WM_LBUTTONDOWN && !modifiers.contains(KeyModifiers::SHIFT) {
+                        if message as u32 == WM_LBUTTONDOWN
+                            && !modifiers.contains(KeyModifiers::SHIFT)
+                        {
                             context.focus.geometry.cached(foreground)
                         } else {
                             context.focus.geometry.current(foreground)
@@ -702,13 +725,17 @@ impl WindowsMouseInput {
             .spawn(move || {
                 struct ThreadId(Arc<Mutex<Option<u32>>>);
                 impl Drop for ThreadId {
-                    fn drop(&mut self) { *self.0.lock().unwrap_or_else(|error| error.into_inner()) = None; }
+                    fn drop(&mut self) {
+                        *self.0.lock().unwrap_or_else(|error| error.into_inner()) = None;
+                    }
                 }
                 // Serialize ID retirement with shutdown posting: Windows may
                 // reuse a thread ID immediately after that thread exits.
                 let _id = ThreadId(hook_thread_id.clone());
                 setup();
-                if hook_stopping.load(Ordering::Acquire) { return; }
+                if hook_stopping.load(Ordering::Acquire) {
+                    return;
+                }
                 let _input_priority = crate::worker_priority::InputPriority::new(true);
                 CONTEXT.set(Some(HookContext {
                     sender,
@@ -725,11 +752,15 @@ impl WindowsMouseInput {
                     SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
                     let mut message: MSG = std::mem::zeroed();
                     PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
-                    *hook_thread_id.lock().unwrap_or_else(|error| error.into_inner()) = Some(GetCurrentThreadId());
-                    let activity = recovery::ActivityWindow::start().map_err(|error| {
-                        log_warn!("Windows Terminal mouse recovery unavailable: {error}");
-                        error
-                    }).ok();
+                    *hook_thread_id
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner()) = Some(GetCurrentThreadId());
+                    let activity = recovery::ActivityWindow::start()
+                        .map_err(|error| {
+                            log_warn!("Windows Terminal mouse recovery unavailable: {error}");
+                            error
+                        })
+                        .ok();
                     let mut hook = match recovery::Hook::install() {
                         Ok(hook) => hook,
                         Err(error) => {
@@ -742,18 +773,35 @@ impl WindowsMouseInput {
                         && !hook_stopping.load(Ordering::Acquire)
                     {
                         while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {
-                            if activity.as_ref().is_some_and(|activity| activity.owns(&message)) {
+                            if activity
+                                .as_ref()
+                                .is_some_and(|activity| activity.owns(&message))
+                            {
                                 let foreground = GetForegroundWindow() as isize;
-                                let focused = CONTEXT.with_borrow(|context| context.as_ref().is_some_and(|context|
-                                    may_capture(true, context.focus.host.load(Ordering::Acquire), foreground)));
+                                let focused = CONTEXT.with_borrow(|context| {
+                                    context.as_ref().is_some_and(|context| {
+                                        may_capture(
+                                            true,
+                                            context.focus.host.load(Ordering::Acquire),
+                                            foreground,
+                                        )
+                                    })
+                                });
                                 if focused && hook.recover_if_stalled(std::time::Instant::now()) {
                                     CONTEXT.with_borrow_mut(|context| {
-                                        if let Some(context) = context { context.recovered(); }
+                                        if let Some(context) = context {
+                                            context.recovered();
+                                        }
                                     });
                                 }
                                 // WM_INPUT requires default processing to release
                                 // the native packet, including foreground input.
-                                DefWindowProcW(message.hwnd, message.message, message.wParam, message.lParam);
+                                DefWindowProcW(
+                                    message.hwnd,
+                                    message.message,
+                                    message.wParam,
+                                    message.lParam,
+                                );
                                 continue;
                             }
                             TranslateMessage(&message);
@@ -767,7 +815,11 @@ impl WindowsMouseInput {
         // busy. Keyboard/native mouse input and the first frame do not need
         // this optional bridge to have finished its handshake.
         Ok(Self {
-            focus, thread_id, stopping, started: Some(started), thread: Some(thread),
+            focus,
+            thread_id,
+            stopping,
+            started: Some(started),
+            thread: Some(thread),
             _geometry_worker: geometry_worker,
         })
     }
@@ -775,7 +827,9 @@ impl WindowsMouseInput {
     pub(crate) fn poll_ready(&mut self) {
         let Some(started) = &self.started else { return };
         match started.try_recv() {
-            Ok(Ok(_)) => { self.started = None; }
+            Ok(Ok(_)) => {
+                self.started = None;
+            }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             result => {
                 log_warn!("Windows Terminal mouse bridge unavailable: {result:?}");
@@ -793,8 +847,15 @@ impl Drop for WindowsMouseInput {
         // The queue is published before hook installation. If shutdown wins
         // that race, the worker checks `stopping` before entering its loop.
         {
-            let id = self.thread_id.lock().unwrap_or_else(|error| error.into_inner());
-            if let Some(id) = *id { unsafe { PostThreadMessageW(id, WM_QUIT, 0, 0); } }
+            let id = self
+                .thread_id
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if let Some(id) = *id {
+                unsafe {
+                    PostThreadMessageW(id, WM_QUIT, 0, 0);
+                }
+            }
         }
         if let Some(thread) = self.thread.take().filter(|thread| thread.is_finished()) {
             let _ = thread.join();
@@ -812,17 +873,33 @@ mod tests {
         let (started, running) = std::sync::mpsc::channel();
         let (release, blocked) = std::sync::mpsc::channel();
         struct Release(std::sync::mpsc::Sender<()>);
-        impl Drop for Release { fn drop(&mut self) { let _ = self.0.send(()); } }
+        impl Drop for Release {
+            fn drop(&mut self) {
+                let _ = self.0.send(());
+            }
+        }
         let _release = Release(release);
-        let mut input = WindowsMouseInput::start_with_setup(sender, Default::default(), move || {
-            started.send(()).unwrap();
-            blocked.recv_timeout(std::time::Duration::from_secs(15)).unwrap();
-        }).unwrap();
-        running.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        let mut input =
+            WindowsMouseInput::start_with_setup(sender, Default::default(), move || {
+                started.send(()).unwrap();
+                blocked
+                    .recv_timeout(std::time::Duration::from_secs(15))
+                    .unwrap();
+            })
+            .unwrap();
+        running
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         input.poll_ready();
-        assert!(input.started.is_some(), "initialization is deliberately still blocked");
+        assert!(
+            input.started.is_some(),
+            "initialization is deliberately still blocked"
+        );
         let (closed, done) = std::sync::mpsc::channel();
-        std::thread::spawn(move || { drop(input); closed.send(()).unwrap(); });
+        std::thread::spawn(move || {
+            drop(input);
+            closed.send(()).unwrap();
+        });
         done.recv_timeout(std::time::Duration::from_secs(5))
             .expect("closing startup must not wait for the optional hook");
     }
@@ -981,7 +1058,7 @@ mod tests {
         (
             HookContext {
                 sender: sender.into(),
-                    focus,
+                focus,
                 wake: crate::background::UiWake::default(),
                 captured_buttons: 0,
                 pointer: PointerCapture::default(),
@@ -1012,31 +1089,95 @@ mod tests {
     fn press_ingress_timestamp_survives_release_and_is_attached_only_once() {
         for modifiers in [KeyModifiers::NONE, KeyModifiers::CONTROL, KeyModifiers::ALT] {
             let (mut context, _) = pointer_context();
-            assert!(!context.handle_pointer(WM_LBUTTONDOWN, &native_event(55, 91, 0), 12, modifiers, None));
-            let observed = context.focus.native_pointer.lock().unwrap().pending.front().unwrap().observed_at;
+            assert!(!context.handle_pointer(
+                WM_LBUTTONDOWN,
+                &native_event(55, 91, 0),
+                12,
+                modifiers,
+                None
+            ));
+            let observed = context
+                .focus
+                .native_pointer
+                .lock()
+                .unwrap()
+                .pending
+                .front()
+                .unwrap()
+                .observed_at;
             // A slow Terminal may deliver Down after the physical Up. That
             // must still be measurable, without rearming a released gesture.
-            assert!(!context.handle_pointer(WM_LBUTTONUP, &native_event(55, 91, 0), 12, modifiers, None));
-            let press = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 3, row: 0, modifiers };
+            assert!(!context.handle_pointer(
+                WM_LBUTTONUP,
+                &native_event(55, 91, 0),
+                12,
+                modifiers,
+                None
+            ));
+            let press = MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 3,
+                row: 0,
+                modifiers,
+            };
             assert!(!context.focus.stage_native_mouse(&press));
             assert_eq!(context.focus.order_native_mouse(), Some(observed));
             assert_eq!(context.focus.order_native_mouse(), None);
-            assert!(context.focus.native_pointer.lock().unwrap().reference.is_none());
+            assert!(
+                context
+                    .focus
+                    .native_pointer
+                    .lock()
+                    .unwrap()
+                    .reference
+                    .is_none()
+            );
             assert!(!context.focus.native_left_down.load(Ordering::Acquire));
 
-            assert!(!context.handle_pointer(WM_LBUTTONDOWN, &native_event(55, 91, 0), 12, modifiers, None));
+            assert!(!context.handle_pointer(
+                WM_LBUTTONDOWN,
+                &native_event(55, 91, 0),
+                12,
+                modifiers,
+                None
+            ));
             assert!(!context.focus.stage_native_mouse(&press));
             context.focus.reset_native_pointer();
-            assert_eq!(context.focus.order_native_mouse(), None, "focus/resize invalidation discards pending metadata too");
+            assert_eq!(
+                context.focus.order_native_mouse(),
+                None,
+                "focus/resize invalidation discards pending metadata too"
+            );
         }
         let (mut context, _) = pointer_context();
         for _ in 0..2 {
-            assert!(!context.handle_pointer(WM_LBUTTONDOWN, &native_event(55, 91, 0), 12, KeyModifiers::NONE, None));
-            assert!(!context.handle_pointer(WM_LBUTTONUP, &native_event(55, 91, 0), 12, KeyModifiers::NONE, None));
+            assert!(!context.handle_pointer(
+                WM_LBUTTONDOWN,
+                &native_event(55, 91, 0),
+                12,
+                KeyModifiers::NONE,
+                None
+            ));
+            assert!(!context.handle_pointer(
+                WM_LBUTTONUP,
+                &native_event(55, 91, 0),
+                12,
+                KeyModifiers::NONE,
+                None
+            ));
         }
-        let press = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 3, row: 0, modifiers: KeyModifiers::NONE };
+        let press = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
         assert!(!context.focus.stage_native_mouse(&press));
-        assert_eq!(context.focus.order_native_mouse(), None, "an older unmatched physical press is not an ingress sample");
+        assert_eq!(
+            context.focus.order_native_mouse(),
+            None,
+            "an older unmatched physical press is not an ingress sample"
+        );
         assert!(!context.focus.stage_native_mouse(&press));
         assert!(context.focus.order_native_mouse().is_some());
     }
@@ -1047,20 +1188,64 @@ mod tests {
         let (sender, receiver) = crate::terminal_input_batch::channel();
         context.sender = sender.clone();
         let grid = Some(geometry::test_grid());
-        assert!(!context.handle_pointer(WM_LBUTTONDOWN, &native_event(55, 91, 0), 12, KeyModifiers::NONE, grid));
-        let press = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 3, row: 0, modifiers: KeyModifiers::NONE };
+        assert!(!context.handle_pointer(
+            WM_LBUTTONDOWN,
+            &native_event(55, 91, 0),
+            12,
+            KeyModifiers::NONE,
+            grid
+        ));
+        let press = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
         let focus = context.focus.clone();
-        assert!(crate::terminal_input_batch::forward_with_budget(Ok(Event::Mouse(press)), &sender, &Default::default(),
+        assert!(crate::terminal_input_batch::forward_with_budget(
+            Ok(Event::Mouse(press)),
+            &sender,
+            &Default::default(),
             |event| matches!(event, Ok(Event::Mouse(mouse)) if focus.stage_native_mouse(mouse)),
             || {
-                assert!(!context.handle_pointer(WM_MOUSEMOVE, &native_event(85, 131, 0), 12, KeyModifiers::SHIFT, grid));
-                assert!(!context.handle_pointer(WM_LBUTTONUP, &native_event(85, 131, 0), 12, KeyModifiers::SHIFT, grid));
-                assert!(receiver.try_recv().is_err(), "native motion and release cannot overtake an unpublished terminal Down");
+                assert!(!context.handle_pointer(
+                    WM_MOUSEMOVE,
+                    &native_event(85, 131, 0),
+                    12,
+                    KeyModifiers::SHIFT,
+                    grid
+                ));
+                assert!(!context.handle_pointer(
+                    WM_LBUTTONUP,
+                    &native_event(85, 131, 0),
+                    12,
+                    KeyModifiers::SHIFT,
+                    grid
+                ));
+                assert!(
+                    receiver.try_recv().is_err(),
+                    "native motion and release cannot overtake an unpublished terminal Down"
+                );
                 Ok(None)
-            }, std::time::Duration::MAX, || focus.order_native_mouse()));
+            },
+            std::time::Duration::MAX,
+            || focus.order_native_mouse()
+        ));
         assert_eq!(receiver.try_recv().unwrap().unwrap(), Event::Mouse(press));
-        assert!(matches!(receiver.try_recv().unwrap().unwrap(), Event::Mouse(MouseEvent { kind: MouseEventKind::Drag(MouseButton::Left), .. })));
-        assert!(matches!(receiver.try_recv().unwrap().unwrap(), Event::Mouse(MouseEvent { kind: MouseEventKind::Up(MouseButton::Left), .. })));
+        assert!(matches!(
+            receiver.try_recv().unwrap().unwrap(),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Drag(MouseButton::Left),
+                ..
+            })
+        ));
+        assert!(matches!(
+            receiver.try_recv().unwrap().unwrap(),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Up(MouseButton::Left),
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -1520,7 +1705,9 @@ mod tests {
         ));
         assert!(receiver.try_recv().is_err());
         assert!(!context.focus.filter_native_mouse(&MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left), column: 3, row: 2,
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row: 2,
             modifiers: KeyModifiers::NONE,
         }));
         assert!(!context.handle_pointer(
@@ -1642,14 +1829,24 @@ mod tests {
     #[test]
     fn switching_terminal_panes_cannot_continue_a_cached_drag_or_capture_side_buttons() {
         let (mut context, receiver) = pointer_context();
-        context.handle_pointer(WM_LBUTTONDOWN, &native_event(55, 91, 0), 12,
-            KeyModifiers::SHIFT, Some(geometry::test_grid()));
+        context.handle_pointer(
+            WM_LBUTTONDOWN,
+            &native_event(55, 91, 0),
+            12,
+            KeyModifiers::SHIFT,
+            Some(geometry::test_grid()),
+        );
         receive_mouse(&receiver);
         // The outer window is unchanged. UIA has invalidated ownership before
         // the remote focus report can make a round trip through SSH.
         context.focus.geometry.pin_current_pane();
-        context.handle_pointer(WM_MOUSEMOVE, &native_event(85, 131, 0), 12,
-            KeyModifiers::SHIFT, Some(geometry::test_grid()));
+        context.handle_pointer(
+            WM_MOUSEMOVE,
+            &native_event(85, 131, 0),
+            12,
+            KeyModifiers::SHIFT,
+            Some(geometry::test_grid()),
+        );
         let release = receive_mouse(&receiver);
         assert_eq!(release.kind, MouseEventKind::Up(MouseButton::Left));
         assert_eq!((release.column, release.row), (3, 2));
@@ -1713,29 +1910,60 @@ mod tests {
         let (mut context, receiver) = pointer_context();
         let grid = Some(geometry::test_grid());
         assert!(context.handle_pointer(
-            WM_LBUTTONDOWN, &native_event(55, 91, 0), 12, KeyModifiers::SHIFT, grid,
+            WM_LBUTTONDOWN,
+            &native_event(55, 91, 0),
+            12,
+            KeyModifiers::SHIFT,
+            grid,
         ));
-        assert_eq!(receive_mouse(&receiver).kind, MouseEventKind::Down(MouseButton::Left));
+        assert_eq!(
+            receive_mouse(&receiver).kind,
+            MouseEventKind::Down(MouseButton::Left)
+        );
         assert!(context.handle_pointer(
-            WM_MOUSEWHEEL, &native_event(55, 91, -60), 12, KeyModifiers::SHIFT, grid,
+            WM_MOUSEWHEEL,
+            &native_event(55, 91, -60),
+            12,
+            KeyModifiers::SHIFT,
+            grid,
         ));
         assert!(receiver.try_recv().is_err());
 
         context.recovered();
         context.recovered();
-        assert_eq!(receive_mouse(&receiver).kind, MouseEventKind::Up(MouseButton::Left));
-        assert!(receiver.try_recv().is_err(), "cancel the lost gesture only once");
+        assert_eq!(
+            receive_mouse(&receiver).kind,
+            MouseEventKind::Up(MouseButton::Left)
+        );
+        assert!(
+            receiver.try_recv().is_err(),
+            "cancel the lost gesture only once"
+        );
         assert!(context.handle_pointer(
-            WM_LBUTTONUP, &native_event(55, 91, 0), 12, KeyModifiers::NONE, grid,
+            WM_LBUTTONUP,
+            &native_event(55, 91, 0),
+            12,
+            KeyModifiers::NONE,
+            grid,
         ));
-        assert!(receiver.try_recv().is_err(), "swallow the original captured release");
+        assert!(
+            receiver.try_recv().is_err(),
+            "swallow the original captured release"
+        );
 
         for tick in 0..2 {
             assert!(context.handle_pointer(
-                WM_MOUSEWHEEL, &native_event(55, 91, -60), 12, KeyModifiers::SHIFT, grid,
+                WM_MOUSEWHEEL,
+                &native_event(55, 91, -60),
+                12,
+                KeyModifiers::SHIFT,
+                grid,
             ));
             if tick == 0 {
-                assert!(receiver.try_recv().is_err(), "discard the pre-interruption half tick");
+                assert!(
+                    receiver.try_recv().is_err(),
+                    "discard the pre-interruption half tick"
+                );
             }
         }
         let wheel = receive_mouse(&receiver);

@@ -336,7 +336,10 @@ pub(crate) fn call_noarg_export(
     // Production stores use a fuel-enabled engine. Ignore the error for unit
     // test stores built with Engine::default(); those guests are tiny and
     // deterministic.
-    let task = matches!(export, "vtcode_prepare_document_action" | "vtcode_deactivate") || store
+    let task = matches!(
+        export,
+        "vtcode_prepare_document_action" | "vtcode_deactivate"
+    ) || store
         .data()
         .tick_handlers
         .iter()
@@ -347,7 +350,9 @@ pub(crate) fn call_noarg_export(
     let _ = store.set_fuel(if task {
         EXTENSION_TASK_FUEL
     } else {
-        EXTENSION_CALL_FUEL.saturating_add(event_bytes.saturating_mul(64)).min(EXTENSION_TASK_FUEL)
+        EXTENSION_CALL_FUEL
+            .saturating_add(event_bytes.saturating_mul(64))
+            .min(EXTENSION_TASK_FUEL)
     });
     if instance.get_func(&mut *store, export).is_none() {
         if required {
@@ -356,12 +361,10 @@ pub(crate) fn call_noarg_export(
         return Ok(None);
     }
 
-    store.data_mut().task_deadline = task.then(|| {
-        std::time::Instant::now() + std::time::Duration::from_millis(6)
-    });
+    store.data_mut().task_deadline =
+        task.then(|| std::time::Instant::now() + std::time::Duration::from_millis(6));
     let result = if let Ok(func) = instance.get_typed_func::<(), i32>(&mut *store, export) {
-        func
-            .call(&mut *store, ())
+        func.call(&mut *store, ())
             .map(Some)
             .map_err(|err| format!("Failed calling `{export}`: {err:#}"))
     } else if let Ok(func) = instance.get_typed_func::<(), ()>(&mut *store, export) {
@@ -439,7 +442,10 @@ pub(crate) fn save_extension_setting(
     let Some(obj) = ext_obj.as_object_mut() else {
         return -1;
     };
-    obj.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+    obj.insert(
+        key.to_string(),
+        serde_json::Value::String(value.to_string()),
+    );
     let parent = settings_path
         .parent()
         .filter(|path| !path.as_os_str().is_empty())
@@ -450,7 +456,9 @@ pub(crate) fn save_extension_setting(
         let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
         temporary.write_all(&bytes)?;
         temporary.as_file().sync_all()?;
-        temporary.persist(settings_path).map_err(|error| error.error)?;
+        temporary
+            .persist(settings_path)
+            .map_err(|error| error.error)?;
         Ok(())
     })();
     match result {
@@ -524,13 +532,19 @@ mod setting_tests {
                 scope.spawn(move || {
                     let id = format!("extension-{worker}");
                     for value in 0..10 {
-                        assert_eq!(save_extension_setting(path, &id, "notebook", &value.to_string()), 0);
+                        assert_eq!(
+                            save_extension_setting(path, &id, "notebook", &value.to_string()),
+                            0
+                        );
                     }
                 });
             }
         });
         for worker in 0..8 {
-            assert_eq!(load_extension_setting(&path, &format!("extension-{worker}"), "notebook"), Some("9".into()));
+            assert_eq!(
+                load_extension_setting(&path, &format!("extension-{worker}"), "notebook"),
+                Some("9".into())
+            );
         }
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     }
@@ -541,7 +555,10 @@ mod setting_tests {
         let path = directory.path().join("settings.json");
         for original in ["{broken", "[]", "null", r#"{"engineer-buddy":42}"#] {
             std::fs::write(&path, original).unwrap();
-            assert_eq!(save_extension_setting(&path, "engineer-buddy", "notebook", "data"), -1);
+            assert_eq!(
+                save_extension_setting(&path, "engineer-buddy", "notebook", "data"),
+                -1
+            );
             assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
         }
     }

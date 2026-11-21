@@ -1,12 +1,14 @@
-use super::*;
 use super::sets_tests::tick;
+use super::*;
 
 #[path = "app_open_folder_confirmation_tests.rs"]
 mod confirmation_tests;
 
 fn choose(app: &mut App, path: &Path) {
     app.execute_palette_command("change_dir");
-    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder);
+    assert!(
+        app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder
+    );
     app.folder_browser.folder = app.display_path(path);
     app.confirm_folder_browser();
     assert!(!app.change_dir_active);
@@ -19,7 +21,10 @@ fn confirmation(app: &mut App) {
         app.workspace_set_confirmation().is_some()
     });
     assert!(app.workspace_folder_replacement());
-    assert!(matches!(app.workspaces.popup.sets.mode, Some(crate::ui_workspace_sets::Mode::Confirm)));
+    assert!(matches!(
+        app.workspaces.popup.sets.mode,
+        Some(crate::ui_workspace_sets::Mode::Confirm)
+    ));
 }
 
 fn finish(app: &mut App) {
@@ -33,8 +38,13 @@ fn finish(app: &mut App) {
 fn finish_without_confirmation(app: &mut App) {
     until(|| {
         tick(app);
-        assert!(!matches!(app.workspaces.popup.sets.mode, Some(crate::ui_workspace_sets::Mode::Confirm)),
-            "clean workbenches must not show an Open folder confirmation");
+        assert!(
+            !matches!(
+                app.workspaces.popup.sets.mode,
+                Some(crate::ui_workspace_sets::Mode::Confirm)
+            ),
+            "clean workbenches must not show an Open folder confirmation"
+        );
         !app.workspace_set_switching() && !app.workspace_opening() && app.workspaces.exit.is_none()
     });
     assert!(!app.shutdown_anim_active);
@@ -45,13 +55,19 @@ fn open_folder_and_ctrl_o_replace_while_add_folder_keeps_existing_workbenches() 
     let a = Project::new();
     let b = Project::new();
     let mut app = a.app(Default::default());
-    crate::input_keyboard::handle_keyboard_event(&mut app,
-        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
-    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder);
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL),
+    );
+    assert!(
+        app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder
+    );
     app.folder_browser_action(crate::folder_browser::Action::Close);
 
     app.execute_palette_command("workspace_add");
-    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::AddFolder);
+    assert!(
+        app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::AddFolder
+    );
     app.folder_browser.folder = b.path().display().to_string();
     app.confirm_folder_browser();
     assert!(matches!(app.workspaces.request, Some(Request::Add(_))));
@@ -71,17 +87,29 @@ fn open_folder_and_ctrl_o_replace_while_add_folder_keeps_existing_workbenches() 
 #[test]
 fn opening_a_folder_with_different_capitalization_loads_its_existing_settings() {
     let project = Project::new();
-    let actual = crate::startup::LocalFolder::resolve(project.path()).unwrap().root;
-    let alias = actual.with_file_name(actual.file_name().unwrap().to_string_lossy().to_ascii_uppercase());
+    let actual = crate::startup::LocalFolder::resolve(project.path())
+        .unwrap()
+        .root;
+    let alias = actual.with_file_name(
+        actual
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_ascii_uppercase(),
+    );
     if !alias.is_dir() {
         return;
     }
     assert_ne!(actual, alias);
     let settings_path = crate::settings::project_settings_path(&actual);
-    crate::settings::save_to_file(&settings_path, &crate::settings::Settings {
-        tab_size: Some(7),
-        ..Default::default()
-    }).unwrap();
+    crate::settings::save_to_file(
+        &settings_path,
+        &crate::settings::Settings {
+            tab_size: Some(7),
+            ..Default::default()
+        },
+    )
+    .unwrap();
 
     let mut app = App::new_startup(PathBuf::new(), Default::default());
     choose(&mut app, &alias);
@@ -114,7 +142,13 @@ fn open_folder_warns_before_closing_all_folders_and_keeps_unsaved_edits_for_reco
     assert_eq!(app.workspace_set_confirmation().unwrap().2.len(), 2);
     let buffer = draw(&mut app, 120, 30);
     let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-    for expected in ["Open folder", "open files will close", "terminals and agents will stop", "Unsaved edits will be kept", "Cancel"] {
+    for expected in [
+        "Open folder",
+        "open files will close",
+        "terminals and agents will stop",
+        "Unsaved edits will be kept",
+        "Cancel",
+    ] {
         assert!(text.contains(expected), "missing warning: {expected}");
     }
     // The initial action is Cancel, including when Enter is pressed immediately.
@@ -122,7 +156,11 @@ fn open_folder_warns_before_closing_all_folders_and_keeps_unsaved_edits_for_reco
     assert!(!app.workspace_set_switching());
     assert_eq!(app.open_folder_count(), 2);
     assert_eq!(app.editor().unwrap().save_identity, identity);
-    assert!(app.workspaces.parked[0].app.terminals[0].terminal_pty.is_some());
+    assert!(
+        app.workspaces.parked[0].app.terminals[0]
+            .terminal_pty
+            .is_some()
+    );
 
     choose(&mut app, c.path());
     confirmation(&mut app);
@@ -132,18 +170,31 @@ fn open_folder_warns_before_closing_all_folders_and_keeps_unsaved_edits_for_reco
         crate::ui_workspaces::handle_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         let buffer = draw(&mut app, 60, height);
         let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
-        assert!(text.contains("Open folder") && text.contains("Cancel"), "actions missing at height {height}");
+        assert!(
+            text.contains("Open folder") && text.contains("Cancel"),
+            "actions missing at height {height}"
+        );
     }
     crate::ui_workspaces::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     finish(&mut app);
     assert_eq!(app.explorer.root, c.path());
     assert_eq!(app.open_folder_count(), 1);
     assert!(app.workspaces.parked.is_empty());
-    assert!(running.send(()).is_err(), "the old terminal must close after confirmation");
+    assert!(
+        running.send(()).is_err(),
+        "the old terminal must close after confirmation"
+    );
     for (project, text) in [(&a, "Aoriginal"), (&b, "Boriginal")] {
         let mut session = crate::session::load_session(project.path()).unwrap();
         crate::session::hydrate_saved_tab(project.path(), &mut session.tabs[0]);
-        assert_eq!(session.tabs[0].pending_unsaved_content.as_ref().unwrap().to_string(), text);
+        assert_eq!(
+            session.tabs[0]
+                .pending_unsaved_content
+                .as_ref()
+                .unwrap()
+                .to_string(),
+            text
+        );
     }
 }
 
@@ -187,7 +238,10 @@ fn open_folder_handles_empty_windows_and_warns_before_closing_loose_editors() {
             confirmation(&mut app);
             assert!(!app.has_open_folder());
             assert_eq!(app.editor().unwrap().rope.to_string(), "!loose draft");
-            assert_eq!(app.workspace_set_confirmation().unwrap().2[0].name, "No folder");
+            assert_eq!(
+                app.workspace_set_confirmation().unwrap().2[0].name,
+                "No folder"
+            );
             app.confirm_workspace_set();
         }
         finish(&mut app);
@@ -200,11 +254,14 @@ fn open_folder_handles_empty_windows_and_warns_before_closing_loose_editors() {
 #[test]
 fn open_folder_from_the_empty_folder_picker_uses_replacement_mode() {
     let mut app = App::new_startup(PathBuf::new(), Default::default());
-    app.tabs.push(Tab::new_file(Editor::test_with_text("loose file")));
+    app.tabs
+        .push(Tab::new_file(Editor::test_with_text("loose file")));
     crate::ui_workspaces::open(&mut app);
     crate::ui_workspaces::handle_key(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
     crate::ui_workspaces::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder);
+    assert!(
+        app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder
+    );
     assert_eq!(app.editor().unwrap().rope.to_string(), "loose file");
 }
 
@@ -254,7 +311,8 @@ fn open_folder_replaces_remote_roots_without_disconnect_or_an_extra_list_entry()
     let a = Project::new();
     let b = Project::new();
     let workspace = crate::remote::workspace::Workspace::new(headless_connection(a.path()));
-    let destination = workspace.view_key(&crate::remote::git::from_native(b.path(), a.path()).unwrap());
+    let destination =
+        workspace.view_key(&crate::remote::git::from_native(b.path(), a.path()).unwrap());
     let mut app = a.app(Default::default());
     app.explorer.root = workspace.view_root.clone();
     app.remote_workspace = Some(workspace.clone());
@@ -265,6 +323,12 @@ fn open_folder_replaces_remote_roots_without_disconnect_or_an_extra_list_entry()
     let current = app.remote_workspace.as_ref().unwrap();
     assert!(current.client.connected());
     assert_ne!(current.view_root, workspace.view_root);
-    assert_eq!(current.client.hello().root_uri, url::Url::from_directory_path(b.path()).unwrap().as_str());
-    current.client.call(crate::remote::Command::Shutdown).unwrap();
+    assert_eq!(
+        current.client.hello().root_uri,
+        url::Url::from_directory_path(b.path()).unwrap().as_str()
+    );
+    current
+        .client
+        .call(crate::remote::Command::Shutdown)
+        .unwrap();
 }

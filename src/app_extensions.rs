@@ -15,7 +15,11 @@ const EXTENSION_DYNAMIC_ACTION_ID: &str = "ext_dynamic";
 
 type ExtensionViewSnapshot = HashMap<
     (String, String),
-    (String, String, Option<std::sync::Arc<crate::extension_surface::ViewFrame>>),
+    (
+        String,
+        String,
+        Option<std::sync::Arc<crate::extension_surface::ViewFrame>>,
+    ),
 >;
 
 impl App {
@@ -26,10 +30,16 @@ impl App {
     pub(crate) fn extension_editor_context_snapshot(&self) -> EditorContextSnapshot {
         let mut context = EditorContext {
             remote_workspace: self.remote_workspace.clone(),
-            workspace_root: self.has_open_folder().then(|| self.explorer.root.to_string_lossy().into_owned()),
-            modified_file_paths: self.tabs.iter().chain(self.groups.iter().flat_map(|group| group.tabs.iter()))
+            workspace_root: self
+                .has_open_folder()
+                .then(|| self.explorer.root.to_string_lossy().into_owned()),
+            modified_file_paths: self
+                .tabs
+                .iter()
+                .chain(self.groups.iter().flat_map(|group| group.tabs.iter()))
                 .filter(|tab| tab.kind == TabKind::File && tab.editor.modified)
-                .filter_map(|tab| tab.editor.file_path.clone()).collect(),
+                .filter_map(|tab| tab.editor.file_path.clone())
+                .collect(),
             ..EditorContext::default()
         };
         let Some(tab) = self.tabs.get(self.active_tab) else {
@@ -78,11 +88,15 @@ impl App {
     }
 
     pub(crate) fn initialize_extensions(&mut self) {
-        let recovery_dir = crate::extension_recovery::directory(&self.extension_manager.settings_file);
+        let recovery_dir =
+            crate::extension_recovery::directory(&self.extension_manager.settings_file);
         let sender = self.background.sender.clone();
-        self.background.spawn("Restoring custom documents", move || {
-            let _ = sender.send(crate::background::BackgroundResult::ExtensionRecoveries(crate::extension_recovery::read(&recovery_dir)));
-        });
+        self.background
+            .spawn("Restoring custom documents", move || {
+                let _ = sender.send(crate::background::BackgroundResult::ExtensionRecoveries(
+                    crate::extension_recovery::read(&recovery_dir),
+                ));
+            });
         self.clamp_extensions_selection();
         // Manifest reads and Wasm activation can be arbitrarily expensive.
         // Queue initial discovery just like subsequent rescans so the first
@@ -100,7 +114,10 @@ impl App {
         let roots = self.extension_manager.scan_roots();
         let sender = self.background.sender.clone();
         let pool = self.background.extension_sender();
-        let initial = self.extension_manager.records.is_empty()
+        let initial = self
+            .extension_manager
+            .records
+            .is_empty()
             .then(|| self.extension_manager.initial_scan_manager());
         let generation = self.extension_scan_generation;
         let activity = self.background.activity.start("Loading extensions", None);
@@ -110,11 +127,15 @@ impl App {
             if let Some(mut manager) = initial {
                 let notices = manager.sync_discovered(discovered, notices);
                 let _ = sender.send(crate::background::BackgroundResult::ExtensionsInitialized {
-                    generation, manager: Box::new(manager), notices,
+                    generation,
+                    manager: Box::new(manager),
+                    notices,
                 });
             } else {
                 let _ = sender.send(crate::background::BackgroundResult::ExtensionsDiscovered {
-                    generation, discovered, notices,
+                    generation,
+                    discovered,
+                    notices,
                 });
             }
         }));
@@ -141,16 +162,28 @@ impl App {
             }
             return false;
         }
-        let selected_id = self.extension_manager.records.get(self.extensions_selected).map(|record| record.manifest.id.clone());
+        let selected_id = self
+            .extension_manager
+            .records
+            .get(self.extensions_selected)
+            .map(|record| record.manifest.id.clone());
         let notices = self.extension_manager.sync_discovered(discovered, notices);
-        if let Some(index) = self.extension_manager.records.iter().position(|record| Some(&record.manifest.id) == selected_id.as_ref()) {
+        if let Some(index) = self
+            .extension_manager
+            .records
+            .iter()
+            .position(|record| Some(&record.manifest.id) == selected_id.as_ref())
+        {
             self.extensions_selected = index;
         }
         self.finish_extension_discovery(notices)
     }
 
     pub(crate) fn apply_initialized_extensions(
-        &mut self, generation: u64, manager: Box<crate::extensions::ExtensionManager>, notices: Vec<String>,
+        &mut self,
+        generation: u64,
+        manager: Box<crate::extensions::ExtensionManager>,
+        notices: Vec<String>,
     ) -> bool {
         self.bg_extension_scan_running = false;
         // A rescan requested during activation (the watcher's initial rescan,
@@ -165,14 +198,21 @@ impl App {
         }
         if superseded {
             // Releasing compiled modules can be expensive too.
-            let _ = self.background.extension_sender().send(Box::new(move || drop(manager)));
+            let _ = self
+                .background
+                .extension_sender()
+                .send(Box::new(move || drop(manager)));
             self.resume_pending_extension_scan();
             return false;
         }
         let changed = !manager.records.is_empty() || !notices.is_empty();
         self.extension_manager = *manager;
-        if changed { self.finish_extension_discovery(notices) }
-        else { self.resume_pending_extension_scan(); false }
+        if changed {
+            self.finish_extension_discovery(notices)
+        } else {
+            self.resume_pending_extension_scan();
+            false
+        }
     }
 
     fn finish_extension_discovery(&mut self, notices: Vec<String>) -> bool {
@@ -206,7 +246,10 @@ impl App {
     }
 
     pub(crate) fn refresh_palette_commands(&mut self) {
-        let selected = self.palette.filtered.get(self.palette.selected)
+        let selected = self
+            .palette
+            .filtered
+            .get(self.palette.selected)
             .filter(|&&index| index < self.palette.commands.len())
             .map(|&index| self.palette_recent_key_for_index(index));
         let syntax_names = self.highlighter.syntax_names();
@@ -214,15 +257,31 @@ impl App {
         if self.remote_workspace.is_some() {
             for (name, id) in [
                 ("Remote: Show Connection Status", "remote_connection_status"),
-                ("Remote: Show Connection Diagnostics", "remote_connection_diagnostics"),
-                ("Remote: Copy Connection Diagnostics", "remote_connection_diagnostics_copy"),
-                ("Remote: Capture Headless CPU (10 seconds)", "remote_capture_cpu"),
+                (
+                    "Remote: Show Connection Diagnostics",
+                    "remote_connection_diagnostics",
+                ),
+                (
+                    "Remote: Copy Connection Diagnostics",
+                    "remote_connection_diagnostics_copy",
+                ),
+                (
+                    "Remote: Capture Headless CPU (10 seconds)",
+                    "remote_capture_cpu",
+                ),
                 ("Remote: Reconnect", "remote_reconnect"),
                 ("Remote: Stop Reconnecting", "remote_reconnect_stop"),
                 ("Remote: Close Remote Connection", "remote_disconnect"),
-                ("Remote: Save Current Connection…", "remote_target_save_current"),
+                (
+                    "Remote: Save Current Connection…",
+                    "remote_target_save_current",
+                ),
             ] {
-                commands.push(PaletteCommand { name: name.into(), shortcut: String::new(), id: id.into() });
+                commands.push(PaletteCommand {
+                    name: name.into(),
+                    shortcut: String::new(),
+                    id: id.into(),
+                });
             }
         }
         self.extension_palette_action_map.clear();
@@ -239,7 +298,10 @@ impl App {
         if self.palette.active {
             self.filter_palette_commands();
             if let Some(selected) = selected {
-                if let Some(position) = self.palette.filtered.iter()
+                if let Some(position) = self
+                    .palette
+                    .filtered
+                    .iter()
                     .position(|&index| self.palette_recent_key_for_index(index) == selected)
                 {
                     self.palette.selected = position;
@@ -296,8 +358,14 @@ impl App {
         &self,
     ) -> Vec<(PaletteCommand, Option<ExtensionPaletteAction>)> {
         let mut commands = vec![
-            (PaletteCommand { name: "Extensions: Install Extension from GitHub".into(), shortcut: String::new(),
-                id: std::borrow::Cow::Borrowed("extensions_install") }, None),
+            (
+                PaletteCommand {
+                    name: "Extensions: Install Extension from GitHub".into(),
+                    shortcut: String::new(),
+                    id: std::borrow::Cow::Borrowed("extensions_install"),
+                },
+                None,
+            ),
             (
                 PaletteCommand {
                     name: "Extensions: Show Extensions".to_string(),
@@ -456,16 +524,16 @@ impl App {
         for extension in self.extension_views() {
             let extension_id = extension.id;
             for view in extension.views.into_values() {
-                views.insert((extension_id.clone(), view.id), (view.title, view.content, view.frame));
+                views.insert(
+                    (extension_id.clone(), view.id),
+                    (view.title, view.content, view.frame),
+                );
             }
         }
         views
     }
 
-    fn refresh_extension_view_tabs_in(
-        tabs: &mut [Tab],
-        view_snapshot: &ExtensionViewSnapshot,
-    ) {
+    fn refresh_extension_view_tabs_in(tabs: &mut [Tab], view_snapshot: &ExtensionViewSnapshot) {
         for tab in tabs {
             if tab.kind != TabKind::ExtensionView {
                 continue;
@@ -490,7 +558,9 @@ impl App {
                 }
                 if let Some(frame) = frame {
                     tab.editor.modified = frame.dirty;
-                    if let Some(path) = &frame.path { tab.editor.file_path = Some(PathBuf::from(path)); }
+                    if let Some(path) = &frame.path {
+                        tab.editor.file_path = Some(PathBuf::from(path));
+                    }
                 }
                 tab.extension_view = Some(ExtensionViewTabRef {
                     extension_id: meta.extension_id,
@@ -531,13 +601,28 @@ impl App {
         self.extension_manager
             .view_resize_requests
             .remove(&(extension_id.to_owned(), view_id.to_owned()));
-        let existing_group = self.groups.iter().enumerate().filter(|(index, _)| *index != self.active_group)
-            .find_map(|(group_index, group)| group.tabs.iter().position(|tab| tab.extension_view.as_ref()
-                .is_some_and(|meta| meta.extension_id == extension_id && meta.view_id == view_id))
-                .map(|tab_index| (group_index, tab_index)));
+        let existing_group = self
+            .groups
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != self.active_group)
+            .find_map(|(group_index, group)| {
+                group
+                    .tabs
+                    .iter()
+                    .position(|tab| {
+                        tab.extension_view.as_ref().is_some_and(|meta| {
+                            meta.extension_id == extension_id && meta.view_id == view_id
+                        })
+                    })
+                    .map(|tab_index| (group_index, tab_index))
+            });
         if let Some((group, tab)) = existing_group {
-            self.switch_group(group); self.active_tab = tab; self.active_pane = crate::app::ActivePane::Editor;
-            self.touch_tab_mru(tab); return true;
+            self.switch_group(group);
+            self.active_tab = tab;
+            self.active_pane = crate::app::ActivePane::Editor;
+            self.touch_tab_mru(tab);
+            return true;
         }
         if let Some(existing_idx) = self.tabs.iter().position(|tab| {
             tab.extension_view
@@ -555,7 +640,9 @@ impl App {
         Self::apply_extension_view_to_editor(&mut editor, extension_id, &view.title, &view.content);
         if let Some(frame) = &view.frame {
             editor.modified = frame.dirty;
-            if let Some(path) = &frame.path { editor.file_path = Some(PathBuf::from(path)); }
+            if let Some(path) = &frame.path {
+                editor.file_path = Some(PathBuf::from(path));
+            }
         }
 
         self.tabs.push(Tab {
@@ -609,20 +696,35 @@ impl App {
     }
 
     pub(crate) fn filtered_extension_indices(&self) -> Vec<usize> {
-        self.extension_views().iter().enumerate()
+        self.extension_views()
+            .iter()
+            .enumerate()
             .filter(|(_, ext)| crate::ui_extensions::matches(ext, &self.extensions_filter))
-            .map(|(index, _)| index).collect()
+            .map(|(index, _)| index)
+            .collect()
     }
 
     pub(crate) fn move_extensions_selection(&mut self, delta: isize) {
         self.clamp_extensions_selection();
         let filtered = self.filtered_extension_indices();
-        let Some(position) = filtered.iter().position(|index| *index == self.extensions_selected) else { return; };
-        let next = position.saturating_add_signed(delta).min(filtered.len() - 1);
+        let Some(position) = filtered
+            .iter()
+            .position(|index| *index == self.extensions_selected)
+        else {
+            return;
+        };
+        let next = position
+            .saturating_add_signed(delta)
+            .min(filtered.len() - 1);
         self.extensions_selected = filtered[next];
-        let visible = usize::from(self.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT).max(1);
-        if next < self.extensions_scroll { self.extensions_scroll = next; }
-        else if next >= self.extensions_scroll + visible { self.extensions_scroll = next + 1 - visible; }
+        let visible =
+            usize::from(self.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT)
+                .max(1);
+        if next < self.extensions_scroll {
+            self.extensions_scroll = next;
+        } else if next >= self.extensions_scroll + visible {
+            self.extensions_scroll = next + 1 - visible;
+        }
     }
 
     pub(crate) fn extensions_rescan(&mut self) {
@@ -642,7 +744,10 @@ impl App {
     }
 
     pub(crate) fn extensions_reload_selected(&mut self) {
-        if !self.filtered_extension_indices().contains(&self.extensions_selected) {
+        if !self
+            .filtered_extension_indices()
+            .contains(&self.extensions_selected)
+        {
             self.notify("No extension selected");
             return;
         }
@@ -659,7 +764,10 @@ impl App {
     }
 
     pub(crate) fn extensions_unload_selected(&mut self) {
-        if !self.filtered_extension_indices().contains(&self.extensions_selected) {
+        if !self
+            .filtered_extension_indices()
+            .contains(&self.extensions_selected)
+        {
             self.notify("No extension selected");
             return;
         }
@@ -676,7 +784,10 @@ impl App {
     }
 
     pub(crate) fn extensions_load_selected(&mut self) {
-        if !self.filtered_extension_indices().contains(&self.extensions_selected) {
+        if !self
+            .filtered_extension_indices()
+            .contains(&self.extensions_selected)
+        {
             self.notify("No extension selected");
             return;
         }
@@ -699,9 +810,15 @@ impl App {
             self.extensions_scroll = 0;
             return;
         }
-        if !filtered.contains(&self.extensions_selected) { self.extensions_selected = filtered[0]; }
-        let visible = usize::from(self.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT).max(1);
-        self.extensions_scroll = self.extensions_scroll.min(filtered.len().saturating_sub(visible));
+        if !filtered.contains(&self.extensions_selected) {
+            self.extensions_selected = filtered[0];
+        }
+        let visible =
+            usize::from(self.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT)
+                .max(1);
+        self.extensions_scroll = self
+            .extensions_scroll
+            .min(filtered.len().saturating_sub(visible));
     }
 
     pub(crate) fn apply_extension_text_edits(&mut self) -> bool {
@@ -936,9 +1053,10 @@ mod tests {
         }
 
         app.rebuild_keybinding_settings_cache();
-        assert!(app
-            .keybinding_settings_cache
-            .iter()
-            .any(|(label, _, _)| label == "Shortcut: Extensions"));
+        assert!(
+            app.keybinding_settings_cache
+                .iter()
+                .any(|(label, _, _)| label == "Shortcut: Extensions")
+        );
     }
 }

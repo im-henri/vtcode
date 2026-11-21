@@ -1,5 +1,5 @@
-use crossterm::event::KeyModifiers;
 use crate::app::{App, TerminalDock};
+use crossterm::event::KeyModifiers;
 
 fn docked_terminal_at(app: &App, col: u16, row: u16) -> Option<usize> {
     if app.show_terminal_sidebar
@@ -19,28 +19,55 @@ fn docked_terminal_at(app: &App, col: u16, row: u16) -> Option<usize> {
 /// panes. Manual movement must survive the active-tab reveal on the next frame.
 fn scroll_tabs_at(app: &mut App, col: u16, row: u16, down: bool, switch: bool) -> bool {
     let point = (col, row).into();
-    let mut target = app.tab_bar_area.filter(|area| area.contains(point)).map(|area| (app.active_group, area));
+    let mut target = app
+        .tab_bar_area
+        .filter(|area| area.contains(point))
+        .map(|area| (app.active_group, area));
     if target.is_none() && app.split_active() {
         target = app.groups.iter().enumerate().find_map(|(index, group)| {
-            if index == app.active_group || group.desk != app.desks.active { return None; }
-            group.tab_bar_area.filter(|area| area.contains(point)).map(|area| (index, area))
+            if index == app.active_group || group.desk != app.desks.active {
+                return None;
+            }
+            group
+                .tab_bar_area
+                .filter(|area| area.contains(point))
+                .map(|area| (index, area))
         });
     }
-    let Some((index, area)) = target else { return false; };
+    let Some((index, area)) = target else {
+        return false;
+    };
     if !switch {
         let distance = app.scroll_speed.max(1).min(isize::MAX as usize) as isize;
-        crate::ui_chrome_tabs::scroll_strip_by(app, area, index, if down { distance } else { -distance });
+        crate::ui_chrome_tabs::scroll_strip_by(
+            app,
+            area,
+            index,
+            if down { distance } else { -distance },
+        );
     } else if index == app.active_group {
         if !app.tabs.is_empty() {
-            app.active_tab = if down { (app.active_tab + 1) % app.tabs.len() }
-                else if app.active_tab == 0 { app.tabs.len() - 1 } else { app.active_tab - 1 };
+            app.active_tab = if down {
+                (app.active_tab + 1) % app.tabs.len()
+            } else if app.active_tab == 0 {
+                app.tabs.len() - 1
+            } else {
+                app.active_tab - 1
+            };
             app.validate_diff_state_for_active_tab();
             app.tab_scroll_manual_anchor = None;
             app.ensure_active_tab_visible();
         }
-    } else if let Some(group) = app.groups.get_mut(index) && !group.tabs.is_empty() {
-        group.active_tab = if down { (group.active_tab + 1) % group.tabs.len() }
-            else if group.active_tab == 0 { group.tabs.len() - 1 } else { group.active_tab - 1 };
+    } else if let Some(group) = app.groups.get_mut(index)
+        && !group.tabs.is_empty()
+    {
+        group.active_tab = if down {
+            (group.active_tab + 1) % group.tabs.len()
+        } else if group.active_tab == 0 {
+            group.tabs.len() - 1
+        } else {
+            group.active_tab - 1
+        };
         crate::ui_chrome_tabs::reveal_strip_tab(app, area, index);
     }
     true
@@ -54,18 +81,29 @@ fn scroll_settings_at(app: &mut App, col: u16, row: u16, down: bool) -> bool {
     }
     let point = (col, row).into();
     if app.settings_dropdown_open
-        && let Some(area) = app.settings_dropdown_area.filter(|area| area.contains(point))
+        && let Some(area) = app
+            .settings_dropdown_area
+            .filter(|area| area.contains(point))
     {
         app.settings_dropdown_scroll = if down {
-            let max = app.settings_dropdown_options.len().saturating_sub(area.height as usize);
+            let max = app
+                .settings_dropdown_options
+                .len()
+                .saturating_sub(area.height as usize);
             app.settings_dropdown_scroll.saturating_add(3).min(max)
         } else {
             app.settings_dropdown_scroll.saturating_sub(3)
         };
         return true;
     }
-    if let Some(area) = app.settings_category_area.filter(|area| area.contains(point)) {
-        let max = app.settings_category_visual_rows().len().saturating_sub(area.height as usize);
+    if let Some(area) = app
+        .settings_category_area
+        .filter(|area| area.contains(point))
+    {
+        let max = app
+            .settings_category_visual_rows()
+            .len()
+            .saturating_sub(area.height as usize);
         app.settings_category_scroll = if down {
             app.settings_category_scroll.saturating_add(3).min(max)
         } else {
@@ -73,13 +111,23 @@ fn scroll_settings_at(app: &mut App, col: u16, row: u16, down: bool) -> bool {
         };
         return true;
     }
-    let Some(area) = app.settings_scroll_areas.iter().find(|area| area.contains(point)).copied() else { return false; };
-    let max = app.settings_line_layout(area.width.saturating_sub(3) as usize).max_scroll(area.height as usize);
+    let Some(area) = app
+        .settings_scroll_areas
+        .iter()
+        .find(|area| area.contains(point))
+        .copied()
+    else {
+        return false;
+    };
+    let max = app
+        .settings_line_layout(area.width.saturating_sub(3) as usize)
+        .max_scroll(area.height as usize);
     app.settings_editor_scroll = if down {
         app.settings_editor_scroll.saturating_add(app.scroll_speed)
     } else {
         app.settings_editor_scroll.saturating_sub(app.scroll_speed)
-    }.min(max);
+    }
+    .min(max);
     true
 }
 
@@ -91,7 +139,9 @@ fn scroll_split_editor_at(app: &mut App, col: u16, row: u16, delta: isize) -> bo
         if index == app.active_group || group.desk != app.desks.active {
             continue;
         }
-        let Some(code) = group.code_area else { continue; };
+        let Some(code) = group.code_area else {
+            continue;
+        };
         let area = group.editor_area.unwrap_or(code);
         if col >= area.x && col < area.right() && row >= code.y && row < code.bottom() {
             if let Some(tab) = group.tabs.get_mut(group.active_tab) {
@@ -110,7 +160,11 @@ fn scroll_active_editor(app: &mut App, delta: isize) {
         app.cancel_wheel_scroll();
     }
     if let Some(tab) = app.tabs.get_mut(app.active_tab) {
-        let driver = if row_diff { None } else { app.wheel_scroll.as_mut() };
+        let driver = if row_diff {
+            None
+        } else {
+            app.wheel_scroll.as_mut()
+        };
         crate::smooth_scroll::scroll_rows(driver, tab, None, delta);
     }
 }
@@ -127,27 +181,34 @@ pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: Key
     if scroll_settings_at(app, col, row, false) {
         return;
     }
-    if crate::ui_source_control::scroll(app, col, row, false) { return; }
-    if scroll_tabs_at(app, col, row, false, shift_scroll) { return; }
-    if app.handle_extension_view_scroll_input(
-        col,
-        row,
-        -1,
-        modifiers,
-        "vertical",
-    ) {
+    if crate::ui_source_control::scroll(app, col, row, false) {
+        return;
+    }
+    if scroll_tabs_at(app, col, row, false, shift_scroll) {
+        return;
+    }
+    if app.handle_extension_view_scroll_input(col, row, -1, modifiers, "vertical") {
         return;
     }
     if app.scroll_markdown_preview_at(col, row, -(spd as isize)) {
         return;
     }
-    if shift_scroll { app.cancel_wheel_scroll(); }
-    if app.scroll_diff_at(col, row, shift_scroll, if shift_scroll { -6 } else { -(spd as isize) }) {
+    if shift_scroll {
+        app.cancel_wheel_scroll();
+    }
+    if app.scroll_diff_at(
+        col,
+        row,
+        shift_scroll,
+        if shift_scroll { -6 } else { -(spd as isize) },
+    ) {
         return;
     }
     if shift_scroll {
         // Shift+ScrollUp = scroll left
-        if crate::ui_chrome::scroll_explorer_horizontal_at(app, col, row, -6) { return; }
+        if crate::ui_chrome::scroll_explorer_horizontal_at(app, col, row, -6) {
+            return;
+        }
         if let Some(ed) = app.editor_mut() {
             if !ed.word_wrap {
                 ed.horizontal_scroll = ed.horizontal_scroll.saturating_sub(6);
@@ -156,14 +217,17 @@ pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: Key
         return;
     }
     if let Some(exp_area) = app.explorer_area {
-        if col >= exp_area.x && col < exp_area.x + exp_area.width
-            && row >= exp_area.y && row < exp_area.y + exp_area.height
+        if col >= exp_area.x
+            && col < exp_area.x + exp_area.width
+            && row >= exp_area.y
+            && row < exp_area.y + exp_area.height
         {
             if app.sidebar_view == crate::app::SidebarView::Settings {
-                if app.settings_selected > 0 { app.settings_selected -= 1; }
+                if app.settings_selected > 0 {
+                    app.settings_selected -= 1;
+                }
             } else if app.sidebar_view == crate::app::SidebarView::Search {
-                let results_y =
-                    crate::ui_search_panel::search_results_start_y(app, exp_area);
+                let results_y = crate::ui_search_panel::search_results_start_y(app, exp_area);
                 if row >= results_y {
                     app.global_search_scroll = app.global_search_scroll.saturating_sub(spd);
                 }
@@ -200,27 +264,34 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
     if scroll_settings_at(app, col, row, true) {
         return;
     }
-    if crate::ui_source_control::scroll(app, col, row, true) { return; }
-    if scroll_tabs_at(app, col, row, true, shift_scroll) { return; }
-    if app.handle_extension_view_scroll_input(
-        col,
-        row,
-        1,
-        modifiers,
-        "vertical",
-    ) {
+    if crate::ui_source_control::scroll(app, col, row, true) {
+        return;
+    }
+    if scroll_tabs_at(app, col, row, true, shift_scroll) {
+        return;
+    }
+    if app.handle_extension_view_scroll_input(col, row, 1, modifiers, "vertical") {
         return;
     }
     if app.scroll_markdown_preview_at(col, row, spd as isize) {
         return;
     }
-    if shift_scroll { app.cancel_wheel_scroll(); }
-    if app.scroll_diff_at(col, row, shift_scroll, if shift_scroll { 6 } else { spd as isize }) {
+    if shift_scroll {
+        app.cancel_wheel_scroll();
+    }
+    if app.scroll_diff_at(
+        col,
+        row,
+        shift_scroll,
+        if shift_scroll { 6 } else { spd as isize },
+    ) {
         return;
     }
     if shift_scroll {
         // Shift+ScrollDown = scroll right
-        if crate::ui_chrome::scroll_explorer_horizontal_at(app, col, row, 6) { return; }
+        if crate::ui_chrome::scroll_explorer_horizontal_at(app, col, row, 6) {
+            return;
+        }
         let max_w = app.cached_max_line_width;
         if let Some(ed) = app.editor_mut() {
             if !ed.word_wrap {
@@ -231,8 +302,10 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
         return;
     }
     if let Some(exp_area) = app.explorer_area {
-        if col >= exp_area.x && col < exp_area.x + exp_area.width
-            && row >= exp_area.y && row < exp_area.y + exp_area.height
+        if col >= exp_area.x
+            && col < exp_area.x + exp_area.width
+            && row >= exp_area.y
+            && row < exp_area.y + exp_area.height
         {
             if app.sidebar_view == crate::app::SidebarView::Settings {
                 let items_count = app.settings_items().len();
@@ -240,14 +313,19 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
                     app.settings_selected += 1;
                 }
             } else if app.sidebar_view == crate::app::SidebarView::Search {
-                let results_y =
-                    crate::ui_search_panel::search_results_start_y(app, exp_area);
+                let results_y = crate::ui_search_panel::search_results_start_y(app, exp_area);
                 if row >= results_y {
                     app.global_search_scroll = app.global_search_scroll.saturating_add(spd);
                 }
             } else if app.sidebar_view == crate::app::SidebarView::Extensions {
-                let visible = usize::from(app.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT).max(1);
-                let max = app.filtered_extension_indices().len().saturating_sub(visible);
+                let visible = usize::from(
+                    app.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT,
+                )
+                .max(1);
+                let max = app
+                    .filtered_extension_indices()
+                    .len()
+                    .saturating_sub(visible);
                 app.extensions_scroll = app.extensions_scroll.saturating_add(spd).min(max);
             } else if !crate::ui_chrome::scroll_open_editors(app, exp_area, row, true) {
                 app.explorer.scroll_down(spd);
@@ -270,10 +348,24 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
 
 /// Handle scroll-left events.
 pub(crate) fn handle_scroll_left(app: &mut App, col: u16, row: u16, modifiers: KeyModifiers) {
-    if scroll_tabs_at(app, col, row, false, modifiers.contains(KeyModifiers::SHIFT)) { return; }
-    if crate::ui_chrome::scroll_explorer_horizontal_at(app, col, row, -6) { return; }
-    if app.handle_extension_view_scroll_input(col, row, -1, modifiers, "horizontal") { return; }
-    if app.scroll_diff_at(col, row, true, -6) { return; }
+    if scroll_tabs_at(
+        app,
+        col,
+        row,
+        false,
+        modifiers.contains(KeyModifiers::SHIFT),
+    ) {
+        return;
+    }
+    if crate::ui_chrome::scroll_explorer_horizontal_at(app, col, row, -6) {
+        return;
+    }
+    if app.handle_extension_view_scroll_input(col, row, -1, modifiers, "horizontal") {
+        return;
+    }
+    if app.scroll_diff_at(col, row, true, -6) {
+        return;
+    }
     if let Some(ed) = app.editor_mut() {
         ed.horizontal_scroll = ed.horizontal_scroll.saturating_sub(6);
     }
@@ -281,10 +373,18 @@ pub(crate) fn handle_scroll_left(app: &mut App, col: u16, row: u16, modifiers: K
 
 /// Handle scroll-right events.
 pub(crate) fn handle_scroll_right(app: &mut App, col: u16, row: u16, modifiers: KeyModifiers) {
-    if scroll_tabs_at(app, col, row, true, modifiers.contains(KeyModifiers::SHIFT)) { return; }
-    if crate::ui_chrome::scroll_explorer_horizontal_at(app, col, row, 6) { return; }
-    if app.handle_extension_view_scroll_input(col, row, 1, modifiers, "horizontal") { return; }
-    if app.scroll_diff_at(col, row, true, 6) { return; }
+    if scroll_tabs_at(app, col, row, true, modifiers.contains(KeyModifiers::SHIFT)) {
+        return;
+    }
+    if crate::ui_chrome::scroll_explorer_horizontal_at(app, col, row, 6) {
+        return;
+    }
+    if app.handle_extension_view_scroll_input(col, row, 1, modifiers, "horizontal") {
+        return;
+    }
+    if app.scroll_diff_at(col, row, true, 6) {
+        return;
+    }
     let max_w = app.cached_max_line_width;
     if let Some(ed) = app.editor_mut() {
         let max_scroll = max_w.saturating_sub(ed.viewport_width);
@@ -302,7 +402,11 @@ mod tests {
 
     fn make_app() -> App {
         let mut app = App::new(PathBuf::from("."));
-        app.tabs = vec![Tab::new_file(Editor::new()), Tab::new_file(Editor::new()), Tab::new_file(Editor::new())];
+        app.tabs = vec![
+            Tab::new_file(Editor::new()),
+            Tab::new_file(Editor::new()),
+            Tab::new_file(Editor::new()),
+        ];
         app.active_tab = 0;
         app.scroll_speed = 3;
         app
@@ -489,13 +593,19 @@ mod tests {
     }
 
     fn wheel(app: &mut App, down: bool, col: u16, row: u16) {
-        crate::mouse::handle_mouse(app, crossterm::event::MouseEvent {
-            kind: if down { crossterm::event::MouseEventKind::ScrollDown }
-                else { crossterm::event::MouseEventKind::ScrollUp },
-            column: col,
-            row,
-            modifiers: KeyModifiers::NONE,
-        });
+        crate::mouse::handle_mouse(
+            app,
+            crossterm::event::MouseEvent {
+                kind: if down {
+                    crossterm::event::MouseEventKind::ScrollDown
+                } else {
+                    crossterm::event::MouseEventKind::ScrollUp
+                },
+                column: col,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
     }
 
     #[test]
@@ -503,8 +613,10 @@ mod tests {
         use crate::app::{ActivePane, TabDropZone};
         use ratatui::{Terminal, backend::TestBackend};
         for (zone, name) in [
-            (TabDropZone::Left, "left"), (TabDropZone::Right, "right"),
-            (TabDropZone::Top, "top"), (TabDropZone::Bottom, "bottom"),
+            (TabDropZone::Left, "left"),
+            (TabDropZone::Right, "right"),
+            (TabDropZone::Top, "top"),
+            (TabDropZone::Bottom, "bottom"),
         ] {
             for width in [90, 160] {
                 for focus in [ActivePane::Editor, ActivePane::Explorer] {
@@ -518,8 +630,10 @@ mod tests {
                     let (col, row) = (pane.right() - 8, pane.bottom() - 3);
                     let editor_scroll = app.editor().unwrap().scroll_offset;
                     wheel(&mut app, true, col, row);
-                    assert_eq!(app.settings_editor_scroll, app.scroll_speed,
-                        "Settings must scroll under the pointer: {name}, width {width}, focus {focus:?}");
+                    assert_eq!(
+                        app.settings_editor_scroll, app.scroll_speed,
+                        "Settings must scroll under the pointer: {name}, width {width}, focus {focus:?}"
+                    );
                     terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
                     wheel(&mut app, false, col, row);
                     assert_eq!(app.settings_editor_scroll, 0);
@@ -555,9 +669,14 @@ mod tests {
         let pane = app.groups[1].editor_area.unwrap();
         let col = pane.right() - 8;
         wheel(&mut app, true, col, row);
-        assert_eq!(app.settings_editor_scroll, settings_scroll + app.scroll_speed);
+        assert_eq!(
+            app.settings_editor_scroll,
+            settings_scroll + app.scroll_speed
+        );
 
-        app.groups[1].tabs.push(Tab::new_file(Editor::test_with_text(&"line\n".repeat(200))));
+        app.groups[1]
+            .tabs
+            .push(Tab::new_file(Editor::test_with_text(&"line\n".repeat(200))));
         app.groups[1].active_tab = 1;
         terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
         assert!(app.settings_scroll_areas.is_empty());
@@ -597,7 +716,8 @@ mod tests {
     fn scroll_up_on_settings_decrements_settings_scroll() {
         let mut app = make_app();
         app.settings_editor_active = true;
-        app.settings_scroll_areas.push(ratatui::layout::Rect::new(0, 0, 40, 30));
+        app.settings_scroll_areas
+            .push(ratatui::layout::Rect::new(0, 0, 40, 30));
         app.settings_editor_scroll = 10;
         handle_scroll_up(&mut app, 5, 5, KeyModifiers::NONE);
         assert!(app.settings_editor_scroll < 10);
@@ -607,7 +727,8 @@ mod tests {
     fn scroll_down_on_settings_increments_settings_scroll() {
         let mut app = make_app();
         app.settings_editor_active = true;
-        app.settings_scroll_areas.push(ratatui::layout::Rect::new(0, 0, 40, 30));
+        app.settings_scroll_areas
+            .push(ratatui::layout::Rect::new(0, 0, 40, 30));
         app.settings_editor_scroll = 0;
         handle_scroll_down(&mut app, 5, 5, KeyModifiers::NONE);
         assert!(app.settings_editor_scroll > 0);
@@ -683,7 +804,8 @@ mod tests {
 
     fn source_control_changes(count: usize) -> Vec<GitFileChange> {
         (0..count)
-            .map(|index| GitFileChange { directory: false,
+            .map(|index| GitFileChange {
+                directory: false,
                 original_path: None,
                 path: format!("src/file_{index}.rs"),
                 status: 'M',
@@ -697,8 +819,7 @@ mod tests {
         let mut app = make_app();
         app.explorer_area = Some(ratatui::layout::Rect::new(0, 0, 40, 12));
         app.sidebar_view = SidebarView::SourceControl;
-        app.source_control_repository_state =
-            crate::app::SourceControlRepositoryState::Available;
+        app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
         app.sc_graph_collapsed = true;
         app.source_control_files = source_control_changes(2);
 
@@ -712,8 +833,7 @@ mod tests {
         let mut app = make_app();
         app.explorer_area = Some(ratatui::layout::Rect::new(0, 0, 40, 12));
         app.sidebar_view = SidebarView::SourceControl;
-        app.source_control_repository_state =
-            crate::app::SourceControlRepositoryState::Available;
+        app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
         app.sc_graph_collapsed = true;
         app.source_control_files = source_control_changes(10);
 

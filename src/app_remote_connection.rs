@@ -14,15 +14,28 @@ use std::{
 
 pub(crate) const NOTICE_ID: &str = "remote-connection";
 const LOG_ACTIONS: &[crate::ui_side_notice::Action] = &[crate::ui_side_notice::Action {
-    label: "Log", command: "remote_connection_diagnostics",
+    label: "Log",
+    command: "remote_connection_diagnostics",
 }];
 const LOGIN_ACTIONS: &[crate::ui_side_notice::Action] = &[
-    crate::ui_side_notice::Action { label: "Log", command: "remote_connection_diagnostics" },
-    crate::ui_side_notice::Action { label: "Sign in", command: "remote_connection_sign_in" },
+    crate::ui_side_notice::Action {
+        label: "Log",
+        command: "remote_connection_diagnostics",
+    },
+    crate::ui_side_notice::Action {
+        label: "Sign in",
+        command: "remote_connection_sign_in",
+    },
 ];
 const STOPPED_ACTIONS: &[crate::ui_side_notice::Action] = &[
-    crate::ui_side_notice::Action { label: "Log", command: "remote_connection_diagnostics" },
-    crate::ui_side_notice::Action { label: "Retry", command: "remote_reconnect" },
+    crate::ui_side_notice::Action {
+        label: "Log",
+        command: "remote_connection_diagnostics",
+    },
+    crate::ui_side_notice::Action {
+        label: "Retry",
+        command: "remote_reconnect",
+    },
 ];
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -104,35 +117,52 @@ impl Default for State {
 }
 impl State {
     pub(crate) fn take_shared_candidate(&mut self) -> Option<workspace::Workspace> {
-        if self.phase != Phase::Stopped { return None; }
-        self.candidate.take().filter(|remote| remote.client.connected())
+        if self.phase != Phase::Stopped {
+            return None;
+        }
+        self.candidate
+            .take()
+            .filter(|remote| remote.client.connected())
     }
-    pub(crate) fn diagnostic_log(&self) -> Option<crate::remote::diagnostics::Log> { self.trace.clone() }
+    pub(crate) fn diagnostic_log(&self) -> Option<crate::remote::diagnostics::Log> {
+        self.trace.clone()
+    }
     pub(crate) fn send_key(&mut self, key: crossterm::event::KeyEvent) {
         if let Some(setup) = &self.setup
             && let Some(login) = &mut self.login
         {
             match setup.send_key(key, &login.grid) {
-                Ok(()) => { login.input_sent = true; login.input_error = None; }
+                Ok(()) => {
+                    login.input_sent = true;
+                    login.input_error = None;
+                }
                 Err(error) => login.input_error = Some(format!("Could not send input: {error}")),
             }
         }
     }
     pub(crate) fn send_paste(&mut self, text: &str) {
-        if let Some(setup) = &self.setup && let Some(login) = &mut self.login
+        if let Some(setup) = &self.setup
+            && let Some(login) = &mut self.login
         {
             match setup.send_paste(text, login.grid.bracketed_paste) {
-                Ok(()) => { login.input_sent = true; login.input_error = None; }
+                Ok(()) => {
+                    login.input_sent = true;
+                    login.input_error = None;
+                }
                 Err(error) => login.input_error = Some(format!("Could not send input: {error}")),
             }
         }
     }
     pub(crate) fn resize_login(&mut self, width: u16, height: u16) {
-        let Some(login) = &mut self.login else { return; };
+        let Some(login) = &mut self.login else {
+            return;
+        };
         let width = width.max(2) as usize;
         let height = height.max(2) as usize;
         if login.grid.width != width || login.grid.height != height {
-            if let Some(setup) = &self.setup { let _ = setup.resize(width as u16, height as u16); }
+            if let Some(setup) = &self.setup {
+                let _ = setup.resize(width as u16, height as u16);
+            }
             login.grid.resize(width, height);
         }
     }
@@ -140,7 +170,8 @@ impl State {
         if self.drain_pending {
             return Some(Duration::ZERO);
         }
-        self.retry.filter(|_| !self.shared_follower)
+        self.retry
+            .filter(|_| !self.shared_follower)
             .into_iter()
             .chain(self.expires)
             .min()
@@ -162,7 +193,9 @@ impl State {
         self.drain_pending = false;
     }
     fn failed(&mut self, error: String) {
-        if let Some(trace) = &self.trace { trace.event("Reconnect failed", &error); }
+        if let Some(trace) = &self.trace {
+            trace.event("Reconnect failed", &error);
+        }
         self.cancel_attempt();
         self.error = error;
         if self.error.contains("VTCode version mismatch:") {
@@ -178,7 +211,9 @@ impl State {
                 delay.as_secs(),
                 self.attempt.saturating_add(1)
             );
-            if let Some(trace) = &self.trace { trace.event("Retry", &self.message); }
+            if let Some(trace) = &self.trace {
+                trace.event("Retry", &self.message);
+            }
         }
     }
 }
@@ -210,22 +245,81 @@ impl App {
         use crate::{app::NotifyLevel, ui_side_notice::Notice};
         let state = &self.remote_connection;
         let (title, message, level) = match state.phase {
-            Phase::Connected => ("SSH connected", "Editing and undo run locally.".into(), NotifyLevel::Info),
-            Phase::Restored if state.conflicts > 0 => ("SSH reconnected", format!("{} attention. Local edits are safe.", if state.conflicts == 1 { "1 file needs".into() } else { format!("{} files need", state.conflicts) }), NotifyLevel::Warning),
-            Phase::Restored => ("SSH reconnected", "Connection restored. Local edits are safe.".into(), NotifyLevel::Info),
-            Phase::Restoring => ("SSH reconnected", "Checking open files…".into(), NotifyLevel::Info),
-            Phase::Resolving => ("SSH reconnected", "Restoring the workspace…".into(), NotifyLevel::Info),
-            Phase::Stopped => ("SSH disconnected", state.message.clone(), NotifyLevel::Warning),
-            Phase::Waiting => ("SSH connection lost", format!("Retrying connection · attempt {} next", state.attempt.saturating_add(1)), NotifyLevel::Warning),
-            Phase::Starting | Phase::Connecting => ("SSH connection lost", format!("Reconnecting · attempt {}", state.attempt), NotifyLevel::Warning),
+            Phase::Connected => (
+                "SSH connected",
+                "Editing and undo run locally.".into(),
+                NotifyLevel::Info,
+            ),
+            Phase::Restored if state.conflicts > 0 => (
+                "SSH reconnected",
+                format!(
+                    "{} attention. Local edits are safe.",
+                    if state.conflicts == 1 {
+                        "1 file needs".into()
+                    } else {
+                        format!("{} files need", state.conflicts)
+                    }
+                ),
+                NotifyLevel::Warning,
+            ),
+            Phase::Restored => (
+                "SSH reconnected",
+                "Connection restored. Local edits are safe.".into(),
+                NotifyLevel::Info,
+            ),
+            Phase::Restoring => (
+                "SSH reconnected",
+                "Checking open files…".into(),
+                NotifyLevel::Info,
+            ),
+            Phase::Resolving => (
+                "SSH reconnected",
+                "Restoring the workspace…".into(),
+                NotifyLevel::Info,
+            ),
+            Phase::Stopped => (
+                "SSH disconnected",
+                state.message.clone(),
+                NotifyLevel::Warning,
+            ),
+            Phase::Waiting => (
+                "SSH connection lost",
+                format!(
+                    "Retrying connection · attempt {} next",
+                    state.attempt.saturating_add(1)
+                ),
+                NotifyLevel::Warning,
+            ),
+            Phase::Starting | Phase::Connecting => (
+                "SSH connection lost",
+                format!("Reconnecting · attempt {}", state.attempt),
+                NotifyLevel::Warning,
+            ),
         };
-        let actions = if state.phase == Phase::Connecting { LOGIN_ACTIONS }
-            else if state.phase == Phase::Stopped && !state.error.contains("VTCode version mismatch:")
-                && self.remote_workspace.as_ref().is_some_and(|remote| remote.recipe.is_some()) { STOPPED_ACTIONS }
-            else { LOG_ACTIONS };
-        let notice = Notice { title, message, level, actions };
-        if reveal { self.side_notice.show(NOTICE_ID, notice); }
-        else { self.side_notice.publish(NOTICE_ID, notice); }
+        let actions = if state.phase == Phase::Connecting {
+            LOGIN_ACTIONS
+        } else if state.phase == Phase::Stopped
+            && !state.error.contains("VTCode version mismatch:")
+            && self
+                .remote_workspace
+                .as_ref()
+                .is_some_and(|remote| remote.recipe.is_some())
+        {
+            STOPPED_ACTIONS
+        } else {
+            LOG_ACTIONS
+        };
+        let notice = Notice {
+            title,
+            message,
+            level,
+            actions,
+        };
+        if reveal {
+            self.side_notice.show(NOTICE_ID, notice);
+        } else {
+            self.side_notice.publish(NOTICE_ID, notice);
+        }
     }
 
     fn remote_reconnect_failed(&mut self, error: String) {
@@ -246,7 +340,9 @@ impl App {
         self.remote_connection.phase = Phase::Stopped;
         self.remote_connection.message =
             "Automatic reconnect stopped. Local edits are retained.".into();
-        if let Some(trace) = &self.remote_connection.trace { trace.event("Reconnect", "Automatic retries stopped locally"); }
+        if let Some(trace) = &self.remote_connection.trace {
+            trace.event("Reconnect", "Automatic retries stopped locally");
+        }
         self.remote_connection.details = false;
         self.publish_remote_connection_notice(true);
     }
@@ -272,7 +368,9 @@ impl App {
         self.remote_connection.phase = Phase::Waiting;
         self.remote_connection.retry = Some(Instant::now());
         self.remote_connection.message = "Reconnecting…".into();
-        if let Some(trace) = &self.remote_connection.trace { trace.event("Reconnect", "Retry requested locally"); }
+        if let Some(trace) = &self.remote_connection.trace {
+            trace.event("Reconnect", "Retry requested locally");
+        }
         self.publish_remote_connection_notice(true);
     }
     pub(crate) fn poll_remote_connection(&mut self, deadline: Instant) -> bool {
@@ -336,7 +434,9 @@ impl App {
                         self.remote_connection.candidate = Some(candidate.clone());
                         self.remote_connection.phase = Phase::Resolving;
                         self.remote_connection.message = "Restoring the remote workspace…".into();
-                        if let Some(trace) = &self.remote_connection.trace { trace.event("Workspace", "Restoring the current remote folder"); }
+                        if let Some(trace) = &self.remote_connection.trace {
+                            trace.event("Workspace", "Restoring the current remote folder");
+                        }
                         let old = self.remote_workspace.as_ref().unwrap().clone();
                         let serial = self.remote_connection.serial;
                         let generation = self.workspace_generation;
@@ -365,15 +465,25 @@ impl App {
         changed
     }
     fn begin_remote_disconnect(&mut self) {
-        self.record_workspace_event("Remote connection lost", crate::app_workspaces::Level::Attention);
-        self.remote_connection.trace = self.remote_workspace.as_ref().and_then(|remote| remote.diagnostics());
+        self.record_workspace_event(
+            "Remote connection lost",
+            crate::app_workspaces::Level::Attention,
+        );
+        self.remote_connection.trace = self
+            .remote_workspace
+            .as_ref()
+            .and_then(|remote| remote.diagnostics());
         let auto = self
             .remote_workspace
             .as_ref()
             .is_some_and(|remote| remote.reconnect_allowed());
         self.remote_connection.cancel_attempt();
         self.remote_connection.attempt = 0;
-        self.remote_connection.error = self.remote_workspace.as_ref().and_then(|remote| remote.client.disconnect_reason()).unwrap_or_default();
+        self.remote_connection.error = self
+            .remote_workspace
+            .as_ref()
+            .and_then(|remote| remote.client.disconnect_reason())
+            .unwrap_or_default();
         self.remote_connection.conflicts = 0;
         self.remote_connection.details = false;
         self.remote_connection.checking.clear();
@@ -420,7 +530,8 @@ impl App {
         self.explorer_refresh_active_generation = None;
         self.bg_explorer_refresh_pending = false;
         self.remote_explorer_error = Some("Connection lost. Showing cached files.".into());
-        self.explorer.cancel_unloaded_expansions(std::mem::take(&mut self.explorer_expanding));
+        self.explorer
+            .cancel_unloaded_expansions(std::mem::take(&mut self.explorer_expanding));
         self.explorer.find.loading = false;
         self.explorer_refresh_generation = self.explorer_refresh_generation.wrapping_add(1);
         if let Some(cancel) = self.explorer.find.cancel.take() {
@@ -459,7 +570,9 @@ impl App {
         let wake = self.background.wake_handle();
         let sender = self.background.sender.clone();
         self.background.spawn("remote-reconnect-launch", move || {
-            if cancel.is_cancelled() { return; }
+            if cancel.is_cancelled() {
+                return;
+            }
             let result = recipe
                 .start(Size::new(72, 18), wake)
                 .map_err(|error| error.to_string());
@@ -522,7 +635,11 @@ impl App {
         }
         let candidate = self.remote_connection.candidate.take();
         match result {
-            Err(error) if candidate.as_ref().is_some_and(|remote| remote.client.connected()) => {
+            Err(error)
+                if candidate
+                    .as_ref()
+                    .is_some_and(|remote| remote.client.connected()) =>
+            {
                 // The transport recovered even if this folder disappeared.
                 // Hand it to the pool instead of repeatedly relaunching SSH
                 // while all the other folders wait behind this one.
@@ -538,13 +655,19 @@ impl App {
     pub(crate) fn resume_remote_services(&mut self, remote: workspace::Workspace) {
         self.resume_remote_services_inner(remote, true);
     }
-    pub(crate) fn resume_remote_services_inner(&mut self, remote: workspace::Workspace, owned: bool) {
+    pub(crate) fn resume_remote_services_inner(
+        &mut self,
+        remote: workspace::Workspace,
+        owned: bool,
+    ) {
         if self
             .remote_workspace
             .as_ref()
             .is_none_or(|old| old.view_root != remote.view_root)
         {
-            if owned { remote.disconnect(); }
+            if owned {
+                remote.disconnect();
+            }
             self.remote_reconnect_failed("Remote workspace changed; buffers were retained.".into());
             return;
         }
@@ -601,7 +724,12 @@ impl App {
             });
         }
         self.remote_connection.checking = files.keys().cloned().collect();
-        if let Some(trace) = &self.remote_connection.trace { trace.event("Revalidation", &format!("Checking {} unique open text files", files.len())); }
+        if let Some(trace) = &self.remote_connection.trace {
+            trace.event(
+                "Revalidation",
+                &format!("Checking {} unique open text files", files.len()),
+            );
+        }
         let generation = self.workspace_generation;
         let focused_path = self.editor().and_then(|editor| editor.file_path.clone());
         let focused = focused_path.as_ref().and_then(|path| files.remove(path));
@@ -643,9 +771,13 @@ impl App {
     }
 
     pub(crate) fn begin_shared_remote_resume(&mut self, connected: workspace::Workspace) {
-        let Some(old) = self.remote_workspace.clone() else { return; };
+        let Some(old) = self.remote_workspace.clone() else {
+            return;
+        };
         self.remote_connection.shared_follower = true;
-        if old.take_disconnect() { self.begin_remote_disconnect(); }
+        if old.take_disconnect() {
+            self.begin_remote_disconnect();
+        }
         self.remote_connection.cancel_attempt();
         self.remote_connection.shared_attempt = Some(connected.client.clone());
         self.remote_connection.phase = Phase::Resolving;
@@ -653,33 +785,54 @@ impl App {
         let generation = self.workspace_generation;
         let serial = self.remote_connection.serial;
         let sender = self.background.sender.clone();
-        self.background.spawn("shared-remote-workspace-resume", move || {
-            let result = old.resume_on(connected).map_err(|error| error.to_string());
-            let _ = sender.send(BackgroundResult::SharedRemoteReconnected { generation, serial, result });
-        });
+        self.background
+            .spawn("shared-remote-workspace-resume", move || {
+                let result = old.resume_on(connected).map_err(|error| error.to_string());
+                let _ = sender.send(BackgroundResult::SharedRemoteReconnected {
+                    generation,
+                    serial,
+                    result,
+                });
+            });
         self.publish_remote_connection_notice(false);
     }
 
-    pub(crate) fn finish_shared_remote_reconnect(&mut self, generation: u64, serial: u64, result: Result<workspace::Workspace, String>) {
+    pub(crate) fn finish_shared_remote_reconnect(
+        &mut self,
+        generation: u64,
+        serial: u64,
+        result: Result<workspace::Workspace, String>,
+    ) {
         // This result borrows the transport of other live workspaces. A late
         // result or failed folder resolution must never disconnect that link.
-        if generation != self.workspace_generation || serial != self.remote_connection.serial
-            || self.remote_connection.phase != Phase::Resolving { return; }
+        if generation != self.workspace_generation
+            || serial != self.remote_connection.serial
+            || self.remote_connection.phase != Phase::Resolving
+        {
+            return;
+        }
         match result {
             Ok(remote) => self.resume_remote_services_inner(remote, false),
             Err(error) => self.remote_folder_reconnect_failed(error),
         }
     }
     fn remote_folder_reconnect_failed(&mut self, error: String) {
-        if let Some(cancel) = self.remote_connection.cancel.take() { cancel.cancel(); }
+        if let Some(cancel) = self.remote_connection.cancel.take() {
+            cancel.cancel();
+        }
         self.remote_connection.retry = None;
         self.remote_connection.expires = None;
         self.remote_connection.drain_pending = false;
         self.remote_connection.details = false;
         self.remote_connection.phase = Phase::Stopped;
         self.remote_connection.error = error;
-        self.remote_connection.message = "Connection restored, but this folder could not be reopened. Local edits are retained.".into();
-        self.record_workspace_event(self.remote_connection.message.clone(), crate::app_workspaces::Level::Attention);
+        self.remote_connection.message =
+            "Connection restored, but this folder could not be reopened. Local edits are retained."
+                .into();
+        self.record_workspace_event(
+            self.remote_connection.message.clone(),
+            crate::app_workspaces::Level::Attention,
+        );
         self.publish_remote_connection_notice(true);
     }
     pub(crate) fn finish_remote_reconnect_file(&mut self, generation: u64, check: FileCheck) {
@@ -781,7 +934,9 @@ impl App {
                 self.remote_connection.expires = Some(Instant::now() + Duration::from_secs(5));
             }
             self.notify(self.remote_connection.message.clone());
-            if let Some(trace) = &self.remote_connection.trace { trace.event("Restored", &self.remote_connection.message); }
+            if let Some(trace) = &self.remote_connection.trace {
+                trace.event("Restored", &self.remote_connection.message);
+            }
             self.publish_remote_connection_notice(false);
         }
     }

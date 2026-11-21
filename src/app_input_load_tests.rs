@@ -20,24 +20,53 @@ fn fixture() -> App {
     app
 }
 
-fn key(code: KeyCode) -> Event { Event::Key(KeyEvent::new(code, KeyModifiers::NONE)) }
+fn key(code: KeyCode) -> Event {
+    Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
+}
 
 fn dispatch(app: &mut App, pump: &mut TerminalEventPump, event: Event) {
     match event {
         Event::Key(key) => assert!(!handle_keyboard_input(app, pump, key)),
-        Event::Mouse(mouse) => { handle_mouse_input(app, pump, mouse); }
+        Event::Mouse(mouse) => {
+            handle_mouse_input(app, pump, mouse);
+        }
         _ => panic!("unexpected event"),
     }
 }
 
 #[test]
 fn changing_navigation_direction_preserves_selection_and_repeat_events() {
-    for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT, KeyModifiers::CONTROL | KeyModifiers::SHIFT] {
-        let keys: Vec<_> = [KeyCode::Down, KeyCode::Right, KeyCode::End, KeyCode::Up,
-            KeyCode::Left, KeyCode::Home, KeyCode::PageDown, KeyCode::PageUp]
-            .into_iter().cycle().take(180).enumerate().map(|(i, code)| {
-                KeyEvent::new_with_kind(code, modifiers, if i % 2 == 0 { KeyEventKind::Press } else { KeyEventKind::Repeat })
-            }).collect();
+    for modifiers in [
+        KeyModifiers::NONE,
+        KeyModifiers::SHIFT,
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ] {
+        let keys: Vec<_> = [
+            KeyCode::Down,
+            KeyCode::Right,
+            KeyCode::End,
+            KeyCode::Up,
+            KeyCode::Left,
+            KeyCode::Home,
+            KeyCode::PageDown,
+            KeyCode::PageUp,
+        ]
+        .into_iter()
+        .cycle()
+        .take(180)
+        .enumerate()
+        .map(|(i, code)| {
+            KeyEvent::new_with_kind(
+                code,
+                modifiers,
+                if i % 2 == 0 {
+                    KeyEventKind::Press
+                } else {
+                    KeyEventKind::Repeat
+                },
+            )
+        })
+        .collect();
         let mut actual = fixture();
         let mut expected = fixture();
         actual.macro_recording = true;
@@ -55,24 +84,45 @@ fn changing_navigation_direction_preserves_selection_and_repeat_events() {
         assert!(batches >= keys.len().div_ceil(MAX_NAVIGATION_BATCH));
         assert!(batches < keys.len());
         assert_eq!(actual.macro_buffer, keys);
-        assert_eq!(input_performance_tests::selection_state(&actual), input_performance_tests::selection_state(&expected));
-        assert_eq!(actual.editor().unwrap().desired_col, expected.editor().unwrap().desired_col);
+        assert_eq!(
+            input_performance_tests::selection_state(&actual),
+            input_performance_tests::selection_state(&expected)
+        );
+        assert_eq!(
+            actual.editor().unwrap().desired_col,
+            expected.editor().unwrap().desired_col
+        );
     }
 }
 
 #[test]
 fn navigation_batch_yields_to_overlays_modifiers_release_and_errors() {
-    for boundary in [key(KeyCode::Char('x')), Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)),
-        Event::Key(KeyEvent::new_with_kind(KeyCode::Right, KeyModifiers::NONE, KeyEventKind::Release)),
-        Event::FocusLost, Event::Resize(30, 10)] {
+    for boundary in [
+        key(KeyCode::Char('x')),
+        Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)),
+        Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Right,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        )),
+        Event::FocusLost,
+        Event::Resize(30, 10),
+    ] {
         let (sender, receiver) = std::sync::mpsc::channel();
         let mut pump = TerminalEventPump::from_receiver(receiver);
         sender.send(Ok(boundary.clone())).unwrap();
-        assert_eq!(pump.next_navigation_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)), None);
+        assert_eq!(
+            pump.next_navigation_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            None
+        );
         assert_eq!(pump.try_recv().unwrap(), Some(boundary));
     }
     let mut app = fixture();
-    let binding = app.keybindings.iter_mut().find(|b| b.id == "toggle_explorer").unwrap();
+    let binding = app
+        .keybindings
+        .iter_mut()
+        .find(|b| b.id == "toggle_explorer")
+        .unwrap();
     binding.id = "quick_open";
     binding.code = KeyCode::Down;
     binding.modifiers = KeyModifiers::NONE;
@@ -83,7 +133,10 @@ fn navigation_batch_yields_to_overlays_modifiers_release_and_errors() {
     assert!(app.quick_open_active);
     assert_eq!(pump.try_recv().unwrap(), Some(key(KeyCode::Right)));
     sender.send(Err(io::Error::other("input error"))).unwrap();
-    assert_eq!(pump.next_navigation_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)), None);
+    assert_eq!(
+        pump.next_navigation_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+        None
+    );
     assert_eq!(pump.try_recv().unwrap_err().to_string(), "input error");
 }
 
@@ -94,12 +147,27 @@ fn multiline_typing_keeps_normal_autoindent_pairing_undo_and_completion() {
         let mut expected = fixture();
         for app in [&mut actual, &mut expected] {
             app.macro_recording = true;
-            if multicursor { app.editor_mut().unwrap().extra_cursors = vec![(3, 0), (7, 0)]; }
+            if multicursor {
+                app.editor_mut().unwrap().extra_cursors = vec![(3, 0), (7, 0)];
+            }
         }
-        let events: Vec<_> = [KeyCode::Char('{'), KeyCode::Enter, KeyCode::Tab,
-            KeyCode::Char('界'), KeyCode::Char('e'), KeyCode::Char('\u{301}'), KeyCode::Backspace,
-            KeyCode::Char('}'), KeyCode::Enter, KeyCode::Char('v'), KeyCode::Char('a'), KeyCode::Char('l')]
-            .into_iter().map(key).collect();
+        let events: Vec<_> = [
+            KeyCode::Char('{'),
+            KeyCode::Enter,
+            KeyCode::Tab,
+            KeyCode::Char('界'),
+            KeyCode::Char('e'),
+            KeyCode::Char('\u{301}'),
+            KeyCode::Backspace,
+            KeyCode::Char('}'),
+            KeyCode::Enter,
+            KeyCode::Char('v'),
+            KeyCode::Char('a'),
+            KeyCode::Char('l'),
+        ]
+        .into_iter()
+        .map(key)
+        .collect();
         let (sender, receiver) = std::sync::mpsc::channel();
         let mut pump = TerminalEventPump::from_receiver(receiver);
         let (_empty, receiver) = std::sync::mpsc::channel();
@@ -127,14 +195,22 @@ fn multiline_typing_keeps_normal_autoindent_pairing_undo_and_completion() {
             // This checks completion correctness, not worker latency under the
             // full release suite's competing background jobs.
             actual.wait_for_background(Duration::from_secs(30), |app| app.vtcomplete_active);
-            assert!(actual.vtcomplete_suggestions.iter().any(|word| word == "value"));
+            assert!(
+                actual
+                    .vtcomplete_suggestions
+                    .iter()
+                    .any(|word| word == "value")
+            );
         }
         for _ in 0..15 {
             let (a, b) = (actual.editor().unwrap(), expected.editor().unwrap());
             assert_eq!(a.rope, b.rope);
             assert_eq!(a.extra_cursors, b.extra_cursors);
             assert_eq!(a.extra_cursor_anchors, b.extra_cursor_anchors);
-            assert_eq!(input_performance_tests::selection_state(&actual), input_performance_tests::selection_state(&expected));
+            assert_eq!(
+                input_performance_tests::selection_state(&actual),
+                input_performance_tests::selection_state(&expected)
+            );
             actual.editor_mut().unwrap().undo();
             expected.editor_mut().unwrap().undo();
         }
@@ -153,8 +229,12 @@ fn deferred_completion_cannot_revive_after_caret_context_or_explicit_dismissal_c
             0 => app.dismiss_vtcomplete(),
             1 => app.editor_mut().unwrap().move_right(),
             2 => app.editor_mut().unwrap().insert_char(' '),
-            3 => { app.tabs[0] = Tab::new_file(Editor::test_with_text("other")); }
-            _ => { app.active_group += 1; }
+            3 => {
+                app.tabs[0] = Tab::new_file(Editor::test_with_text("other"));
+            }
+            _ => {
+                app.active_group += 1;
+            }
         }
         app.finish_vtcomplete_batch();
         assert_eq!(app.vtcomplete_input_batch.submissions, 0);
@@ -178,26 +258,45 @@ fn moving_wheel_pointer_preserves_every_delta_and_stops_at_editor_boundary() {
         let (sender, receiver) = std::sync::mpsc::channel();
         let mut pump = TerminalEventPump::from_receiver(receiver);
         for index in 0..180 {
-            let mouse = MouseEvent { kind: MouseEventKind::ScrollDown, column: area.x + index % 30,
-                row: area.y + index % 15, modifiers: KeyModifiers::NONE };
+            let mouse = MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: area.x + index % 30,
+                row: area.y + index % 15,
+                modifiers: KeyModifiers::NONE,
+            };
             sender.send(Ok(Event::Mouse(mouse))).unwrap();
             mouse::handle_mouse(&mut expected, mouse);
         }
-        let boundary = Event::Mouse(MouseEvent { kind: MouseEventKind::ScrollDown,
-            column: area.right(), row: area.y, modifiers: KeyModifiers::NONE });
+        let boundary = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: area.right(),
+            row: area.y,
+            modifiers: KeyModifiers::NONE,
+        });
         sender.send(Ok(boundary.clone())).unwrap();
         let mut batches = 0;
         loop {
             let next = pump.try_recv().unwrap().unwrap();
-            if next == boundary { break; }
+            if next == boundary {
+                break;
+            }
             dispatch(&mut actual, &mut pump, next);
             batches += 1;
         }
         assert!(batches >= 180usize.div_ceil(MAX_SCROLL_BATCH));
         assert!(batches < 180);
-        assert_eq!(input_performance_tests::selection_state(&actual), input_performance_tests::selection_state(&expected));
-        assert_eq!(actual.editor().unwrap().wrap_scroll_offset, expected.editor().unwrap().wrap_scroll_offset);
-        assert_eq!((actual.mouse_col, actual.mouse_row), (expected.mouse_col, expected.mouse_row));
+        assert_eq!(
+            input_performance_tests::selection_state(&actual),
+            input_performance_tests::selection_state(&expected)
+        );
+        assert_eq!(
+            actual.editor().unwrap().wrap_scroll_offset,
+            expected.editor().unwrap().wrap_scroll_offset
+        );
+        assert_eq!(
+            (actual.mouse_col, actual.mouse_row),
+            (expected.mouse_col, expected.mouse_row)
+        );
     }
 }
 
@@ -219,13 +318,29 @@ fn benchmark_contended_editor_input() {
                 let mut pump = TerminalEventPump::from_receiver(receiver);
                 for index in 0..240 {
                     let event = match case {
-                        "scroll" => Event::Mouse(MouseEvent { kind: MouseEventKind::ScrollDown,
-                            column: area.x + (index % 25) as u16, row: area.y + 3 + (index % 5) as u16,
-                            modifiers: KeyModifiers::NONE }),
-                        "typing" => key(match index % 8 { 0 => KeyCode::Enter, 1 => KeyCode::Tab,
-                            _ => KeyCode::Char(['v', 'a', 'l', 'u', 'e', 's'][index % 6]) }),
-                        _ => Event::Key(KeyEvent::new(if index % 2 == 0 { KeyCode::Down } else { KeyCode::Right },
-                            if case == "selection" { KeyModifiers::SHIFT } else { KeyModifiers::NONE })),
+                        "scroll" => Event::Mouse(MouseEvent {
+                            kind: MouseEventKind::ScrollDown,
+                            column: area.x + (index % 25) as u16,
+                            row: area.y + 3 + (index % 5) as u16,
+                            modifiers: KeyModifiers::NONE,
+                        }),
+                        "typing" => key(match index % 8 {
+                            0 => KeyCode::Enter,
+                            1 => KeyCode::Tab,
+                            _ => KeyCode::Char(['v', 'a', 'l', 'u', 'e', 's'][index % 6]),
+                        }),
+                        _ => Event::Key(KeyEvent::new(
+                            if index % 2 == 0 {
+                                KeyCode::Down
+                            } else {
+                                KeyCode::Right
+                            },
+                            if case == "selection" {
+                                KeyModifiers::SHIFT
+                            } else {
+                                KeyModifiers::NONE
+                            },
+                        )),
                     };
                     sender.send(Ok(event)).unwrap();
                 }
@@ -238,16 +353,29 @@ fn benchmark_contended_editor_input() {
                 }
                 let elapsed = start.elapsed();
                 samples[usize::from(reference)].push(elapsed);
-                states.push((app.editor().unwrap().rope.clone(), input_performance_tests::selection_state(&app),
-                    terminal.backend().buffer().clone()));
-                if round == 6 { eprintln!("{case} reference={reference}: frames={frames}, completion jobs={}, total={elapsed:?}",
-                    app.vtcomplete_input_batch.submissions); }
+                states.push((
+                    app.editor().unwrap().rope.clone(),
+                    input_performance_tests::selection_state(&app),
+                    terminal.backend().buffer().clone(),
+                ));
+                if round == 6 {
+                    eprintln!(
+                        "{case} reference={reference}: frames={frames}, completion jobs={}, total={elapsed:?}",
+                        app.vtcomplete_input_batch.submissions
+                    );
+                }
             }
             assert_eq!(states[0], states[1], "case={case}");
         }
         REFERENCE_INPUT_BATCHES.set(false);
-        for sample in &mut samples { sample.sort(); }
-        eprintln!("{case}: median old={:?} new={:?} speedup={:.2}x", samples[1][3], samples[0][3],
-            samples[1][3].as_secs_f64() / samples[0][3].as_secs_f64());
+        for sample in &mut samples {
+            sample.sort();
+        }
+        eprintln!(
+            "{case}: median old={:?} new={:?} speedup={:.2}x",
+            samples[1][3],
+            samples[0][3],
+            samples[1][3].as_secs_f64() / samples[0][3].as_secs_f64()
+        );
     }
 }

@@ -40,13 +40,28 @@ pub(crate) struct Key {
 
 impl Key {
     pub(crate) const fn ch(c: char) -> Self {
-        Self { k: K::Char(c), ctrl: false, alt: false, shift: false }
+        Self {
+            k: K::Char(c),
+            ctrl: false,
+            alt: false,
+            shift: false,
+        }
     }
     pub(crate) const fn plain(k: K) -> Self {
-        Self { k, ctrl: false, alt: false, shift: false }
+        Self {
+            k,
+            ctrl: false,
+            alt: false,
+            shift: false,
+        }
     }
     pub(crate) const fn ctrl(c: char) -> Self {
-        Self { k: K::Char(c), ctrl: true, alt: false, shift: false }
+        Self {
+            k: K::Char(c),
+            ctrl: true,
+            alt: false,
+            shift: false,
+        }
     }
     pub(crate) const ESC: Self = Self::plain(K::Esc);
     pub(crate) const ENTER: Self = Self::plain(K::Enter);
@@ -89,7 +104,11 @@ impl Key {
             KeyCode::Char('5') if ctrl && !alt => KeyEvent::new(KeyCode::Char(']'), mods),
             // A raw control character (0x1c for Ctrl-\) is Ctrl plus its key.
             KeyCode::Char(c) if (c as u32) < 0x20 && !matches!(c, '\t' | '\r' | '\n' | '\x1b') => {
-                let base = if (c as u32) <= 0x1a { (c as u8 | 0x60) as char } else { (c as u8 | 0x40) as char };
+                let base = if (c as u32) <= 0x1a {
+                    (c as u8 | 0x60) as char
+                } else {
+                    (c as u8 | 0x40) as char
+                };
                 ctrl = true;
                 KeyEvent::new(KeyCode::Char(base), mods | KeyModifiers::CONTROL)
             }
@@ -99,7 +118,8 @@ impl Key {
             KeyCode::Char(c) => {
                 // Vim cannot tell <C-a> from <C-A>; keep Shift so that
                 // workbench shortcuts like Ctrl+Shift+P stay distinct.
-                let ctrl_shift = ctrl && c.is_ascii_alphabetic() && (shift || c.is_ascii_uppercase());
+                let ctrl_shift =
+                    ctrl && c.is_ascii_alphabetic() && (shift || c.is_ascii_uppercase());
                 let c = if ctrl && c.is_ascii_alphabetic() {
                     c.to_ascii_lowercase()
                 } else if shift && c.is_ascii_lowercase() {
@@ -107,7 +127,12 @@ impl Key {
                 } else {
                     c
                 };
-                return Some(Self { k: K::Char(c), ctrl, alt, shift: ctrl_shift });
+                return Some(Self {
+                    k: K::Char(c),
+                    ctrl,
+                    alt,
+                    shift: ctrl_shift,
+                });
             }
             KeyCode::Esc => K::Esc,
             KeyCode::Enter => K::Enter,
@@ -129,24 +154,40 @@ impl Key {
             _ => return None,
         };
         let shift = shift && k != K::BackTab;
-        Some(Self { k, ctrl, alt, shift })
+        Some(Self {
+            k,
+            ctrl,
+            alt,
+            shift,
+        })
     }
 
     /// The crossterm event that the workbench would have seen for this key.
     pub(crate) fn to_event(self) -> KeyEvent {
         let mut mods = KeyModifiers::empty();
-        if self.ctrl { mods |= KeyModifiers::CONTROL; }
-        if self.alt { mods |= KeyModifiers::ALT; }
-        if self.shift { mods |= KeyModifiers::SHIFT; }
+        if self.ctrl {
+            mods |= KeyModifiers::CONTROL;
+        }
+        if self.alt {
+            mods |= KeyModifiers::ALT;
+        }
+        if self.shift {
+            mods |= KeyModifiers::SHIFT;
+        }
         let code = match self.k {
             K::Char(c) => {
-                if c.is_ascii_uppercase() { mods |= KeyModifiers::SHIFT; }
+                if c.is_ascii_uppercase() {
+                    mods |= KeyModifiers::SHIFT;
+                }
                 KeyCode::Char(c)
             }
             K::Esc => KeyCode::Esc,
             K::Enter => KeyCode::Enter,
             K::Tab => KeyCode::Tab,
-            K::BackTab => { mods |= KeyModifiers::SHIFT; KeyCode::BackTab }
+            K::BackTab => {
+                mods |= KeyModifiers::SHIFT;
+                KeyCode::BackTab
+            }
             K::Backspace => KeyCode::Backspace,
             K::Delete => KeyCode::Delete,
             K::Insert => KeyCode::Insert,
@@ -304,9 +345,15 @@ pub(crate) fn format_key(key: Key) -> String {
         K::Nop => "Nop".into(),
     };
     let mut out = String::from("<");
-    if key.ctrl { out.push_str("C-"); }
-    if key.alt { out.push_str("M-"); }
-    if key.shift { out.push_str("S-"); }
+    if key.ctrl {
+        out.push_str("C-");
+    }
+    if key.alt {
+        out.push_str("M-");
+    }
+    if key.shift {
+        out.push_str("S-");
+    }
     out.push_str(&base);
     out.push('>');
     out
@@ -336,12 +383,31 @@ mod tests {
     fn notation_round_trips_common_mappings() {
         let leader = [Key::ch(' ')];
         let keys = parse("<leader>ff<C-w>j<Esc>:w<CR><lt>", &leader);
-        assert_eq!(keys, vec![
-            Key::ch(' '), Key::ch('f'), Key::ch('f'), Key::ctrl('w'), Key::ch('j'), Key::ESC,
-            Key::ch(':'), Key::ch('w'), Key::ENTER, Key::ch('<'),
-        ]);
+        assert_eq!(
+            keys,
+            vec![
+                Key::ch(' '),
+                Key::ch('f'),
+                Key::ch('f'),
+                Key::ctrl('w'),
+                Key::ch('j'),
+                Key::ESC,
+                Key::ch(':'),
+                Key::ch('w'),
+                Key::ENTER,
+                Key::ch('<'),
+            ]
+        );
         assert_eq!(format(&keys[3..]), "<C-w>j<Esc>:w<CR><lt>");
-        assert_eq!(parse("<C-S-x>", &leader), vec![Key { k: K::Char('x'), ctrl: true, alt: false, shift: true }]);
+        assert_eq!(
+            parse("<C-S-x>", &leader),
+            vec![Key {
+                k: K::Char('x'),
+                ctrl: true,
+                alt: false,
+                shift: true
+            }]
+        );
         assert_eq!(parse("<S-a>", &leader), vec![Key::ch('A')]);
         assert_eq!(parse("<S-Tab>", &leader), vec![Key::plain(K::BackTab)]);
         assert_eq!(parse("<Nop>", &leader), Vec::<Key>::new());
@@ -351,19 +417,39 @@ mod tests {
 
     #[test]
     fn events_normalize_shift_and_ctrl_like_vim() {
-        let shifted = Key::from_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::SHIFT)).unwrap();
+        let shifted =
+            Key::from_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::SHIFT)).unwrap();
         assert_eq!(shifted, Key::ch('A'));
-        let ctrl = Key::from_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)).unwrap();
+        let ctrl =
+            Key::from_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL)).unwrap();
         assert_eq!(ctrl, Key::ctrl('r'));
         // Ctrl+Shift+P must not turn into Ctrl+P.
-        let palette = Key::from_event(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)).unwrap();
+        let palette = Key::from_event(KeyEvent::new(
+            KeyCode::Char('P'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ))
+        .unwrap();
         assert_ne!(palette, Key::ctrl('p'));
-        assert_eq!(palette.to_event(), KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL | KeyModifiers::SHIFT));
-        let altgr = Key::from_event(KeyEvent::new(KeyCode::Char('{'), KeyModifiers::CONTROL | KeyModifiers::ALT)).unwrap();
+        assert_eq!(
+            palette.to_event(),
+            KeyEvent::new(
+                KeyCode::Char('p'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )
+        );
+        let altgr = Key::from_event(KeyEvent::new(
+            KeyCode::Char('{'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ))
+        .unwrap();
         assert_eq!(altgr, Key::ch('{'));
-        let backtab = Key::from_event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)).unwrap();
+        let backtab =
+            Key::from_event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)).unwrap();
         assert_eq!(backtab, Key::plain(K::BackTab));
         assert!(Key::ctrl('[').is_escape());
-        assert_eq!(showcmd(&[Key::ch('"'), Key::ch('a'), Key::ctrl('w')]), "\"a^W");
+        assert_eq!(
+            showcmd(&[Key::ch('"'), Key::ch('a'), Key::ctrl('w')]),
+            "\"a^W"
+        );
     }
 }

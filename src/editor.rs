@@ -5,8 +5,8 @@ use std::io;
 #[cfg(test)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use ropey::Rope;
 
@@ -100,7 +100,10 @@ impl PreparedGitLineStatus {
         Self::prepare(markers, |_, marker| (*marker).into())
     }
 
-    fn prepare(mut markers: Vec<char>, mut classify: impl FnMut(usize, &mut char) -> LineChanges) -> Self {
+    fn prepare(
+        mut markers: Vec<char>,
+        mut classify: impl FnMut(usize, &mut char) -> LineChanges,
+    ) -> Self {
         let mut changes = Vec::new();
         let mut signature = 0xcbf29ce484222325u64;
         for (line, marker) in markers.iter_mut().enumerate() {
@@ -130,19 +133,37 @@ impl PreparedGitLineStatus {
         previous: Option<&Arc<GitIndexLineStatus>>,
     ) -> Self {
         let text = Rope::from_str(index_text);
-        let staged: Arc<[_]> = staged.iter().enumerate().filter_map(|(line, &kind)| {
-            (kind != ' ').then_some((line, LineChanges::git(kind, ' ')))
-        }).collect();
-        self.index = Some(if let Some(previous) = previous.filter(|old| matches_git_index(&old.text, &text)) {
-            if previous.staged == staged {
-                Arc::clone(previous)
+        let staged: Arc<[_]> = staged
+            .iter()
+            .enumerate()
+            .filter_map(|(line, &kind)| {
+                (kind != ' ').then_some((line, LineChanges::git(kind, ' ')))
+            })
+            .collect();
+        self.index = Some(
+            if let Some(previous) = previous.filter(|old| matches_git_index(&old.text, &text)) {
+                if previous.staged == staged {
+                    Arc::clone(previous)
+                } else {
+                    Arc::new(GitIndexLineStatus {
+                        path: path.to_owned(),
+                        text: previous.text.clone(),
+                        staged,
+                    })
+                }
             } else {
-                Arc::new(GitIndexLineStatus { path: path.to_owned(), text: previous.text.clone(), staged })
-            }
-        } else {
-            let text = if matches_git_index(saved, &text) { saved.clone() } else { text };
-            Arc::new(GitIndexLineStatus { path: path.to_owned(), text, staged })
-        });
+                let text = if matches_git_index(saved, &text) {
+                    saved.clone()
+                } else {
+                    text
+                };
+                Arc::new(GitIndexLineStatus {
+                    path: path.to_owned(),
+                    text,
+                    staged,
+                })
+            },
+        );
         self
     }
 
@@ -184,21 +205,36 @@ pub(crate) struct SaveOptions {
 impl BackgroundSaveRequest {
     pub(crate) fn prepare_text(&self) -> Rope {
         if self.prepared_options == Some(self.options())
-            && self.expected_disk.as_ref().is_some_and(|saved| self.rope.is_instance(&saved.rope))
+            && self
+                .expected_disk
+                .as_ref()
+                .is_some_and(|saved| self.rope.is_instance(&saved.rope))
         {
             return self.rope.clone();
         }
-        prepare_save_rope(&self.rope, self.trim_trailing, self.insert_final_newline, self.line_ending == "CRLF")
+        prepare_save_rope(
+            &self.rope,
+            self.trim_trailing,
+            self.insert_final_newline,
+            self.line_ending == "CRLF",
+        )
     }
 
     pub(crate) fn options(&self) -> SaveOptions {
-        SaveOptions { trim_trailing: self.trim_trailing, insert_final_newline: self.insert_final_newline, line_ending: self.line_ending }
+        SaveOptions {
+            trim_trailing: self.trim_trailing,
+            insert_final_newline: self.insert_final_newline,
+            line_ending: self.line_ending,
+        }
     }
     pub(crate) fn same_intent(&self, other: &Self) -> bool {
-        self.path == other.path && self.source_document_id == other.source_document_id
+        self.path == other.path
+            && self.source_document_id == other.source_document_id
             && self.source_content_version == other.source_content_version
-            && self.rope.is_instance(&other.rope) && self.encoding == other.encoding
-            && self.options() == other.options() && self.fail_if_exists == other.fail_if_exists
+            && self.rope.is_instance(&other.rope)
+            && self.encoding == other.encoding
+            && self.options() == other.options()
+            && self.fail_if_exists == other.fail_if_exists
             && match (&self.expected_disk, &other.expected_disk) {
                 (None, None) => true,
                 (Some(a), Some(b)) => a.same_snapshot(b),
@@ -216,14 +252,30 @@ pub(crate) struct SaveIntent {
 }
 impl SaveIntent {
     pub(crate) fn new(request: Arc<BackgroundSaveRequest>) -> Self {
-        Self { version: request.source_content_version, request: Some(request) }
+        Self {
+            version: request.source_content_version,
+            request: Some(request),
+        }
     }
     pub(crate) fn matches(&self, request: &BackgroundSaveRequest) -> bool {
-        self.request.as_ref().is_some_and(|previous| previous.same_intent(request))
+        self.request
+            .as_ref()
+            .is_some_and(|previous| previous.same_intent(request))
     }
-    pub(crate) fn completed_options(&self, document: u64, version: u64, rope: &Rope) -> Option<SaveOptions> {
-        self.request.as_ref().filter(|request| request.source_document_id == document
-            && request.source_content_version == version && request.rope.is_instance(rope)).map(|request| request.options())
+    pub(crate) fn completed_options(
+        &self,
+        document: u64,
+        version: u64,
+        rope: &Rope,
+    ) -> Option<SaveOptions> {
+        self.request
+            .as_ref()
+            .filter(|request| {
+                request.source_document_id == document
+                    && request.source_content_version == version
+                    && request.rope.is_instance(rope)
+            })
+            .map(|request| request.options())
     }
 }
 #[cfg(test)]
@@ -231,7 +283,10 @@ impl From<u64> for SaveIntent {
     fn from(version: u64) -> Self {
         // Existing fixtures can mark unknown pending work. It must never be
         // mistaken for a provably identical real save request.
-        Self { version, request: None }
+        Self {
+            version,
+            request: None,
+        }
     }
 }
 
@@ -247,15 +302,30 @@ pub(crate) fn load_text_file(path: &Path) -> io::Result<LoadedTextFile> {
     decode_text_source(file, metadata, path, None)
 }
 
-pub(crate) fn decode_text_source(file: fs::File, metadata: fs::Metadata, path: &Path, cancel: Option<&crate::background::CancellationToken>) -> io::Result<LoadedTextFile> {
+pub(crate) fn decode_text_source(
+    file: fs::File,
+    metadata: fs::Metadata,
+    path: &Path,
+    cancel: Option<&crate::background::CancellationToken>,
+) -> io::Result<LoadedTextFile> {
     let file_size = metadata.len();
     let last_disk_modified = metadata.modified().ok();
     let result = if let Some(cancel) = cancel {
         load::read_text_stream_cancellable(file, path, file_size, cancel)
-    } else { load::read_text_file(file, path, file_size) };
-    if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err(io::ErrorKind::Interrupted.into()); }
+    } else {
+        load::read_text_file(file, path, file_size)
+    };
+    if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+        return Err(io::ErrorKind::Interrupted.into());
+    }
     let (rope, encoding) = result?;
-    Ok(LoadedTextFile { rope, encoding, file_size, last_disk_modified, remote_checkpoint: None })
+    Ok(LoadedTextFile {
+        rope,
+        encoding,
+        file_size,
+        last_disk_modified,
+        remote_checkpoint: None,
+    })
 }
 
 pub(crate) fn rope_line_ending(rope: &Rope) -> &'static str {
@@ -266,7 +336,11 @@ pub(crate) fn rope_line_ending(rope: &Rope) -> &'static str {
         let line = rope.line(index);
         let len = line.len_chars();
         if len > 0 && line.char(len - 1) == '\n' {
-            return if len > 1 && line.char(len - 2) == '\r' { "CRLF" } else { "LF" };
+            return if len > 1 && line.char(len - 2) == '\r' {
+                "CRLF"
+            } else {
+                "LF"
+            };
         }
     }
     "LF"
@@ -291,20 +365,29 @@ pub(crate) fn save_temp_path(path: &Path) -> PathBuf {
 }
 
 pub(crate) fn is_save_temporary_path(path: &Path) -> bool {
-    let Some(name) = path.file_name() else { return false; };
+    let Some(name) = path.file_name() else {
+        return false;
+    };
     let bytes = name.as_encoded_bytes();
     let marker = b".vtcode-tmp-";
-    let Some(start) = bytes.windows(marker.len()).rposition(|part| part == marker) else { return false; };
+    let Some(start) = bytes.windows(marker.len()).rposition(|part| part == marker) else {
+        return false;
+    };
     let suffix = &bytes[start + marker.len()..];
-    let Some(dash) = suffix.iter().position(|byte| *byte == b'-') else { return false; };
-    dash != 0 && dash + 1 < suffix.len()
+    let Some(dash) = suffix.iter().position(|byte| *byte == b'-') else {
+        return false;
+    };
+    dash != 0
+        && dash + 1 < suffix.len()
         && suffix[..dash].iter().all(u8::is_ascii_digit)
         && suffix[dash + 1..].iter().all(u8::is_ascii_digit)
 }
 
 #[path = "editor_unsaved_diff.rs"]
 mod unsaved_diff;
-pub(crate) use unsaved_diff::{InsertionAnchors, UnsavedDiff, compute_unsaved_diff_markers_cancellable};
+pub(crate) use unsaved_diff::{
+    InsertionAnchors, UnsavedDiff, compute_unsaved_diff_markers_cancellable,
+};
 
 /// Compute exact per-line unsaved-change markers without mutating an editor.
 /// Rope clones are cheap, so callers can run this on a background worker while
@@ -336,7 +419,8 @@ pub(crate) type UndoSnapshot = (
 
 /// Ordered by source line so local edits can invalidate a range without
 /// visiting every row cached while browsing the document.
-type WrapCache = std::collections::BTreeMap<(usize, usize, usize), std::rc::Rc<Vec<(usize, usize)>>>;
+type WrapCache =
+    std::collections::BTreeMap<(usize, usize, usize), std::rc::Rc<Vec<(usize, usize)>>>;
 
 #[path = "editor_rope_search.rs"]
 mod occurrence_search;
@@ -617,7 +701,8 @@ pub(crate) struct Editor {
     pub lsp_folding_ranges: Vec<(usize, usize)>,
     /// Text-derived gutter hints, reused across cursor and selection redraws.
     pub(crate) fold_hint_cache: std::cell::RefCell<crate::editor_transform::FoldHintCache>,
-    pub(crate) conditional_fold_cache: std::cell::RefCell<crate::editor_conditional_folds::ConditionalFoldCache>,
+    pub(crate) conditional_fold_cache:
+        std::cell::RefCell<crate::editor_conditional_folds::ConditionalFoldCache>,
     /// Bounded decoded viewport text reused across scrolling and redraws.
     pub(crate) render_line_cache: std::cell::RefCell<crate::ui_editor_highlight::RenderLineCache>,
     pub(crate) minimap_cache: std::cell::RefCell<crate::ui_editor_minimap::MinimapCache>,
@@ -696,7 +781,8 @@ pub(crate) struct WrappedRowInfo {
 
 impl Editor {
     pub(crate) fn allocate_navigation_id() -> u64 {
-        static NEXT_NAVIGATION_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        static NEXT_NAVIGATION_ID: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
         NEXT_NAVIGATION_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
@@ -853,56 +939,58 @@ impl Editor {
     #[cfg(test)]
     pub(crate) fn open_file(&mut self, path: &Path) -> io::Result<()> {
         crate::editor_document::edit!(self, {
-        self.fold_hint_cache.get_mut().clear();
-        self.minimap_cache.get_mut().clear();
-        // Synchronous opens must use the same BOM-before-binary
-        // detection as background opens and reloads. UTF-16 contains NUL
-        // bytes even in ordinary source files.
-        let loaded = load_text_file(path)?;
-        let file_size = loaded.file_size;
-        self.rope = loaded.rope;
-        self.insertion_anchors = None;
-        self.saved_insertion_anchors = None;
-        self.encoding = loaded.encoding;
-        if self.encoding == "Binary" { self.read_only = true; }
+            self.fold_hint_cache.get_mut().clear();
+            self.minimap_cache.get_mut().clear();
+            // Synchronous opens must use the same BOM-before-binary
+            // detection as background opens and reloads. UTF-16 contains NUL
+            // bytes even in ordinary source files.
+            let loaded = load_text_file(path)?;
+            let file_size = loaded.file_size;
+            self.rope = loaded.rope;
+            self.insertion_anchors = None;
+            self.saved_insertion_anchors = None;
+            self.encoding = loaded.encoding;
+            if self.encoding == "Binary" {
+                self.read_only = true;
+            }
 
-        self.file_path = Some(path.to_path_buf());
-        self.file_size = file_size;
-        self.bg_loading = false;
-        self.disk_unavailable = false;
-        self.load_failed = false;
-        self.rich_features_timed_out = false;
-        self.update_large_file_mode(LARGE_FILE_THRESHOLD);
-        self.content_version = 0;
-        self.mark_syntax_dirty_range(0, self.rope.len_lines());
-        self.cursor_line = 0;
-        self.cursor_col = 0;
-        self.desired_col = None;
-        self.scroll_offset = 0;
-        self.wrap_scroll_offset = 0;
-        self.horizontal_scroll = 0;
-        self.modified = false;
-        self.selection_anchor = None;
-        self.extra_cursors.clear();
-        self.extra_cursor_anchors.clear();
-        self.undo_stack.clear();
-        self.redo_stack.clear();
-        self.break_undo_group();
-        self.cached_wrapped_total = None;
-        self.cached_row_offsets = None;
-        // Rope clones share their backing tree. Keeping the saved snapshot is
-        // O(1) here and preserves diff/undo behavior at every file size.
-        self.saved_rope = Some(self.rope.clone());
-        self.saved_encoding = self.encoding;
-        self.saved_save_options = None;
-        self.reset_unsaved_diff_cache();
-        self.last_disk_modified = loaded.last_disk_modified;
-        self.disk_unavailable = false;
-        self.detect_indentation();
-        self.detect_line_ending();
-        self.apply_editorconfig();
-        Ok(())
-            })
+            self.file_path = Some(path.to_path_buf());
+            self.file_size = file_size;
+            self.bg_loading = false;
+            self.disk_unavailable = false;
+            self.load_failed = false;
+            self.rich_features_timed_out = false;
+            self.update_large_file_mode(LARGE_FILE_THRESHOLD);
+            self.content_version = 0;
+            self.mark_syntax_dirty_range(0, self.rope.len_lines());
+            self.cursor_line = 0;
+            self.cursor_col = 0;
+            self.desired_col = None;
+            self.scroll_offset = 0;
+            self.wrap_scroll_offset = 0;
+            self.horizontal_scroll = 0;
+            self.modified = false;
+            self.selection_anchor = None;
+            self.extra_cursors.clear();
+            self.extra_cursor_anchors.clear();
+            self.undo_stack.clear();
+            self.redo_stack.clear();
+            self.break_undo_group();
+            self.cached_wrapped_total = None;
+            self.cached_row_offsets = None;
+            // Rope clones share their backing tree. Keeping the saved snapshot is
+            // O(1) here and preserves diff/undo behavior at every file size.
+            self.saved_rope = Some(self.rope.clone());
+            self.saved_encoding = self.encoding;
+            self.saved_save_options = None;
+            self.reset_unsaved_diff_cache();
+            self.last_disk_modified = loaded.last_disk_modified;
+            self.disk_unavailable = false;
+            self.detect_indentation();
+            self.detect_line_ending();
+            self.apply_editorconfig();
+            Ok(())
+        })
     }
 
     /// Apply .editorconfig settings for the current file, overriding auto-detected values.
@@ -947,48 +1035,51 @@ impl Editor {
         file_size: u64,
         large_file_threshold_bytes: u64,
     ) {
-        let was_loading=self.bg_loading;
+        let was_loading = self.bg_loading;
         crate::editor_document::edit!(self, {
-        if was_loading && !self.bg_loading {self.document.restore_view_only=true;return;}
+            if was_loading && !self.bg_loading {
+                self.document.restore_view_only = true;
+                return;
+            }
 
-        self.fold_hint_cache.get_mut().clear();
-        self.rope = rope;
-        self.insertion_anchors = None;
-        self.saved_insertion_anchors = None;
-        self.inferred_language = None;
-        self.language_detection = None;
-        self.language_detection_epoch = self.language_detection_epoch.wrapping_add(1);
-        self.minimap_cache.get_mut().clear();
-        self.encoding = encoding;
-        self.file_size = file_size;
-        self.rich_features_timed_out = false;
-        self.update_large_file_mode(large_file_threshold_bytes);
-        self.content_version = 0;
-        self.mark_syntax_dirty_range(0, self.rope.len_lines());
-        self.cursor_line = 0;
-        self.cursor_col = 0;
-        self.desired_col = None;
-        self.scroll_offset = 0;
-        self.wrap_scroll_offset = 0;
-        self.horizontal_scroll = 0;
-        self.modified = false;
-        self.selection_anchor = None;
-        self.undo_stack.clear();
-        self.redo_stack.clear();
-        self.break_undo_group();
-        self.cached_wrapped_total = None;
-        self.cached_row_offsets = None;
-        self.clear_git_line_status();
-        self.saved_rope = Some(self.rope.clone());
-        self.saved_encoding = self.encoding;
-        self.saved_save_options = None;
-        self.reset_unsaved_diff_cache();
-        self.detect_indentation();
-        self.detect_line_ending();
-        self.bg_loading = false;
-        self.disk_unavailable = false;
-        self.load_failed = false;
-            })
+            self.fold_hint_cache.get_mut().clear();
+            self.rope = rope;
+            self.insertion_anchors = None;
+            self.saved_insertion_anchors = None;
+            self.inferred_language = None;
+            self.language_detection = None;
+            self.language_detection_epoch = self.language_detection_epoch.wrapping_add(1);
+            self.minimap_cache.get_mut().clear();
+            self.encoding = encoding;
+            self.file_size = file_size;
+            self.rich_features_timed_out = false;
+            self.update_large_file_mode(large_file_threshold_bytes);
+            self.content_version = 0;
+            self.mark_syntax_dirty_range(0, self.rope.len_lines());
+            self.cursor_line = 0;
+            self.cursor_col = 0;
+            self.desired_col = None;
+            self.scroll_offset = 0;
+            self.wrap_scroll_offset = 0;
+            self.horizontal_scroll = 0;
+            self.modified = false;
+            self.selection_anchor = None;
+            self.undo_stack.clear();
+            self.redo_stack.clear();
+            self.break_undo_group();
+            self.cached_wrapped_total = None;
+            self.cached_row_offsets = None;
+            self.clear_git_line_status();
+            self.saved_rope = Some(self.rope.clone());
+            self.saved_encoding = self.encoding;
+            self.saved_save_options = None;
+            self.reset_unsaved_diff_cache();
+            self.detect_indentation();
+            self.detect_line_ending();
+            self.bg_loading = false;
+            self.disk_unavailable = false;
+            self.load_failed = false;
+        })
     }
 
     pub(crate) fn update_large_file_mode(&mut self, threshold_bytes: u64) {
@@ -1016,51 +1107,57 @@ impl Editor {
     /// for the same file retain independent cursor and scroll state.
     pub(crate) fn apply_pending_session_restore(&mut self, threshold_bytes: u64) {
         crate::editor_document::edit!(self, {
-        let Some(restore) = self.pending_session_restore.take() else {
-            return;
-        };
-        let mut saved = restore.tab;
-        if std::mem::take(&mut self.document.restore_view_only) {
-            saved.pending_unsaved_content=None;saved.undo_entries=None;saved.redo_entries=None;
-        }
-
-        if let Some(content) = saved.pending_unsaved_content {
-            self.fold_hint_cache.get_mut().clear();
-            self.minimap_cache.get_mut().clear();
-            self.rope = content;
-            self.mark_syntax_dirty_range(0, self.rope.len_lines());
-            self.modified = true;
-            self.cached_wrapped_total = None;
-            self.cached_row_offsets = None;
-        }
-        if let (Some(undo), Some(redo)) = (saved.undo_entries, saved.redo_entries) {
-            self.import_undo_redo(undo, redo);
-        }
-        if self.saved_rope.as_ref().is_some_and(|rope| self.rope.is_instance(rope)) {
-            self.refresh_modified_from_saved();
-        }
-        self.language_override = saved.language_override;
-        self.cursor_line = saved
-            .cursor_line
-            .min(self.rope.len_lines().saturating_sub(1));
-        self.cursor_col = saved.cursor_col.min(self.line_len(self.cursor_line));
-        self.scroll_offset = saved
-            .scroll_offset
-            .min(self.rope.len_lines().saturating_sub(1));
-        self.horizontal_scroll = saved.horizontal_scroll;
-        self.bookmarks = saved
-            .bookmarks
-            .into_iter()
-            .filter(|&line| line < self.rope.len_lines())
-            .collect();
-        self.folded_ranges.clear();
-        for (start, end) in saved.folded_ranges {
-            if start < self.rope.len_lines() && end < self.rope.len_lines() {
-                self.folded_ranges.insert(start, end);
+            let Some(restore) = self.pending_session_restore.take() else {
+                return;
+            };
+            let mut saved = restore.tab;
+            if std::mem::take(&mut self.document.restore_view_only) {
+                saved.pending_unsaved_content = None;
+                saved.undo_entries = None;
+                saved.redo_entries = None;
             }
-        }
-        self.update_large_file_mode(threshold_bytes);
-            })
+
+            if let Some(content) = saved.pending_unsaved_content {
+                self.fold_hint_cache.get_mut().clear();
+                self.minimap_cache.get_mut().clear();
+                self.rope = content;
+                self.mark_syntax_dirty_range(0, self.rope.len_lines());
+                self.modified = true;
+                self.cached_wrapped_total = None;
+                self.cached_row_offsets = None;
+            }
+            if let (Some(undo), Some(redo)) = (saved.undo_entries, saved.redo_entries) {
+                self.import_undo_redo(undo, redo);
+            }
+            if self
+                .saved_rope
+                .as_ref()
+                .is_some_and(|rope| self.rope.is_instance(rope))
+            {
+                self.refresh_modified_from_saved();
+            }
+            self.language_override = saved.language_override;
+            self.cursor_line = saved
+                .cursor_line
+                .min(self.rope.len_lines().saturating_sub(1));
+            self.cursor_col = saved.cursor_col.min(self.line_len(self.cursor_line));
+            self.scroll_offset = saved
+                .scroll_offset
+                .min(self.rope.len_lines().saturating_sub(1));
+            self.horizontal_scroll = saved.horizontal_scroll;
+            self.bookmarks = saved
+                .bookmarks
+                .into_iter()
+                .filter(|&line| line < self.rope.len_lines())
+                .collect();
+            self.folded_ranges.clear();
+            for (start, end) in saved.folded_ranges {
+                if start < self.rope.len_lines() && end < self.rope.len_lines() {
+                    self.folded_ranges.insert(start, end);
+                }
+            }
+            self.update_large_file_mode(threshold_bytes);
+        })
     }
 
     pub(crate) fn mark_rich_features_timed_out(&mut self, threshold_bytes: u64) {
@@ -1083,9 +1180,14 @@ impl Editor {
             if first_char == Some('\t') {
                 tab_count += 1;
             } else if first_char == Some(' ') {
-                let spaces = line.chars().take(MAX_INDENT_SAMPLE_CHARS + 1)
-                    .take_while(|c| *c == ' ').count();
-                if spaces > MAX_INDENT_SAMPLE_CHARS { continue; }
+                let spaces = line
+                    .chars()
+                    .take(MAX_INDENT_SAMPLE_CHARS + 1)
+                    .take_while(|c| *c == ' ')
+                    .count();
+                if spaces > MAX_INDENT_SAMPLE_CHARS {
+                    continue;
+                }
                 let line_char_count = line.len_chars();
                 // Exclude trailing newline from char count comparison
                 let trailing_newlines =
@@ -1139,36 +1241,40 @@ impl Editor {
         insert_final_newline: bool,
     ) -> io::Result<()> {
         crate::editor_document::edit!(self, {
-        if let Some(error) = self.save_content_error() {
-            return Err(io::Error::other(error));
-        }
-        let request = self.background_save_request(trim_trailing, insert_final_newline, false)
-            .ok_or_else(|| io::Error::other("No file to save"))?;
-        let saved = write_background_save(&request)?;
-        // Preparation stays separate: a failed save must not change history.
-        if let Some((first, last)) = saved.transformed_lines {
-            self.save_undo_for_range(first, last);
-            let old_lines = self.rope.len_lines();
-            self.rope = saved.rope;
-            self.mark_syntax_dirty_range(first, last);
-            self.snippet_cancel();
-            if old_lines != self.rope.len_lines() { self.clear_stale_folds(); }
-            self.set_multi_cursor_states(self.collect_multi_cursors());
-        }
-        self.break_undo_group();
-        if let Some(metadata) = saved.metadata {
-            self.file_size = metadata.len();
-            self.last_disk_modified = metadata.modified().ok();
-        }
-        self.record_saved_snapshot(self.rope.clone());
-        self.disk_unavailable = false;
-        Ok(())
-            })
+            if let Some(error) = self.save_content_error() {
+                return Err(io::Error::other(error));
+            }
+            let request = self
+                .background_save_request(trim_trailing, insert_final_newline, false)
+                .ok_or_else(|| io::Error::other("No file to save"))?;
+            let saved = write_background_save(&request)?;
+            // Preparation stays separate: a failed save must not change history.
+            if let Some((first, last)) = saved.transformed_lines {
+                self.save_undo_for_range(first, last);
+                let old_lines = self.rope.len_lines();
+                self.rope = saved.rope;
+                self.mark_syntax_dirty_range(first, last);
+                self.snippet_cancel();
+                if old_lines != self.rope.len_lines() {
+                    self.clear_stale_folds();
+                }
+                self.set_multi_cursor_states(self.collect_multi_cursors());
+            }
+            self.break_undo_group();
+            if let Some(metadata) = saved.metadata {
+                self.file_size = metadata.len();
+                self.last_disk_modified = metadata.modified().ok();
+            }
+            self.record_saved_snapshot(self.rope.clone());
+            self.disk_unavailable = false;
+            Ok(())
+        })
     }
 
     fn disk_save_baseline(&self) -> Option<DiskSaveBaseline> {
         self.saved_rope.as_ref().map(|rope| DiskSaveBaseline {
-            rope: rope.clone(), encoding: self.saved_encoding,
+            rope: rope.clone(),
+            encoding: self.saved_encoding,
         })
     }
 
@@ -1179,22 +1285,27 @@ impl Editor {
 
     #[cfg(test)]
     fn prepared_save_rope(&self, trim: bool, final_newline: bool) -> Rope {
-        save::prepare_rope(&self.rope, trim, final_newline, self.cached_line_ending == "CRLF")
+        save::prepare_rope(
+            &self.rope,
+            trim,
+            final_newline,
+            self.cached_line_ending == "CRLF",
+        )
     }
 
     #[cfg(test)]
     fn prepare_save_content(&mut self, trim_trailing: bool, insert_final_newline: bool) {
         crate::editor_document::edit!(self, {
-        let prepared = self.prepared_save_rope(trim_trailing, insert_final_newline);
-        if !crate::rope_changes::equal(&self.rope, &prepared) {
-            self.rope = prepared;
-            self.mark_syntax_dirty_range(0, self.rope.len_lines());
-            self.content_version += 1;
-            self.cached_wrapped_total = None;
-            self.cached_row_offsets = None;
-            self.set_multi_cursor_states(self.collect_multi_cursors());
-        }
-            })
+            let prepared = self.prepared_save_rope(trim_trailing, insert_final_newline);
+            if !crate::rope_changes::equal(&self.rope, &prepared) {
+                self.rope = prepared;
+                self.mark_syntax_dirty_range(0, self.rope.len_lines());
+                self.content_version += 1;
+                self.cached_wrapped_total = None;
+                self.cached_row_offsets = None;
+                self.set_multi_cursor_states(self.collect_multi_cursors());
+            }
+        })
     }
 
     pub(crate) fn set_read_only(&mut self, read_only: bool) {
@@ -1227,7 +1338,9 @@ impl Editor {
         insert_final_newline: bool,
         fail_if_exists: bool,
     ) -> Option<BackgroundSaveRequest> {
-        if self.save_content_error().is_some() { return None; }
+        if self.save_content_error().is_some() {
+            return None;
+        }
         let path = self.file_path.clone()?;
         Some(BackgroundSaveRequest {
             source_document_id: self.save_identity,
@@ -1245,12 +1358,17 @@ impl Editor {
     }
 
     pub(crate) fn save_options(&self, trim: bool, newline: bool) -> SaveOptions {
-        SaveOptions { trim_trailing: self.ec_trim_trailing.unwrap_or(trim),
-            insert_final_newline: self.ec_insert_final_newline.unwrap_or(newline), line_ending: self.cached_line_ending }
+        SaveOptions {
+            trim_trailing: self.ec_trim_trailing.unwrap_or(trim),
+            insert_final_newline: self.ec_insert_final_newline.unwrap_or(newline),
+            line_ending: self.cached_line_ending,
+        }
     }
 
     pub(crate) fn record_save_options(&mut self, options: Option<SaveOptions>) {
-        crate::editor_document::edit!(self, { self.saved_save_options = options; })
+        crate::editor_document::edit!(self, {
+            self.saved_save_options = options;
+        })
     }
 
     /// Reconcile a completed background save with the live editor. If typing
@@ -1268,39 +1386,45 @@ impl Editor {
         large_file_threshold_bytes: u64,
     ) {
         crate::editor_document::edit!(self, {
-        // Versions are local counters, reused by a reopened file or another
-        // view. Only the actual submitted snapshot can authorize replacement.
-        let still_current = self.content_version == source_content_version
-            && crate::rope_changes::equal(&self.rope, source_rope);
-        let saved_rope = if still_current && transformed_lines.is_none() {
-            self.rope.clone()
-        } else {
-            saved_rope
-        };
-        if still_current {
-            self.break_undo_group();
-            if let Some((first, last)) = transformed_lines {
-                self.save_undo_for_range(first, last);
-                let old_lines = self.rope.len_lines();
-                self.rope = saved_rope.clone();
-                self.mark_syntax_dirty_range(first, last);
-                self.cached_wrapped_total = None;
-                self.snippet_cancel();
-                if old_lines != self.rope.len_lines() { self.clear_stale_folds(); }
-                self.set_multi_cursor_states(self.collect_multi_cursors());
+            // Versions are local counters, reused by a reopened file or another
+            // view. Only the actual submitted snapshot can authorize replacement.
+            let still_current = self.content_version == source_content_version
+                && crate::rope_changes::equal(&self.rope, source_rope);
+            let saved_rope = if still_current && transformed_lines.is_none() {
+                self.rope.clone()
+            } else {
+                saved_rope
+            };
+            if still_current {
+                self.break_undo_group();
+                if let Some((first, last)) = transformed_lines {
+                    self.save_undo_for_range(first, last);
+                    let old_lines = self.rope.len_lines();
+                    self.rope = saved_rope.clone();
+                    self.mark_syntax_dirty_range(first, last);
+                    self.cached_wrapped_total = None;
+                    self.snippet_cancel();
+                    if old_lines != self.rope.len_lines() {
+                        self.clear_stale_folds();
+                    }
+                    self.set_multi_cursor_states(self.collect_multi_cursors());
+                }
             }
-        }
-        self.record_saved_snapshot_with_encoding(saved_rope, saved_encoding);
-        if !self.saved_rope.as_ref().is_some_and(|saved| self.rope.is_instance(saved)) {
-            self.invalidate_unsaved_diff_cache();
-        }
-        self.last_disk_modified = last_disk_modified;
-        self.disk_unavailable = false;
-        if let Some(file_size) = file_size {
-            self.file_size = file_size;
-        }
-        self.update_large_file_mode(large_file_threshold_bytes);
-            })
+            self.record_saved_snapshot_with_encoding(saved_rope, saved_encoding);
+            if !self
+                .saved_rope
+                .as_ref()
+                .is_some_and(|saved| self.rope.is_instance(saved))
+            {
+                self.invalidate_unsaved_diff_cache();
+            }
+            self.last_disk_modified = last_disk_modified;
+            self.disk_unavailable = false;
+            if let Some(file_size) = file_size {
+                self.file_size = file_size;
+            }
+            self.update_large_file_mode(large_file_threshold_bytes);
+        })
     }
 
     pub(crate) fn line_count(&self) -> usize {
@@ -1308,7 +1432,11 @@ impl Editor {
     }
 
     pub(crate) fn unsaved_line_status(&self, line: usize) -> char {
-        if self.unsaved_line_changes(line).unsaved() { 'N' } else { ' ' }
+        if self.unsaved_line_changes(line).unsaved() {
+            'N'
+        } else {
+            ' '
+        }
     }
 
     fn unsaved_line_changes(&self, line: usize) -> LineChanges {
@@ -1325,7 +1453,8 @@ impl Editor {
         // Reuse known additions and edits while the worker runs. For a line-count
         // edit, the dirty range gives us a safe prefix and a shifted suffix.
         self.stale_unsaved_source_line(line)
-            .map(|source| cached.line_changes(source)).unwrap_or_default()
+            .map(|source| cached.line_changes(source))
+            .unwrap_or_default()
     }
 
     pub(crate) fn begin_unsaved_diff_edit(&mut self) {
@@ -1338,30 +1467,37 @@ impl Editor {
     }
 
     pub(crate) fn prepare_live_unsaved_diff(&mut self) {
-        self.insertion_anchors = self.insertion_anchors.take().and_then(|anchors| anchors.rebase(&self.rope));
-        if !self.modified || self.large_file_mode || self.uses_git_index_markers()
+        self.insertion_anchors = self
+            .insertion_anchors
+            .take()
+            .and_then(|anchors| anchors.rebase(&self.rope));
+        if !self.modified
+            || self.large_file_mode
+            || self.uses_git_index_markers()
             || self.unsaved_diff_cache.0 == self.content_version
             || self.live_unsaved_diff_attempt == Some(self.content_version)
         {
             return;
         }
-        let Some(saved) = &self.saved_rope else { return; };
+        let Some(saved) = &self.saved_rope else {
+            return;
+        };
         self.live_unsaved_diff_attempt = Some(self.content_version);
-        let rows = self.insertion_anchors.as_ref().map_or(&[][..], |anchors| anchors.rows(&self.rope));
+        let rows = self
+            .insertion_anchors
+            .as_ref()
+            .map_or(&[][..], |anchors| anchors.rows(&self.rope));
         if let Some(changes) = unsaved_diff::compute_live_unsaved_diff(saved, &self.rope, rows) {
             self.apply_unsaved_diff_cache(self.content_version, changes);
         }
     }
 
     pub(crate) fn record_line_insertion(&mut self, before: &Rope, row: usize) {
-        self.insertion_anchors = InsertionAnchors::insert(self.insertion_anchors.take(), before, &self.rope, row);
+        self.insertion_anchors =
+            InsertionAnchors::insert(self.insertion_anchors.take(), before, &self.rope, row);
     }
 
-    pub(crate) fn apply_unsaved_diff_cache(
-        &mut self,
-        version: u64,
-        changes: UnsavedDiff,
-    ) {
+    pub(crate) fn apply_unsaved_diff_cache(&mut self, version: u64, changes: UnsavedDiff) {
         if self.content_version != version {
             return;
         }
@@ -1427,7 +1563,11 @@ impl Editor {
     /// markers. This is O(log changed-lines), even if a 50k-line document has
     /// every line marked, and retains safe stale rows until analysis catches up.
     pub(crate) fn has_unsaved_change_in_range(&self, start: usize, end: usize) -> bool {
-        if !self.modified || self.saved_rope.is_none() || start >= end || self.uses_git_index_markers() {
+        if !self.modified
+            || self.saved_rope.is_none()
+            || start >= end
+            || self.uses_git_index_markers()
+        {
             return false;
         }
         if self.unsaved_diff_cache.0 == self.content_version {
@@ -1463,10 +1603,7 @@ impl Editor {
         self.set_prepared_git_line_status(PreparedGitLineStatus::from_markers(statuses))
     }
 
-    pub(crate) fn set_prepared_git_line_status(
-        &mut self,
-        status: PreparedGitLineStatus,
-    ) -> bool {
+    pub(crate) fn set_prepared_git_line_status(&mut self, status: PreparedGitLineStatus) -> bool {
         self.git_line_status_untracked = status.untracked;
         let index_changed = self.set_git_index_line_status(status.index);
         if self.git_line_status.len() == status.markers.len()
@@ -1481,7 +1618,10 @@ impl Editor {
         true
     }
 
-    pub(crate) fn set_git_index_line_status(&mut self, index: Option<Arc<GitIndexLineStatus>>) -> bool {
+    pub(crate) fn set_git_index_line_status(
+        &mut self,
+        index: Option<Arc<GitIndexLineStatus>>,
+    ) -> bool {
         let same = match (&self.git_line_index, &index) {
             (Some(old), Some(new)) => Arc::ptr_eq(old, new),
             (None, None) => true,
@@ -1511,13 +1651,18 @@ impl Editor {
     }
 
     pub(crate) fn git_change_lines(&self) -> &[(usize, LineChanges)] {
-        self.matching_git_index().map_or(&self.git_change_lines, |index| &index.staged)
+        self.matching_git_index()
+            .map_or(&self.git_change_lines, |index| &index.staged)
     }
 
     fn git_changes_at(&self, line: usize) -> LineChanges {
         let changes = if let Some(index) = self.matching_git_index() {
             &index.staged
-        } else if self.git_line_status.get(line).is_some_and(|&marker| marker != ' ') {
+        } else if self
+            .git_line_status
+            .get(line)
+            .is_some_and(|&marker| marker != ' ')
+        {
             &self.git_change_lines
         } else {
             return LineChanges::default();
@@ -1528,7 +1673,8 @@ impl Editor {
     }
 
     pub(crate) fn line_changes(&self, line: usize) -> LineChanges {
-        self.git_changes_at(line).merge(self.unsaved_line_changes(line))
+        self.git_changes_at(line)
+            .merge(self.unsaved_line_changes(line))
     }
 
     pub(crate) fn git_line_status(&self) -> &[char] {
@@ -1554,7 +1700,9 @@ impl Editor {
     }
 
     pub(crate) fn git_index_line_status(&self) -> Option<&Arc<GitIndexLineStatus>> {
-        self.git_line_index.as_ref().filter(|index| self.file_path.as_ref() == Some(&index.path))
+        self.git_line_index
+            .as_ref()
+            .filter(|index| self.file_path.as_ref() == Some(&index.path))
     }
 
     fn matching_git_index(&self) -> Option<&GitIndexLineStatus> {
@@ -1563,7 +1711,10 @@ impl Editor {
         }
         let index = self.git_line_index.as_deref()?;
         let matches_buffer = self.rope.is_instance(&index.text)
-            || self.git_index_match.as_ref().is_some_and(|matched| self.rope.is_instance(matched));
+            || self
+                .git_index_match
+                .as_ref()
+                .is_some_and(|matched| self.rope.is_instance(matched));
         (matches_buffer && self.file_path.as_ref() == Some(&index.path)).then_some(index)
     }
 
@@ -1575,7 +1726,9 @@ impl Editor {
     /// snapshot once here, keeping equality checks out of frame rendering.
     pub(crate) fn refresh_git_index_match(&mut self) {
         if !self.uses_git_index_markers()
-            && self.git_index_line_status().is_some_and(|index| matches_git_index(&self.rope, &index.text))
+            && self
+                .git_index_line_status()
+                .is_some_and(|index| matches_git_index(&self.rope, &index.text))
         {
             self.git_index_match = Some(self.rope.clone());
         }
@@ -1619,9 +1772,12 @@ impl Editor {
     /// Accumulate the full line range an upcoming/just-applied edit can affect.
     pub(crate) fn mark_syntax_dirty_range(&mut self, start: usize, end: usize) {
         self.wrap_revision = self.wrap_revision.wrapping_add(1);
-        self.wrap_dirty_range = Some(self.wrap_dirty_range.map_or((start, end), |(from, through)| {
-            (from.min(start), through.max(end))
-        }));
+        self.wrap_dirty_range = Some(
+            self.wrap_dirty_range
+                .map_or((start, end), |(from, through)| {
+                    (from.min(start), through.max(end))
+                }),
+        );
         self.render_line_cache.get_mut().mark_dirty(
             start,
             end,
@@ -1866,7 +2022,9 @@ impl Editor {
     /// Decode opaque remote keys only for display; file_name() keeps the path
     /// spelling used for language detection, file icons and save paths.
     pub(crate) fn file_display_name(&self) -> Cow<'_, str> {
-        self.file_path.as_deref().and_then(crate::remote::workspace::display_name)
+        self.file_path
+            .as_deref()
+            .and_then(crate::remote::workspace::display_name)
             .map_or_else(|| Cow::Borrowed(self.file_name()), Cow::Owned)
     }
 
@@ -1882,13 +2040,16 @@ impl Editor {
         let line = self.rope.line(0);
         let end = line.len_chars().min(128);
         let prefix = line.slice(..end);
-        let text = prefix.as_str().map_or_else(
-            || Cow::Owned(prefix.to_string()), Cow::Borrowed,
-        );
+        let text = prefix
+            .as_str()
+            .map_or_else(|| Cow::Owned(prefix.to_string()), Cow::Borrowed);
         let clipped = end < line.len_chars();
         // A grapheme at the sample boundary may continue in the next chunk.
         let complete = if clipped {
-            let end = text.grapheme_indices(true).next_back().map_or(0, |(end, _)| end);
+            let end = text
+                .grapheme_indices(true)
+                .next_back()
+                .map_or(0, |(end, _)| end);
             &text[..end]
         } else {
             text.as_ref()
@@ -1897,9 +2058,9 @@ impl Editor {
         if complete.is_empty() {
             return Cow::Borrowed("[NoFile]");
         }
-        let mut chars = complete.graphemes(true).filter(|g| {
-            !g.chars().all(|c| c.is_control() && !c.is_whitespace())
-        });
+        let mut chars = complete
+            .graphemes(true)
+            .filter(|g| !g.chars().all(|c| c.is_control() && !c.is_whitespace()));
         let mut title = String::with_capacity(48);
         for ch in chars.by_ref().take(10) {
             if ch.chars().all(char::is_whitespace) {
@@ -1959,11 +2120,14 @@ impl Editor {
         if let Some(language) = self.syntax_language_token() {
             return language.eq_ignore_ascii_case("Markdown");
         }
-        self.file_name().rsplit('.').next().is_some_and(|extension| {
-            extension.eq_ignore_ascii_case("md")
-                || extension.eq_ignore_ascii_case("markdown")
-                || extension.eq_ignore_ascii_case("mdx")
-        })
+        self.file_name()
+            .rsplit('.')
+            .next()
+            .is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("md")
+                    || extension.eq_ignore_ascii_case("markdown")
+                    || extension.eq_ignore_ascii_case("mdx")
+            })
     }
 
     pub(crate) fn language_name(&self) -> &str {
@@ -2119,25 +2283,37 @@ impl Editor {
     /// from their path, while user overrides and language associations should
     /// take precedence over the extension built into a grammar.
     pub(crate) fn syntax_file_path(&self) -> Option<&std::path::Path> {
-        self.blame.revision.as_ref().map(|revision| revision.syntax_path.as_path())
+        self.blame
+            .revision
+            .as_ref()
+            .map(|revision| revision.syntax_path.as_path())
             .or(self.file_path.as_deref())
-            .or_else(|| self.suggested_file_name.as_deref().map(std::path::Path::new))
+            .or_else(|| {
+                self.suggested_file_name
+                    .as_deref()
+                    .map(std::path::Path::new)
+            })
     }
 
     /// Highlight caches also need an identity for untitled buffers. This key
     /// never becomes a filename or a target for filesystem operations.
     pub(crate) fn highlight_path(&self) -> &std::path::Path {
         self.syntax_file_path().unwrap_or_else(|| {
-            self.untitled_highlight_path.get_or_init(|| {
-                std::path::PathBuf::from(format!("untitled://buffer-{}", self.navigation_id))
-            }).as_path()
+            self.untitled_highlight_path
+                .get_or_init(|| {
+                    std::path::PathBuf::from(format!("untitled://buffer-{}", self.navigation_id))
+                })
+                .as_path()
         })
     }
 
     pub(crate) fn syntax_language_token(&self) -> Option<&str> {
-        self.explicit_language_token().or_else(|| self.inferred_language.as_ref()
-            .filter(|binding| binding.path.as_deref() == self.syntax_file_path())
-            .map(|binding| binding.syntax.as_str()))
+        self.explicit_language_token().or_else(|| {
+            self.inferred_language
+                .as_ref()
+                .filter(|binding| binding.path.as_deref() == self.syntax_file_path())
+                .map(|binding| binding.syntax.as_str())
+        })
     }
 
     pub(crate) fn explicit_language_token(&self) -> Option<&str> {
@@ -2151,7 +2327,10 @@ impl Editor {
             .map(|(_, language)| language)
     }
 
-    pub(crate) fn set_language_associations(&mut self, associations: &rustc_hash::FxHashMap<String, String>) {
+    pub(crate) fn set_language_associations(
+        &mut self,
+        associations: &rustc_hash::FxHashMap<String, String>,
+    ) {
         if &self.language_associations != associations {
             crate::editor_document::edit!(self, {
                 self.language_associations.clone_from(associations);
@@ -2165,20 +2344,32 @@ impl Editor {
     /// Accept one complete conflict as a single shared-document undo step.
     pub(crate) fn resolve_conflict(&mut self, start_line: usize, action: &str) -> bool {
         crate::editor_document::edit!(self, {
-            if self.read_only || self.bg_loading || self.load_failed || self.encoding == "Binary"
-                || !matches!(action, "current" | "incoming" | "both") {
+            if self.read_only
+                || self.bg_loading
+                || self.load_failed
+                || self.encoding == "Binary"
+                || !matches!(action, "current" | "incoming" | "both")
+            {
                 return false;
             }
             let region = if let Some(index) = self.merge_conflicts.current(&self.rope) {
-                index.region_for_line(start_line).filter(|region| region.start == start_line)
-            } else { crate::merge_conflicts::at(&self.rope, start_line) };
-            let Some(region) = region else { return false; };
+                index
+                    .region_for_line(start_line)
+                    .filter(|region| region.start == start_line)
+            } else {
+                crate::merge_conflicts::at(&self.rope, start_line)
+            };
+            let Some(region) = region else {
+                return false;
+            };
             let chars = |lines| crate::merge_conflicts::line_chars(&self.rope, lines);
             let mut replacement: Rope = match action {
                 "incoming" => self.rope.slice(chars(region.incoming())).into(),
                 _ => self.rope.slice(chars(region.current())).into(),
             };
-            if action == "both" { replacement.append(self.rope.slice(chars(region.incoming())).into()); }
+            if action == "both" {
+                replacement.append(self.rope.slice(chars(region.incoming())).into());
+            }
             let remove = chars(region.start..region.end + 1);
             self.break_undo_group();
             self.save_undo_for_range(region.start, region.end);
@@ -2224,18 +2415,30 @@ impl Editor {
         if !is_word(rope_line.char(col)) {
             return (col, col);
         }
-        let start = col - rope_line.chars_at(col).reversed()
-            .take_while(|&c| is_word(c)).count();
-        let end = col + rope_line.chars_at(col).take(len - col)
-            .take_while(|&c| is_word(c)).count();
+        let start = col
+            - rope_line
+                .chars_at(col)
+                .reversed()
+                .take_while(|&c| is_word(c))
+                .count();
+        let end = col
+            + rope_line
+                .chars_at(col)
+                .take(len - col)
+                .take_while(|&c| is_word(c))
+                .count();
         (start, end)
     }
 
     /// Presence checks need only the preceding character, not a scan and
     /// allocation of the entire prefix (e.g. after every Backspace).
     pub(crate) fn has_word_prefix_at_cursor(&self) -> bool {
-        let Some(line) = self.rope.get_line(self.cursor_line) else { return false; };
-        self.cursor_col.min(line.len_chars()).checked_sub(1)
+        let Some(line) = self.rope.get_line(self.cursor_line) else {
+            return false;
+        };
+        self.cursor_col
+            .min(line.len_chars())
+            .checked_sub(1)
             .and_then(|col| line.get_char(col))
             .is_some_and(|ch| ch.is_alphanumeric() || ch == '_' || ch == '$')
     }
@@ -2257,8 +2460,12 @@ impl Editor {
 
         let is_word_char = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
 
-        let start = col - line.chars_at(col).reversed()
-            .take_while(|&c| is_word_char(c)).count();
+        let start = col
+            - line
+                .chars_at(col)
+                .reversed()
+                .take_while(|&c| is_word_char(c))
+                .count();
         if start == col {
             return None;
         }
@@ -2273,16 +2480,37 @@ impl Editor {
     /// Find definition of the word at cursor (heuristic: looks for fn/struct/class/def/etc.)
     pub(crate) fn find_definition(&self, word: &str) -> Option<(usize, usize)> {
         const PREFIXES: &[&str] = &[
-            "fn ", "pub(crate) fn ", "struct ", "pub struct ", "enum ",
-            "pub enum ", "trait ", "pub trait ", "impl ", "type ", "pub type ",
-            "const ", "pub const ", "static ", "pub static ", "let ",
-            "let mut ", "class ", "def ", "function ", "var ", "interface ",
+            "fn ",
+            "pub(crate) fn ",
+            "struct ",
+            "pub struct ",
+            "enum ",
+            "pub enum ",
+            "trait ",
+            "pub trait ",
+            "impl ",
+            "type ",
+            "pub type ",
+            "const ",
+            "pub const ",
+            "static ",
+            "pub static ",
+            "let ",
+            "let mut ",
+            "class ",
+            "def ",
+            "function ",
+            "var ",
+            "interface ",
         ];
         for (line_idx, line) in self.rope.lines().enumerate() {
             if let Some(text) = line.as_str() {
                 let trimmed = text.trim_start();
                 for &prefix in PREFIXES {
-                    if trimmed.strip_prefix(prefix).is_some_and(|tail| tail.starts_with(word)) {
+                    if trimmed
+                        .strip_prefix(prefix)
+                        .is_some_and(|tail| tail.starts_with(word))
+                    {
                         let indent = text.len() - trimmed.len();
                         return Some((line_idx, text[..indent].chars().count() + prefix.len()));
                     }
@@ -2298,9 +2526,15 @@ impl Editor {
                     indent += 1;
                 }
                 for &prefix in PREFIXES {
-                    if chars.peek().copied() != prefix.chars().next() { continue; }
+                    if chars.peek().copied() != prefix.chars().next() {
+                        continue;
+                    }
                     let mut candidate = chars.clone();
-                    if prefix.chars().chain(word.chars()).all(|ch| candidate.next() == Some(ch)) {
+                    if prefix
+                        .chars()
+                        .chain(word.chars())
+                        .all(|ch| candidate.next() == Some(ch))
+                    {
                         return Some((line_idx, indent + prefix.len()));
                     }
                 }
@@ -2312,11 +2546,11 @@ impl Editor {
     /// Complete the current word with the given completion
     pub(crate) fn complete_word(&mut self, completion: &str) {
         crate::editor_document::edit!(self, {
-        let line = self.rope.line(self.cursor_line);
-        let is_word_char = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+            let line = self.rope.line(self.cursor_line);
+            let is_word_char = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
 
-        // Seek once and traverse backwards across rope chunks.
-        let col = self.cursor_col.min(line.len_chars());
+            // Seek once and traverse backwards across rope chunks.
+            let col = self.cursor_col.min(line.len_chars());
             let before = line
                 .chars_at(col)
                 .reversed()
@@ -2336,9 +2570,11 @@ impl Editor {
             let start = col - before;
             let end = col + after;
             let callable = completion.ends_with("()");
-            let call_spacing = line.chars_at(end)
+            let call_spacing = line
+                .chars_at(end)
                 .take(16)
-            .take_while(|ch| matches!(ch, ' ' | '\t')).count();
+                .take_while(|ch| matches!(ch, ' ' | '\t'))
+                .count();
             let existing_call = callable && line.get_char(end + call_spacing) == Some('(');
             let insertion = if existing_call {
                 &completion[..completion.len() - 2]
@@ -2346,18 +2582,19 @@ impl Editor {
                 completion
             };
 
-        self.save_undo();
-        let line_start = self.rope.line_to_char(self.cursor_line);
-        let from = line_start + start;
-        let to = line_start + end;
-        self.rope.remove(from..to);
-        self.rope.insert(from, insertion);
-        self.cursor_col = start + insertion.chars().count()
+            self.save_undo();
+            let line_start = self.rope.line_to_char(self.cursor_line);
+            let from = line_start + start;
+            let to = line_start + end;
+            self.rope.remove(from..to);
+            self.rope.insert(from, insertion);
+            self.cursor_col = start
+                + insertion.chars().count()
                 + if existing_call { call_spacing + 1 } else { 0 }
                 - usize::from(callable && !existing_call);
-        self.modified = true;
-        self.ensure_visible();
-            })
+            self.modified = true;
+            self.ensure_visible();
+        })
     }
 
     /// Numeric predictions replace one literal, including its fractional tail.
@@ -2375,25 +2612,46 @@ impl Editor {
             let whole = parts.next().unwrap();
             whole.starts_with(|ch: char| ch.is_ascii_digit())
                 && whole.chars().all(|ch| ch.is_ascii_digit() || ch == '_')
-                && parts.next().is_none_or(|fraction| fraction.chars().all(|ch| ch.is_ascii_digit()))
+                && parts
+                    .next()
+                    .is_none_or(|fraction| fraction.chars().all(|ch| ch.is_ascii_digit()))
                 && parts.next().is_none()
         }
         if completion.len() > 48 || completion.is_empty() || !numeric_atom(completion) {
             return;
         }
         crate::editor_document::edit!(self, {
-            let Some(line) = self.rope.get_line(self.cursor_line) else { return; };
+            let Some(line) = self.rope.get_line(self.cursor_line) else {
+                return;
+            };
             let col = self.cursor_col.min(line.len_chars());
             let atom_char = |ch: char| ch.is_alphanumeric() || matches!(ch, '_' | '.');
-            let before = line.chars_at(col).reversed().take(97).take_while(|&ch| atom_char(ch)).count();
-            let after = line.chars_at(col).take(97).take_while(|&ch| atom_char(ch)).count();
-            if before > 96 || after > 96 { return; }
+            let before = line
+                .chars_at(col)
+                .reversed()
+                .take(97)
+                .take_while(|&ch| atom_char(ch))
+                .count();
+            let after = line
+                .chars_at(col)
+                .take(97)
+                .take_while(|&ch| atom_char(ch))
+                .count();
+            if before > 96 || after > 96 {
+                return;
+            }
             let mut start = col - before;
             let end = col + after;
             if start > 0 && line.char(start - 1) == '-' {
-                let preceding = line.chars_at(start - 1).reversed().take(32)
+                let preceding = line
+                    .chars_at(start - 1)
+                    .reversed()
+                    .take(32)
                     .find(|ch| !matches!(ch, ' ' | '\t'));
-                if start == 1 || preceding.is_some_and(|ch| matches!(ch, '(' | '[' | '{' | '=' | ':' | ',' | ';')) {
+                if start == 1
+                    || preceding
+                        .is_some_and(|ch| matches!(ch, '(' | '[' | '{' | '=' | ':' | ',' | ';'))
+                {
                     start -= 1;
                 } else if completion.starts_with('-') {
                     // Do not turn `value-1` into `value--2` or lose its operator.
@@ -2401,7 +2659,9 @@ impl Editor {
                 }
             }
             let current = line.slice(start..end).to_string();
-            if !numeric_atom(&current) || current == completion { return; }
+            if !numeric_atom(&current) || current == completion {
+                return;
+            }
             self.save_undo();
             let from = self.rope.line_to_char(self.cursor_line) + start;
             self.rope.remove(from..from + end - start);
@@ -2460,9 +2720,10 @@ impl Editor {
         start: usize,
         end: usize,
     ) -> Option<usize> {
-        RopeSearch::new(&needle.iter().collect::<String>()).matches(rope, start, end).next()
+        RopeSearch::new(&needle.iter().collect::<String>())
+            .matches(rope, start, end)
+            .next()
     }
-
 }
 
 #[cfg(test)]

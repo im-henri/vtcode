@@ -35,7 +35,10 @@ fn occurrence_target_can_be_bound_by_a_later_visible_use_in_the_full_worker() {
             || false,
         )
         .unwrap();
-        assert_eq!(result.suggestions.first().map(String::as_str), Some("payloadNew"));
+        assert_eq!(
+            result.suggestions.first().map(String::as_str),
+            Some("payloadNew")
+        );
         assert_eq!(result.suggestions.len(), result.details.len());
     }
 }
@@ -47,10 +50,19 @@ fn more_specific_literal_occurrence_survives_an_optional_target_mapping_collisio
     let mut active = snapshot(92, &text, 2);
     active.cursor_col = before.rsplit('\n').next().unwrap().chars().count();
     let result = compute_contextual_invoked(
-        &active, "ri", "Unknown language", &Default::default(),
-        &mut CompletionCache::default(), false, || false,
-    ).unwrap();
-    assert_eq!(result.suggestions.first().map(String::as_str), Some("rightSpecific"));
+        &active,
+        "ri",
+        "Unknown language",
+        &Default::default(),
+        &mut CompletionCache::default(),
+        false,
+        || false,
+    )
+    .unwrap();
+    assert_eq!(
+        result.suggestions.first().map(String::as_str),
+        Some("rightSpecific")
+    );
 }
 
 #[test]
@@ -60,9 +72,20 @@ fn compatible_shorter_context_survives_an_incompatible_longer_example() {
     let mut active = snapshot(92, &text, 2);
     active.cursor_col = before.rsplit('\n').next().unwrap().chars().count();
     for explicit in [false, true] {
-        let result = compute_contextual_invoked(&active, "ri", "Unknown language",
-            &Default::default(), &mut CompletionCache::default(), explicit, || false).unwrap();
-        assert_eq!(result.suggestions.first().map(String::as_str), Some("rightPayload"));
+        let result = compute_contextual_invoked(
+            &active,
+            "ri",
+            "Unknown language",
+            &Default::default(),
+            &mut CompletionCache::default(),
+            explicit,
+            || false,
+        )
+        .unwrap();
+        assert_eq!(
+            result.suggestions.first().map(String::as_str),
+            Some("rightPayload")
+        );
     }
 }
 
@@ -152,11 +175,7 @@ fn explicit_completion_supports_one_letter_and_empty_member_prefixes() {
 
 #[test]
 fn automatic_completion_stays_quiet_in_quotes_and_allows_comments() {
-    for text in [
-        "value = \"logg",
-        "value = 'logg",
-        "value = `logg",
-    ] {
+    for text in ["value = \"logg", "value = 'logg", "value = `logg"] {
         let mut active = snapshot(1, text, 0);
         active.cursor_col = text.chars().count();
         assert!(quiet_context(&active), "{text:?}");
@@ -311,7 +330,8 @@ fn benchmark_contextual_hot_path() {
 #[test]
 fn streaming_words_reuse_bounded_scratch_without_leaking_cancelled_tokens() {
     let mut scores = Scores::new(
-        "", "",
+        "",
+        "",
         crate::fuzzy_score::FuzzyWorkBudget::new(scoring::work_limits()),
     );
     let mut scratch = String::with_capacity(MAX_COMPLETION_WORD_BYTES);
@@ -438,7 +458,8 @@ fn cancelled_work_stops_within_a_single_large_line_and_shared_chunk_walk() {
         scan_words(rope.line(0), 0, &mut scores, &mut String::new(), &|| {
             checks.set(checks.get() + 1);
             checks.get() >= 3
-        }).is_none()
+        })
+        .is_none()
     );
     assert_eq!(checks.get(), 3);
     let mut changed = rope.clone();
@@ -685,8 +706,6 @@ fn work_limits_preserve_prefixes_keywords_and_distinguish_deferred_from_rejected
     assert_eq!(result.outcome, VtCompleteWorkOutcome::FuzzyWorkLimited);
     assert_eq!(result.suggestions, ["async", "as_value"]);
     assert!(result.deferred_candidates > 0);
-
-
 }
 
 #[test]
@@ -695,8 +714,14 @@ fn oversized_tokens_are_skipped_and_later_words_are_still_suggested() {
     let mut current = snapshot(1, &text, 0);
     current.cursor_col = 3;
     let result = compute_contextual(
-        &current, "pri", "Plain Text", &Default::default(), &mut CompletionCache::default(), || false,
-    ).unwrap();
+        &current,
+        "pri",
+        "Plain Text",
+        &Default::default(),
+        &mut CompletionCache::default(),
+        || false,
+    )
+    .unwrap();
     assert_eq!(result.outcome, VtCompleteWorkOutcome::FuzzyWorkLimited);
     assert_eq!(result.suggestions, ["print_short"]);
     assert!(result.deferred_candidates > 0);

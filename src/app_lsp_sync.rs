@@ -31,7 +31,10 @@ impl App {
         if self.pending_lsp_syncs.is_empty() {
             return false;
         }
-        if !self.workspace_visible && !self.lsp_format_pending && self.lsp_manager.clients.is_empty() {
+        if !self.workspace_visible
+            && !self.lsp_format_pending
+            && self.lsp_manager.clients.is_empty()
+        {
             return false;
         }
         let connection_state = (
@@ -41,9 +44,15 @@ impl App {
         let mut pending = std::mem::take(&mut self.pending_lsp_syncs);
         let mut deferred = Vec::new();
         for (path, (version, rope)) in pending.drain() {
-            let requested_format = self.lsp_format_pending && self.lsp_format_target_path.as_ref() == Some(&path);
-            if !self.workspace_visible && !requested_format
-                && !self.lsp_manager.clients.iter().any(|client| !client.server_dead && client.handles_file(&path))
+            let requested_format =
+                self.lsp_format_pending && self.lsp_format_target_path.as_ref() == Some(&path);
+            if !self.workspace_visible
+                && !requested_format
+                && !self
+                    .lsp_manager
+                    .clients
+                    .iter()
+                    .any(|client| !client.server_dead && client.handles_file(&path))
             {
                 deferred.push((path, (version, rope)));
                 continue;

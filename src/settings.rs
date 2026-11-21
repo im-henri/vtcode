@@ -13,13 +13,24 @@ pub(crate) const MAX_MINIMAP_WIDTH: u16 = 40;
 const MAX_SETTINGS_BYTES: u64 = 16 * 1024 * 1024;
 
 pub(crate) fn default_files_exclude() -> ExcludePatterns {
-    ["**/.git", "**/.svn", "**/.hg", "**/.jj", "**/.DS_Store", "**/Thumbs.db"]
-        .into_iter().map(|pattern| (pattern.into(), serde_json::Value::Bool(true))).collect()
+    [
+        "**/.git",
+        "**/.svn",
+        "**/.hg",
+        "**/.jj",
+        "**/.DS_Store",
+        "**/Thumbs.db",
+    ]
+    .into_iter()
+    .map(|pattern| (pattern.into(), serde_json::Value::Bool(true)))
+    .collect()
 }
 
 pub(crate) fn default_search_exclude() -> ExcludePatterns {
     ["**/node_modules", "**/bower_components", "**/*.code-search"]
-        .into_iter().map(|pattern| (pattern.into(), serde_json::Value::Bool(true))).collect()
+        .into_iter()
+        .map(|pattern| (pattern.into(), serde_json::Value::Bool(true)))
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -129,14 +140,23 @@ pub struct Settings {
     pub whitespace_mode: Option<String>,
     pub comment_whitespace_mode: Option<String>,
     pub read_only: Option<bool>,
-    #[serde(rename = "diffEditor.renderSideBySide", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "diffEditor.renderSideBySide",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub diff_side_by_side: Option<bool>,
-    #[serde(rename = "diffEditor.diffAlgorithm", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "diffEditor.diffAlgorithm",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub(crate) diff_algorithm: Option<crate::diff_algorithm::DiffAlgorithm>,
 
     // Appearance
     pub theme: Option<String>,
-    #[serde(rename = "workbench.colorCustomizations", skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[serde(
+        rename = "workbench.colorCustomizations",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
     pub workbench_color_customizations: std::collections::BTreeMap<String, serde_json::Value>,
     pub show_explorer: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -162,7 +182,10 @@ pub struct Settings {
     pub status_bar_items: std::collections::BTreeMap<String, bool>,
     pub show_tab_bar: Option<bool>,
     pub enable_preview_tabs: Option<bool>,
-    #[serde(rename = "workbench.editor.mouseBackForwardToNavigate", alias = "mouseBackForwardToNavigate")]
+    #[serde(
+        rename = "workbench.editor.mouseBackForwardToNavigate",
+        alias = "mouseBackForwardToNavigate"
+    )]
     pub mouse_back_forward_to_navigate: Option<bool>,
     pub show_menu_bar: Option<bool>,
     pub zen_mode: Option<bool>,
@@ -301,16 +324,21 @@ pub struct Settings {
     pub search_use_parent_ignore_files: Option<bool>,
     #[serde(alias = "search.followSymlinks")]
     pub search_follow_symlinks: Option<bool>,
-    #[serde(rename = "files.exclude", skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[serde(
+        rename = "files.exclude",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
     pub files_exclude: std::collections::BTreeMap<String, serde_json::Value>,
-    #[serde(rename = "search.exclude", skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[serde(
+        rename = "search.exclude",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
     pub search_exclude: std::collections::BTreeMap<String, serde_json::Value>,
 
     /// Custom file extension → language mappings. Keys are glob patterns like "*.xyz",
     /// "Dockerfile.*", or exact filenames like "Jenkinsfile". Values are language names
     /// like "Python", "JavaScript", etc.
     pub language_associations: Option<HashMap<String, String>>,
-
 }
 
 fn merge_keybinding_layers(
@@ -335,11 +363,19 @@ fn merge_keybinding_layers(
         });
         let mut entry = entry.clone();
         if let Some(index) = matching_index {
-            if entry.when.as_deref().is_some_and(|when| crate::shortcut_context::When::parse(when).is_err()) {
+            if entry
+                .when
+                .as_deref()
+                .is_some_and(|when| crate::shortcut_context::When::parse(when).is_err())
+            {
                 continue;
             }
             let inherited = merged.remove(index);
-            entry.when = entry.when.or_else(|| inherited.when.filter(|when| crate::shortcut_context::When::parse(when).is_ok()));
+            entry.when = entry.when.or_else(|| {
+                inherited
+                    .when
+                    .filter(|when| crate::shortcut_context::When::parse(when).is_ok())
+            });
             entry.key = entry.key.or(inherited.key);
             entry.modifiers = entry.modifiers.or(inherited.modifiers);
             entry.key_code = entry.key_code.or(inherited.key_code);
@@ -449,23 +485,42 @@ impl Settings {
         Settings {
             lsp_enabled: other.lsp_enabled.or(self.lsp_enabled),
             source_control_enabled: other.source_control_enabled.or(self.source_control_enabled),
-            source_control_show_untracked: other.source_control_show_untracked.or(self.source_control_show_untracked),
-            lsp_diagnostic_delay_ms: other.lsp_diagnostic_delay_ms.or(self.lsp_diagnostic_delay_ms),
-            lsp_servers: other.lsp_servers.clone().or_else(|| self.lsp_servers.clone()),
+            source_control_show_untracked: other
+                .source_control_show_untracked
+                .or(self.source_control_show_untracked),
+            lsp_diagnostic_delay_ms: other
+                .lsp_diagnostic_delay_ms
+                .or(self.lsp_diagnostic_delay_ms),
+            lsp_servers: other
+                .lsp_servers
+                .clone()
+                .or_else(|| self.lsp_servers.clone()),
             acp_agents: other.acp_agents.clone().or_else(|| self.acp_agents.clone()),
-            chat_output_detail: other.chat_output_detail.clone().or_else(|| self.chat_output_detail.clone()),
+            chat_output_detail: other
+                .chat_output_detail
+                .clone()
+                .or_else(|| self.chat_output_detail.clone()),
             chat_thinking_expanded: other.chat_thinking_expanded.or(self.chat_thinking_expanded),
             tab_size: other.tab_size.or(self.tab_size),
             use_tabs: other.use_tabs.or(self.use_tabs),
             word_wrap: other.word_wrap.or(self.word_wrap),
             word_wrap_column: other.word_wrap_column.or(self.word_wrap_column),
-            whitespace_mode: other.whitespace_mode.clone().or_else(|| self.whitespace_mode.clone()),
-            comment_whitespace_mode: other.comment_whitespace_mode.clone().or_else(|| self.comment_whitespace_mode.clone()),
+            whitespace_mode: other
+                .whitespace_mode
+                .clone()
+                .or_else(|| self.whitespace_mode.clone()),
+            comment_whitespace_mode: other
+                .comment_whitespace_mode
+                .clone()
+                .or_else(|| self.comment_whitespace_mode.clone()),
             read_only: other.read_only.or(self.read_only),
             diff_side_by_side: other.diff_side_by_side.or(self.diff_side_by_side),
             diff_algorithm: other.diff_algorithm.or(self.diff_algorithm),
             theme: other.theme.clone().or_else(|| self.theme.clone()),
-            workbench_color_customizations: crate::theme_customizations::merge(&self.workbench_color_customizations, &other.workbench_color_customizations),
+            workbench_color_customizations: crate::theme_customizations::merge(
+                &self.workbench_color_customizations,
+                &other.workbench_color_customizations,
+            ),
             show_explorer: other.show_explorer.or(self.show_explorer),
             sidebar_auto_hide: other.sidebar_auto_hide.or(self.sidebar_auto_hide),
             show_open_editors: other.show_open_editors.or(self.show_open_editors),
@@ -479,7 +534,10 @@ impl Settings {
             sidebar_right: other.sidebar_right.or(self.sidebar_right),
             explorer_width: other.explorer_width.or(self.explorer_width),
             show_activity_bar: other.show_activity_bar.or(self.show_activity_bar),
-            activity_bar_position: other.activity_bar_position.clone().or_else(|| self.activity_bar_position.clone()),
+            activity_bar_position: other
+                .activity_bar_position
+                .clone()
+                .or_else(|| self.activity_bar_position.clone()),
             show_breadcrumbs: other.show_breadcrumbs.or(self.show_breadcrumbs),
             show_status_bar: other.show_status_bar.or(self.show_status_bar),
             status_bar_items: {
@@ -492,18 +550,26 @@ impl Settings {
             },
             show_tab_bar: other.show_tab_bar.or(self.show_tab_bar),
             enable_preview_tabs: other.enable_preview_tabs.or(self.enable_preview_tabs),
-            mouse_back_forward_to_navigate: other.mouse_back_forward_to_navigate.or(self.mouse_back_forward_to_navigate),
+            mouse_back_forward_to_navigate: other
+                .mouse_back_forward_to_navigate
+                .or(self.mouse_back_forward_to_navigate),
             show_menu_bar: other.show_menu_bar.or(self.show_menu_bar),
             zen_mode: other.zen_mode.or(self.zen_mode),
             indent_rainbow: other.indent_rainbow.or(self.indent_rainbow),
             color_preview: other.color_preview.or(self.color_preview),
-            bracket_pair_colorization: other.bracket_pair_colorization.or(self.bracket_pair_colorization),
-            highlight_words_across_tabs: other.highlight_words_across_tabs.or(self.highlight_words_across_tabs),
+            bracket_pair_colorization: other
+                .bracket_pair_colorization
+                .or(self.bracket_pair_colorization),
+            highlight_words_across_tabs: other
+                .highlight_words_across_tabs
+                .or(self.highlight_words_across_tabs),
             error_lens: other.error_lens.or(self.error_lens),
             hover_enabled: other.hover_enabled.or(self.hover_enabled),
             vim_mode: other.vim_mode.or(self.vim_mode),
             vim_use_ctrl_keys: other.vim_use_ctrl_keys.or(self.vim_use_ctrl_keys),
-            vim_use_system_clipboard: other.vim_use_system_clipboard.or(self.vim_use_system_clipboard),
+            vim_use_system_clipboard: other
+                .vim_use_system_clipboard
+                .or(self.vim_use_system_clipboard),
             vimrc_path: other.vimrc_path.clone().or_else(|| self.vimrc_path.clone()),
             quick_suggestions: other.quick_suggestions.or(self.quick_suggestions),
             inlay_hints: other.inlay_hints.or(self.inlay_hints),
@@ -514,12 +580,17 @@ impl Settings {
             sticky_scroll_max: other.sticky_scroll_max.or(self.sticky_scroll_max),
             scroll_past_end: other.scroll_past_end.or(self.scroll_past_end),
             focus_mode: other.focus_mode.or(self.focus_mode),
-            show_word_count: other.status_bar_items.get("word_count").copied()
+            show_word_count: other
+                .status_bar_items
+                .get("word_count")
+                .copied()
                 .or(other.show_word_count)
                 .or_else(|| self.status_bar_items.get("word_count").copied())
                 .or(self.show_word_count),
             screencast_mode: other.screencast_mode.or(self.screencast_mode),
-            max_global_search_results: other.max_global_search_results.or(self.max_global_search_results),
+            max_global_search_results: other
+                .max_global_search_results
+                .or(self.max_global_search_results),
             large_file_threshold_mb: other
                 .large_file_threshold_mb
                 .or(self.large_file_threshold_mb),
@@ -529,15 +600,22 @@ impl Settings {
             rulers: other.rulers.clone().or_else(|| self.rulers.clone()),
             trim_trailing_on_save: other.trim_trailing_on_save.or(self.trim_trailing_on_save),
             format_on_save: other.format_on_save.or(self.format_on_save),
-            formatters: if self.formatters.is_none() && other.formatters.is_none() { None } else {
+            formatters: if self.formatters.is_none() && other.formatters.is_none() {
+                None
+            } else {
                 let mut map = self.formatters.clone().unwrap_or_default();
                 map.extend(other.formatters.clone().unwrap_or_default());
                 Some(map)
             },
             insert_final_newline: other.insert_final_newline.or(self.insert_final_newline),
-            cursor_style: other.cursor_style.clone().or_else(|| self.cursor_style.clone()),
+            cursor_style: other
+                .cursor_style
+                .clone()
+                .or_else(|| self.cursor_style.clone()),
             cursor_blinking: other.cursor_blinking.or(self.cursor_blinking),
-            cursor_surrounding_lines: other.cursor_surrounding_lines.or(self.cursor_surrounding_lines),
+            cursor_surrounding_lines: other
+                .cursor_surrounding_lines
+                .or(self.cursor_surrounding_lines),
             auto_save: other.auto_save.clone().or_else(|| self.auto_save.clone()),
             auto_save_delay: other.auto_save_delay.or(self.auto_save_delay),
             animation_cursor_smear: other.animation_cursor_smear.or(self.animation_cursor_smear),
@@ -545,10 +623,16 @@ impl Settings {
                 .animation_cursor_smear_when_typing
                 .or(self.animation_cursor_smear_when_typing),
             animation_copy: other.animation_copy.or(self.animation_copy),
-            animation_copy_duration_ms: other.animation_copy_duration_ms.or(self.animation_copy_duration_ms),
+            animation_copy_duration_ms: other
+                .animation_copy_duration_ms
+                .or(self.animation_copy_duration_ms),
             animation_cursor_fire: other.animation_cursor_fire.or(self.animation_cursor_fire),
-            animation_whitespace_reveal: other.animation_whitespace_reveal.or(self.animation_whitespace_reveal),
-            animation_scope_connector: other.animation_scope_connector.or(self.animation_scope_connector),
+            animation_whitespace_reveal: other
+                .animation_whitespace_reveal
+                .or(self.animation_whitespace_reveal),
+            animation_scope_connector: other
+                .animation_scope_connector
+                .or(self.animation_scope_connector),
             animation_tab_slide: other.animation_tab_slide.or(self.animation_tab_slide),
             animation_duration_ms: other.animation_duration_ms.or(self.animation_duration_ms),
             animation_fps: other.animation_fps.or(self.animation_fps),
@@ -594,7 +678,9 @@ impl Settings {
                 .clone()
                 .or_else(|| self.animation_scope_bubble_disabled_languages.clone()),
             animation_scope_bubble_languages: crate::scope_bubble_config::merge(
-                &self.animation_scope_bubble_languages, &other.animation_scope_bubble_languages),
+                &self.animation_scope_bubble_languages,
+                &other.animation_scope_bubble_languages,
+            ),
             animation_scope_bubble_glow: other
                 .animation_scope_bubble_glow
                 .or(self.animation_scope_bubble_glow),
@@ -607,18 +693,41 @@ impl Settings {
             search_regex: other.search_regex.or(self.search_regex),
             search_whole_word: other.search_whole_word.or(self.search_whole_word),
             search_preserve_case: other.search_preserve_case.or(self.search_preserve_case),
-            global_search_case_sensitive: other.global_search_case_sensitive.or(self.global_search_case_sensitive),
+            global_search_case_sensitive: other
+                .global_search_case_sensitive
+                .or(self.global_search_case_sensitive),
             global_search_regex: other.global_search_regex.or(self.global_search_regex),
-            global_search_whole_word: other.global_search_whole_word.or(self.global_search_whole_word),
-            global_search_preserve_case: other.global_search_preserve_case.or(self.global_search_preserve_case),
+            global_search_whole_word: other
+                .global_search_whole_word
+                .or(self.global_search_whole_word),
+            global_search_preserve_case: other
+                .global_search_preserve_case
+                .or(self.global_search_preserve_case),
             search_debounce_ms: other.search_debounce_ms.or(self.search_debounce_ms),
-            search_use_ignore_files: other.search_use_ignore_files.or(self.search_use_ignore_files),
-            search_use_global_ignore_files: other.search_use_global_ignore_files.or(self.search_use_global_ignore_files),
-            search_use_parent_ignore_files: other.search_use_parent_ignore_files.or(self.search_use_parent_ignore_files),
+            search_use_ignore_files: other
+                .search_use_ignore_files
+                .or(self.search_use_ignore_files),
+            search_use_global_ignore_files: other
+                .search_use_global_ignore_files
+                .or(self.search_use_global_ignore_files),
+            search_use_parent_ignore_files: other
+                .search_use_parent_ignore_files
+                .or(self.search_use_parent_ignore_files),
             search_follow_symlinks: other.search_follow_symlinks.or(self.search_follow_symlinks),
-            files_exclude: self.files_exclude.iter().chain(&other.files_exclude).map(|(key, value)| (key.clone(), value.clone())).collect(),
-            search_exclude: self.search_exclude.iter().chain(&other.search_exclude).map(|(key, value)| (key.clone(), value.clone())).collect(),
-            language_associations: match (&other.language_associations, &self.language_associations) {
+            files_exclude: self
+                .files_exclude
+                .iter()
+                .chain(&other.files_exclude)
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            search_exclude: self
+                .search_exclude
+                .iter()
+                .chain(&other.search_exclude)
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            language_associations: match (&other.language_associations, &self.language_associations)
+            {
                 (Some(o), Some(s)) => {
                     let mut merged = s.clone();
                     merged.extend(o.iter().map(|(k, v)| (k.clone(), v.clone())));
@@ -637,10 +746,14 @@ impl Settings {
             *v = (*v).clamp(1, 8);
         }
         if let Some(ref mut v) = self.panel_height {
-            if *v < 3 { *v = 3; }
+            if *v < 3 {
+                *v = 3;
+            }
         }
         if let Some(ref mut v) = self.explorer_width {
-            if *v < 15 { *v = 15; }
+            if *v < 15 {
+                *v = 15;
+            }
         }
         if let Some(ref mut v) = self.minimap_width {
             *v = (*v).clamp(MIN_MINIMAP_WIDTH, MAX_MINIMAP_WIDTH);
@@ -673,17 +786,26 @@ impl Settings {
                 .map(|position| position.setting_value().to_owned());
         }
         if let Some(ref v) = self.whitespace_mode {
-            if !matches!(v.as_str(), "selection" | "all" | "none" | "boundary" | "trailing") {
+            if !matches!(
+                v.as_str(),
+                "selection" | "all" | "none" | "boundary" | "trailing"
+            ) {
                 self.whitespace_mode = None;
             }
         }
         if let Some(ref v) = self.comment_whitespace_mode {
-            if !matches!(v.as_str(), "inherit" | "selection" | "all" | "none" | "boundary" | "trailing") {
+            if !matches!(
+                v.as_str(),
+                "inherit" | "selection" | "all" | "none" | "boundary" | "trailing"
+            ) {
                 self.comment_whitespace_mode = None;
             }
         }
         if let Some(ref v) = self.auto_save {
-            if !matches!(v.as_str(), "off" | "afterDelay" | "onFocusChange" | "onWindowChange") {
+            if !matches!(
+                v.as_str(),
+                "off" | "afterDelay" | "onFocusChange" | "onWindowChange"
+            ) {
                 self.auto_save = None;
             }
         }
@@ -696,7 +818,9 @@ impl Settings {
         if let Some(ref mut v) = self.animation_duration_ms {
             *v = clamp_animation_duration_ms(*v);
         }
-        if let Some(ref mut v) = self.animation_copy_duration_ms { *v = clamp_animation_duration_ms(*v); }
+        if let Some(ref mut v) = self.animation_copy_duration_ms {
+            *v = clamp_animation_duration_ms(*v);
+        }
         if let Some(ref mut v) = self.animation_fps {
             *v = (*v).clamp(15, 120);
         }
@@ -793,7 +917,8 @@ fn read_text(path: &Path) -> io::Result<Option<(String, fs::Metadata)>> {
         return Err(settings_too_large());
     }
     let mut text = String::with_capacity(metadata.len() as usize);
-    file.take(MAX_SETTINGS_BYTES + 1).read_to_string(&mut text)?;
+    file.take(MAX_SETTINGS_BYTES + 1)
+        .read_to_string(&mut text)?;
     if text.len() as u64 > MAX_SETTINGS_BYTES {
         return Err(settings_too_large());
     }
@@ -850,13 +975,14 @@ fn update_document(
     lock_name.push(".lock");
     fs::create_dir_all(parent)?;
     let lock = crate::fs_ops::open_lock_file(&parent.join(lock_name))?;
-    let _lock = vtcode::file_source::ExclusiveFileLock::try_acquire(lock).map_err(|error| match error {
-        fs::TryLockError::WouldBlock => io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "Another VTCode window is saving these settings",
-        ),
-        fs::TryLockError::Error(error) => error,
-    })?;
+    let _lock =
+        vtcode::file_source::ExclusiveFileLock::try_acquire(lock).map_err(|error| match error {
+            fs::TryLockError::WouldBlock => io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "Another VTCode window is saving these settings",
+            ),
+            fs::TryLockError::Error(error) => error,
+        })?;
 
     let before = read_text(&target)?;
     let mut document = match &before {
@@ -964,8 +1090,12 @@ pub(crate) fn save_changes(
     update_document(path, |document, exists| {
         if !exists {
             // A scope can have in-memory overrides before its first save.
-            document.extend(previous.iter().filter(|(_, value)| !value.is_null())
-                .map(|(key, value)| (key.clone(), value.clone())));
+            document.extend(
+                previous
+                    .iter()
+                    .filter(|(_, value)| !value.is_null())
+                    .map(|(key, value)| (key.clone(), value.clone())),
+            );
         }
         apply_changes(document, &previous, &updated, true);
         Ok(())
@@ -1092,7 +1222,10 @@ mod tests {
             document.insert("tabSize".into(), 2.into());
             std::fs::write(&path, external)
         });
-        assert_eq!(result.unwrap_err().to_string(), "Settings changed on disk while saving");
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Settings changed on disk while saving"
+        );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), external);
     }
 
@@ -1105,8 +1238,12 @@ mod tests {
         let mut updated = previous.clone();
         updated.max_global_search_results = Some(40);
         super::save_changes(&path, &previous, &updated).unwrap();
-        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(saved, serde_json::json!({"maxGlobalSearchResults": 40, "external": 7}));
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            saved,
+            serde_json::json!({"maxGlobalSearchResults": 40, "external": 7})
+        );
     }
 
     #[cfg(unix)]
@@ -1126,17 +1263,35 @@ mod tests {
     fn diagnostic_delay_roundtrips_inherits_and_clamps_without_losing_zero() {
         let global: Settings = serde_json::from_value(serde_json::json!({
             "lspDiagnosticDelayMs": 1_500
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(global.lsp_diagnostic_delay_ms, Some(1_500));
-        assert_eq!(serde_json::to_value(&global).unwrap()["lspDiagnosticDelayMs"], 1_500);
-        assert_eq!(global.merge(&Settings::default()).lsp_diagnostic_delay_ms, Some(1_500));
-        let mut workspace = Settings { lsp_diagnostic_delay_ms: Some(0), ..Default::default() };
+        assert_eq!(
+            serde_json::to_value(&global).unwrap()["lspDiagnosticDelayMs"],
+            1_500
+        );
+        assert_eq!(
+            global.merge(&Settings::default()).lsp_diagnostic_delay_ms,
+            Some(1_500)
+        );
+        let mut workspace = Settings {
+            lsp_diagnostic_delay_ms: Some(0),
+            ..Default::default()
+        };
         workspace.validate();
         assert_eq!(global.merge(&workspace).lsp_diagnostic_delay_ms, Some(0));
         workspace.lsp_diagnostic_delay_ms = Some(u64::MAX);
         workspace.validate();
-        assert_eq!(workspace.lsp_diagnostic_delay_ms, Some(crate::lsp::diagnostics::MAX_DELAY_MS));
-        assert!(serde_json::to_value(Settings::default()).unwrap().get("lspDiagnosticDelayMs").is_none());
+        assert_eq!(
+            workspace.lsp_diagnostic_delay_ms,
+            Some(crate::lsp::diagnostics::MAX_DELAY_MS)
+        );
+        assert!(
+            serde_json::to_value(Settings::default())
+                .unwrap()
+                .get("lspDiagnosticDelayMs")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1150,7 +1305,8 @@ mod tests {
         base_json["animationFps"] = serde_json::json!(30);
         base_json["animationIntensity"] = serde_json::json!(70);
         let base: Settings = serde_json::from_value(base_json.clone()).unwrap();
-        let decoded: Settings = serde_json::from_str(&serde_json::to_string(&base).unwrap()).unwrap();
+        let decoded: Settings =
+            serde_json::from_str(&serde_json::to_string(&base).unwrap()).unwrap();
         assert_eq!(decoded, base);
         let empty = serde_json::to_value(Settings::default()).unwrap();
         for effect in AnimationEffect::ALL {
@@ -1177,7 +1333,8 @@ mod tests {
             "animationMinimapPulse": true,
             "animationDurationMs": 310,
             "tabSize": 8,
-        })).unwrap();
+        }))
+        .unwrap();
         let mut effective = crate::animation_config::AnimationSettings::default();
         effective.apply(&old);
         let defaults = crate::animation_config::AnimationSettings::default();
@@ -1187,7 +1344,12 @@ mod tests {
         assert_eq!(effective.duration_ms, 310);
         assert_eq!(old.tab_size, Some(8));
         let saved = serde_json::to_value(old).unwrap();
-        for key in ["animationCursorGlow", "animationTypingParticles", "animationSaveShimmer", "animationMinimapPulse"] {
+        for key in [
+            "animationCursorGlow",
+            "animationTypingParticles",
+            "animationSaveShimmer",
+            "animationMinimapPulse",
+        ] {
             assert!(saved.get(key).is_none());
         }
     }
@@ -1305,7 +1467,10 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         assert_eq!(json["animationScopeBubbleTight"], false);
         assert_eq!(json["animationScopeBubbleFill"], true);
-        assert_eq!(json["animationScopeBubbleDisabledLanguages"], serde_json::json!(["Python", "cpp"]));
+        assert_eq!(
+            json["animationScopeBubbleDisabledLanguages"],
+            serde_json::json!(["Python", "cpp"])
+        );
         assert_eq!(json["animationScopeBubbleGlow"], true);
         assert_eq!(json["animationScopeBubbleGlowDurationMs"], 2100);
         assert!(json.get("animationDurationMs").is_none());
@@ -1331,7 +1496,11 @@ mod tests {
 
     #[test]
     fn merge_none_does_not_override() {
-        let base = Settings { tab_size: Some(4), theme: Some("dark".to_string()), ..Default::default() };
+        let base = Settings {
+            tab_size: Some(4),
+            theme: Some("dark".to_string()),
+            ..Default::default()
+        };
         let other = Settings::default();
         let merged = base.merge(&other);
         assert_eq!(merged.tab_size, Some(4));
@@ -1345,7 +1514,9 @@ mod tests {
         global.status_bar_items.insert("language".into(), false);
         let mut workspace = Settings::default();
         workspace.status_bar_items.insert("encoding".into(), false);
-        workspace.status_bar_items.insert("line_ending".into(), true);
+        workspace
+            .status_bar_items
+            .insert("line_ending".into(), true);
         let merged = global.merge(&workspace);
         assert_eq!(merged.status_bar_items.get("encoding"), Some(&false));
         assert_eq!(merged.status_bar_items.get("language"), Some(&false));
@@ -1353,14 +1524,27 @@ mod tests {
         let json = serde_json::to_string(&merged).unwrap();
         let restored: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.status_bar_items, merged.status_bar_items);
-        assert!(!serde_json::to_value(Settings::default()).unwrap()
-            .as_object().unwrap().contains_key("statusBarItems"));
+        assert!(
+            !serde_json::to_value(Settings::default())
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("statusBarItems")
+        );
     }
 
     #[test]
     fn merge_mixed_fields() {
-        let base = Settings { tab_size: Some(4), use_tabs: Some(true), ..Default::default() };
-        let other = Settings { use_tabs: Some(false), word_wrap: Some(true), ..Default::default() };
+        let base = Settings {
+            tab_size: Some(4),
+            use_tabs: Some(true),
+            ..Default::default()
+        };
+        let other = Settings {
+            use_tabs: Some(false),
+            word_wrap: Some(true),
+            ..Default::default()
+        };
         let merged = base.merge(&other);
         assert_eq!(merged.tab_size, Some(4)); // kept from base
         assert_eq!(merged.use_tabs, Some(false)); // overridden by other
@@ -1419,7 +1603,11 @@ mod tests {
         let dir = std::env::temp_dir().join("vtcode_test_settings_roundtrip");
         let _ = std::fs::create_dir_all(&dir); // Error OK: dir may already exist
         let path = dir.join("settings.json");
-        let settings = Settings { tab_size: Some(8), use_tabs: Some(true), ..Default::default() };
+        let settings = Settings {
+            tab_size: Some(8),
+            use_tabs: Some(true),
+            ..Default::default()
+        };
         super::save_to_file(&path, &settings).unwrap();
         let loaded = super::load_from_file(&path);
         assert_eq!(loaded.tab_size, Some(8));
@@ -1438,7 +1626,11 @@ mod tests {
     #[test]
     fn loading_missing_scope_is_read_only_until_first_save() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("project").join(".vtcode").join("settings.json");
+        let path = dir
+            .path()
+            .join("project")
+            .join(".vtcode")
+            .join("settings.json");
 
         let loaded = super::load_from_file(&path);
         assert_eq!(loaded, Settings::default());
@@ -1478,18 +1670,24 @@ mod tests {
         let mut base_map = HashMap::new();
         base_map.insert("*.xyz".to_string(), "Python".to_string());
         base_map.insert("*.abc".to_string(), "Java".to_string());
-        let base = Settings { language_associations: Some(base_map), ..Default::default() };
+        let base = Settings {
+            language_associations: Some(base_map),
+            ..Default::default()
+        };
 
         let mut other_map = HashMap::new();
         other_map.insert("*.xyz".to_string(), "Ruby".to_string()); // override
-        other_map.insert("*.def".to_string(), "Go".to_string());   // new
-        let other = Settings { language_associations: Some(other_map), ..Default::default() };
+        other_map.insert("*.def".to_string(), "Go".to_string()); // new
+        let other = Settings {
+            language_associations: Some(other_map),
+            ..Default::default()
+        };
 
         let merged = base.merge(&other);
         let assoc = merged.language_associations.unwrap();
-        assert_eq!(assoc.get("*.xyz").unwrap(), "Ruby");  // overridden
-        assert_eq!(assoc.get("*.abc").unwrap(), "Java");  // kept
-        assert_eq!(assoc.get("*.def").unwrap(), "Go");    // new
+        assert_eq!(assoc.get("*.xyz").unwrap(), "Ruby"); // overridden
+        assert_eq!(assoc.get("*.abc").unwrap(), "Java"); // kept
+        assert_eq!(assoc.get("*.def").unwrap(), "Go"); // new
     }
 
     #[test]
@@ -1519,10 +1717,12 @@ mod tests {
             "search.maxResults": 50_000,
             "files.exclude": { "**/generated": true },
             "search.exclude": { "**/node_modules": false, "**/cache": true }
-        })).unwrap();
+        }))
+        .unwrap();
         let workspace: Settings = serde_json::from_value(serde_json::json!({
             "search.exclude": { "**/cache": false }
-        })).unwrap();
+        }))
+        .unwrap();
         let merged = global.merge(&workspace);
         assert_eq!(merged.search_use_ignore_files, Some(false));
         assert_eq!(merged.search_use_parent_ignore_files, Some(true));
@@ -1536,11 +1736,17 @@ mod tests {
 
     #[test]
     fn validate_tab_size_clamps() {
-        let mut s = Settings { tab_size: Some(0), ..Default::default() };
+        let mut s = Settings {
+            tab_size: Some(0),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.tab_size, Some(1));
 
-        let mut s = Settings { tab_size: Some(99), ..Default::default() };
+        let mut s = Settings {
+            tab_size: Some(99),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.tab_size, Some(8));
     }
@@ -1567,26 +1773,50 @@ mod tests {
 
     #[test]
     fn validate_whitespace_mode_rejects_invalid() {
-        let mut s = Settings { whitespace_mode: Some("invalid".to_string()), ..Default::default() };
+        let mut s = Settings {
+            whitespace_mode: Some("invalid".to_string()),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.whitespace_mode, None);
 
-        let mut s = Settings { whitespace_mode: Some("all".to_string()), ..Default::default() };
+        let mut s = Settings {
+            whitespace_mode: Some("all".to_string()),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.whitespace_mode, Some("all".to_string()));
     }
 
     #[test]
     fn comment_whitespace_modes_validate_and_inherit_overrides_a_global_choice() {
-        for mode in ["inherit", "none", "boundary", "selection", "trailing", "all", "invalid"] {
+        for mode in [
+            "inherit",
+            "none",
+            "boundary",
+            "selection",
+            "trailing",
+            "all",
+            "invalid",
+        ] {
             let mut settings: Settings = serde_json::from_value(serde_json::json!({
                 "commentWhitespaceMode": mode,
-            })).unwrap();
+            }))
+            .unwrap();
             settings.validate();
-            assert_eq!(settings.comment_whitespace_mode.as_deref(), (mode != "invalid").then_some(mode));
+            assert_eq!(
+                settings.comment_whitespace_mode.as_deref(),
+                (mode != "invalid").then_some(mode)
+            );
         }
-        let global = Settings { comment_whitespace_mode: Some("all".into()), ..Default::default() };
-        let workspace = Settings { comment_whitespace_mode: Some("inherit".into()), ..Default::default() };
+        let global = Settings {
+            comment_whitespace_mode: Some("all".into()),
+            ..Default::default()
+        };
+        let workspace = Settings {
+            comment_whitespace_mode: Some("inherit".into()),
+            ..Default::default()
+        };
         let merged = global.merge(&workspace);
         let saved = serde_json::to_string(&merged).unwrap();
         let loaded: Settings = serde_json::from_str(&saved).unwrap();
@@ -1595,40 +1825,61 @@ mod tests {
 
     #[test]
     fn validate_auto_save_rejects_invalid() {
-        let mut s = Settings { auto_save: Some("always".to_string()), ..Default::default() };
+        let mut s = Settings {
+            auto_save: Some("always".to_string()),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.auto_save, None);
 
-        let mut s = Settings { auto_save: Some("afterDelay".to_string()), ..Default::default() };
+        let mut s = Settings {
+            auto_save: Some("afterDelay".to_string()),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.auto_save, Some("afterDelay".to_string()));
     }
 
     #[test]
     fn validate_auto_save_delay_clamps() {
-        let mut s = Settings { auto_save_delay: Some(10), ..Default::default() };
+        let mut s = Settings {
+            auto_save_delay: Some(10),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.auto_save_delay, Some(100));
 
-        let mut s = Settings { auto_save_delay: Some(99_999_999), ..Default::default() };
+        let mut s = Settings {
+            auto_save_delay: Some(99_999_999),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.auto_save_delay, Some(3_600_000));
     }
 
     #[test]
     fn validate_scroll_speed_clamps() {
-        let mut s = Settings { scroll_speed: Some(0), ..Default::default() };
+        let mut s = Settings {
+            scroll_speed: Some(0),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.scroll_speed, Some(1));
 
-        let mut s = Settings { scroll_speed: Some(100), ..Default::default() };
+        let mut s = Settings {
+            scroll_speed: Some(100),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.scroll_speed, Some(10));
     }
 
     #[test]
     fn validate_explorer_width_min() {
-        let mut s = Settings { explorer_width: Some(5), ..Default::default() };
+        let mut s = Settings {
+            explorer_width: Some(5),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.explorer_width, Some(15));
     }
@@ -1647,36 +1898,54 @@ mod tests {
 
     #[test]
     fn validate_sticky_scroll_max_clamps() {
-        let mut s = Settings { sticky_scroll_max: Some(0), ..Default::default() };
+        let mut s = Settings {
+            sticky_scroll_max: Some(0),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.sticky_scroll_max, Some(1));
 
-        let mut s = Settings { sticky_scroll_max: Some(50), ..Default::default() };
+        let mut s = Settings {
+            sticky_scroll_max: Some(50),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.sticky_scroll_max, Some(5));
     }
 
     #[test]
     fn validate_word_wrap_column_clamps() {
-        let mut s = Settings { word_wrap_column: Some(10), ..Default::default() };
+        let mut s = Settings {
+            word_wrap_column: Some(10),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.word_wrap_column, Some(40));
 
-        let mut s = Settings { word_wrap_column: Some(1000), ..Default::default() };
+        let mut s = Settings {
+            word_wrap_column: Some(1000),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.word_wrap_column, Some(500));
     }
 
     #[test]
     fn validate_word_wrap_column_preserves_viewport_zero() {
-        let mut s = Settings { word_wrap_column: Some(0), ..Default::default() };
+        let mut s = Settings {
+            word_wrap_column: Some(0),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.word_wrap_column, Some(0));
     }
 
     #[test]
     fn validate_rulers_filters_invalid_and_truncates() {
-        let mut s = Settings { rulers: Some(vec![0, 80, 120, 1500]), ..Default::default() };
+        let mut s = Settings {
+            rulers: Some(vec![0, 80, 120, 1500]),
+            ..Default::default()
+        };
         s.validate();
         let rulers = s.rulers.unwrap();
         assert_eq!(rulers, vec![80, 120]); // 0 and 1500 filtered out
@@ -1691,7 +1960,10 @@ mod tests {
 
     #[test]
     fn validate_cursor_surrounding_lines_max() {
-        let mut s = Settings { cursor_surrounding_lines: Some(100), ..Default::default() };
+        let mut s = Settings {
+            cursor_surrounding_lines: Some(100),
+            ..Default::default()
+        };
         s.validate();
         assert_eq!(s.cursor_surrounding_lines, Some(50));
     }
@@ -1701,17 +1973,29 @@ mod tests {
         use std::collections::HashMap;
         let mut map = HashMap::new();
         map.insert("*.py".to_string(), "Python".to_string());
-        let base = Settings { language_associations: Some(map), ..Default::default() };
+        let base = Settings {
+            language_associations: Some(map),
+            ..Default::default()
+        };
         let other = Settings::default();
         let merged = base.merge(&other);
-        assert_eq!(merged.language_associations.unwrap().get("*.py").unwrap(), "Python");
+        assert_eq!(
+            merged.language_associations.unwrap().get("*.py").unwrap(),
+            "Python"
+        );
 
         let base2 = Settings::default();
         let mut map2 = HashMap::new();
         map2.insert("*.rs".to_string(), "Rust".to_string());
-        let other2 = Settings { language_associations: Some(map2), ..Default::default() };
+        let other2 = Settings {
+            language_associations: Some(map2),
+            ..Default::default()
+        };
         let merged2 = base2.merge(&other2);
-        assert_eq!(merged2.language_associations.unwrap().get("*.rs").unwrap(), "Rust");
+        assert_eq!(
+            merged2.language_associations.unwrap().get("*.rs").unwrap(),
+            "Rust"
+        );
     }
 
     #[test]
@@ -1736,7 +2020,12 @@ mod tests {
         let settings: Settings =
             serde_json::from_str(r#"{"smoothScrolling":true,"scrollSpeed":7}"#).unwrap();
         assert_eq!(settings.scroll_speed, Some(7));
-        assert!(serde_json::to_value(settings).unwrap().get("smoothScrolling").is_none());
+        assert!(
+            serde_json::to_value(settings)
+                .unwrap()
+                .get("smoothScrolling")
+                .is_none()
+        );
     }
 
     #[test]
@@ -1751,8 +2040,14 @@ mod tests {
             key: Some("ctrl+q".to_string()),
             ..Default::default()
         };
-        let base = Settings { keybindings: Some(vec![kb1]), ..Default::default() };
-        let other = Settings { keybindings: Some(vec![kb2]), ..Default::default() };
+        let base = Settings {
+            keybindings: Some(vec![kb1]),
+            ..Default::default()
+        };
+        let other = Settings {
+            keybindings: Some(vec![kb2]),
+            ..Default::default()
+        };
         let merged = base.merge(&other);
         let kbs = merged.keybindings.unwrap();
         assert_eq!(kbs.len(), 2);
@@ -1793,7 +2088,10 @@ mod tests {
         map.insert(String::new(), "Python".to_string());
         map.insert("*.rs".to_string(), String::new());
         map.insert("*.js".to_string(), "JavaScript".to_string());
-        let mut s = Settings { language_associations: Some(map), ..Default::default() };
+        let mut s = Settings {
+            language_associations: Some(map),
+            ..Default::default()
+        };
         s.validate();
         let assoc = s.language_associations.unwrap();
         assert_eq!(assoc.len(), 1);
@@ -1807,7 +2105,10 @@ mod tests {
         let long_pattern = "x".repeat(101);
         map.insert(long_pattern, "Python".to_string());
         map.insert("*.rs".to_string(), "Rust".to_string());
-        let mut s = Settings { language_associations: Some(map), ..Default::default() };
+        let mut s = Settings {
+            language_associations: Some(map),
+            ..Default::default()
+        };
         s.validate();
         let assoc = s.language_associations.unwrap();
         assert_eq!(assoc.len(), 1);

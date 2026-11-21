@@ -112,9 +112,15 @@ impl Layout {
             minimap: app.minimap_area,
             scrollbar: app.scrollbar_area,
             horizontal_scrollbar: app.h_scrollbar_area,
-            inline_blame: app.editor().and_then(|editor| editor.blame.inline_annotation),
-            inline_blame_candidate: app.editor().and_then(|editor| editor.blame.inline_candidate),
-            fold_buttons: app.editor().map_or_else(Default::default, |editor| editor.fold_buttons.clone()),
+            inline_blame: app
+                .editor()
+                .and_then(|editor| editor.blame.inline_annotation),
+            inline_blame_candidate: app
+                .editor()
+                .and_then(|editor| editor.blame.inline_candidate),
+            fold_buttons: app
+                .editor()
+                .map_or_else(Default::default, |editor| editor.fold_buttons.clone()),
             editor: app.editor_area,
             diff_split: app.diff_split_area,
             diff_divider: app.diff_divider_area,
@@ -196,7 +202,9 @@ impl AnimationFrameCache {
                 self.spare.push(scene.underlay);
                 if let Paint::Editor { geometry, .. } = scene.paint {
                     #[cfg(test)]
-                    if REFERENCE_FRESH_GEOMETRY.get() { continue; }
+                    if REFERENCE_FRESH_GEOMETRY.get() {
+                        continue;
+                    }
                     self.previous_geometry.push((scene.key.id, geometry));
                 }
             }
@@ -307,7 +315,8 @@ pub(crate) fn finish_editor(
     gutter: Rect,
     tooltips: bool,
 ) {
-    if !app.copy_animation.active() && (app.animation_settings.any_enabled() || app.loading.active())
+    if !app.copy_animation.active()
+        && (app.animation_settings.any_enabled() || app.loading.active())
         && !app.should_render_diff_for_active_editor()
         && let Some(area) = app.animation_frame_cache.capture_area
         && !area.is_empty()
@@ -318,15 +327,21 @@ pub(crate) fn finish_editor(
         let underlay = app.animation_frame_cache.underlay(frame, area);
         geometry.retain_validated(frame.buffer_mut());
         let cache = &mut app.animation_frame_cache;
-        if let Some(index) = cache.previous_geometry.iter().position(|(id, old)| {
-            *id == key.id && old.area == geometry.area
-        }) {
+        if let Some(index) = cache
+            .previous_geometry
+            .iter()
+            .position(|(id, old)| *id == key.id && old.area == geometry.area)
+        {
             let (_, mut old) = cache.previous_geometry.swap_remove(index);
             let _reused = geometry.reuse_projection(&mut old);
             #[cfg(test)]
-            { cache.projection_reuses += usize::from(_reused); }
+            {
+                cache.projection_reuses += usize::from(_reused);
+            }
             old.reset(Rect::default(), false);
-            if cache.spare_geometry.len() < MAX_SCENES { cache.spare_geometry.push(old); }
+            if cache.spare_geometry.len() < MAX_SCENES {
+                cache.spare_geometry.push(old);
+            }
         }
         crate::ui_editor_animations::draw(frame, app, &geometry, gutter);
         let scene = Scene {
@@ -359,7 +374,8 @@ pub(crate) fn finish_editor(
 }
 
 pub(crate) fn finish_diff(frame: &mut Frame, app: &mut App, area: Rect, aligned: bool) {
-    if !app.copy_animation.active() && (app.animation_settings.any_enabled() || app.loading.active())
+    if !app.copy_animation.active()
+        && (app.animation_settings.any_enabled() || app.loading.active())
         && !area.is_empty()
         && area.intersection(frame.area()) == area
         && usize::from(area.width) * usize::from(area.height) <= MAX_SCENE_CELLS

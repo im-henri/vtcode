@@ -110,7 +110,11 @@ struct PendingNavigation {
 }
 
 impl NavigationHistory {
-    fn replaces_selection(&self, old: Option<NavigationSelection>, new: Option<NavigationSelection>) -> bool {
+    fn replaces_selection(
+        &self,
+        old: Option<NavigationSelection>,
+        new: Option<NavigationSelection>,
+    ) -> bool {
         match (old, new) {
             (None, _) => true,
             (Some(old), Some(new)) => {
@@ -122,21 +126,35 @@ impl NavigationHistory {
     }
 
     fn record_current_selection(&mut self, selection: Option<NavigationSelection>) -> bool {
-        let Some(index) = self.index else { return false; };
+        let Some(index) = self.index else {
+            return false;
+        };
         let previous = self.entries[index].selection;
-        if previous == selection { return true; }
+        if previous == selection {
+            return true;
+        }
         #[cfg(test)]
-        if self.reference_caret_recording { return false; }
-        if selection.is_none() { return true; }
-        if !self.replaces_selection(previous, selection) { return false; }
+        if self.reference_caret_recording {
+            return false;
+        }
+        if selection.is_none() {
+            return true;
+        }
+        if !self.replaces_selection(previous, selection) {
+            return false;
+        }
         self.entries[index].selection = selection;
         self.jump_pending = false;
         true
     }
 
     pub(crate) fn can_navigate(&self, forward: bool) -> bool {
-        let Some(index) = self.index else { return false; };
-        let Some(current) = self.entries.get(index) else { return false; };
+        let Some(index) = self.index else {
+            return false;
+        };
+        let Some(current) = self.entries.get(index) else {
+            return false;
+        };
         let candidates = if forward {
             &self.entries[index + 1..]
         } else {
@@ -144,9 +162,9 @@ impl NavigationHistory {
         };
         // Reconciliation can merge adjacent stops. Match navigation's skip
         // behavior so those duplicates do not enable an ineffective button.
-        candidates.iter().any(|entry| {
-            !current.same_editor(entry) || current.selection != entry.selection
-        })
+        candidates
+            .iter()
+            .any(|entry| !current.same_editor(entry) || current.selection != entry.selection)
     }
 
     pub(crate) fn resolve_loaded_editor(
@@ -285,9 +303,12 @@ impl App {
     fn navigation_location(&self) -> Option<NavigationLocation> {
         let tab = self.tabs.get(self.active_tab)?;
         let editor = &tab.editor;
-        let selection = matches!(tab.kind, TabKind::File | TabKind::GitRevision | TabKind::Diff(_))
-            .then(|| NavigationSelection::capture(editor))
-            .flatten();
+        let selection = matches!(
+            tab.kind,
+            TabKind::File | TabKind::GitRevision | TabKind::Diff(_)
+        )
+        .then(|| NavigationSelection::capture(editor))
+        .flatten();
         Some(NavigationLocation {
             group: self.active_group,
             editor_id: editor.navigation_id,
@@ -311,20 +332,31 @@ impl App {
         // current stop's selection: do not clone its path and reconcile all
         // fifty stops on every arrow key or mouse selection sample.
         let same_view = self.navigation.pending_file.is_none()
-            && self.navigation.index.and_then(|index| self.navigation.entries.get(index))
+            && self
+                .navigation
+                .index
+                .and_then(|index| self.navigation.entries.get(index))
                 .zip(self.tabs.get(self.active_tab))
                 .is_some_and(|(entry, tab)| {
                     entry.group == self.active_group
                         && entry.editor_id == tab.editor.navigation_id
                         && entry.kind == tab.kind
-                        && entry.path.as_deref() == (tab.kind == TabKind::File)
-                            .then_some(tab.editor.file_path.as_deref()).flatten()
+                        && entry.path.as_deref()
+                            == (tab.kind == TabKind::File)
+                                .then_some(tab.editor.file_path.as_deref())
+                                .flatten()
                 });
         if same_view {
             let tab = &self.tabs[self.active_tab];
-            let selection = matches!(tab.kind, TabKind::File | TabKind::GitRevision | TabKind::Diff(_))
-                .then(|| NavigationSelection::capture(&tab.editor)).flatten();
-            if self.navigation.record_current_selection(selection) { return; }
+            let selection = matches!(
+                tab.kind,
+                TabKind::File | TabKind::GitRevision | TabKind::Diff(_)
+            )
+            .then(|| NavigationSelection::capture(&tab.editor))
+            .flatten();
+            if self.navigation.record_current_selection(selection) {
+                return;
+            }
         }
         let location = self.navigation_location();
         if self
@@ -387,7 +419,10 @@ impl App {
         selection_anchor: Option<(usize, usize)>,
     ) {
         let mut diff = self.row_diff_active().then(|| {
-            (self.diff_render_cache.clone(), std::mem::take(&mut self.diff_inline_scroll))
+            (
+                self.diff_render_cache.clone(),
+                std::mem::take(&mut self.diff_inline_scroll),
+            )
         });
         if let Some(editor) = self.editor_mut() {
             editor.clear_selection();
@@ -418,12 +453,14 @@ impl App {
                     .flat_map(|(group, state)| state.tabs.iter().map(move |tab| (group, tab))),
             )
             .map(|(group, tab)| {
-                (tab.editor.navigation_id, (group, tab.kind, tab.editor.file_path.as_ref()))
+                (
+                    tab.editor.navigation_id,
+                    (group, tab.kind, tab.editor.file_path.as_ref()),
+                )
             })
             .collect();
         for entry in &mut self.navigation.entries {
-            if let Some((group, kind, path)) = views.get(&entry.editor_id)
-            {
+            if let Some((group, kind, path)) = views.get(&entry.editor_id) {
                 entry.group = *group;
                 entry.kind = *kind;
                 let path = (*kind == TabKind::File).then_some(*path).flatten();
@@ -432,9 +469,8 @@ impl App {
                 }
             }
         }
-        self.navigation.retain(|entry| {
-            entry.path.is_some() || views.contains_key(&entry.editor_id)
-        });
+        self.navigation
+            .retain(|entry| entry.path.is_some() || views.contains_key(&entry.editor_id));
     }
 
     pub(crate) fn navigate_back(&mut self) {
@@ -541,10 +577,9 @@ impl App {
             self.navigation.entries[..index]
                 .iter()
                 .filter(|entry| {
-                    !entry
-                        .path
-                        .as_ref()
-                        .is_some_and(|candidate| crate::native_paths::same_spelling(candidate, path))
+                    !entry.path.as_ref().is_some_and(|candidate| {
+                        crate::native_paths::same_spelling(candidate, path)
+                    })
                 })
                 .count()
         });

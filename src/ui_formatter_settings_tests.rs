@@ -124,11 +124,7 @@ fn formatter_settings_mouse_keyboard_scroll_and_validation() {
     assert!(!screen.contains("Black"));
     click(&mut app, Action::ChooseProvider);
     let screen = render(&mut app, 100, 35);
-    for text in [
-        "Language Server",
-        "External Command",
-        "Disabled",
-    ] {
+    for text in ["Language Server", "External Command", "Disabled"] {
         assert!(screen.contains(text), "missing formatter choice {text}");
     }
     assert!(!screen.contains("Black"));
@@ -209,8 +205,7 @@ fn formatter_form_is_compact_with_separate_controls_and_optional_arguments() {
         );
         assert!(app.formatter_settings.arguments_open);
         assert!(
-            hits
-                .iter()
+            hits.iter()
                 .any(|(_, action)| *action == Action::AddArgument)
         );
         let language = hits
@@ -242,7 +237,12 @@ fn formatter_form_is_compact_with_separate_controls_and_optional_arguments() {
         replace_input(&mut app, "--line-length");
         click(&mut app, Action::AddArgument);
         replace_input(&mut app, "100");
-        capture(&mut app, &format!("command-arguments-light-{light}"), 100, 35);
+        capture(
+            &mut app,
+            &format!("command-arguments-light-{light}"),
+            100,
+            35,
+        );
         click(&mut app, Action::Arguments);
         assert!(!app.formatter_settings.arguments_open);
         assert_eq!(
@@ -496,7 +496,9 @@ fn formatter_input_output_mode_is_explicit_and_keeps_arguments_and_drafts() {
     replace_input(&mut app, "formatter");
     click(&mut app, Action::ChooseMode);
     let screen = render(&mut app, 100, 35);
-    for mode in modes() { assert!(screen.contains(mode.label())); }
+    for mode in modes() {
+        assert!(screen.contains(mode.label()));
+    }
     check_hits(&app, 100, 35);
     capture(&mut app, "input-output-menu", 100, 35);
     key(&mut app, KeyCode::Down);
@@ -509,7 +511,10 @@ fn formatter_input_output_mode_is_explicit_and_keeps_arguments_and_drafts() {
     activate(&mut app, Action::Provider(Provider::Disabled));
     activate(&mut app, Action::Provider(Provider::Command));
     assert_eq!(app.formatter_settings.mode, CommandMode::Stdin);
-    assert!(app.formatter_settings.config().args.is_empty(), "do not reinsert defaults into a draft");
+    assert!(
+        app.formatter_settings.config().args.is_empty(),
+        "do not reinsert defaults into a draft"
+    );
     click(&mut app, Action::Save);
     assert_eq!(app.formatters["python"].mode, CommandMode::Stdin);
     app.open_formatter_settings(None);
@@ -517,7 +522,13 @@ fn formatter_input_output_mode_is_explicit_and_keeps_arguments_and_drafts() {
     click(&mut app, Action::Mode(CommandMode::File));
     click(&mut app, Action::Save);
     assert!(app.formatter_settings.active);
-    assert!(app.formatter_settings.error.as_ref().unwrap().contains("Add {file}"));
+    assert!(
+        app.formatter_settings
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("Add {file}")
+    );
     assert!(app.formatter_settings.arguments_open);
     assert_eq!(app.formatter_settings.focus, Action::Arguments);
     click(&mut app, Action::AddArgument);

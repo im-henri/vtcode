@@ -1,8 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use flate2::{read::GzDecoder, write::GzEncoder, Compression};
 use crate::textmate::{SyntaxRegistry, SyntaxRegistryBuilder};
+use flate2::{Compression, read::GzDecoder, write::GzEncoder};
 use walkdir::WalkDir;
 
 const CACHE_FORMAT: &str = "vtcode-textmate-registry-v1-irosashi-0.3.0";
@@ -17,9 +17,12 @@ fn read_syntax_cache(path: &Path) -> Option<SyntaxRegistry> {
     #[cfg(test)]
     CACHE_LOADS.set(CACHE_LOADS.get() + 1);
     let file = fs::File::open(path).ok()?;
-    let sources: std::collections::BTreeMap<String,crate::textmate::GrammarSource> = serde_json::from_reader(GzDecoder::new(file)).ok()?;
-    let mut builder=SyntaxRegistryBuilder::new();
-    for source in sources.into_values() { builder.add(source); }
+    let sources: std::collections::BTreeMap<String, crate::textmate::GrammarSource> =
+        serde_json::from_reader(GzDecoder::new(file)).ok()?;
+    let mut builder = SyntaxRegistryBuilder::new();
+    for source in sources.into_values() {
+        builder.add(source);
+    }
     builder.build().ok()
 }
 
@@ -37,43 +40,78 @@ pub(crate) struct RefreshedSyntaxRegistry {
     pub(crate) cache_write_error: Option<String>,
 }
 
-pub(crate) fn build_syntax_set(folders: &[PathBuf]) -> Result<SyntaxRegistry,String> {
-    let mut builder=SyntaxRegistryBuilder::new();
-    for folder in folders {add_syntax_folder(&mut builder,folder)?;}
+pub(crate) fn build_syntax_set(folders: &[PathBuf]) -> Result<SyntaxRegistry, String> {
+    let mut builder = SyntaxRegistryBuilder::new();
+    for folder in folders {
+        add_syntax_folder(&mut builder, folder)?;
+    }
     builder.build()
 }
 
-fn override_entries(folder: &Path) -> impl Iterator<Item = Result<walkdir::DirEntry, walkdir::Error>> {
+fn override_entries(
+    folder: &Path,
+) -> impl Iterator<Item = Result<walkdir::DirEntry, walkdir::Error>> {
     let bundled = folder.join("bundled");
-    let compiled_catalog = folder.join("BUNDLED-GRAMMARS.json").is_file()
-        && bundled.join("index.json").is_file();
+    let compiled_catalog =
+        folder.join("BUNDLED-GRAMMARS.json").is_file() && bundled.join("index.json").is_file();
     // The base catalog is compiled into the engine. Parsing it as overrides
     // would replace the curated VS Code packages and duplicate the cache.
-    WalkDir::new(folder).follow_links(false).into_iter().filter_entry(move |entry| {
-        entry.file_name() != ".cache" && (!compiled_catalog || entry.path() != bundled)
-    })
+    WalkDir::new(folder)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(move |entry| {
+            entry.file_name() != ".cache" && (!compiled_catalog || entry.path() != bundled)
+        })
 }
 
-pub(crate) fn add_syntax_folder(builder: &mut SyntaxRegistryBuilder, folder: &Path) -> Result<(),String> {
-    if !folder.exists() {return Ok(());}
-    let mut files=Vec::new();
+pub(crate) fn add_syntax_folder(
+    builder: &mut SyntaxRegistryBuilder,
+    folder: &Path,
+) -> Result<(), String> {
+    if !folder.exists() {
+        return Ok(());
+    }
+    let mut files = Vec::new();
     for entry in override_entries(folder) {
-        let entry=entry.map_err(|e|e.to_string())?;
-        if entry.file_type().is_file() && crate::textmate_grammar::is_grammar_path(entry.path()) {files.push(entry.into_path());}
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_type().is_file() && crate::textmate_grammar::is_grammar_path(entry.path()) {
+            files.push(entry.into_path());
+        }
     }
     files.sort();
-    let mut contributed=std::collections::BTreeSet::new();
-    for manifest in files.iter().filter(|p|p.file_name().is_some_and(|n|n=="package.json")) {
-        contributed.extend(crate::textmate_grammar::add_package(builder,manifest)?);
+    let mut contributed = std::collections::BTreeSet::new();
+    for manifest in files
+        .iter()
+        .filter(|p| p.file_name().is_some_and(|n| n == "package.json"))
+    {
+        contributed.extend(crate::textmate_grammar::add_package(builder, manifest)?);
     }
     for path in files {
-        if contributed.contains(&path) || path.file_name().is_some_and(|n|n=="package.json") {continue;}
-        let bytes=fs::read(&path).map_err(|e|format!("{}: {e}",path.display()))?;
-        let value=crate::textmate_grammar::parse_value(&bytes).map_err(|e|format!("{}: {e}",path.display()))?;
+        if contributed.contains(&path) || path.file_name().is_some_and(|n| n == "package.json") {
+            continue;
+        }
+        let bytes = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let value = crate::textmate_grammar::parse_value(&bytes)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         // A folder may also contain manifests and provenance JSON.
-        if value.get("scopeName").is_some() {builder.add(crate::textmate_grammar::parse_source(&bytes,path.file_stem().and_then(|s|s.to_str()).unwrap_or("TextMate"))?);}
-        else if path.file_name().is_some_and(|n|n.to_string_lossy().ends_with(".tmLanguage.json")) || path.extension().is_some_and(|e|e.eq_ignore_ascii_case("tmLanguage")) {
-            return Err(format!("{}: TextMate grammar needs a scopeName",path.display()));
+        if value.get("scopeName").is_some() {
+            builder.add(crate::textmate_grammar::parse_source(
+                &bytes,
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("TextMate"),
+            )?);
+        } else if path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().ends_with(".tmLanguage.json"))
+            || path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("tmLanguage"))
+        {
+            return Err(format!(
+                "{}: TextMate grammar needs a scopeName",
+                path.display()
+            ));
         }
     }
     Ok(())
@@ -103,9 +141,9 @@ fn resolve_installed_syntax_folder(executable: Option<&Path>) -> Option<PathBuf>
 
     // Discover development assets relative to the running binary. Do not embed
     // the build machine's checkout path in a distributed executable.
-    let target_dir = executable?.ancestors().find(|path| {
-        path.file_name().is_some_and(|name| name == "target")
-    })?;
+    let target_dir = executable?
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "target"))?;
     let source_tree = target_dir.parent()?.join("grammars");
     source_tree.is_dir().then_some(source_tree)
 }
@@ -134,7 +172,8 @@ pub(crate) fn load_startup_syntax_set(
     let fingerprint_path = folder.join(CACHE_DIRECTORY).join(FINGERPRINT_FILE);
     let cache_path = folder.join(CACHE_DIRECTORY).join(CACHE_FILE);
     let fingerprint = fs::read_to_string(fingerprint_path).ok().and_then(|saved| {
-        saved.strip_prefix(&format!("{CACHE_FORMAT}:"))
+        saved
+            .strip_prefix(&format!("{CACHE_FORMAT}:"))
             .and_then(|hash| u64::from_str_radix(hash.trim(), 16).ok())
     });
     if fingerprint.is_some() {
@@ -189,13 +228,15 @@ pub(crate) fn refresh_installed_syntax_set(
 
     if fs::read_to_string(&fingerprint_path).is_ok_and(|saved| saved == expected) {
         if let Some(syntax_set) = read_syntax_cache(&cache_path) {
-            return Ok((force_install || loaded_fingerprint != Some(fingerprint)).then_some(
-                RefreshedSyntaxRegistry {
-                    syntax_set,
-                    fingerprint: Some(fingerprint),
-                    cache_write_error: None,
-                },
-            ));
+            return Ok(
+                (force_install || loaded_fingerprint != Some(fingerprint)).then_some(
+                    RefreshedSyntaxRegistry {
+                        syntax_set,
+                        fingerprint: Some(fingerprint),
+                        cache_write_error: None,
+                    },
+                ),
+            );
         }
     }
 
@@ -234,10 +275,10 @@ fn write_syntax_cache(
         .map_err(|error| format!("{}: {error}", cache_directory.display()))?;
     let cache_path = cache_directory.join(CACHE_FILE);
     let cache_temp = cache_directory.join(format!(".{CACHE_FILE}.{}.tmp", std::process::id()));
-    let file=fs::File::create(&cache_temp).map_err(|e|e.to_string())?;
-    let mut encoder=GzEncoder::new(file,Compression::fast());
-    serde_json::to_writer(&mut encoder,&syntax_set.sources).map_err(|e|e.to_string())?;
-    encoder.finish().map_err(|e|e.to_string())?;
+    let file = fs::File::create(&cache_temp).map_err(|e| e.to_string())?;
+    let mut encoder = GzEncoder::new(file, Compression::fast());
+    serde_json::to_writer(&mut encoder, &syntax_set.sources).map_err(|e| e.to_string())?;
+    encoder.finish().map_err(|e| e.to_string())?;
     replace_cache_file(&cache_temp, &cache_path)?;
     let fingerprint_path = cache_directory.join(FINGERPRINT_FILE);
     let fingerprint_temp =
@@ -276,10 +317,11 @@ fn syntax_source_fingerprint(folder: &Path) -> Result<u64, String> {
     for entry in override_entries(folder) {
         let entry = entry.map_err(|error| format!("{}: {error}", folder.display()))?;
         if entry.file_type().is_file()
-            && entry
-                .path()
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("tmLanguage") || extension.eq_ignore_ascii_case("plist") || extension.eq_ignore_ascii_case("json"))
+            && entry.path().extension().is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("tmLanguage")
+                    || extension.eq_ignore_ascii_case("plist")
+                    || extension.eq_ignore_ascii_case("json")
+            })
         {
             files.push(entry.path().to_path_buf());
         }
@@ -326,13 +368,25 @@ mod tests {
         rebuild_syntax_cache(directory.path()).unwrap();
         let startup = load_startup_syntax_set(Some(directory.path())).unwrap();
         CACHE_LOADS.set(0);
-        assert!(refresh_installed_syntax_set(Some(directory.path()), false, startup.fingerprint).unwrap().is_none());
+        assert!(
+            refresh_installed_syntax_set(Some(directory.path()), false, startup.fingerprint)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(CACHE_LOADS.get(), 0);
         // A different in-memory generation must still read a valid newer cache.
-        assert!(refresh_installed_syntax_set(Some(directory.path()), false, Some(0)).unwrap().is_some());
+        assert!(
+            refresh_installed_syntax_set(Some(directory.path()), false, Some(0))
+                .unwrap()
+                .is_some()
+        );
         assert_eq!(CACHE_LOADS.get(), 1);
         write_test_syntax(&syntax, "Changed Language", "changed");
-        assert!(refresh_installed_syntax_set(Some(directory.path()), false, startup.fingerprint).unwrap().is_some());
+        assert!(
+            refresh_installed_syntax_set(Some(directory.path()), false, startup.fingerprint)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -340,7 +394,9 @@ mod tests {
     fn benchmark_startup_syntax_work() {
         use std::{hint::black_box, time::Instant};
         let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars");
-        let loaded = refresh_installed_syntax_set(Some(&folder), true, None).unwrap().unwrap();
+        let loaded = refresh_installed_syntax_set(Some(&folder), true, None)
+            .unwrap()
+            .unwrap();
         let cache = folder.join(CACHE_DIRECTORY).join(CACHE_FILE);
         let mut before = Vec::new();
         let mut after = Vec::new();
@@ -351,19 +407,33 @@ mod tests {
             black_box(read_syntax_cache(&cache).unwrap());
             before.push(start.elapsed());
             let start = Instant::now();
-            assert!(refresh_installed_syntax_set(Some(&folder), false, loaded.fingerprint).unwrap().is_none());
+            assert!(
+                refresh_installed_syntax_set(Some(&folder), false, loaded.fingerprint)
+                    .unwrap()
+                    .is_none()
+            );
             after.push(start.elapsed());
             let start = Instant::now();
             black_box(load_startup_syntax_set(Some(&folder)).unwrap());
             load.push(start.elapsed());
         }
-        before.sort(); after.sort(); load.sort();
-        eprintln!("startup syntax: synchronous cache load moved off UI = {:?}; unchanged validation before = {:?}, after = {:?}", load[4], before[4], after[4]);
+        before.sort();
+        after.sort();
+        load.sort();
+        eprintln!(
+            "startup syntax: synchronous cache load moved off UI = {:?}; unchanged validation before = {:?}, after = {:?}",
+            load[4], before[4], after[4]
+        );
     }
 
     fn write_test_syntax(path: &Path, name: &str, extension: &str) {
-        fs::write(path,serde_json::json!({"name":name,"scopeName":"source.test","fileTypes":[extension],
-            "patterns":[{"match":"\\bmagic\\b","name":"keyword.control.test"}]}).to_string()).unwrap();
+        fs::write(
+            path,
+            serde_json::json!({"name":name,"scopeName":"source.test","fileTypes":[extension],
+            "patterns":[{"match":"\\bmagic\\b","name":"keyword.control.test"}]})
+            .to_string(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -403,11 +473,13 @@ mod tests {
             first.find_syntax_by_extension("first").unwrap().name,
             "First Language"
         );
-        assert!(directory
-            .path()
-            .join(CACHE_DIRECTORY)
-            .join(CACHE_FILE)
-            .is_file());
+        assert!(
+            directory
+                .path()
+                .join(CACHE_DIRECTORY)
+                .join(CACHE_FILE)
+                .is_file()
+        );
 
         write_test_syntax(&syntax, "Second Language", "second");
         let edited = load_installed_syntax_set(Some(directory.path())).unwrap();
@@ -433,23 +505,33 @@ mod tests {
 
         let startup = load_startup_syntax_set(Some(directory.path())).unwrap();
         assert!(startup.fingerprint.is_some());
-        assert!(startup.syntax_set.find_syntax_by_extension("first").is_some());
+        assert!(
+            startup
+                .syntax_set
+                .find_syntax_by_extension("first")
+                .is_some()
+        );
 
         write_test_syntax(&syntax, "Second Language", "second");
         let stale_startup = load_startup_syntax_set(Some(directory.path())).unwrap();
         assert!(stale_startup.fingerprint.is_some());
-        assert!(stale_startup
-            .syntax_set
-            .find_syntax_by_extension("first")
-            .is_some());
+        assert!(
+            stale_startup
+                .syntax_set
+                .find_syntax_by_extension("first")
+                .is_some()
+        );
 
-        let refreshed = refresh_installed_syntax_set(Some(directory.path()), false, stale_startup.fingerprint)
-            .unwrap()
-            .expect("edited source must refresh automatically");
-        assert!(refreshed
-            .syntax_set
-            .find_syntax_by_extension("first")
-            .is_none());
+        let refreshed =
+            refresh_installed_syntax_set(Some(directory.path()), false, stale_startup.fingerprint)
+                .unwrap()
+                .expect("edited source must refresh automatically");
+        assert!(
+            refreshed
+                .syntax_set
+                .find_syntax_by_extension("first")
+                .is_none()
+        );
         assert_eq!(
             refreshed
                 .syntax_set
@@ -489,43 +571,72 @@ mod tests {
         assert!(startup.fingerprint.is_none());
         assert!(startup.syntax_set.find_syntax_by_name("Rust").is_some());
 
-        let refreshed = refresh_installed_syntax_set(Some(directory.path()), true, startup.fingerprint)
-            .unwrap()
-            .expect("missing cache must be created automatically");
-        assert!(refreshed
-            .syntax_set
-            .find_syntax_by_extension("example")
-            .is_some());
-        assert!(directory
-            .path()
-            .join(CACHE_DIRECTORY)
-            .join(CACHE_FILE)
-            .is_file());
-        assert!(directory
-            .path()
-            .join(CACHE_DIRECTORY)
-            .join(FINGERPRINT_FILE)
-            .is_file());
+        let refreshed =
+            refresh_installed_syntax_set(Some(directory.path()), true, startup.fingerprint)
+                .unwrap()
+                .expect("missing cache must be created automatically");
+        assert!(
+            refreshed
+                .syntax_set
+                .find_syntax_by_extension("example")
+                .is_some()
+        );
+        assert!(
+            directory
+                .path()
+                .join(CACHE_DIRECTORY)
+                .join(CACHE_FILE)
+                .is_file()
+        );
+        assert!(
+            directory
+                .path()
+                .join(CACHE_DIRECTORY)
+                .join(FINGERPRINT_FILE)
+                .is_file()
+        );
     }
 
     #[test]
     fn repository_ships_the_complete_textmate_source_set() {
         let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars");
         let bundled = folder.join("bundled");
-        let index: serde_json::Value = serde_json::from_slice(&fs::read(bundled.join("index.json")).unwrap()).unwrap();
+        let index: serde_json::Value =
+            serde_json::from_slice(&fs::read(bundled.join("index.json")).unwrap()).unwrap();
         assert_eq!(index["grammars"].as_object().unwrap().len(), 257);
-        let provenance: serde_json::Value = serde_json::from_slice(&fs::read(folder.join("BUNDLED-GRAMMARS.json")).unwrap()).unwrap();
+        let provenance: serde_json::Value =
+            serde_json::from_slice(&fs::read(folder.join("BUNDLED-GRAMMARS.json")).unwrap())
+                .unwrap();
         use sha2::Digest;
         for (name, expected) in provenance["grammars"].as_object().unwrap() {
             let bytes = fs::read(bundled.join(name)).unwrap();
-            assert_eq!(format!("sha256:{:x}", sha2::Sha256::digest(bytes)), expected.as_str().unwrap(), "{name}");
+            assert_eq!(
+                format!("sha256:{:x}", sha2::Sha256::digest(bytes)),
+                expected.as_str().unwrap(),
+                "{name}"
+            );
         }
-        assert!(!Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor/irosashi/assets/grammars").exists());
-        assert_eq!(WalkDir::new(&folder).into_iter().filter_map(Result::ok)
-            .filter(|e|e.file_type().is_file() && e.path().extension().is_some_and(|s|s=="sublime-syntax")).count(),0);
-        let syntax_set=load_installed_syntax_set(Some(&folder)).unwrap();
-        assert_eq!(syntax_set.sources.len(), 8, "the runtime cache contains the overrides, not a second copy of the bundled catalog");
-        assert!(syntax_set.syntaxes().len()>=258);
+        assert!(
+            !Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("vendor/irosashi/assets/grammars")
+                .exists()
+        );
+        assert_eq!(
+            WalkDir::new(&folder)
+                .into_iter()
+                .filter_map(Result::ok)
+                .filter(|e| e.file_type().is_file()
+                    && e.path().extension().is_some_and(|s| s == "sublime-syntax"))
+                .count(),
+            0
+        );
+        let syntax_set = load_installed_syntax_set(Some(&folder)).unwrap();
+        assert_eq!(
+            syntax_set.sources.len(),
+            8,
+            "the runtime cache contains the overrides, not a second copy of the bundled catalog"
+        );
+        assert!(syntax_set.syntaxes().len() >= 258);
         assert!(syntax_set.find_syntax_by_name("Rust").is_some());
         assert!(syntax_set.find_syntax_by_name("ANTLR4").is_some());
         assert!(syntax_set.find_syntax_by_name("Git Log").is_some());

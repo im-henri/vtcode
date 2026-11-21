@@ -2,14 +2,14 @@
 use crate::{
     app::App,
     text_input::TextInputId,
-    ui_widgets::{draw_dialog_button, InputField},
+    ui_widgets::{InputField, draw_dialog_button},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
-    Frame,
 };
 use std::path::PathBuf;
 use unicode_width::UnicodeWidthStr;
@@ -80,12 +80,18 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
     if app.save_error.is_some() {
         return Some(Kind::SaveError);
     }
-    if app.exit_recovery.pending() { return Some(Kind::ExitRecovery); }
+    if app.exit_recovery.pending() {
+        return Some(Kind::ExitRecovery);
+    }
     if app.change_dir_active {
         return None;
     }
     if app.exit_confirm_active {
-        Some(if app.exit_backup_warning.is_some() { Kind::ExitBackup } else { Kind::Exit })
+        Some(if app.exit_backup_warning.is_some() {
+            Kind::ExitBackup
+        } else {
+            Kind::Exit
+        })
     } else if app.about_info.is_some() {
         Some(Kind::About)
     } else if app.chat.confirm_close_agent.is_some() {
@@ -105,7 +111,13 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
     } else if app.sc_stage_all_commit_request.is_some() {
         Some(Kind::StageAllCommit)
     } else if let Some(request) = &app.git_operation_ui.request {
-        Some(if request.choice == crate::ui_git_operation::Choice::Start { Kind::GitOperationTarget } else { Kind::GitOperationConfirm })
+        Some(
+            if request.choice == crate::ui_git_operation::Choice::Start {
+                Kind::GitOperationTarget
+            } else {
+                Kind::GitOperationConfirm
+            },
+        )
     } else if app.save_as_active {
         Some(Kind::SaveAs)
     } else if app.rename.symbol_active {
@@ -131,11 +143,13 @@ pub(crate) fn active(app: &App) -> Option<Kind> {
     } else if app.agent_settings.active {
         Some(Kind::AgentSettings)
     } else if app.theme_install_prompt_visible() {
-        Some(if app.palette.install_theme_mode && app.palette.theme_vsix_url.is_some() {
-            Kind::ThemeVsixLink
-        } else {
-            Kind::ThemeInstall
-        })
+        Some(
+            if app.palette.install_theme_mode && app.palette.theme_vsix_url.is_some() {
+                Kind::ThemeVsixLink
+            } else {
+                Kind::ThemeInstall
+            },
+        )
     } else {
         None
     }
@@ -177,17 +191,30 @@ fn sync(app: &mut App, kind: Kind) {
 }
 
 fn focus_enabled(app: &App, kind: Kind, focus: usize) -> bool {
-    if matches!(kind, Kind::GitOperationTarget | Kind::GitOperationConfirm) && app.git_operation_ui.pending { return false; }
-    if kind == Kind::ExitRecovery { return false; }
-    if kind == Kind::SaveError && app.save_conflict.as_ref().is_some_and(|conflict| conflict.busy()) { return false; }
+    if matches!(kind, Kind::GitOperationTarget | Kind::GitOperationConfirm)
+        && app.git_operation_ui.pending
+    {
+        return false;
+    }
+    if kind == Kind::ExitRecovery {
+        return false;
+    }
+    if kind == Kind::SaveError
+        && app
+            .save_conflict
+            .as_ref()
+            .is_some_and(|conflict| conflict.busy())
+    {
+        return false;
+    }
     !(kind == Kind::ThemeInstall && app.install_prompt_running() && focus < 2)
 }
 
 fn step_focus(app: &mut App, kind: Kind, reverse: bool, first: usize) {
     let count = labels(app, kind).len() + usize::from(kind.input().is_some()) - first;
     for _ in 0..count {
-        app.modal.focus = first + (app.modal.focus.saturating_sub(first)
-            + if reverse { count - 1 } else { 1 }) % count;
+        app.modal.focus = first
+            + (app.modal.focus.saturating_sub(first) + if reverse { count - 1 } else { 1 }) % count;
         if focus_enabled(app, kind, app.modal.focus) {
             break;
         }
@@ -207,17 +234,34 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
         Kind::AgentSettings => vec!["Done"],
         Kind::LspSettings => vec!["Done"],
         Kind::CloseAgent => vec!["Close agent", "Cancel"],
-        Kind::CloseTerminal => vec![if app.terminal_close.as_ref().is_some_and(|request| request.names.len() > 1) {
-            "Close terminals"
-        } else { "Close terminal" }, "Cancel"],
+        Kind::CloseTerminal => vec![
+            if app
+                .terminal_close
+                .as_ref()
+                .is_some_and(|request| request.names.len() > 1)
+            {
+                "Close terminals"
+            } else {
+                "Close terminal"
+            },
+            "Cancel",
+        ],
         Kind::ThemeDelete => vec!["Delete theme", "Cancel"],
         Kind::ThemeInstall => {
             let mut buttons = vec![if app.install_prompt_running() {
-                if app.palette.install_extension_mode { "Finding versions…" } else { "Installing…" }
+                if app.palette.install_extension_mode {
+                    "Finding versions…"
+                } else {
+                    "Installing…"
+                }
             } else {
-                if app.palette.install_extension_mode { "Choose version…" }
-                else if app.palette.install_syntax_mode { "Install syntax" }
-                else { "Install theme" }
+                if app.palette.install_extension_mode {
+                    "Choose version…"
+                } else if app.palette.install_syntax_mode {
+                    "Install syntax"
+                } else {
+                    "Install theme"
+                }
             }];
             if app.theme_vsix_link().is_some() {
                 buttons.push("Get VSIX link");
@@ -227,23 +271,45 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
         }
         Kind::ThemeVsixLink => vec!["Copy link", "Open in browser", "Back"],
         Kind::SaveAs => {
-            let mut buttons = vec![if app.modal.overwrite.is_some() { "Replace file" } else { "Save" }];
-            if app.remote_workspace.is_none() || app.editor_uses_remote_files() { buttons.push("Browse…"); }
+            let mut buttons = vec![if app.modal.overwrite.is_some() {
+                "Replace file"
+            } else {
+                "Save"
+            }];
+            if app.remote_workspace.is_none() || app.editor_uses_remote_files() {
+                buttons.push("Browse…");
+            }
             buttons.push("Cancel");
             buttons
-        },
+        }
         Kind::Rename | Kind::RenameTerminal => vec!["Rename", "Cancel"],
         Kind::Goto => vec!["Go to line", "Cancel"],
         Kind::Close if app.confirm_close_is_amend() => vec!["Abort amend", "Keep editing"],
         Kind::Close => vec!["Save & close", "Don't save", "Cancel"],
         Kind::Delete => vec!["Delete", "Cancel"],
         Kind::Move => vec!["Move", "Cancel"],
-        Kind::Discard => vec![if app.sc_discard_request.as_ref().is_some_and(|request| request.all) {
-            "Discard all"
-        } else { "Discard changes" }, "Cancel"],
+        Kind::Discard => vec![
+            if app
+                .sc_discard_request
+                .as_ref()
+                .is_some_and(|request| request.all)
+            {
+                "Discard all"
+            } else {
+                "Discard changes"
+            },
+            "Cancel",
+        ],
         Kind::StageAllCommit => vec!["Stage all & commit", "Cancel"],
-        Kind::GitOperationTarget | Kind::GitOperationConfirm => vec![crate::ui_git_operation::primary(app), "Cancel"],
-        Kind::Exit if app.closing_workspace_only() && app.exit_unsaved_file_count() > 0 => vec!["Save & close", "Discard & close", "Keep unsaved & close", "Cancel"],
+        Kind::GitOperationTarget | Kind::GitOperationConfirm => {
+            vec![crate::ui_git_operation::primary(app), "Cancel"]
+        }
+        Kind::Exit if app.closing_workspace_only() && app.exit_unsaved_file_count() > 0 => vec![
+            "Save & close",
+            "Discard & close",
+            "Keep unsaved & close",
+            "Cancel",
+        ],
         Kind::Exit if app.closing_workspace_only() => vec!["Close folder", "Cancel"],
         Kind::Exit if app.workspace_unsaved_file_count() > 0 => vec![
             "Save & quit",
@@ -252,7 +318,14 @@ fn labels(app: &App, kind: Kind) -> Vec<&'static str> {
             "Cancel",
         ],
         Kind::Exit => vec!["Quit", "Cancel"],
-        Kind::ExitBackup => vec![if app.closing_workspace_only() { "Back up & close" } else { "Back up & quit" }, "Back"],
+        Kind::ExitBackup => vec![
+            if app.closing_workspace_only() {
+                "Back up & close"
+            } else {
+                "Back up & quit"
+            },
+            "Back",
+        ],
         Kind::ExitRecovery => vec!["Backing up…"],
     }
 }
@@ -263,8 +336,9 @@ pub(crate) fn field_changed(app: &mut App) {
 }
 
 pub(crate) fn dismiss_tab_dialog(app: &mut App) {
-    while let Some(kind @ (Kind::Close | Kind::SaveAs | Kind::Rename | Kind::Goto
-        | Kind::RenameTerminal)) = active(app)
+    while let Some(
+        kind @ (Kind::Close | Kind::SaveAs | Kind::Rename | Kind::Goto | Kind::RenameTerminal),
+    ) = active(app)
     {
         dismiss(app, kind);
     }
@@ -275,13 +349,26 @@ fn dismiss(app: &mut App, kind: Kind) {
         Kind::About => app.about_info = None,
         Kind::SaveError => app.dismiss_save_error(),
         Kind::FormattingError => app.formatting.error = None,
-        Kind::ScopeBubbleSettings => crate::ui_scope_bubble_settings::activate(app, crate::ui_scope_bubble_settings::Action::Close),
-        Kind::ExclusionSettings => crate::ui_exclusion_settings::activate(app, crate::ui_exclusion_settings::Action::Close),
-        Kind::FileAssociations => crate::ui_file_associations::activate(app, crate::ui_file_associations::Action::Close),
-        Kind::FormatterSettings => crate::ui_formatter_settings::activate(app, crate::ui_formatter_settings::Action::Close),
+        Kind::ScopeBubbleSettings => crate::ui_scope_bubble_settings::activate(
+            app,
+            crate::ui_scope_bubble_settings::Action::Close,
+        ),
+        Kind::ExclusionSettings => {
+            crate::ui_exclusion_settings::activate(app, crate::ui_exclusion_settings::Action::Close)
+        }
+        Kind::FileAssociations => {
+            crate::ui_file_associations::activate(app, crate::ui_file_associations::Action::Close)
+        }
+        Kind::FormatterSettings => {
+            crate::ui_formatter_settings::activate(app, crate::ui_formatter_settings::Action::Close)
+        }
         Kind::RemoteTargets => app.cancel_remote_target_dialog(),
-        Kind::AgentSettings => crate::ui_agent_settings::activate(app, crate::ui_agent_settings::Action::Close),
-        Kind::LspSettings => crate::ui_lsp_settings::activate(app, crate::ui_lsp_settings::Action::Close),
+        Kind::AgentSettings => {
+            crate::ui_agent_settings::activate(app, crate::ui_agent_settings::Action::Close)
+        }
+        Kind::LspSettings => {
+            crate::ui_lsp_settings::activate(app, crate::ui_lsp_settings::Action::Close)
+        }
         Kind::CloseAgent => app.chat.confirm_close_agent = None,
         Kind::CloseTerminal => app.terminal_close = None,
         Kind::ThemeDelete => app.cancel_theme_removal(),
@@ -306,8 +393,11 @@ fn dismiss(app: &mut App, kind: Kind) {
             app.exit_backup_warning = None;
             // Return to the safe Cancel action rather than letting a repeated
             // Enter immediately save or discard from the original quit dialog.
-            app.modal = ModalState { kind: Some(Kind::Exit),
-                focus: labels(app, Kind::Exit).len() - 1, ..Default::default() };
+            app.modal = ModalState {
+                kind: Some(Kind::Exit),
+                focus: labels(app, Kind::Exit).len() - 1,
+                ..Default::default()
+            };
             return;
         }
         Kind::ExitRecovery => return,
@@ -317,8 +407,14 @@ fn dismiss(app: &mut App, kind: Kind) {
 
 fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
     if kind == Kind::SaveError && app.save_conflict.is_some() {
-        if !focus_enabled(app, kind, index) { return false; }
-        if index == 0 { app.overwrite_save_conflict(); } else { app.view_save_conflict(); }
+        if !focus_enabled(app, kind, index) {
+            return false;
+        }
+        if index == 0 {
+            app.overwrite_save_conflict();
+        } else {
+            app.view_save_conflict();
+        }
         return false;
     }
     if index == labels(app, kind).len() - 1 {
@@ -333,16 +429,22 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
                         app.modal.error = None;
                         app.notify("About information copied");
                     }
-                    Err(error) => app.modal.error = Some(format!("Could not copy information: {error}")),
+                    Err(error) => {
+                        app.modal.error = Some(format!("Could not copy information: {error}"))
+                    }
                 }
             }
         }
-        Kind::SaveError => {},
+        Kind::SaveError => {}
         Kind::FormattingError => {
             app.formatting.error = None;
             app.open_formatter_settings(None);
         }
-        Kind::FormatterSettings | Kind::RemoteTargets | Kind::FileAssociations | Kind::ExclusionSettings | Kind::ScopeBubbleSettings => {},
+        Kind::FormatterSettings
+        | Kind::RemoteTargets
+        | Kind::FileAssociations
+        | Kind::ExclusionSettings
+        | Kind::ScopeBubbleSettings => {}
         Kind::ThemeInstall if index == 1 => app.show_theme_vsix_link(),
         Kind::ThemeInstall => app.start_theme_install(),
         Kind::ThemeVsixLink if index == 0 => app.copy_theme_vsix_link(),
@@ -351,17 +453,22 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
                 app.open_external(crate::external_open::Request::Url(url));
             }
         }
-        Kind::AgentSettings => {},
-        Kind::LspSettings => {},
+        Kind::AgentSettings => {}
+        Kind::LspSettings => {}
         Kind::CloseAgent => app.confirm_close_chat_agent(),
         Kind::CloseTerminal => app.confirm_terminal_close(),
         Kind::ThemeDelete => app.confirm_theme_removal(),
         Kind::SaveAs if index == 1 => {
             let parent = if let Some(remote) = remote_save_workspace(app) {
-                remote.target_key(&app.save_as_query).ok()
+                remote
+                    .target_key(&app.save_as_query)
+                    .ok()
                     .and_then(|key| remote.parent_key(&key).ok().flatten())
             } else {
-                save_path(app).parent().filter(|path| path.is_dir()).map(|path| path.to_path_buf())
+                save_path(app)
+                    .parent()
+                    .filter(|path| path.is_dir())
+                    .map(|path| path.to_path_buf())
             };
             app.open_path_browser(crate::folder_browser::Mode::SaveLocation);
             if let Some(parent) = parent {
@@ -394,7 +501,7 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
         Kind::StageAllCommit => app.confirm_stage_all_commit(),
         Kind::GitOperationTarget | Kind::GitOperationConfirm => app.submit_git_operation_dialog(),
         Kind::ExitBackup => return crate::input_dialogs::confirm_large_backup(app),
-        Kind::ExitRecovery => {},
+        Kind::ExitRecovery => {}
         Kind::Exit => {
             let key = if app.exit_unsaved_file_count() == 0 {
                 KeyCode::Char('y')
@@ -416,7 +523,11 @@ fn activate(app: &mut App, kind: Kind, index: usize) -> bool {
 
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
     let kind = active(app)?;
-    if matches!(kind, Kind::GitOperationTarget | Kind::GitOperationConfirm) && app.git_operation_ui.pending { return Some(false); }
+    if matches!(kind, Kind::GitOperationTarget | Kind::GitOperationConfirm)
+        && app.git_operation_ui.pending
+    {
+        return Some(false);
+    }
     app.chord_pending = false;
     if kind == Kind::ThemeInstall && app.palette.extension_versions.is_some() {
         crate::ui_extension_versions::handle_key(app, key);
@@ -431,7 +542,8 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
         return Some(false);
     }
     if kind == Kind::ExclusionSettings {
-        crate::ui_exclusion_settings::handle_key(app, key); return Some(false);
+        crate::ui_exclusion_settings::handle_key(app, key);
+        return Some(false);
     }
     if kind == Kind::FileAssociations {
         crate::ui_file_associations::handle_key(app, key);
@@ -455,7 +567,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
     }
     let offset = usize::from(kind.input().is_some());
     match key.code {
-        KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End if kind == Kind::ExitBackup => {
+        KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End
+            if kind == Kind::ExitBackup =>
+        {
             let page = usize::from(app.modal.context_area.height).max(1);
             let maximum = app.modal.context_total.saturating_sub(page);
             app.modal.context_scroll = match key.code {
@@ -465,7 +579,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
                 _ => app.modal.context_scroll.saturating_add(page).min(maximum),
             };
         }
-        KeyCode::Char('c' | 'C') if kind == Kind::About && key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('c' | 'C')
+            if kind == Kind::About && key.modifiers.contains(KeyModifiers::CONTROL) =>
+        {
             activate(app, kind, 0);
         }
         KeyCode::Esc => {
@@ -476,7 +592,9 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
                 key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
             step_focus(app, kind, reverse, 0);
         }
-        KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down if app.modal.focus >= offset => {
+        KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+            if app.modal.focus >= offset =>
+        {
             let reverse = matches!(key.code, KeyCode::Left | KeyCode::Up);
             step_focus(app, kind, reverse, offset);
         }
@@ -506,7 +624,11 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
                 .modifiers
                 .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
         {
-            if app.vim.enabled && app.modal.focus >= offset && matches!(c, 'h' | 'j' | 'k' | 'l') && kind != Kind::Exit {
+            if app.vim.enabled
+                && app.modal.focus >= offset
+                && matches!(c, 'h' | 'j' | 'k' | 'l')
+                && kind != Kind::Exit
+            {
                 step_focus(app, kind, matches!(c, 'h' | 'k'), offset);
                 return Some(false);
             }
@@ -534,7 +656,13 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Option<bool> {
 }
 
 pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
-    if matches!(active(app), Some(Kind::GitOperationTarget | Kind::GitOperationConfirm)) && app.git_operation_ui.pending { return true; }
+    if matches!(
+        active(app),
+        Some(Kind::GitOperationTarget | Kind::GitOperationConfirm)
+    ) && app.git_operation_ui.pending
+    {
+        return true;
+    }
     let Some(kind) = active(app) else {
         return false;
     };
@@ -551,7 +679,8 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         return true;
     }
     if kind == Kind::ExclusionSettings {
-        crate::ui_exclusion_settings::handle_mouse(app, mouse); return true;
+        crate::ui_exclusion_settings::handle_mouse(app, mouse);
+        return true;
     }
     if kind == Kind::FileAssociations {
         crate::ui_file_associations::handle_mouse(app, mouse);
@@ -570,17 +699,28 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         return true;
     }
     sync(app, kind);
-    if kind == Kind::ExitBackup && matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
-        let maximum = app.modal.context_total.saturating_sub(usize::from(app.modal.context_area.height));
+    if kind == Kind::ExitBackup
+        && matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        )
+    {
+        let maximum = app
+            .modal
+            .context_total
+            .saturating_sub(usize::from(app.modal.context_area.height));
         app.modal.context_scroll = if mouse.kind == MouseEventKind::ScrollUp {
             app.modal.context_scroll.saturating_sub(3)
-        } else { app.modal.context_scroll.saturating_add(3).min(maximum) };
+        } else {
+            app.modal.context_scroll.saturating_add(3).min(maximum)
+        };
         return true;
     }
     let position = (mouse.column, mouse.row);
     let moved = app.modal.mouse_position != position;
     app.modal.mouse_position = position;
-    if moved && mouse.kind == MouseEventKind::Moved
+    if moved
+        && mouse.kind == MouseEventKind::Moved
         && let Some((_, index)) = app.modal.buttons.iter().find(|(area, index)| {
             area.contains(position.into())
                 && focus_enabled(app, kind, index + usize::from(kind.input().is_some()))
@@ -620,7 +760,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 // old mouse path hid this dialog and left quit flags waiting
                 // forever, with neither an error nor a usable Cancel button.
                 if activate(app, kind, index) {
-                    if index == 0 { app.exit_save_and_quit = true; }
+                    if index == 0 {
+                        app.exit_save_and_quit = true;
+                    }
                     app.exit_confirm_active = false;
                     app.modal.kind = None;
                 }
@@ -633,7 +775,9 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
 }
 
 fn remote_save_workspace(app: &App) -> Option<&crate::remote::workspace::Workspace> {
-    app.remote_workspace.as_ref().filter(|_| app.editor_uses_remote_files())
+    app.remote_workspace
+        .as_ref()
+        .filter(|_| app.editor_uses_remote_files())
 }
 
 fn save_path(app: &App) -> PathBuf {
@@ -652,17 +796,35 @@ pub(crate) fn save_target(app: &mut App) -> Option<(PathBuf, bool)> {
     if let Some(remote) = remote_save_workspace(app) {
         let key = match remote.target_key(&app.save_as_query) {
             Ok(key) => key,
-            Err(error) => { app.modal.error = Some(error.to_string()); return None; }
+            Err(error) => {
+                app.modal.error = Some(error.to_string());
+                return None;
+            }
         };
-        let Some(editor) = app.editor() else { app.modal.error = Some("Open a document before saving.".into()); return None; };
+        let Some(editor) = app.editor() else {
+            app.modal.error = Some("Open a document before saving.".into());
+            return None;
+        };
         let identity = editor.save_identity;
-        if let Some(error) = app.editor().and_then(crate::editor::Editor::save_content_error) {
-            app.modal.error = Some(error.into()); return None;
+        if let Some(error) = app
+            .editor()
+            .and_then(crate::editor::Editor::save_content_error)
+        {
+            app.modal.error = Some(error.into());
+            return None;
         }
-        if app.tabs.iter().chain(app.groups.iter().flat_map(|g| &g.tabs)).any(|tab|
-            tab.kind == crate::app::TabKind::File && tab.editor.file_path.as_ref() == Some(&key)
-                && tab.editor.save_identity != identity) {
-            app.modal.error = Some("This remote file is already open. Choose another name.".into()); return None;
+        if app
+            .tabs
+            .iter()
+            .chain(app.groups.iter().flat_map(|g| &g.tabs))
+            .any(|tab| {
+                tab.kind == crate::app::TabKind::File
+                    && tab.editor.file_path.as_ref() == Some(&key)
+                    && tab.editor.save_identity != identity
+            })
+        {
+            app.modal.error = Some("This remote file is already open. Choose another name.".into());
+            return None;
         }
         // Existence and permissions are checked atomically by the service, not
         // with a network round trip or a native Windows metadata call here.
@@ -680,14 +842,26 @@ pub(crate) fn save_target(app: &mut App) -> Option<(PathBuf, bool)> {
         Some("The destination folder does not exist. Choose Browse to select one.")
     } else if app.editor().is_none() {
         Some("Open a document before saving.")
-    } else if app.active_extension_view().is_none() && app.editor().is_some_and(|editor|
-        app.tabs.iter().chain(app.groups.iter().flat_map(|g| &g.tabs)).any(|tab|
-            tab.kind == crate::app::TabKind::File && tab.editor.save_identity != editor.save_identity
-                && tab.editor.file_path.as_ref().is_some_and(|other| App::paths_may_share_entry(other, &path))))
+    } else if app.active_extension_view().is_none()
+        && app.editor().is_some_and(|editor| {
+            app.tabs
+                .iter()
+                .chain(app.groups.iter().flat_map(|g| &g.tabs))
+                .any(|tab| {
+                    tab.kind == crate::app::TabKind::File
+                        && tab.editor.save_identity != editor.save_identity
+                        && tab
+                            .editor
+                            .file_path
+                            .as_ref()
+                            .is_some_and(|other| App::paths_may_share_entry(other, &path))
+                })
+        })
     {
         Some("This file is already open. Close it before replacing it, or choose another name.")
     } else {
-        app.editor().and_then(crate::editor::Editor::save_content_error)
+        app.editor()
+            .and_then(crate::editor::Editor::save_content_error)
     };
     if let Some(error) = error {
         app.modal.error = Some(error.into());
@@ -1212,7 +1386,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         used += w + 1;
     }
     let has_input = kind.input().is_some();
-    let context_lines = data.context.len().min(if kind == Kind::ExitBackup { 12 } else { u16::MAX as usize }) as u16;
+    let context_lines = data.context.len().min(if kind == Kind::ExitBackup {
+        12
+    } else {
+        u16::MAX as usize
+    }) as u16;
     let desired = 7u16
         .saturating_add(context_lines)
         .saturating_add(message_lines)
@@ -1241,11 +1419,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.colors.ui.widget_border.border(bg).unwrap_or(bg)))
-        .style(
-            Style::default()
-                .bg(bg)
-                .fg(fg),
-        );
+        .style(Style::default().bg(bg).fg(fg));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let padding = 2.min(inner.width / 4);
@@ -1288,12 +1462,17 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
     text(
         f,
         title,
-        &format!("  {}", if kind == Kind::ExitBackup && width < 40 { "Large unsaved files" }
-            else if kind == Kind::ExitRecovery && width < 40 { "Backing up…" } else { data.title }),
-        Style::default()
-            .fg(fg)
-            .bg(bg)
-            .add_modifier(Modifier::BOLD),
+        &format!(
+            "  {}",
+            if kind == Kind::ExitBackup && width < 40 {
+                "Large unsaved files"
+            } else if kind == Kind::ExitRecovery && width < 40 {
+                "Backing up…"
+            } else {
+                data.title
+            }
+        ),
+        Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
     );
     app.modal.close = Rect::new(
         title.right().saturating_sub(3).max(title.x),
@@ -1301,7 +1480,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         3.min(title.width),
         title.height,
     );
-    if kind == Kind::ExitRecovery { app.modal.close = Rect::default(); }
+    if kind == Kind::ExitRecovery {
+        app.modal.close = Rect::default();
+    }
     let close_hover = app
         .modal
         .close
@@ -1310,7 +1491,13 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         f,
         app.modal.close,
         " × ",
-        app.colors.ui.toolbar_layer_style(app.colors.ui.widget_foreground, bg, close_hover, false, false),
+        app.colors.ui.toolbar_layer_style(
+            app.colors.ui.widget_foreground,
+            bg,
+            close_hover,
+            false,
+            false,
+        ),
     );
     text(
         f,
@@ -1318,12 +1505,19 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         &data.message,
         Style::default()
             .fg(fg)
-            .add_modifier(if kind == Kind::About { Modifier::empty() } else { Modifier::BOLD }),
+            .add_modifier(if kind == Kind::About {
+                Modifier::empty()
+            } else {
+                Modifier::BOLD
+            }),
     );
     app.modal.context_area = rows[2];
     app.modal.context_total = data.context.len();
     let scrollable = kind == Kind::ExitBackup && data.context.len() > rows[2].height as usize;
-    app.modal.context_scroll = app.modal.context_scroll.min(data.context.len().saturating_sub(rows[2].height as usize));
+    app.modal.context_scroll = app
+        .modal
+        .context_scroll
+        .min(data.context.len().saturating_sub(rows[2].height as usize));
     for (i, line) in data
         .context
         .iter()
@@ -1331,22 +1525,27 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         .take(rows[2].height as usize)
         .enumerate()
     {
-        let row = Rect::new(rows[2].x, rows[2].y + i as u16, rows[2].width.saturating_sub(u16::from(scrollable)), 1);
-        let value = format!(" {}", path_tail(line, row.width.saturating_sub(2) as usize));
-        text(
-            f,
-            row,
-            &value,
-            Style::default()
-                .fg(fg)
-                .bg(bg),
+        let row = Rect::new(
+            rows[2].x,
+            rows[2].y + i as u16,
+            rows[2].width.saturating_sub(u16::from(scrollable)),
+            1,
         );
+        let value = format!(" {}", path_tail(line, row.width.saturating_sub(2) as usize));
+        text(f, row, &value, Style::default().fg(fg).bg(bg));
     }
     if scrollable && !rows[2].is_empty() {
         let (track, thumb) = app.colors.ui.scrollbar_colors(bg, false, false);
-        crate::ui_widgets::VerticalScrollbar::new(rows[2].right() - 1, rows[2].y,
-            rows[2].height, data.context.len(), app.modal.context_scroll)
-            .symbols('┃', '│').colors(thumb, track, bg).render(f);
+        crate::ui_widgets::VerticalScrollbar::new(
+            rows[2].right() - 1,
+            rows[2].y,
+            rows[2].height,
+            data.context.len(),
+            app.modal.context_scroll,
+        )
+        .symbols('┃', '│')
+        .colors(thumb, track, bg)
+        .render(f);
     }
     if let Some(id) = kind.input() {
         let field_area = rows[3];
@@ -1377,13 +1576,24 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             } else {
                 Borders::NONE
             })
-            .border_style(Style::default().fg((if focused { app.colors.ui.focus_border }
-                else { app.colors.ui.input_colors.border }).border(input_bg).unwrap_or(input_bg)))
+            .border_style(
+                Style::default().fg((if focused {
+                    app.colors.ui.focus_border
+                } else {
+                    app.colors.ui.input_colors.border
+                })
+                .border(input_bg)
+                .unwrap_or(input_bg)),
+            )
             .style(input_style);
         let input_inner = border.inner(input_area);
         f.render_widget(border, input_area);
         let (value, cursor, anchor) = match id {
-            TextInputId::GitOperationTarget => (&app.git_operation_ui.target, app.git_operation_ui.cursor, app.git_operation_ui.anchor),
+            TextInputId::GitOperationTarget => (
+                &app.git_operation_ui.target,
+                app.git_operation_ui.cursor,
+                app.git_operation_ui.anchor,
+            ),
             TextInputId::CommandPalette => (
                 &app.palette.query,
                 app.palette.cursor,
@@ -1415,24 +1625,26 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             .theme_colors(&app.colors)
             .prefix(" ", input_fg)
             .bg(input_bg)
-            .placeholder_text(
-                match kind {
-                    Kind::Goto => "e.g. 42:8",
-                    Kind::ThemeInstall => if app.palette.install_syntax_mode { "Path to a syntax file…" }
-                        else if app.palette.install_extension_mode { "https://github.com/owner/extensions…" }
-                        else { "vscodethemes.com link or local path…" },
-                    Kind::SaveAs => "e.g. src/main.rs",
-                    Kind::Rename => "New symbol name",
-                    Kind::RenameTerminal => "Terminal name",
-                    _ => "Enter a value",
-                },
-            )
+            .placeholder_text(match kind {
+                Kind::Goto => "e.g. 42:8",
+                Kind::ThemeInstall => {
+                    if app.palette.install_syntax_mode {
+                        "Path to a syntax file…"
+                    } else if app.palette.install_extension_mode {
+                        "https://github.com/owner/extensions…"
+                    } else {
+                        "vscodethemes.com link or local path…"
+                    }
+                }
+                Kind::SaveAs => "e.g. src/main.rs",
+                Kind::Rename => "New symbol name",
+                Kind::RenameTerminal => "Terminal name",
+                _ => "Enter a value",
+            })
             .cursor_marker(if focused { "│" } else { "" })
             .cursor_pos(cursor.min(value.len()));
         if focused {
-            field = field.selection_range(
-                App::inline_selection_range(cursor, anchor),
-            );
+            field = field.selection_range(App::inline_selection_range(cursor, anchor));
         }
         if !input_inner.is_empty() {
             let hit = field.render(f, input_inner);
@@ -1440,7 +1652,16 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         }
     }
     let abort_amend = kind == Kind::Close && app.confirm_close_is_amend();
-    let caution = matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::CloseTerminal | Kind::ThemeDelete | Kind::GitOperationConfirm) || abort_amend || app.modal.overwrite.is_some();
+    let caution = matches!(
+        kind,
+        Kind::Delete
+            | Kind::Discard
+            | Kind::CloseAgent
+            | Kind::CloseTerminal
+            | Kind::ThemeDelete
+            | Kind::GitOperationConfirm
+    ) || abort_amend
+        || app.modal.overwrite.is_some();
     text(
         f,
         rows[4],
@@ -1471,15 +1692,37 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             1,
         );
         let selected = app.modal.focus == i + usize::from(has_input);
-        let destructive = (matches!(kind, Kind::Delete | Kind::Discard | Kind::CloseAgent | Kind::CloseTerminal | Kind::ThemeDelete | Kind::GitOperationConfirm) && i == 0)
+        let destructive = (matches!(
+            kind,
+            Kind::Delete
+                | Kind::Discard
+                | Kind::CloseAgent
+                | Kind::CloseTerminal
+                | Kind::ThemeDelete
+                | Kind::GitOperationConfirm
+        ) && i == 0)
             || (abort_amend && i == 0)
             || (kind == Kind::SaveError && app.save_conflict.is_some() && i == 0)
             || (matches!(kind, Kind::Close | Kind::Exit) && i == 1 && i + 1 < labels.len());
         let disabled = (kind == Kind::ThemeInstall && app.install_prompt_running() && i == 0)
-            || (matches!(kind, Kind::GitOperationTarget | Kind::GitOperationConfirm) && app.git_operation_ui.pending)
+            || (matches!(kind, Kind::GitOperationTarget | Kind::GitOperationConfirm)
+                && app.git_operation_ui.pending)
             || kind == Kind::ExitRecovery
-            || (kind == Kind::SaveError && app.save_conflict.as_ref().is_some_and(|conflict| conflict.busy()));
-        draw_dialog_button(f, rect, label, &app.colors, i == 0, selected, destructive, !disabled);
+            || (kind == Kind::SaveError
+                && app
+                    .save_conflict
+                    .as_ref()
+                    .is_some_and(|conflict| conflict.busy()));
+        draw_dialog_button(
+            f,
+            rect,
+            label,
+            &app.colors,
+            i == 0,
+            selected,
+            destructive,
+            !disabled,
+        );
         if !rect.is_empty() {
             app.modal.buttons.push((rect, i));
         }
@@ -1504,7 +1747,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
 mod tests {
     use super::*;
     use crate::{app::Tab, editor::Editor};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
     use std::time::Duration;
 
     fn app() -> App {
@@ -1518,14 +1761,19 @@ mod tests {
 
     #[test]
     fn about_opens_from_palette_and_keyboard_or_mouse_help_menu_in_all_editor_contexts() {
-        assert!(App::build_command_list_with_themes(&[], &[])
-            .iter().any(|command| command.id == "about" && command.name == "Help: About"));
+        assert!(
+            App::build_command_list_with_themes(&[], &[])
+                .iter()
+                .any(|command| command.id == "about" && command.name == "Help: About")
+        );
         for context in 0..4 {
             for route in 0..3 {
                 let mut app = app();
                 match context {
                     1 => app.tabs.clear(),
-                    2 => { app.execute_palette_command("settings"); }
+                    2 => {
+                        app.execute_palette_command("settings");
+                    }
                     3 => app.show_output(),
                     _ => {}
                 }
@@ -1535,27 +1783,61 @@ mod tests {
                 } else {
                     app.menu_active = true;
                     app.menu_open = true;
-                    app.menu_selected = App::menu_labels().iter().position(|label| *label == "Help").unwrap();
-                    app.menu_item_selected = app.menu_items(app.menu_selected).iter()
-                        .position(|(_, id)| *id == "about").unwrap();
-                    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+                    app.menu_selected = App::menu_labels()
+                        .iter()
+                        .position(|label| *label == "Help")
+                        .unwrap();
+                    app.menu_item_selected = app
+                        .menu_items(app.menu_selected)
+                        .iter()
+                        .position(|(_, id)| *id == "about")
+                        .unwrap();
+                    terminal
+                        .draw(|frame| crate::ui::draw(frame, &mut app))
+                        .unwrap();
                     if route == 1 {
                         crate::input_keyboard::handle_keyboard_event(
-                            &mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                            &mut app,
+                            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+                        );
                     } else {
                         let x = crate::ui_chrome::menu_dropdown_anchor_x(&app) + 2;
                         let y = app.menu_bar_area.unwrap().y + 2 + app.menu_item_selected as u16;
                         click(&mut app, Rect::new(x, y, 1, 1));
                     }
                 }
-                assert_eq!(active(&app), Some(Kind::About), "context {context}, route {route}");
+                assert_eq!(
+                    active(&app),
+                    Some(Kind::About),
+                    "context {context}, route {route}"
+                );
                 assert!(!app.menu_active && !app.menu_open);
-                terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-                let screen: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
-                for expected in ["About VTCode", "VTCode ", env!("CARGO_PKG_VERSION"),
-                    "Platform:", "Build:", "License:", "SSH protocol:",
-                    "https://github.com/im-henri/vtcode", "Copy Info", "Close"] {
-                    assert!(screen.contains(expected), "Missing {expected}: context {context}, route {route}");
+                terminal
+                    .draw(|frame| crate::ui::draw(frame, &mut app))
+                    .unwrap();
+                let screen: String = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect();
+                for expected in [
+                    "About VTCode",
+                    "VTCode ",
+                    env!("CARGO_PKG_VERSION"),
+                    "Platform:",
+                    "Build:",
+                    "License:",
+                    "SSH protocol:",
+                    "https://github.com/im-henri/vtcode",
+                    "Copy Info",
+                    "Close",
+                ] {
+                    assert!(
+                        screen.contains(expected),
+                        "Missing {expected}: context {context}, route {route}"
+                    );
                 }
                 assert_eq!(app.modal.focus, 1, "Enter should close About by default");
             }
@@ -1577,7 +1859,9 @@ mod tests {
         assert_eq!(active(&app), Some(Kind::About));
         crate::clipboard::set_text("another clipboard value").unwrap();
         crate::input_keyboard::handle_keyboard_event(
-            &mut app, KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+            &mut app,
+            KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL),
+        );
         assert_eq!(crate::clipboard::get_text().unwrap(), info);
         assert_eq!(app.editor().unwrap().rope, original);
         assert_eq!(app.editor().unwrap().content_version, version);
@@ -1591,8 +1875,10 @@ mod tests {
             let original = app.editor().unwrap().rope.clone();
             app.execute_palette_command("about");
             render(&mut app, 100, 30);
-            for key in [KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
-                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)] {
+            for key in [
+                KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE),
+                KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL),
+            ] {
                 crate::input_keyboard::handle_keyboard_event(&mut app, key);
                 assert_eq!(active(&app), Some(Kind::About));
                 assert_eq!(app.editor().unwrap().rope, original);
@@ -1600,11 +1886,26 @@ mod tests {
             }
             match action {
                 0 | 1 => {
-                    crate::input_keyboard::handle_keyboard_event(&mut app,
-                        KeyEvent::new(if action == 0 { KeyCode::Esc } else { KeyCode::Enter }, KeyModifiers::NONE));
+                    crate::input_keyboard::handle_keyboard_event(
+                        &mut app,
+                        KeyEvent::new(
+                            if action == 0 {
+                                KeyCode::Esc
+                            } else {
+                                KeyCode::Enter
+                            },
+                            KeyModifiers::NONE,
+                        ),
+                    );
                 }
-                2 => { let close = app.modal.close; click(&mut app, close); }
-                3 => { let close = app.modal.buttons[1].0; click(&mut app, close); }
+                2 => {
+                    let close = app.modal.close;
+                    click(&mut app, close);
+                }
+                3 => {
+                    let close = app.modal.buttons[1].0;
+                    click(&mut app, close);
+                }
                 _ => click(&mut app, Rect::new(0, 0, 1, 1)),
             }
             assert!(app.about_info.is_none());
@@ -1617,10 +1918,22 @@ mod tests {
     fn multiline_dialog_messages_keep_hard_breaks_and_blank_lines_visible() {
         for newline in ["\n", "\r\n"] {
             let mut app = app();
-            let message = ["The operation failed.", "", "Details:", "The final diagnostic line."].join(newline);
+            let message = [
+                "The operation failed.",
+                "",
+                "Details:",
+                "The final diagnostic line.",
+            ]
+            .join(newline);
             app.show_save_error(message);
             let terminal = render(&mut app, 100, 30);
-            let screen: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+            let screen: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
             assert!(screen.contains("The final diagnostic line."));
             assert_eq!(wrapped_height("one\n\nthree", 70), 3);
         }
@@ -1642,20 +1955,30 @@ mod tests {
         match kind {
             Kind::About => app.show_about(),
             Kind::SaveError => app.show_save_error("This file changed on disk. Save cancelled."),
-            Kind::FormattingError => app.show_formatting_error("The language server could not format this document."),
+            Kind::FormattingError => {
+                app.show_formatting_error("The language server could not format this document.")
+            }
             Kind::AgentSettings => app.open_agent_settings(),
             Kind::LspSettings => app.open_lsp_settings(),
             Kind::ScopeBubbleSettings => app.open_scope_bubble_settings(),
             Kind::ExclusionSettings => app.open_exclusion_settings("files_exclude", None, false),
             Kind::FileAssociations => app.open_file_associations(),
             Kind::FormatterSettings => app.open_formatter_settings(None),
-            Kind::RemoteTargets => { app.remote_targets.path = Some(std::env::temp_dir().join("vtcode-modal-remote-test.json")); app.edit_remote_target(None, false); }
+            Kind::RemoteTargets => {
+                app.remote_targets.path =
+                    Some(std::env::temp_dir().join("vtcode-modal-remote-test.json"));
+                app.edit_remote_target(None, false);
+            }
             Kind::CloseAgent => app.chat.confirm_close_agent = Some(app.chat.active_agent),
             Kind::CloseTerminal => app.request_terminal_close(
-                vec!["Build: cargo test".into()], crate::app_terminal::TerminalCloseAction::Session(0)),
+                vec!["Build: cargo test".into()],
+                crate::app_terminal::TerminalCloseAction::Session(0),
+            ),
             Kind::ThemeInstall => app.open_theme_install_prompt(),
             Kind::ThemeDelete => {
-                let mut theme = crate::app_theme_loader::builtin_theme("dark").unwrap().clone();
+                let mut theme = crate::app_theme_loader::builtin_theme("dark")
+                    .unwrap()
+                    .clone();
                 theme.config_key = "test-installed-theme".into();
                 theme.name = "Installed Theme".into();
                 theme.builtin = false;
@@ -1665,7 +1988,8 @@ mod tests {
             }
             Kind::ThemeVsixLink => {
                 app.open_theme_install_prompt();
-                app.palette.query = "https://vscodethemes.com/e/akamud.vscode-theme-onedark/atom-one-dark".into();
+                app.palette.query =
+                    "https://vscodethemes.com/e/akamud.vscode-theme-onedark/atom-one-dark".into();
                 app.show_theme_vsix_link();
             }
             Kind::SaveAs => {
@@ -1712,7 +2036,10 @@ mod tests {
             }
             Kind::GitOperationTarget | Kind::GitOperationConfirm => {
                 app.start_git_operation_dialog(crate::git_operation::Kind::Rebase);
-                if kind == Kind::GitOperationConfirm { app.git_operation_ui.request.as_mut().unwrap().choice = crate::ui_git_operation::Choice::Abort; }
+                if kind == Kind::GitOperationConfirm {
+                    app.git_operation_ui.request.as_mut().unwrap().choice =
+                        crate::ui_git_operation::Choice::Abort;
+                }
             }
             Kind::Exit => {
                 app.editor_mut().unwrap().modified = true;
@@ -1721,7 +2048,11 @@ mod tests {
             Kind::ExitBackup => {
                 app.exit_confirm_active = true;
                 app.exit_backup_warning = Some(crate::app_exit_backup::Warning {
-                    files: vec![crate::app_exit_backup::File { name: "large.log".into(), bytes: 20 * 1024 * 1024, history_bytes: 0 }],
+                    files: vec![crate::app_exit_backup::File {
+                        name: "large.log".into(),
+                        bytes: 20 * 1024 * 1024,
+                        history_bytes: 0,
+                    }],
                     total_bytes: 20 * 1024 * 1024,
                 });
             }
@@ -1762,23 +2093,47 @@ mod tests {
     fn assert_button_focus(app: &App, terminal: &Terminal<TestBackend>, selected: usize) {
         let buffer = terminal.backend().buffer();
         for &(area, index) in &app.modal.buttons {
-            let row: String = (area.x..area.right()).map(|x| buffer[(x, area.y)].symbol()).collect();
+            let row: String = (area.x..area.right())
+                .map(|x| buffer[(x, area.y)].symbol())
+                .collect();
             if index == selected {
-                assert!(row.starts_with('[') && row.ends_with(']'), "active button must have a visible outline: {row:?}");
-                assert_eq!(buffer[(area.x, area.y)].bg, (if index == 0 {
-                    app.colors.ui.primary_button_hover
-                } else { app.colors.ui.secondary_button_hover }).over(app.colors.ui.bg_widget).unwrap());
+                assert!(
+                    row.starts_with('[') && row.ends_with(']'),
+                    "active button must have a visible outline: {row:?}"
+                );
+                assert_eq!(
+                    buffer[(area.x, area.y)].bg,
+                    (if index == 0 {
+                        app.colors.ui.primary_button_hover
+                    } else {
+                        app.colors.ui.secondary_button_hover
+                    })
+                    .over(app.colors.ui.bg_widget)
+                    .unwrap()
+                );
                 assert!(buffer[(area.x, area.y)].modifier.contains(Modifier::BOLD));
             } else {
-                assert!(!row.contains('['), "only one button may look active: {row:?}");
+                assert!(
+                    !row.contains('['),
+                    "only one button may look active: {row:?}"
+                );
                 let disabled = app.modal.kind == Some(Kind::ThemeInstall)
-                    && app.install_prompt_running() && index == 0;
-                let control = if index == 0 && (!disabled || app.colors.ui.preserve_theme_colors) { app.colors.ui.primary_button }
-                    else { app.colors.ui.secondary_button };
+                    && app.install_prompt_running()
+                    && index == 0;
+                let control = if index == 0 && (!disabled || app.colors.ui.preserve_theme_colors) {
+                    app.colors.ui.primary_button
+                } else {
+                    app.colors.ui.secondary_button
+                };
                 let surface = app.colors.ui.bg_widget;
                 let mut background = control.background.over(surface).unwrap_or(surface);
-                if disabled && app.colors.ui.preserve_theme_colors && let ratatui::style::Color::Rgb(r, g, b) = background {
-                    background = crate::theme_workbench::ColorLayer::rgba(r, g, b, 102).over(surface).unwrap();
+                if disabled
+                    && app.colors.ui.preserve_theme_colors
+                    && let ratatui::style::Color::Rgb(r, g, b) = background
+                {
+                    background = crate::theme_workbench::ColorLayer::rgba(r, g, b, 102)
+                        .over(surface)
+                        .unwrap();
                 }
                 assert_eq!(buffer[(area.x, area.y)].bg, background);
             }
@@ -1787,7 +2142,12 @@ mod tests {
 
     #[test]
     fn dialog_buttons_share_one_clear_mouse_and_keyboard_selection() {
-        for (kind, unsaved) in [(Kind::Exit, false), (Kind::Exit, true), (Kind::Close, true), (Kind::Delete, false)] {
+        for (kind, unsaved) in [
+            (Kind::Exit, false),
+            (Kind::Exit, true),
+            (Kind::Close, true),
+            (Kind::Delete, false),
+        ] {
             let mut app = app();
             enable(&mut app, kind);
             app.editor_mut().unwrap().modified = unsaved;
@@ -1797,16 +2157,31 @@ mod tests {
             let terminal = render(&mut app, 100, 30);
             assert_button_focus(&app, &terminal, 0);
             let count = labels(&app, kind).len();
-            for key in [KeyCode::Right, KeyCode::Down, KeyCode::Left, KeyCode::Up, KeyCode::Tab, KeyCode::BackTab] {
+            for key in [
+                KeyCode::Right,
+                KeyCode::Down,
+                KeyCode::Left,
+                KeyCode::Up,
+                KeyCode::Tab,
+                KeyCode::BackTab,
+            ] {
                 let previous = app.modal.focus;
                 let backwards = matches!(key, KeyCode::Left | KeyCode::Up | KeyCode::BackTab);
                 handle_key(&mut app, KeyEvent::new(key, KeyModifiers::NONE));
-                assert_eq!(app.modal.focus, (previous + if backwards { count - 1 } else { 1 }) % count);
+                assert_eq!(
+                    app.modal.focus,
+                    (previous + if backwards { count - 1 } else { 1 }) % count
+                );
                 let terminal = render(&mut app, 100, 30);
                 assert_button_focus(&app, &terminal, app.modal.focus);
             }
             let cancel = app.modal.buttons.last().unwrap().0;
-            let movement = MouseEvent { kind: MouseEventKind::Moved, column: cancel.x + 1, row: cancel.y, modifiers: KeyModifiers::NONE };
+            let movement = MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: cancel.x + 1,
+                row: cancel.y,
+                modifiers: KeyModifiers::NONE,
+            };
             crate::mouse::handle_mouse(&mut app, movement);
             assert_eq!(app.modal.focus, count - 1, "hover changes the Enter target");
             let terminal = render(&mut app, 100, 30);
@@ -1818,10 +2193,22 @@ mod tests {
             let terminal = render(&mut app, 100, 30);
             assert_eq!(app.modal.focus, count - 2);
             assert_button_focus(&app, &terminal, count - 2);
-            crate::mouse::handle_mouse(&mut app, MouseEvent { column: movement.column + 1, ..movement });
+            crate::mouse::handle_mouse(
+                &mut app,
+                MouseEvent {
+                    column: movement.column + 1,
+                    ..movement
+                },
+            );
             assert_eq!(app.modal.focus, count - 1);
-            assert_eq!(handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), Some(false));
-            assert!(active(&app).is_none(), "Enter must activate the hovered Cancel");
+            assert_eq!(
+                handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+                Some(false)
+            );
+            assert!(
+                active(&app).is_none(),
+                "Enter must activate the hovered Cancel"
+            );
         }
     }
 
@@ -1867,14 +2254,21 @@ mod tests {
             assert_eq!(labels(&app, Kind::ThemeInstall), ["Install theme", "Close"]);
         }
         app.palette.query = "https://vscodethemes.com/e/example.theme/dark".into();
-        assert_eq!(labels(&app, Kind::ThemeInstall), ["Install theme", "Get VSIX link", "Close"]);
+        assert_eq!(
+            labels(&app, Kind::ThemeInstall),
+            ["Install theme", "Get VSIX link", "Close"]
+        );
         app.palette.install_extension_mode = true;
-        assert_eq!(labels(&app, Kind::ThemeInstall), ["Choose version…", "Close"]);
+        assert_eq!(
+            labels(&app, Kind::ThemeInstall),
+            ["Choose version…", "Close"]
+        );
     }
 
     #[test]
     fn vsix_link_is_accessible_before_during_and_after_failed_install() {
-        let source = "https://vscodethemes.com/e/akamud.vscode-theme-onedark/atom-one-dark?language=py";
+        let source =
+            "https://vscodethemes.com/e/akamud.vscode-theme-onedark/atom-one-dark?language=py";
         let url = "https://marketplace.visualstudio.com/_apis/public/gallery/publishers/akamud/vsextensions/vscode-theme-onedark/latest/vspackage";
         for phase in 0..3 {
             for mouse in [false, true] {
@@ -1886,7 +2280,13 @@ mod tests {
                 }
                 if phase == 2 {
                     app.finish_theme_install(Err("Proxy connection refused".into()));
-                    assert!(app.palette.theme_install_error.as_deref().unwrap().contains("Get VSIX link"));
+                    assert!(
+                        app.palette
+                            .theme_install_error
+                            .as_deref()
+                            .unwrap()
+                            .contains("Get VSIX link")
+                    );
                 }
                 let error = app.palette.theme_install_error.clone();
                 render(&mut app, 100, 30);
@@ -1914,11 +2314,17 @@ mod tests {
                     .flat_map(str::chars)
                     .filter(|ch| !ch.is_whitespace())
                     .collect();
-                assert!(rendered.contains(url), "the entire download URL must be visible");
+                assert!(
+                    rendered.contains(url),
+                    "the entire download URL must be visible"
+                );
                 assert!(app.text_input_regions.is_empty());
                 assert!(app.paste_into_focused_text_input("do not replace the source"));
                 assert_eq!(app.palette.query, source);
-                assert_eq!(labels(&app, Kind::ThemeVsixLink), ["Copy link", "Open in browser", "Back"]);
+                assert_eq!(
+                    labels(&app, Kind::ThemeVsixLink),
+                    ["Copy link", "Open in browser", "Back"]
+                );
                 if mouse {
                     let back = app.modal.buttons.last().unwrap().0;
                     click(&mut app, back);
@@ -1959,7 +2365,13 @@ mod tests {
             enable(&mut app, kind);
             for (width, height) in [(100, 30), (80, 24), (40, 20), (30, 12), (16, 8), (3, 3)] {
                 let terminal = render(&mut app, width, height);
-                let rendered: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+                let rendered: String = terminal
+                    .backend()
+                    .buffer()
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect();
                 assert!(!rendered.contains("Switch control"));
                 assert!(!rendered.contains("Enter  Confirm"));
                 assert!(!rendered.contains("Tab Move"));
@@ -2080,7 +2492,11 @@ mod tests {
             app.pending_file_saves.is_empty()
         });
         assert!(app.save_error.is_none());
-        assert!(std::fs::read_to_string(&target).unwrap().starts_with("one\n"));
+        assert!(
+            std::fs::read_to_string(&target)
+                .unwrap()
+                .starts_with("one\n")
+        );
         assert!(!app.save_as_active);
         assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&target));
     }

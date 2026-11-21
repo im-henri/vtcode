@@ -228,7 +228,9 @@ impl App {
         self.bulk_paste.job.is_some() || self.bulk_paste.receiving.is_some()
     }
 
-    pub(crate) fn paste_receiving(&self) -> bool { self.bulk_paste.receiving.is_some() }
+    pub(crate) fn paste_receiving(&self) -> bool {
+        self.bulk_paste.receiving.is_some()
+    }
 
     pub(crate) fn paste_editor_clipboard(&mut self, allow_line_copy: bool) {
         if self.bulk_paste.job.is_some() {
@@ -383,11 +385,15 @@ impl App {
                 .ok_or_else(|| {
                     "Paste cancelled because the destination was closed or moved".to_owned()
                 })?;
-            prepared.apply(editor, threshold).map(|bytes| (bytes, editor.file_path.clone(), editor.rope.clone()))
+            prepared
+                .apply(editor, threshold)
+                .map(|bytes| (bytes, editor.file_path.clone(), editor.rope.clone()))
         });
         match result {
             Ok((bytes, path, rope)) => {
-                if let Some(path) = path { self.queue_global_search_model_update(path, rope); }
+                if let Some(path) = path {
+                    self.queue_global_search_model_update(path, rope);
+                }
                 self.last_edit_time = std::time::Instant::now();
                 self.notify(format!("Paste complete · {}", size(bytes)));
                 if self

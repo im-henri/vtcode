@@ -84,8 +84,13 @@ pub(crate) fn read(
         *epoch = query.epoch;
     }
     explorer.set_source_control_enabled(query.source_control);
-    if let Some(locale) = &query.sort_locale && !explorer.set_sort_locale(locale) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Invalid Explorer sort locale"));
+    if let Some(locale) = &query.sort_locale
+        && !explorer.set_sort_locale(locale)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid Explorer sort locale",
+        ));
     }
     explorer.set_files_exclude(&query.files_exclude);
     let expanded = query
@@ -159,7 +164,11 @@ impl workspace::Workspace {
                 .map(|find| -> io::Result<_> {
                     Ok(Find {
                         text: find.text,
-                        directory: find.directory.as_deref().map(|path| self.remote_path(path)).transpose()?,
+                        directory: find
+                            .directory
+                            .as_deref()
+                            .map(|path| self.remote_path(path))
+                            .transpose()?,
                         filter: find.filter,
                         fuzzy: find.fuzzy,
                         regex: find.regex,

@@ -1,8 +1,8 @@
 use super::*;
-#[path = "app_terminal_links_remote_tests.rs"]
-mod terminal_links;
 #[path = "app_open_file_path_remote_tests.rs"]
 mod file_paths;
+#[path = "app_terminal_links_remote_tests.rs"]
+mod terminal_links;
 use crate::app::Tab;
 use crate::editor::Editor;
 use crate::remote::{self, RemotePath};
@@ -93,9 +93,27 @@ fn remote_editor_path_links_resolve_fallbacks_without_hover_io() {
     use ratatui::{Terminal, backend::TestBackend};
 
     for (source_file, source, marker, target_file, cursor) in [
-        ("logs/build.log", "src/main.txt:3:4\n", "main.txt", "src/main.txt", (2, 3)),
-        ("src/main.cpp", "#include \"lib/remote header.hpp\"\n", "remote", "include/lib/remote header.hpp", (0, 0)),
-        ("src/main.ts", "import './lib';\n", "lib", "src/lib/index.ts", (0, 0)),
+        (
+            "logs/build.log",
+            "src/main.txt:3:4\n",
+            "main.txt",
+            "src/main.txt",
+            (2, 3),
+        ),
+        (
+            "src/main.cpp",
+            "#include \"lib/remote header.hpp\"\n",
+            "remote",
+            "include/lib/remote header.hpp",
+            (0, 0),
+        ),
+        (
+            "src/main.ts",
+            "import './lib';\n",
+            "lib",
+            "src/lib/index.ts",
+            (0, 0),
+        ),
     ] {
         let mut fixture = setup();
         let contents = "first\nsecond\nthird line\n";
@@ -105,18 +123,31 @@ fn remote_editor_path_links_resolve_fallbacks_without_hover_io() {
         fixture.app.tabs = vec![Tab::new_file(editor)];
         fixture.app.active_pane = ActivePane::Editor;
         let mut terminal = Terminal::new(TestBackend::new(100, 15)).unwrap();
-        terminal.draw(|frame| crate::ui_editor::draw_editor(frame, &mut fixture.app, frame.area())).unwrap();
+        terminal
+            .draw(|frame| crate::ui_editor::draw_editor(frame, &mut fixture.app, frame.area()))
+            .unwrap();
         let area = fixture.app.code_area.unwrap();
         let column = area.x + u16::try_from(source.find(marker).unwrap()).unwrap();
-        let event = |kind| MouseEvent { kind, column, row: area.y, modifiers: KeyModifiers::CONTROL };
+        let event = |kind| MouseEvent {
+            kind,
+            column,
+            row: area.y,
+            modifiers: KeyModifiers::CONTROL,
+        };
         let traffic = fixture.traffic.load(Ordering::Relaxed);
         crate::mouse::handle_mouse(&mut fixture.app, event(MouseEventKind::Moved));
         assert!(fixture.app.refresh_lsp_link_hover(), "{source}");
         assert_eq!(fixture.traffic.load(Ordering::Relaxed), traffic);
 
         fixture.hold.store(true, Ordering::Release);
-        crate::mouse::handle_mouse(&mut fixture.app, event(MouseEventKind::Down(MouseButton::Left)));
-        crate::mouse::handle_mouse(&mut fixture.app, event(MouseEventKind::Up(MouseButton::Left)));
+        crate::mouse::handle_mouse(
+            &mut fixture.app,
+            event(MouseEventKind::Down(MouseButton::Left)),
+        );
+        crate::mouse::handle_mouse(
+            &mut fixture.app,
+            event(MouseEventKind::Up(MouseButton::Left)),
+        );
         until(|| fixture.blocked.load(Ordering::Acquire));
         assert_eq!(fixture.app.tabs.len(), 1);
         fixture.hold.store(false, Ordering::Release);
@@ -133,14 +164,24 @@ fn remote_folder_browser_goes_up_to_the_nodes_filesystems_and_back() {
     use crate::folder_browser::{Action, Focus};
     let mut fixture = setup();
     let workspace = fixture.app.remote_workspace.as_ref().unwrap().clone();
-    fixture.app.open_path_browser(crate::folder_browser::Mode::OpenFolder);
-    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    fixture
+        .app
+        .open_path_browser(crate::folder_browser::Mode::OpenFolder);
+    fixture
+        .app
+        .wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
     let mut depth = 0;
     while !fixture.app.folder_browser_is_computer() {
         assert!(depth < 64);
         fixture.app.folder_browser_up();
-        fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
-        assert!(fixture.app.folder_browser.error.is_none(), "{:?}", fixture.app.folder_browser.error);
+        fixture
+            .app
+            .wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+        assert!(
+            fixture.app.folder_browser.error.is_none(),
+            "{:?}",
+            fixture.app.folder_browser.error
+        );
         depth += 1;
     }
     let roots = workspace.filesystem_roots().unwrap();
@@ -149,30 +190,61 @@ fn remote_folder_browser_goes_up_to_the_nodes_filesystems_and_back() {
         assert!(crate::remote::workspace::is_view_key(key));
         assert!(fixture.app.folder_browser_entries.contains(key));
         assert_eq!(fixture.app.folder_browser_entry_name(key), label.as_str());
-        assert!(fixture.app.folder_browser.locations.iter().all(|(_, path)|
-            path.as_os_str().is_empty() || crate::remote::workspace::is_view_key(path)));
+        assert!(
+            fixture
+                .app
+                .folder_browser
+                .locations
+                .iter()
+                .all(|(_, path)| path.as_os_str().is_empty()
+                    || crate::remote::workspace::is_view_key(path))
+        );
     }
     let native_root = fixture.root.path().ancestors().last().unwrap();
-    let root = workspace.view_key(&remote::git::from_native(native_root, fixture.root.path()).unwrap());
-    let row = fixture.app.folder_browser_entries.iter().position(|path| path == &root).unwrap();
+    let root =
+        workspace.view_key(&remote::git::from_native(native_root, fixture.root.path()).unwrap());
+    let row = fixture
+        .app
+        .folder_browser_entries
+        .iter()
+        .position(|path| path == &root)
+        .unwrap();
     fixture.app.select_browser_row(row);
     fixture.app.folder_browser_enter();
-    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    fixture
+        .app
+        .wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
     assert_eq!(fixture.app.folder_browser_path, root);
-    assert!(fixture.app.folder_browser.error.is_none(), "{:?}", fixture.app.folder_browser.error);
+    assert!(
+        fixture.app.folder_browser.error.is_none(),
+        "{:?}",
+        fixture.app.folder_browser.error
+    );
     fixture.app.folder_browser_action(Action::Back);
-    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    fixture
+        .app
+        .wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
     assert!(fixture.app.folder_browser_is_computer());
     fixture.app.folder_browser_action(Action::Forward);
-    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    fixture
+        .app
+        .wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
     assert_eq!(fixture.app.folder_browser_path, root);
     fixture.app.navigate_folder_browser(PathBuf::new());
-    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    fixture
+        .app
+        .wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
     fixture.app.folder_browser_action(Action::Address);
     fixture.app.change_dir_query = workspace.display_path(&workspace.view_root).unwrap();
-    fixture.app.folder_browser_key(crossterm::event::KeyEvent::new(
-        crossterm::event::KeyCode::Enter, crossterm::event::KeyModifiers::NONE));
-    fixture.app.wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
+    fixture
+        .app
+        .folder_browser_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+    fixture
+        .app
+        .wait_for_background(Duration::from_secs(10), |app| !app.folder_browser_loading);
     assert_eq!(fixture.app.folder_browser_path, workspace.view_root);
     assert_eq!(fixture.app.folder_browser.focus, Focus::List);
 }

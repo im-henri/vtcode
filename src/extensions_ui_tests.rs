@@ -392,14 +392,21 @@ fn ui_combinations_replaced_extension_identity_rejects_previous_page_hit_areas()
     let (_root, mut app) = fixture(2);
     app.open_extension_info_tab("test.ext00");
     let mut terminal = Terminal::new(TestBackend::new(180, 42)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let (x, y) = find(&terminal, "FEATURES");
     // A preview can be replaced between an input event and the next frame.
     // Keep the view identity to verify the represented extension as well.
     let index = app.active_tab;
     app.tabs[index].editor.file_path = Some("Test Extension 01 [ext-info:test.ext01]".into());
-    crate::mouse::handle_mouse(&mut app, event(MouseEventKind::Down(MouseButton::Left), x, y));
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    crate::mouse::handle_mouse(
+        &mut app,
+        event(MouseEventKind::Down(MouseButton::Left), x, y),
+    );
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     assert!(text(&terminal).contains("Documentation line 00"));
     assert!(!text(&terminal).contains("Commands"));
 }

@@ -67,7 +67,10 @@ fn detached_editors_keep_their_own_find_queries_and_results() {
     draw(&mut app, &mut other);
     assert_eq!(app.search_matches.len(), 2);
     key(&mut app, KeyCode::F(3), KeyModifiers::NONE);
-    assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some("beta"));
+    assert_eq!(
+        app.editor().unwrap().selected_text().as_deref(),
+        Some("beta")
+    );
 
     assert!(app.activate_window(MAIN_WINDOW));
     draw(&mut app, &mut main);

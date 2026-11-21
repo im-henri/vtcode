@@ -20,7 +20,8 @@ fn legacy_includes(paths: &SearchPaths, path: &Path) -> bool {
         crate::native_paths::strip_prefix(path, &folder.root).is_some_and(|relative| {
             (!paths.has_global && folder.whole_folder)
                 || legacy_match(&paths.global, relative)
-                || folder.pattern
+                || folder
+                    .pattern
                     .as_ref()
                     .is_some_and(|glob| legacy_match(glob, relative))
         })
@@ -43,7 +44,8 @@ fn legacy_excludes(paths: &SearchPaths, path: &Path, workspace: &Path) -> bool {
             && paths.folders.iter().any(|folder| {
                 crate::native_paths::strip_prefix(path, &folder.root).is_some_and(|relative| {
                     folder.whole_folder
-                        || folder.pattern
+                        || folder
+                            .pattern
                             .as_ref()
                             .is_some_and(|glob| legacy_match(glob, relative))
                 })
@@ -435,7 +437,11 @@ fn whole_folder_scope_keeps_its_coverage_when_combined_with_narrower_globs() {
     }
 
     let rules = SearchPaths::new(&workspace, &format!("{absolute},{absolute}/*.rs,*.toml"));
-    for (name, included) in [("main.rs", true), ("Cargo.toml", true), ("notes.txt", false)] {
+    for (name, included) in [
+        ("main.rs", true),
+        ("Cargo.toml", true),
+        ("notes.txt", false),
+    ] {
         let path = folder.join(name);
         assert_eq!(rules.includes(&Candidate::new(&path)), included, "{name}");
     }
@@ -681,11 +687,16 @@ fn settings_sibling_clauses_require_exact_sibling_names_and_replace_one_basename
     std::fs::write(workspace.path().join("nested/a.ts"), "").unwrap();
     std::fs::write(workspace.path().join("a-a.ts"), "").unwrap();
     let matches = |when: &str| {
-        let rules = ExcludeRules::new(&[("**/*.js".into(), serde_json::json!({"when":when}))].into(), &BTreeMap::new());
+        let rules = ExcludeRules::new(
+            &[("**/*.js".into(), serde_json::json!({"when":when}))].into(),
+            &BTreeMap::new(),
+        );
         assert!(rules.requires_siblings());
         rules.excludes(&Candidate::new(&path), workspace.path())
     };
-    for when in ["", ".", "nested/a.ts", "$(basename)-$(basename).ts"] { assert!(!matches(when), "{when}"); }
+    for when in ["", ".", "nested/a.ts", "$(basename)-$(basename).ts"] {
+        assert!(!matches(when), "{when}");
+    }
     std::fs::write(workspace.path().join("a-$(basename).ts"), "").unwrap();
     assert!(matches("$(basename)-$(basename).ts"));
 }
@@ -693,9 +704,15 @@ fn settings_sibling_clauses_require_exact_sibling_names_and_replace_one_basename
 #[test]
 fn settings_glob_case_follows_the_native_platform_for_ascii_and_unicode_paths() {
     let root = Path::new("workspace");
-    let rules = ExcludeRules::new(&[("src/*.RS".into(), serde_json::json!(true))].into(), &BTreeMap::new());
+    let rules = ExcludeRules::new(
+        &[("src/*.RS".into(), serde_json::json!(true))].into(),
+        &BTreeMap::new(),
+    );
     for name in ["src/plain.rs", "src/café.rs"] {
-        assert_eq!(rules.excludes(&Candidate::new(&root.join(name)), root), cfg!(any(windows, target_os="macos")));
+        assert_eq!(
+            rules.excludes(&Candidate::new(&root.join(name)), root),
+            cfg!(any(windows, target_os = "macos"))
+        );
     }
 }
 

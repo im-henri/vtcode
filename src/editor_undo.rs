@@ -11,21 +11,25 @@ fn next_snapshot_id() -> u64 {
 impl Editor {
     pub(crate) fn set_encoding(&mut self, encoding: &'static str) {
         crate::editor_document::edit!(self, {
-        if self.encoding == encoding || self.save_content_error().is_some() { return; }
-        self.encoding = encoding;
-        self.modified = true;
-        // Save/autosave versions identify the bytes to write, not just text.
-        self.content_version = self.content_version.wrapping_add(1);
-        self.break_undo_group();
-        self.refresh_modified_from_saved();
-            })
+            if self.encoding == encoding || self.save_content_error().is_some() {
+                return;
+            }
+            self.encoding = encoding;
+            self.modified = true;
+            // Save/autosave versions identify the bytes to write, not just text.
+            self.content_version = self.content_version.wrapping_add(1);
+            self.break_undo_group();
+            self.refresh_modified_from_saved();
+        })
     }
 
     /// Check a claimed clean state before capturing another edit. Dirty states
     /// need no comparison on the typing path; history navigation and hunk
     /// reverts reconcile both directions after restoring their content.
     fn verify_clean_snapshot(&mut self) {
-        if self.modified { return; }
+        if self.modified {
+            return;
+        }
         self.refresh_modified_from_saved();
     }
 
@@ -33,7 +37,9 @@ impl Editor {
     /// contain exactly the same text. Reuse the saved Rope after equality is
     /// verified so subsequent checks use constant-time identity comparisons.
     pub(crate) fn refresh_modified_from_saved(&mut self) {
-        let Some(saved) = &self.saved_rope else { return; };
+        let Some(saved) = &self.saved_rope else {
+            return;
+        };
         if crate::rope_changes::equal(&self.rope, saved) {
             self.rope = saved.clone();
             self.modified = self.encoding != self.saved_encoding;
@@ -49,27 +55,47 @@ impl Editor {
     /// other entries are checked exactly when Undo/Redo restores them.
     pub(crate) fn record_saved_snapshot(&mut self, saved: Rope) {
         crate::editor_document::edit!(self, {
-        self.record_saved_snapshot_with_encoding(saved, self.encoding);
-            })
+            self.record_saved_snapshot_with_encoding(saved, self.encoding);
+        })
     }
 
-    pub(crate) fn record_saved_snapshot_with_encoding(&mut self, saved: Rope, encoding: &'static str) {
+    pub(crate) fn record_saved_snapshot_with_encoding(
+        &mut self,
+        saved: Rope,
+        encoding: &'static str,
+    ) {
         crate::editor_document::edit!(self, {
-        let same_baseline = self.saved_rope.as_ref().is_some_and(|old| old.is_instance(&saved));
-        for state in self.undo_stack.write().iter_mut().chain(self.redo_stack.write().iter_mut()) {
-            state.modified = !(state.rope.is_instance(&saved) || (same_baseline && !state.modified));
-        }
-        self.saved_rope = Some(saved);
-        self.saved_encoding = encoding;
-        self.saved_save_options = None;
-        self.refresh_modified_from_saved();
-        if self.saved_rope.as_ref().is_some_and(|saved| self.rope.is_instance(saved)) {
-            self.insertion_anchors = self.insertion_anchors.take().and_then(|anchors| anchors.rebase(&self.rope));
-            self.saved_insertion_anchors = self.insertion_anchors.clone();
-        } else if !same_baseline {
-            self.saved_insertion_anchors = None;
-        }
-            })
+            let same_baseline = self
+                .saved_rope
+                .as_ref()
+                .is_some_and(|old| old.is_instance(&saved));
+            for state in self
+                .undo_stack
+                .write()
+                .iter_mut()
+                .chain(self.redo_stack.write().iter_mut())
+            {
+                state.modified =
+                    !(state.rope.is_instance(&saved) || (same_baseline && !state.modified));
+            }
+            self.saved_rope = Some(saved);
+            self.saved_encoding = encoding;
+            self.saved_save_options = None;
+            self.refresh_modified_from_saved();
+            if self
+                .saved_rope
+                .as_ref()
+                .is_some_and(|saved| self.rope.is_instance(saved))
+            {
+                self.insertion_anchors = self
+                    .insertion_anchors
+                    .take()
+                    .and_then(|anchors| anchors.rebase(&self.rope));
+                self.saved_insertion_anchors = self.insertion_anchors.clone();
+            } else if !same_baseline {
+                self.saved_insertion_anchors = None;
+            }
+        })
     }
 
     /// Push current cursor position onto the cursor undo stack.
@@ -209,116 +235,119 @@ impl Editor {
 
     pub(crate) fn undo(&mut self) {
         crate::editor_document::edit!(self, {
-        self.desired_col = None;
-        self.break_undo_group();
-        if let Some(state) = self.undo_stack.pop_back() {
-            self.snippet_cancel();
-            self.animation_undo_revision = self.animation_undo_revision.wrapping_add(1);
-            let old_line_count = self.rope.len_lines();
-            self.redo_stack.push_back(UndoState {
-                snapshot_id: next_snapshot_id(),
-                rope: self.rope.clone(),
-                insertion_anchors: self.insertion_anchors.clone(),
-                line_ending: self.cached_line_ending,
-                cursor_line: self.cursor_line,
-                cursor_col: self.cursor_col,
-                extra_cursors: self.extra_cursors.clone(),
-                extra_cursor_anchors: self.extra_cursor_anchors.clone(),
-                selection_anchor: self.selection_anchor,
-                modified: self.modified,
-                dirty_from: state.dirty_from,
-                dirty_through: state.dirty_through,
-                change_id: state.change_id,
-            });
-            // Cap redo stack to same limit as undo
-            let max_redo = 500;
-            if self.redo_stack.len() > max_redo {
-                self.redo_stack.pop_front();
+            self.desired_col = None;
+            self.break_undo_group();
+            if let Some(state) = self.undo_stack.pop_back() {
+                self.snippet_cancel();
+                self.animation_undo_revision = self.animation_undo_revision.wrapping_add(1);
+                let old_line_count = self.rope.len_lines();
+                self.redo_stack.push_back(UndoState {
+                    snapshot_id: next_snapshot_id(),
+                    rope: self.rope.clone(),
+                    insertion_anchors: self.insertion_anchors.clone(),
+                    line_ending: self.cached_line_ending,
+                    cursor_line: self.cursor_line,
+                    cursor_col: self.cursor_col,
+                    extra_cursors: self.extra_cursors.clone(),
+                    extra_cursor_anchors: self.extra_cursor_anchors.clone(),
+                    selection_anchor: self.selection_anchor,
+                    modified: self.modified,
+                    dirty_from: state.dirty_from,
+                    dirty_through: state.dirty_through,
+                    change_id: state.change_id,
+                });
+                // Cap redo stack to same limit as undo
+                let max_redo = 500;
+                if self.redo_stack.len() > max_redo {
+                    self.redo_stack.pop_front();
+                }
+                self.rope = state.rope;
+                self.insertion_anchors = state.insertion_anchors;
+                self.cached_line_ending = state.line_ending;
+                self.cursor_line = state.cursor_line;
+                self.cursor_col = state.cursor_col;
+                self.extra_cursors = state.extra_cursors;
+                self.extra_cursor_anchors = state.extra_cursor_anchors;
+                self.selection_anchor = state.selection_anchor;
+                let line_delta = old_line_count.abs_diff(self.rope.len_lines());
+                self.mark_syntax_dirty_range(
+                    state.dirty_from,
+                    state
+                        .dirty_through
+                        .max(state.dirty_from.saturating_add(line_delta)),
+                );
+                self.content_version += 1;
+                self.cached_wrapped_total = None;
+                self.clear_stale_folds();
+                self.modified = state.modified;
+                self.refresh_modified_from_saved();
+                self.ensure_visible();
             }
-            self.rope = state.rope;
-            self.insertion_anchors = state.insertion_anchors;
-            self.cached_line_ending = state.line_ending;
-            self.cursor_line = state.cursor_line;
-            self.cursor_col = state.cursor_col;
-            self.extra_cursors = state.extra_cursors;
-            self.extra_cursor_anchors = state.extra_cursor_anchors;
-            self.selection_anchor = state.selection_anchor;
-            let line_delta = old_line_count.abs_diff(self.rope.len_lines());
-            self.mark_syntax_dirty_range(
-                state.dirty_from,
-                state
-                    .dirty_through
-                    .max(state.dirty_from.saturating_add(line_delta)),
-            );
-            self.content_version += 1;
-            self.cached_wrapped_total = None;
-            self.clear_stale_folds();
-            self.modified = state.modified;
-            self.refresh_modified_from_saved();
-            self.ensure_visible();
-        }
-            })
+        })
     }
 
     pub(crate) fn redo(&mut self) {
         crate::editor_document::edit!(self, {
-        self.desired_col = None;
-        self.break_undo_group();
-        if let Some(state) = self.redo_stack.pop_back() {
-            self.snippet_cancel();
-            self.animation_undo_revision = self.animation_undo_revision.wrapping_add(1);
-            let old_line_count = self.rope.len_lines();
-            self.undo_stack.push_back(UndoState {
-                snapshot_id: next_snapshot_id(),
-                rope: self.rope.clone(),
-                insertion_anchors: self.insertion_anchors.clone(),
-                line_ending: self.cached_line_ending,
-                cursor_line: self.cursor_line,
-                cursor_col: self.cursor_col,
-                extra_cursors: self.extra_cursors.clone(),
-                extra_cursor_anchors: self.extra_cursor_anchors.clone(),
-                selection_anchor: self.selection_anchor,
-                modified: self.modified,
-                dirty_from: state.dirty_from,
-                dirty_through: state.dirty_through,
-                change_id: state.change_id,
-            });
-            // Cap undo stack (same limit as in undo path)
-            let max_undo = 500;
-            if self.undo_stack.len() > max_undo {
-                self.undo_stack.pop_front();
+            self.desired_col = None;
+            self.break_undo_group();
+            if let Some(state) = self.redo_stack.pop_back() {
+                self.snippet_cancel();
+                self.animation_undo_revision = self.animation_undo_revision.wrapping_add(1);
+                let old_line_count = self.rope.len_lines();
+                self.undo_stack.push_back(UndoState {
+                    snapshot_id: next_snapshot_id(),
+                    rope: self.rope.clone(),
+                    insertion_anchors: self.insertion_anchors.clone(),
+                    line_ending: self.cached_line_ending,
+                    cursor_line: self.cursor_line,
+                    cursor_col: self.cursor_col,
+                    extra_cursors: self.extra_cursors.clone(),
+                    extra_cursor_anchors: self.extra_cursor_anchors.clone(),
+                    selection_anchor: self.selection_anchor,
+                    modified: self.modified,
+                    dirty_from: state.dirty_from,
+                    dirty_through: state.dirty_through,
+                    change_id: state.change_id,
+                });
+                // Cap undo stack (same limit as in undo path)
+                let max_undo = 500;
+                if self.undo_stack.len() > max_undo {
+                    self.undo_stack.pop_front();
+                }
+                self.rope = state.rope;
+                self.insertion_anchors = state.insertion_anchors;
+                self.cached_line_ending = state.line_ending;
+                self.cursor_line = state.cursor_line;
+                self.cursor_col = state.cursor_col;
+                self.extra_cursors = state.extra_cursors;
+                self.extra_cursor_anchors = state.extra_cursor_anchors;
+                self.selection_anchor = state.selection_anchor;
+                let line_delta = old_line_count.abs_diff(self.rope.len_lines());
+                self.mark_syntax_dirty_range(
+                    state.dirty_from,
+                    state
+                        .dirty_through
+                        .max(state.dirty_from.saturating_add(line_delta)),
+                );
+                self.content_version += 1;
+                self.cached_wrapped_total = None;
+                self.clear_stale_folds();
+                self.modified = state.modified;
+                self.refresh_modified_from_saved();
+                self.ensure_visible();
             }
-            self.rope = state.rope;
-            self.insertion_anchors = state.insertion_anchors;
-            self.cached_line_ending = state.line_ending;
-            self.cursor_line = state.cursor_line;
-            self.cursor_col = state.cursor_col;
-            self.extra_cursors = state.extra_cursors;
-            self.extra_cursor_anchors = state.extra_cursor_anchors;
-            self.selection_anchor = state.selection_anchor;
-            let line_delta = old_line_count.abs_diff(self.rope.len_lines());
-            self.mark_syntax_dirty_range(
-                state.dirty_from,
-                state
-                    .dirty_through
-                    .max(state.dirty_from.saturating_add(line_delta)),
-            );
-            self.content_version += 1;
-            self.cached_wrapped_total = None;
-            self.clear_stale_folds();
-            self.modified = state.modified;
-            self.refresh_modified_from_saved();
-            self.ensure_visible();
-        }
-            })
+        })
     }
 
     /// Keep only the history that recovery persists, sharing immutable text
     /// with the editor instead of expanding every snapshot into a String.
     pub(crate) fn export_undo_stack(&self) -> Vec<UndoSnapshot> {
         self.undo_stack
-            .read().iter()
-            .rev().take(crate::session::MAX_UNDO_ENTRIES).rev()
+            .read()
+            .iter()
+            .rev()
+            .take(crate::session::MAX_UNDO_ENTRIES)
+            .rev()
             .map(|s| {
                 (
                     s.rope.clone(),
@@ -342,8 +371,13 @@ impl Editor {
     }
 
     pub(crate) fn undo_history_key(&self) -> (u64, usize, Option<u64>, usize, Option<u64>) {
-        (self.next_undo_change_id, self.undo_stack.len(), self.undo_stack.back().map(|s| s.snapshot_id),
-            self.redo_stack.len(), self.redo_stack.back().map(|s| s.snapshot_id))
+        (
+            self.next_undo_change_id,
+            self.undo_stack.len(),
+            self.undo_stack.back().map(|s| s.snapshot_id),
+            self.redo_stack.len(),
+            self.redo_stack.back().map(|s| s.snapshot_id),
+        )
     }
 
     /// Share the actual history queues; no per-view history copies exist.
@@ -357,8 +391,11 @@ impl Editor {
     /// Export redo stack for session recovery.
     pub(crate) fn export_redo_stack(&self) -> Vec<UndoSnapshot> {
         self.redo_stack
-            .read().iter()
-            .rev().take(crate::session::MAX_UNDO_ENTRIES).rev()
+            .read()
+            .iter()
+            .rev()
+            .take(crate::session::MAX_UNDO_ENTRIES)
+            .rev()
             .map(|s| {
                 (
                     s.rope.clone(),
@@ -380,98 +417,113 @@ impl Editor {
         redo_entries: Vec<UndoSnapshot>,
     ) {
         crate::editor_document::edit!(self, {
-        self.break_undo_group();
-        // Helper to clamp a (line, col) pair to valid bounds for a rope
-        let clamp_pos = |rope: &Rope, line: usize, col: usize| -> (usize, usize) {
-            let max_line = rope.len_lines().saturating_sub(1);
-            let clamped_line = line.min(max_line);
-            let line_slice = rope.line(clamped_line);
-            let line_len = line_slice.len_chars().saturating_sub(
-                if line_slice.len_chars() > 1
-                    && line_slice.char(line_slice.len_chars() - 2) == '\r'
-                    && line_slice.char(line_slice.len_chars() - 1) == '\n'
-                {
-                    2
-                } else if line_slice.len_chars() > 0
-                    && matches!(line_slice.char(line_slice.len_chars() - 1), '\n' | '\r')
-                {
-                    1
-                } else {
-                    0
-                },
-            );
-            (clamped_line, col.min(line_len))
-        };
+            self.break_undo_group();
+            // Helper to clamp a (line, col) pair to valid bounds for a rope
+            let clamp_pos = |rope: &Rope, line: usize, col: usize| -> (usize, usize) {
+                let max_line = rope.len_lines().saturating_sub(1);
+                let clamped_line = line.min(max_line);
+                let line_slice = rope.line(clamped_line);
+                let line_len = line_slice.len_chars().saturating_sub(
+                    if line_slice.len_chars() > 1
+                        && line_slice.char(line_slice.len_chars() - 2) == '\r'
+                        && line_slice.char(line_slice.len_chars() - 1) == '\n'
+                    {
+                        2
+                    } else if line_slice.len_chars() > 0
+                        && matches!(line_slice.char(line_slice.len_chars() - 1), '\n' | '\r')
+                    {
+                        1
+                    } else {
+                        0
+                    },
+                );
+                (clamped_line, col.min(line_len))
+            };
 
-        self.undo_stack.clear();
-        for (content, cl, cc, extra_cursors, extra_cursor_anchors, selection_anchor, modified) in undo_entries
-        {
-            let rope = content;
-            let dirty_through = rope.len_lines().saturating_sub(1);
-            let (cl, cc) = clamp_pos(&rope, cl, cc);
-            let extra_cursors: Vec<(usize, usize)> = extra_cursors
-                .into_iter()
-                .map(|(l, c)| clamp_pos(&rope, l, c))
-                .collect();
-            let extra_cursor_anchors: Vec<Option<(usize, usize)>> = extra_cursor_anchors
-                .into_iter()
-                .map(|opt| opt.map(|(l, c)| clamp_pos(&rope, l, c)))
-                .collect();
-            let selection_anchor = selection_anchor.map(|(l, c)| clamp_pos(&rope, l, c));
-            let change_id = self.next_undo_change_id;
-            self.next_undo_change_id = self.next_undo_change_id.wrapping_add(1);
-            self.undo_stack.push_back(UndoState {
-                snapshot_id: next_snapshot_id(),
-                line_ending: crate::editor::rope_line_ending(&rope),
-                insertion_anchors: None,
-                rope,
-                cursor_line: cl,
-                cursor_col: cc,
+            self.undo_stack.clear();
+            for (
+                content,
+                cl,
+                cc,
                 extra_cursors,
                 extra_cursor_anchors,
                 selection_anchor,
                 modified,
-                dirty_from: 0,
-                dirty_through,
-                change_id,
-            });
-        }
-        self.redo_stack.clear();
-        for (content, cl, cc, extra_cursors, extra_cursor_anchors, selection_anchor, modified) in redo_entries
-        {
-            let rope = content;
-            let dirty_through = rope.len_lines().saturating_sub(1);
-            let (cl, cc) = clamp_pos(&rope, cl, cc);
-            let extra_cursors: Vec<(usize, usize)> = extra_cursors
-                .into_iter()
-                .map(|(l, c)| clamp_pos(&rope, l, c))
-                .collect();
-            let extra_cursor_anchors: Vec<Option<(usize, usize)>> = extra_cursor_anchors
-                .into_iter()
-                .map(|opt| opt.map(|(l, c)| clamp_pos(&rope, l, c)))
-                .collect();
-            let selection_anchor = selection_anchor.map(|(l, c)| clamp_pos(&rope, l, c));
-            let change_id = self.next_undo_change_id;
-            self.next_undo_change_id = self.next_undo_change_id.wrapping_add(1);
-            self.redo_stack.push_back(UndoState {
-                snapshot_id: next_snapshot_id(),
-                line_ending: crate::editor::rope_line_ending(&rope),
-                insertion_anchors: None,
-                rope,
-                cursor_line: cl,
-                cursor_col: cc,
+            ) in undo_entries
+            {
+                let rope = content;
+                let dirty_through = rope.len_lines().saturating_sub(1);
+                let (cl, cc) = clamp_pos(&rope, cl, cc);
+                let extra_cursors: Vec<(usize, usize)> = extra_cursors
+                    .into_iter()
+                    .map(|(l, c)| clamp_pos(&rope, l, c))
+                    .collect();
+                let extra_cursor_anchors: Vec<Option<(usize, usize)>> = extra_cursor_anchors
+                    .into_iter()
+                    .map(|opt| opt.map(|(l, c)| clamp_pos(&rope, l, c)))
+                    .collect();
+                let selection_anchor = selection_anchor.map(|(l, c)| clamp_pos(&rope, l, c));
+                let change_id = self.next_undo_change_id;
+                self.next_undo_change_id = self.next_undo_change_id.wrapping_add(1);
+                self.undo_stack.push_back(UndoState {
+                    snapshot_id: next_snapshot_id(),
+                    line_ending: crate::editor::rope_line_ending(&rope),
+                    insertion_anchors: None,
+                    rope,
+                    cursor_line: cl,
+                    cursor_col: cc,
+                    extra_cursors,
+                    extra_cursor_anchors,
+                    selection_anchor,
+                    modified,
+                    dirty_from: 0,
+                    dirty_through,
+                    change_id,
+                });
+            }
+            self.redo_stack.clear();
+            for (
+                content,
+                cl,
+                cc,
                 extra_cursors,
                 extra_cursor_anchors,
                 selection_anchor,
                 modified,
-                dirty_from: 0,
-                dirty_through,
-                change_id,
-            });
-        }
-            })
+            ) in redo_entries
+            {
+                let rope = content;
+                let dirty_through = rope.len_lines().saturating_sub(1);
+                let (cl, cc) = clamp_pos(&rope, cl, cc);
+                let extra_cursors: Vec<(usize, usize)> = extra_cursors
+                    .into_iter()
+                    .map(|(l, c)| clamp_pos(&rope, l, c))
+                    .collect();
+                let extra_cursor_anchors: Vec<Option<(usize, usize)>> = extra_cursor_anchors
+                    .into_iter()
+                    .map(|opt| opt.map(|(l, c)| clamp_pos(&rope, l, c)))
+                    .collect();
+                let selection_anchor = selection_anchor.map(|(l, c)| clamp_pos(&rope, l, c));
+                let change_id = self.next_undo_change_id;
+                self.next_undo_change_id = self.next_undo_change_id.wrapping_add(1);
+                self.redo_stack.push_back(UndoState {
+                    snapshot_id: next_snapshot_id(),
+                    line_ending: crate::editor::rope_line_ending(&rope),
+                    insertion_anchors: None,
+                    rope,
+                    cursor_line: cl,
+                    cursor_col: cc,
+                    extra_cursors,
+                    extra_cursor_anchors,
+                    selection_anchor,
+                    modified,
+                    dirty_from: 0,
+                    dirty_through,
+                    change_id,
+                });
+            }
+        })
     }
-
 }
 
 #[cfg(test)]
@@ -494,7 +546,9 @@ mod tests {
         let snapshot = undo.last().unwrap().0.to_string();
         editor.rope.insert(0, "later edit");
         assert_eq!(undo.last().unwrap().0, snapshot);
-        for _ in 0..80 { editor.undo(); }
+        for _ in 0..80 {
+            editor.undo();
+        }
         let redo = editor.export_redo_stack();
         assert_eq!(redo.len(), crate::session::MAX_UNDO_ENTRIES);
         for (saved, original) in redo.iter().zip(editor.redo_stack.read().iter().skip(30)) {
@@ -503,7 +557,14 @@ mod tests {
         let shared = redo.last().unwrap().0.clone();
         let mut restored = Editor::test_with_text("current");
         restored.import_undo_redo(undo, redo);
-        assert!(restored.redo_stack.back().unwrap().rope.is_instance(&shared));
+        assert!(
+            restored
+                .redo_stack
+                .back()
+                .unwrap()
+                .rope
+                .is_instance(&shared)
+        );
         restored.redo();
         assert!(restored.rope.is_instance(&shared));
     }
@@ -525,16 +586,33 @@ mod tests {
                 } else {
                     // Previous export expanded all 500 snapshots even though
                     // the persistence layer retained only the final 50.
-                    std::hint::black_box(editor.undo_stack.read().iter().map(|state| (
-                        state.rope.to_string(), state.cursor_line, state.cursor_col,
-                        state.extra_cursors.clone(), state.extra_cursor_anchors.clone(),
-                        state.selection_anchor, state.modified,
-                    )).collect::<Vec<_>>());
+                    std::hint::black_box(
+                        editor
+                            .undo_stack
+                            .read()
+                            .iter()
+                            .map(|state| {
+                                (
+                                    state.rope.to_string(),
+                                    state.cursor_line,
+                                    state.cursor_col,
+                                    state.extra_cursors.clone(),
+                                    state.extra_cursor_anchors.clone(),
+                                    state.selection_anchor,
+                                    state.modified,
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    );
                 }
                 samples.push(started.elapsed());
             }
             samples.sort();
-            eprintln!("recovery_export optimized={optimized} document_bytes={} snapshots=500 median={:?}", editor.rope.len_bytes(), samples[3]);
+            eprintln!(
+                "recovery_export optimized={optimized} document_bytes={} snapshots=500 median={:?}",
+                editor.rope.len_bytes(),
+                samples[3]
+            );
         }
     }
 

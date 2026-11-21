@@ -161,12 +161,16 @@ fn merge_conflict_overview_tracks_resolution_and_undo_with_or_without_a_minimap(
     use crate::app_theme::EditorTheme;
     use crate::ui_colors::contrast_ratio;
 
-    let filler = format!("ordinary heading\n=======\n{}", "ordinary line\n".repeat(46));
+    let filler = format!(
+        "ordinary heading\n=======\n{}",
+        "ordinary line\n".repeat(46)
+    );
     let wrapped_conflict = TEXT.replace("current value", &"current value ".repeat(12));
     for (name, theme) in [("dark", EditorTheme::Dark), ("light", EditorTheme::Light)] {
         for show_minimap in [true, false] {
             let mut app = app();
-            let mut editor = Editor::test_with_text(&format!("{wrapped_conflict}{filler}{TEXT}{filler}"));
+            let mut editor =
+                Editor::test_with_text(&format!("{wrapped_conflict}{filler}{TEXT}{filler}"));
             editor.word_wrap = !show_minimap;
             editor.word_wrap_column = 24;
             editor.saved_rope = Some(editor.rope.clone());
@@ -201,7 +205,10 @@ fn merge_conflict_overview_tracks_resolution_and_undo_with_or_without_a_minimap(
                     }
                 }
                 if expected == 2 && show_minimap {
-                    crate::ui_control_visibility_tests::snapshot(&buffer, &format!("Conflict overview {name}"));
+                    crate::ui_control_visibility_tests::snapshot(
+                        &buffer,
+                        &format!("Conflict overview {name}"),
+                    );
                 }
             };
 
@@ -209,7 +216,12 @@ fn merge_conflict_overview_tracks_resolution_and_undo_with_or_without_a_minimap(
             app.merge_action("current", Some(1));
             check(&mut app, 1);
             let editor = app.editor().unwrap();
-            let second = editor.merge_conflicts.current(&editor.rope).unwrap().regions[0].start;
+            let second = editor
+                .merge_conflicts
+                .current(&editor.rope)
+                .unwrap()
+                .regions[0]
+                .start;
             app.merge_action("incoming", Some(second));
             check(&mut app, 0);
             app.editor_mut().unwrap().undo();
@@ -226,7 +238,10 @@ fn merge_conflict_overview_uses_wrapped_diff_rows_in_both_compare_layouts() {
     let conflict = TEXT.replace("current value", &"current value ".repeat(80));
     let target = format!("{filler}{conflict}{filler}");
     let base = format!("{}{filler}base text\n{filler}", "deleted line\n".repeat(60));
-    for (name, mode) in [("inline", DiffMode::Inline), ("side by side", DiffMode::SideBySide)] {
+    for (name, mode) in [
+        ("inline", DiffMode::Inline),
+        ("side by side", DiffMode::SideBySide),
+    ] {
         let mut app = app();
         let mut editor = Editor::test_with_text(&target);
         editor.word_wrap = true;
@@ -252,7 +267,11 @@ fn merge_conflict_overview_uses_wrapped_diff_rows_in_both_compare_layouts() {
             .unwrap();
         let buffer = terminal.backend().buffer();
         let editor = app.editor().unwrap();
-        let region = editor.merge_conflicts.current(&editor.rope).unwrap().regions[0];
+        let region = editor
+            .merge_conflicts
+            .current(&editor.rope)
+            .unwrap()
+            .regions[0];
         let cache = &app.diff_render_cache;
         let mapping = if mode == DiffMode::Inline {
             cache.inline_target_text_rows()
@@ -271,7 +290,9 @@ fn merge_conflict_overview_uses_wrapped_diff_rows_in_both_compare_layouts() {
             .collect();
         assert_eq!(actual, expected.collect::<Vec<_>>(), "{name}");
         let minimap = app.minimap_area.unwrap();
-        assert!((minimap.y..minimap.bottom()).any(|y| buffer[(minimap.right() - 2, y)].symbol() == "!"));
+        assert!(
+            (minimap.y..minimap.bottom()).any(|y| buffer[(minimap.right() - 2, y)].symbol() == "!")
+        );
     }
 }
 
@@ -541,7 +562,8 @@ fn merge_conflict_staging_rejects_markers_preserves_index_and_stages_resolved_re
             } else {
                 crate::app_git::changes::stage(
                     directory.path(),
-                    &[GitFileChange { directory: false,
+                    &[GitFileChange {
+                        directory: false,
                         path: "conflict.txt".to_string(),
                         status: '!',
                         staged: false,
@@ -818,7 +840,8 @@ fn merge_conflict_deleted_files_can_be_staged_as_resolved_deletions() {
         } else {
             crate::app_git::changes::stage(
                 directory.path(),
-                &[GitFileChange { directory: false,
+                &[GitFileChange {
+                    directory: false,
                     path: "conflict.txt".to_string(),
                     status: '!',
                     staged: false,
@@ -934,7 +957,8 @@ fn merge_conflict_real_git_merge_resolves_saves_and_stages_from_both_views() {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), accepted);
         crate::app_git::changes::stage(
             directory.path(),
-            &[GitFileChange { directory: false,
+            &[GitFileChange {
+                directory: false,
                 path: "file.rs".to_string(),
                 status: '!',
                 staged: false,
@@ -952,7 +976,9 @@ fn merge_conflict_remote_status_and_staging_use_the_same_safety_checks() {
     let (directory, repo) = conflicted_repo();
     let client = crate::remote::tests::connection(directory.path(), Arc::default(), Arc::default());
     let Reply::GitStatus { scans, .. } = client
-        .call(Command::GitStatus { progress: None, revalidate: false,
+        .call(Command::GitStatus {
+            progress: None,
+            revalidate: false,
             changed: None,
             include_untracked: false,
             known: None,
@@ -1100,8 +1126,13 @@ fn merge_conflict_partial_manual_edits_are_not_reported_as_resolved() {
     let buffer = paint(&mut app, 120, 30);
     assert!(text(&buffer).contains("Conflict markers remain"));
     assert!(!text(&buffer).contains("All conflicts resolved"));
-    for (area, offset) in [(app.minimap_area.unwrap(), 2), (app.scrollbar_area.unwrap(), 1)] {
-        assert!((area.y..area.bottom()).any(|y| buffer[(area.right() - offset, y)].symbol() == "!"));
+    for (area, offset) in [
+        (app.minimap_area.unwrap(), 2),
+        (app.scrollbar_area.unwrap(), 1),
+    ] {
+        assert!(
+            (area.y..area.bottom()).any(|y| buffer[(area.right() - offset, y)].symbol() == "!")
+        );
     }
 }
 
@@ -1198,7 +1229,8 @@ fn merge_conflict_resolved_submodule_is_staged_without_reading_it_as_a_text_file
         } else {
             crate::app_git::changes::stage(
                 directory.path(),
-                &[GitFileChange { directory: false,
+                &[GitFileChange {
+                    directory: false,
                     path: "conflict.txt".to_string(),
                     status: '!',
                     staged: false,
@@ -1231,7 +1263,8 @@ fn merge_conflict_file_replaced_by_a_directory_preserves_children_when_staging_a
         } else {
             crate::app_git::changes::stage(
                 directory.path(),
-                &[GitFileChange { directory: false,
+                &[GitFileChange {
+                    directory: false,
                     path: "conflict.txt".to_string(),
                     status: '!',
                     staged: false,

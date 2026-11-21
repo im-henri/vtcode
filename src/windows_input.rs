@@ -99,15 +99,23 @@ impl ConsoleInputMode {
     pub(crate) fn prepare_bridge(&self) -> io::Result<()> {
         if unsafe { SetConsoleCP(UTF8_CODE_PAGE) } == 0
             || unsafe { SetConsoleOutputCP(UTF8_CODE_PAGE) } == 0
-        { return Err(io::Error::last_os_error()); }
-        let mode = Self::mode(&self.output)? | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let mode = Self::mode(&self.output)?
+            | ENABLE_VIRTUAL_TERMINAL_PROCESSING
             | windows_sys::Win32::System::Console::DISABLE_NEWLINE_AUTO_RETURN;
-        if unsafe { SetConsoleMode(self.output.as_raw_handle(), mode) } == 0 { return Err(io::Error::last_os_error()); }
+        if unsafe { SetConsoleMode(self.output.as_raw_handle(), mode) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
         let mut output = &self.output;
         let mode = Self::mode(&self.input)?;
-        let mode = (mode & !(1 | 2 | 4 | 0x40)) | ENABLE_VIRTUAL_TERMINAL_INPUT
+        let mode = (mode & !(1 | 2 | 4 | 0x40))
+            | ENABLE_VIRTUAL_TERMINAL_INPUT
             | windows_sys::Win32::System::Console::ENABLE_WINDOW_INPUT;
-        if unsafe { SetConsoleMode(self.input.as_raw_handle(), mode) } == 0 { return Err(io::Error::last_os_error()); }
+        if unsafe { SetConsoleMode(self.input.as_raw_handle(), mode) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
         output.write_all(b"\x1b[?9001l")?;
         output.flush()
     }
@@ -220,17 +228,31 @@ mod tests {
                 .env(PROBE, "1")
                 .creation_flags(0x0800_0000)
                 .output().unwrap();
-            assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
         let mode = ConsoleInputMode::save().unwrap();
         crossterm::terminal::enable_raw_mode().unwrap();
         mode.enable_virtual_terminal_input().unwrap();
         inject_raw_text(&mode.input, "\x1b[<32;15;8M\x1b[83;31;19;1;8;1_");
-        assert!(event::poll(Duration::ZERO).unwrap(), "a complete queued VT mouse packet is ready, even when it spans several native records");
+        assert!(
+            event::poll(Duration::ZERO).unwrap(),
+            "a complete queued VT mouse packet is ready, even when it spans several native records"
+        );
         assert!(matches!(event::read().unwrap(), Event::Mouse(_)));
-        assert!(event::poll(Duration::ZERO).unwrap(), "a complete queued Win32 key packet is ready");
-        assert_eq!(event::read().unwrap(), Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)));
+        assert!(
+            event::poll(Duration::ZERO).unwrap(),
+            "a complete queued Win32 key packet is ready"
+        );
+        assert_eq!(
+            event::read().unwrap(),
+            Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL))
+        );
         assert!(!event::poll(Duration::ZERO).unwrap());
         // An incomplete packet must never cause zero-time polling to wait.
         inject_raw_text(&mode.input, "\x1b[<32;15;");
@@ -245,46 +267,106 @@ mod tests {
         use windows_sys::Win32::System::Console::{COORD, MOUSE_EVENT, MOUSE_EVENT_RECORD};
 
         for (mask, code, button) in [(8, 128, MouseButton::Back), (16, 129, MouseButton::Forward)] {
-            for (state, kind) in [(mask, MouseEventKind::Down(button)), (0, MouseEventKind::Up(button))] {
+            for (state, kind) in [
+                (mask, MouseEventKind::Down(button)),
+                (0, MouseEventKind::Up(button)),
+            ] {
                 let mode = ConsoleInputMode::mode(input).unwrap();
-                unsafe { assert_ne!(SetConsoleMode(input.as_raw_handle(), mode & !ENABLE_VIRTUAL_TERMINAL_INPUT), 0); }
-                inject(input, &[INPUT_RECORD {
-                    EventType: MOUSE_EVENT as u16,
-                    Event: INPUT_RECORD_0 { MouseEvent: MOUSE_EVENT_RECORD {
-                        dwMousePosition: COORD { X: 7, Y: 0 },
-                        dwButtonState: state, dwControlKeyState: 0, dwEventFlags: 0,
-                    } },
-                }]);
-                unsafe { assert_ne!(SetConsoleMode(input.as_raw_handle(), mode), 0); }
-                assert_eq!(next(), Event::Mouse(MouseEvent {
-                    kind, column: 7, row: 0, modifiers: KeyModifiers::NONE,
-                }));
+                unsafe {
+                    assert_ne!(
+                        SetConsoleMode(
+                            input.as_raw_handle(),
+                            mode & !ENABLE_VIRTUAL_TERMINAL_INPUT
+                        ),
+                        0
+                    );
+                }
+                inject(
+                    input,
+                    &[INPUT_RECORD {
+                        EventType: MOUSE_EVENT as u16,
+                        Event: INPUT_RECORD_0 {
+                            MouseEvent: MOUSE_EVENT_RECORD {
+                                dwMousePosition: COORD { X: 7, Y: 0 },
+                                dwButtonState: state,
+                                dwControlKeyState: 0,
+                                dwEventFlags: 0,
+                            },
+                        },
+                    }],
+                );
+                unsafe {
+                    assert_ne!(SetConsoleMode(input.as_raw_handle(), mode), 0);
+                }
+                assert_eq!(
+                    next(),
+                    Event::Mouse(MouseEvent {
+                        kind,
+                        column: 7,
+                        row: 0,
+                        modifiers: KeyModifiers::NONE,
+                    })
+                );
             }
-            for (suffix, kind) in [('M', MouseEventKind::Down(button)), ('m', MouseEventKind::Up(button))] {
+            for (suffix, kind) in [
+                ('M', MouseEventKind::Down(button)),
+                ('m', MouseEventKind::Up(button)),
+            ] {
                 inject_raw_text(input, &format!("\x1b[<{code};8;1{suffix}"));
-                assert_eq!(next(), Event::Mouse(MouseEvent {
-                    kind, column: 7, row: 0, modifiers: KeyModifiers::NONE,
-                }));
+                assert_eq!(
+                    next(),
+                    Event::Mouse(MouseEvent {
+                        kind,
+                        column: 7,
+                        row: 0,
+                        modifiers: KeyModifiers::NONE,
+                    })
+                );
             }
         }
     }
 
     fn check_control_hover_input(input: &File) {
         use crossterm::event::{KeyEventKind, ModifierKeyCode};
-        for (enhanced, code) in [(0, ModifierKeyCode::LeftControl), (256, ModifierKeyCode::RightControl)] {
+        for (enhanced, code) in [
+            (0, ModifierKeyCode::LeftControl),
+            (256, ModifierKeyCode::RightControl),
+        ] {
             for (down, kind, flags, modifiers) in [
-                (true, KeyEventKind::Press, if enhanced == 0 { 8 } else { 4 }, KeyModifiers::CONTROL),
+                (
+                    true,
+                    KeyEventKind::Press,
+                    if enhanced == 0 { 8 } else { 4 },
+                    KeyModifiers::CONTROL,
+                ),
                 (false, KeyEventKind::Release, 0, KeyModifiers::NONE),
             ] {
                 let mode = ConsoleInputMode::mode(input).unwrap();
-                unsafe { assert_ne!(SetConsoleMode(input.as_raw_handle(), mode & !ENABLE_VIRTUAL_TERMINAL_INPUT), 0); }
+                unsafe {
+                    assert_ne!(
+                        SetConsoleMode(
+                            input.as_raw_handle(),
+                            mode & !ENABLE_VIRTUAL_TERMINAL_INPUT
+                        ),
+                        0
+                    );
+                }
                 let mut record = key(0, 17, down, 1);
                 record.Event.KeyEvent.dwControlKeyState = flags | enhanced;
                 inject(input, &[record]);
-                unsafe { assert_ne!(SetConsoleMode(input.as_raw_handle(), mode), 0); }
-                let expected = Event::Key(KeyEvent::new_with_kind(KeyCode::Modifier(code), modifiers, kind));
+                unsafe {
+                    assert_ne!(SetConsoleMode(input.as_raw_handle(), mode), 0);
+                }
+                let expected = Event::Key(KeyEvent::new_with_kind(
+                    KeyCode::Modifier(code),
+                    modifiers,
+                    kind,
+                ));
                 assert_eq!(next(), expected);
-                inject_raw_text(input, &format!("\x1b[17;29;0;{};{};1_", u8::from(down), flags | enhanced));
+                inject_raw_text(
+                    input,
+                    &format!("\x1b[17;29;0;{};{};1_", u8::from(down), flags | enhanced),
+                );
                 assert_eq!(next(), expected);
             }
         }
@@ -300,22 +382,53 @@ mod tests {
         // delivers SGR packets. Both must keep Shift through the real reader.
         for (buttons, flags, code, suffix, kind) in [
             (1, 0, 4, 'M', MouseEventKind::Down(MouseButton::Left)),
-            (1, MOUSE_MOVED, 36, 'M', MouseEventKind::Drag(MouseButton::Left)),
+            (
+                1,
+                MOUSE_MOVED,
+                36,
+                'M',
+                MouseEventKind::Drag(MouseButton::Left),
+            ),
             (0, 0, 4, 'm', MouseEventKind::Up(MouseButton::Left)),
             (120 << 16, MOUSE_WHEELED, 68, 'M', MouseEventKind::ScrollUp),
-            ((-120i16 as u16 as u32) << 16, MOUSE_WHEELED, 69, 'M', MouseEventKind::ScrollDown),
+            (
+                (-120i16 as u16 as u32) << 16,
+                MOUSE_WHEELED,
+                69,
+                'M',
+                MouseEventKind::ScrollDown,
+            ),
         ] {
             let mode = ConsoleInputMode::mode(input).unwrap();
-            unsafe { assert_ne!(SetConsoleMode(input.as_raw_handle(), mode & !ENABLE_VIRTUAL_TERMINAL_INPUT), 0); }
-            inject(input, &[INPUT_RECORD {
-                EventType: MOUSE_EVENT as u16,
-                Event: INPUT_RECORD_0 { MouseEvent: MOUSE_EVENT_RECORD {
-                    dwMousePosition: COORD { X: 7, Y: 0 }, dwButtonState: buttons,
-                    dwControlKeyState: SHIFT_PRESSED, dwEventFlags: flags,
-                } },
-            }]);
-            unsafe { assert_ne!(SetConsoleMode(input.as_raw_handle(), mode), 0); }
-            let expected = Event::Mouse(MouseEvent { kind, column: 7, row: 0, modifiers: KeyModifiers::SHIFT });
+            unsafe {
+                assert_ne!(
+                    SetConsoleMode(input.as_raw_handle(), mode & !ENABLE_VIRTUAL_TERMINAL_INPUT),
+                    0
+                );
+            }
+            inject(
+                input,
+                &[INPUT_RECORD {
+                    EventType: MOUSE_EVENT as u16,
+                    Event: INPUT_RECORD_0 {
+                        MouseEvent: MOUSE_EVENT_RECORD {
+                            dwMousePosition: COORD { X: 7, Y: 0 },
+                            dwButtonState: buttons,
+                            dwControlKeyState: SHIFT_PRESSED,
+                            dwEventFlags: flags,
+                        },
+                    },
+                }],
+            );
+            unsafe {
+                assert_ne!(SetConsoleMode(input.as_raw_handle(), mode), 0);
+            }
+            let expected = Event::Mouse(MouseEvent {
+                kind,
+                column: 7,
+                row: 0,
+                modifiers: KeyModifiers::SHIFT,
+            });
             assert_eq!(next(), expected);
             inject_raw_text(input, &format!("\x1b[<{code};8;1{suffix}"));
             assert_eq!(next(), expected);
@@ -331,12 +444,18 @@ mod tests {
                 .env(PROBE, "1")
                 .creation_flags(0x0800_0000)
                 .output().unwrap();
-            assert!(output.status.success(), "{}\n{}",
-                String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
         use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-        use windows_sys::Win32::System::Console::{COORD, MOUSE_EVENT, MOUSE_EVENT_RECORD, MOUSE_MOVED};
+        use windows_sys::Win32::System::Console::{
+            COORD, MOUSE_EVENT, MOUSE_EVENT_RECORD, MOUSE_MOVED,
+        };
         let mode = ConsoleInputMode::save().unwrap();
         crossterm::terminal::enable_raw_mode().unwrap();
         mode.enable_virtual_terminal_input().unwrap();
@@ -348,33 +467,67 @@ mod tests {
             let row = index * 7 % 30;
             records.push(INPUT_RECORD {
                 EventType: MOUSE_EVENT as u16,
-                Event: INPUT_RECORD_0 { MouseEvent: MOUSE_EVENT_RECORD {
-                    dwMousePosition: COORD { X: column as i16, Y: row as i16 },
-                    dwButtonState: u32::from(!release), dwControlKeyState: 0,
-                    dwEventFlags: if index == 0 || release { 0 } else { MOUSE_MOVED },
-                } },
+                Event: INPUT_RECORD_0 {
+                    MouseEvent: MOUSE_EVENT_RECORD {
+                        dwMousePosition: COORD {
+                            X: column as i16,
+                            Y: row as i16,
+                        },
+                        dwButtonState: u32::from(!release),
+                        dwControlKeyState: 0,
+                        dwEventFlags: if index == 0 || release {
+                            0
+                        } else {
+                            MOUSE_MOVED
+                        },
+                    },
+                },
             });
             expected.push(Event::Mouse(MouseEvent {
-                kind: if index == 0 { MouseEventKind::Down(MouseButton::Left) }
-                    else if release { MouseEventKind::Up(MouseButton::Left) }
-                    else { MouseEventKind::Drag(MouseButton::Left) },
-                column, row, modifiers: KeyModifiers::NONE,
+                kind: if index == 0 {
+                    MouseEventKind::Down(MouseButton::Left)
+                } else if release {
+                    MouseEventKind::Up(MouseButton::Left)
+                } else {
+                    MouseEventKind::Drag(MouseButton::Left)
+                },
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
             }));
             if index == 511 {
                 let mut save = key(19, 0x53, true, 1);
                 save.Event.KeyEvent.dwControlKeyState = 8;
                 records.push(save);
-                expected.push(Event::Key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)));
+                expected.push(Event::Key(KeyEvent::new(
+                    KeyCode::Char('s'),
+                    KeyModifiers::CONTROL,
+                )));
             }
         }
         let native_mode = ConsoleInputMode::mode(&mode.input).unwrap();
-        unsafe { assert_ne!(SetConsoleMode(mode.input.as_raw_handle(), native_mode & !ENABLE_VIRTUAL_TERMINAL_INPUT), 0); }
+        unsafe {
+            assert_ne!(
+                SetConsoleMode(
+                    mode.input.as_raw_handle(),
+                    native_mode & !ENABLE_VIRTUAL_TERMINAL_INPUT
+                ),
+                0
+            );
+        }
         inject(&mode.input, &records);
-        unsafe { assert_ne!(SetConsoleMode(mode.input.as_raw_handle(), native_mode), 0); }
+        unsafe {
+            assert_ne!(SetConsoleMode(mode.input.as_raw_handle(), native_mode), 0);
+        }
         inject_raw_text(&mode.input, "\x1b[200~after drag 🦀\r\nsecond row\x1b[201~");
         expected.push(Event::Paste("after drag 🦀\r\nsecond row".into()));
-        for event in expected { assert_eq!(next(), event); }
-        assert!(!event::poll(Duration::ZERO).unwrap(), "a drained reader must be immediately idle");
+        for event in expected {
+            assert_eq!(next(), event);
+        }
+        assert!(
+            !event::poll(Duration::ZERO).unwrap(),
+            "a drained reader must be immediately idle"
+        );
         // A subsequent sparse event must wake the same persistent handle.
         inject(&mode.input, &[key(0, 0x25, true, 1)]);
         assert_eq!(next(), Event::Key(KeyCode::Left.into()));
@@ -388,30 +541,65 @@ mod tests {
             let output = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "windows_input::tests::native_mouse_origin_can_be_fixed_and_restores_the_live_console_on_drop", "--nocapture"])
                 .env(PROBE, "1").creation_flags(0x0800_0000).output().unwrap();
-            assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
         use crossterm::event::{MouseEvent, MouseEventKind};
-        use windows_sys::Win32::System::Console::{CONSOLE_SCREEN_BUFFER_INFO, COORD, GetConsoleScreenBufferInfo, INPUT_RECORD_0, MOUSE_EVENT, MOUSE_EVENT_RECORD, MOUSE_MOVED};
+        use windows_sys::Win32::System::Console::{
+            CONSOLE_SCREEN_BUFFER_INFO, COORD, GetConsoleScreenBufferInfo, INPUT_RECORD_0,
+            MOUSE_EVENT, MOUSE_EVENT_RECORD, MOUSE_MOVED,
+        };
         let mode = ConsoleInputMode::save().unwrap();
         crossterm::terminal::enable_raw_mode().unwrap();
         let mut info = CONSOLE_SCREEN_BUFFER_INFO::default();
-        assert_ne!(unsafe { GetConsoleScreenBufferInfo(mode.output.as_raw_handle(), &mut info) }, 0);
+        assert_ne!(
+            unsafe { GetConsoleScreenBufferInfo(mode.output.as_raw_handle(), &mut info) },
+            0
+        );
         let top = info.srWindow.Top;
-        let record = INPUT_RECORD { EventType: MOUSE_EVENT as u16, Event: INPUT_RECORD_0 { MouseEvent: MOUSE_EVENT_RECORD {
-            dwMousePosition: COORD { X: 17, Y: top + 10 }, dwButtonState: 0, dwControlKeyState: 0, dwEventFlags: MOUSE_MOVED,
-        } } };
+        let record = INPUT_RECORD {
+            EventType: MOUSE_EVENT as u16,
+            Event: INPUT_RECORD_0 {
+                MouseEvent: MOUSE_EVENT_RECORD {
+                    dwMousePosition: COORD { X: 17, Y: top + 10 },
+                    dwButtonState: 0,
+                    dwControlKeyState: 0,
+                    dwEventFlags: MOUSE_MOVED,
+                },
+            },
+        };
         mode.use_alternate_screen_coordinates();
         for (origin, expected) in [(Some(top + 7), 3), (None, 10), (Some(top + 5), 5)] {
             crossterm::event::set_windows_mouse_viewport_origin(origin);
             inject(&mode.input, &[record]);
-            assert_eq!(next(), Event::Mouse(MouseEvent { kind: MouseEventKind::Moved, column: 17, row: expected, modifiers: KeyModifiers::NONE }));
+            assert_eq!(
+                next(),
+                Event::Mouse(MouseEvent {
+                    kind: MouseEventKind::Moved,
+                    column: 17,
+                    row: expected,
+                    modifiers: KeyModifiers::NONE
+                })
+            );
         }
         let input = mode.input.try_clone().unwrap();
         drop(mode);
         // Drop must remove the fixed origin even if callers overrode it.
         inject(&input, &[record]);
-        assert_eq!(next(), Event::Mouse(MouseEvent { kind: MouseEventKind::Moved, column: 17, row: 10, modifiers: KeyModifiers::NONE }));
+        assert_eq!(
+            next(),
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: 17,
+                row: 10,
+                modifiers: KeyModifiers::NONE
+            })
+        );
         crossterm::terminal::disable_raw_mode().unwrap();
     }
 
@@ -422,44 +610,117 @@ mod tests {
             let output = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "windows_input::tests::alternate_screen_mouse_coordinates_ignore_primary_console_scrollback", "--nocapture"])
                 .env(PROBE, "1").creation_flags(0x0800_0000).output().unwrap();
-            assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
-        use windows_sys::Win32::System::Console::{CONSOLE_SCREEN_BUFFER_INFO, COORD, FlushConsoleInputBuffer, GetConsoleScreenBufferInfo, INPUT_RECORD_0, MOUSE_EVENT, MOUSE_EVENT_RECORD, MOUSE_MOVED, SetConsoleScreenBufferSize, SetConsoleWindowInfo, SMALL_RECT};
+        use windows_sys::Win32::System::Console::{
+            CONSOLE_SCREEN_BUFFER_INFO, COORD, FlushConsoleInputBuffer, GetConsoleScreenBufferInfo,
+            INPUT_RECORD_0, MOUSE_EVENT, MOUSE_EVENT_RECORD, MOUSE_MOVED, SMALL_RECT,
+            SetConsoleScreenBufferSize, SetConsoleWindowInfo,
+        };
         let mode = ConsoleInputMode::save().unwrap();
         let handle = mode.output.as_raw_handle();
         let mut info = CONSOLE_SCREEN_BUFFER_INFO::default();
         unsafe {
             assert_ne!(GetConsoleScreenBufferInfo(handle, &mut info), 0);
             if info.dwSize.Y < 200 {
-                assert_ne!(SetConsoleScreenBufferSize(handle, COORD { X: info.dwSize.X, Y: 200 }), 0);
+                assert_ne!(
+                    SetConsoleScreenBufferSize(
+                        handle,
+                        COORD {
+                            X: info.dwSize.X,
+                            Y: 200
+                        }
+                    ),
+                    0
+                );
             }
-            let window = SMALL_RECT { Left: info.srWindow.Left, Right: info.srWindow.Right,
-                Top: 20, Bottom: 20 + info.srWindow.Bottom - info.srWindow.Top };
+            let window = SMALL_RECT {
+                Left: info.srWindow.Left,
+                Right: info.srWindow.Right,
+                Top: 20,
+                Bottom: 20 + info.srWindow.Bottom - info.srWindow.Top,
+            };
             assert_ne!(SetConsoleWindowInfo(handle, 1, &window), 0);
-            assert_ne!(SetConsoleMode(handle, ConsoleInputMode::mode(&mode.output).unwrap() | ENABLE_VIRTUAL_TERMINAL_PROCESSING), 0);
+            assert_ne!(
+                SetConsoleMode(
+                    handle,
+                    ConsoleInputMode::mode(&mode.output).unwrap()
+                        | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+                ),
+                0
+            );
         }
         let mut output = mode.output.try_clone().unwrap();
         crossterm::execute!(output, crossterm::terminal::EnterAlternateScreen).unwrap();
         mode.use_alternate_screen_coordinates();
-        let active = OpenOptions::new().read(true).write(true).open("CONOUT$").unwrap();
-        assert_ne!(unsafe { GetConsoleScreenBufferInfo(active.as_raw_handle(), &mut info) }, 0);
-        assert_eq!(info.srWindow.Top, 0, "alternate screen has no primary scrollback origin");
-        unsafe { FlushConsoleInputBuffer(mode.input.as_raw_handle()); }
-        inject(&mode.input, &[INPUT_RECORD { EventType: MOUSE_EVENT as u16, Event: INPUT_RECORD_0 { MouseEvent: MOUSE_EVENT_RECORD {
-            dwMousePosition: COORD { X: 17, Y: 4 }, dwButtonState: 0, dwControlKeyState: 0, dwEventFlags: MOUSE_MOVED,
-        } } }]);
-        let Event::Mouse(mouse) = next() else { panic!("expected alternate-screen mouse"); };
+        let active = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("CONOUT$")
+            .unwrap();
+        assert_ne!(
+            unsafe { GetConsoleScreenBufferInfo(active.as_raw_handle(), &mut info) },
+            0
+        );
+        assert_eq!(
+            info.srWindow.Top, 0,
+            "alternate screen has no primary scrollback origin"
+        );
+        unsafe {
+            FlushConsoleInputBuffer(mode.input.as_raw_handle());
+        }
+        inject(
+            &mode.input,
+            &[INPUT_RECORD {
+                EventType: MOUSE_EVENT as u16,
+                Event: INPUT_RECORD_0 {
+                    MouseEvent: MOUSE_EVENT_RECORD {
+                        dwMousePosition: COORD { X: 17, Y: 4 },
+                        dwButtonState: 0,
+                        dwControlKeyState: 0,
+                        dwEventFlags: MOUSE_MOVED,
+                    },
+                },
+            }],
+        );
+        let Event::Mouse(mouse) = next() else {
+            panic!("expected alternate-screen mouse");
+        };
         assert_eq!((mouse.column, mouse.row), (17, 4));
         crossterm::execute!(output, crossterm::terminal::LeaveAlternateScreen).unwrap();
         let input = mode.input.try_clone().unwrap();
         drop(mode);
-        unsafe { FlushConsoleInputBuffer(input.as_raw_handle()); }
-        inject(&input, &[INPUT_RECORD { EventType: MOUSE_EVENT as u16, Event: INPUT_RECORD_0 { MouseEvent: MOUSE_EVENT_RECORD {
-            dwMousePosition: COORD { X: 17, Y: 24 }, dwButtonState: 0, dwControlKeyState: 0, dwEventFlags: MOUSE_MOVED,
-        } } }]);
-        let Event::Mouse(mouse) = next() else { panic!("expected primary-screen mouse"); };
-        assert_eq!((mouse.column, mouse.row), (17, 4), "restored console uses its scrolled viewport again");
+        unsafe {
+            FlushConsoleInputBuffer(input.as_raw_handle());
+        }
+        inject(
+            &input,
+            &[INPUT_RECORD {
+                EventType: MOUSE_EVENT as u16,
+                Event: INPUT_RECORD_0 {
+                    MouseEvent: MOUSE_EVENT_RECORD {
+                        dwMousePosition: COORD { X: 17, Y: 24 },
+                        dwButtonState: 0,
+                        dwControlKeyState: 0,
+                        dwEventFlags: MOUSE_MOVED,
+                    },
+                },
+            }],
+        );
+        let Event::Mouse(mouse) = next() else {
+            panic!("expected primary-screen mouse");
+        };
+        assert_eq!(
+            (mouse.column, mouse.row),
+            (17, 4),
+            "restored console uses its scrolled viewport again"
+        );
     }
 
     #[test]
@@ -468,24 +729,50 @@ mod tests {
         const PROBE: &str = "VTCODE_MOUSE_DECODE_BENCH";
         if std::env::var_os(PROBE).is_none() {
             let output = Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "windows_input::tests::benchmark_native_mouse_viewport_lookup", "--ignored", "--nocapture"])
-                .env(PROBE, "1").creation_flags(0x0800_0000).output().unwrap();
-            assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+                .args([
+                    "--exact",
+                    "windows_input::tests::benchmark_native_mouse_viewport_lookup",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env(PROBE, "1")
+                .creation_flags(0x0800_0000)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             eprintln!("{}", String::from_utf8_lossy(&output.stderr));
             return;
         }
-        use windows_sys::Win32::System::Console::{COORD, INPUT_RECORD_0, MOUSE_EVENT, MOUSE_EVENT_RECORD, MOUSE_MOVED};
+        use windows_sys::Win32::System::Console::{
+            COORD, INPUT_RECORD_0, MOUSE_EVENT, MOUSE_EVENT_RECORD, MOUSE_MOVED,
+        };
         let mode = ConsoleInputMode::save().unwrap();
         crossterm::terminal::enable_raw_mode().unwrap();
         let _priority = crate::worker_priority::InputPriority::new(true);
-        let records: Vec<_> = (0..512u16).map(|index| INPUT_RECORD { EventType: MOUSE_EVENT as u16,
-            Event: INPUT_RECORD_0 { MouseEvent: MOUSE_EVENT_RECORD {
-                dwMousePosition: COORD { X: (index % 60) as i16, Y: (index % 20) as i16 },
-                dwButtonState: 0, dwControlKeyState: 0, dwEventFlags: MOUSE_MOVED,
-            } },
-        }).collect();
+        let records: Vec<_> = (0..512u16)
+            .map(|index| INPUT_RECORD {
+                EventType: MOUSE_EVENT as u16,
+                Event: INPUT_RECORD_0 {
+                    MouseEvent: MOUSE_EVENT_RECORD {
+                        dwMousePosition: COORD {
+                            X: (index % 60) as i16,
+                            Y: (index % 20) as i16,
+                        },
+                        dwButtonState: 0,
+                        dwControlKeyState: 0,
+                        dwEventFlags: MOUSE_MOVED,
+                    },
+                },
+            })
+            .collect();
         // Initialize the reader and reusable native buffer before measuring.
-        inject(&mode.input, &records[..1]); next();
+        inject(&mode.input, &records[..1]);
+        next();
         let mut samples: [Vec<Duration>; 2] = Default::default();
         for round in 0..7 {
             for cached in [round % 2 == 0, round % 2 != 0] {
@@ -493,14 +780,21 @@ mod tests {
                 inject(&mode.input, &records);
                 let started = std::time::Instant::now();
                 for index in 0..512u16 {
-                    let Event::Mouse(mouse) = event::read().unwrap() else { panic!("expected mouse"); };
+                    let Event::Mouse(mouse) = event::read().unwrap() else {
+                        panic!("expected mouse");
+                    };
                     assert_eq!((mouse.column, mouse.row), (index % 60, index % 20));
                 }
                 samples[usize::from(cached)].push(started.elapsed());
             }
         }
-        for sample in &mut samples { sample.sort(); }
-        eprintln!("native mouse decode n=512: live viewport={:?}; fixed viewport={:?}", samples[0][3], samples[1][3]);
+        for sample in &mut samples {
+            sample.sort();
+        }
+        eprintln!(
+            "native mouse decode n=512: live viewport={:?}; fixed viewport={:?}",
+            samples[0][3], samples[1][3]
+        );
         crossterm::event::set_windows_mouse_viewport_origin(None);
         crossterm::terminal::disable_raw_mode().unwrap();
     }
@@ -555,7 +849,13 @@ mod tests {
             (8, 72, 8, KeyCode::Char('h'), KeyModifiers::CONTROL),
             (0, 37, 8, KeyCode::Left, KeyModifiers::CONTROL),
             (0, 39, 8, KeyCode::Right, KeyModifiers::CONTROL),
-            (0, 39, 24, KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            (
+                0,
+                39,
+                24,
+                KeyCode::Right,
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
             (0, 38, 8, KeyCode::Up, KeyModifiers::CONTROL),
             (0, 40, 8, KeyCode::Down, KeyModifiers::CONTROL),
             (0, 36, 8, KeyCode::Home, KeyModifiers::CONTROL),
@@ -641,7 +941,8 @@ mod tests {
             // Match the workbench: modifier-only reports update hover state,
             // while command routing receives the actual shortcut press.
             if matches!(event, Event::Key(key) if key.kind == event::KeyEventKind::Release
-                || matches!(key.code, KeyCode::Modifier(_))) {
+                || matches!(key.code, KeyCode::Modifier(_)))
+            {
                 continue;
             }
             return event;
@@ -838,9 +1139,13 @@ mod tests {
         inject_raw_text(&mode.input, "\x1b[200~unfinished");
         assert!(!event::poll(Duration::from_millis(20)).unwrap());
         inject(&mode.input, &[key(27, 27, true, 1)]);
-        assert!(matches!(next(), Event::PasteStatus(event::PasteStatus::Failed {
-            reason: event::PasteFailure::Cancelled, ..
-        })));
+        assert!(matches!(
+            next(),
+            Event::PasteStatus(event::PasteStatus::Failed {
+                reason: event::PasteFailure::Cancelled,
+                ..
+            })
+        ));
         inject_raw_text(&mode.input, "\x03\x11\x1b[201~\x1b[200~recovered\x1b[201~");
         assert_eq!(next(), Event::Paste("recovered".into()));
 
@@ -906,10 +1211,14 @@ mod tests {
         }
         // Model an SSH/VT sequence split at every read boundary, including
         // immediately after Escape. Poll between fragments as the UI does.
-        for (sequence, expected) in crate::keyboard_protocol_tests::fragmented_shortcut_sequences() {
+        for (sequence, expected) in crate::keyboard_protocol_tests::fragmented_shortcut_sequences()
+        {
             for split in 1..sequence.len() {
                 inject_raw_text(&mode.input, &sequence[..split]);
-                assert!(!event::poll(Duration::from_millis(5)).unwrap(), "premature key at {sequence:?}, split {split}");
+                assert!(
+                    !event::poll(Duration::from_millis(5)).unwrap(),
+                    "premature key at {sequence:?}, split {split}"
+                );
                 inject_raw_text(&mode.input, &sequence[split..]);
                 let actual = next();
                 assert_eq!(actual, Event::Key(expected), "{sequence:?}, split {split}");
@@ -967,9 +1276,17 @@ mod tests {
         const TEST: &str = "windows_input::tests::windows_console_rejects_invalid_cursor_reports_and_keeps_extended_keys";
         if std::env::var_os(PROBE).is_none() {
             let output = Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", TEST, "--nocapture"]).env(PROBE, "1")
-                .creation_flags(0x0800_0000).output().unwrap();
-            assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+                .args(["--exact", TEST, "--nocapture"])
+                .env(PROBE, "1")
+                .creation_flags(0x0800_0000)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
         let mode = ConsoleInputMode::save().unwrap();
@@ -990,7 +1307,12 @@ mod tests {
             let output = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "windows_input::tests::windows_console_million_line_paste_preserves_unicode_progress_and_following_keys", "--nocapture"])
                 .env(PROBE, "1").creation_flags(0x0800_0000).output().unwrap();
-            assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
         let mode = ConsoleInputMode::save().unwrap();
@@ -1005,26 +1327,51 @@ mod tests {
                 let deadline = std::time::Instant::now() + Duration::from_secs(30);
                 loop {
                     let mut queued = 0;
-                    assert_ne!(unsafe { windows_sys::Win32::System::Console::GetNumberOfConsoleInputEvents(input.as_raw_handle(), &mut queued) }, 0);
-                    if queued <= 65_536 { break; }
-                    assert!(std::time::Instant::now() < deadline, "bulk input stopped draining");
+                    assert_ne!(
+                        unsafe {
+                            windows_sys::Win32::System::Console::GetNumberOfConsoleInputEvents(
+                                input.as_raw_handle(),
+                                &mut queued,
+                            )
+                        },
+                        0
+                    );
+                    if queued <= 65_536 {
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "bulk input stopped draining"
+                    );
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 if index == 1_000_000 / 4096 {
                     inject_raw_text(&input, &LINE.repeat(1_000_000 % 4096));
-                } else { inject_raw_text(&input, &chunk); }
+                } else {
+                    inject_raw_text(&input, &chunk);
+                }
             }
             inject_raw_text(&input, "\x1b[201~");
         });
         let mut received = 0;
         loop {
-            assert!(event::poll(Duration::from_secs(30)).unwrap(), "paste stalled after {received} bytes");
+            assert!(
+                event::poll(Duration::from_secs(30)).unwrap(),
+                "paste stalled after {received} bytes"
+            );
             match event::read().unwrap() {
-                Event::PasteStatus(event::PasteStatus::Receiving { bytes }) => { assert!(bytes > received); received = bytes; }
+                Event::PasteStatus(event::PasteStatus::Receiving { bytes }) => {
+                    assert!(bytes > received);
+                    received = bytes;
+                }
                 Event::Paste(text) => {
                     assert!(received > 10 * 1024 * 1024);
                     assert_eq!(text.len(), LINE.len() * 1_000_000);
-                    assert!(text.as_bytes().chunks(LINE.len()).all(|row| row == LINE.as_bytes()));
+                    assert!(
+                        text.as_bytes()
+                            .chunks(LINE.len())
+                            .all(|row| row == LINE.as_bytes())
+                    );
                     break;
                 }
                 other => panic!("bulk text became {other:?}"),

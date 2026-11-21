@@ -24,9 +24,15 @@ fn wait_for_files(app: &mut App) {
 
 fn open_search_result(app: &mut App, path: &std::path::Path, line: usize, col: usize) {
     app.global_search_results = vec![crate::app::GlobalSearchResult {
-        file_path: path.into(), line_num: line, line_text: "match".into(),
-        col_start: col, col_end: col + 1, context_before: None, context_after: None,
-    }].into();
+        file_path: path.into(),
+        line_num: line,
+        line_text: "match".into(),
+        col_start: col,
+        col_end: col + 1,
+        context_before: None,
+        context_after: None,
+    }]
+    .into();
     app.global_search_selected = 0;
     app.focus_global_search();
     assert!(app.open_global_search_result());
@@ -50,10 +56,18 @@ fn opening_a_file_places_its_tab_after_the_active_tab() {
 
         assert_eq!(app.active_tab, 2);
         assert_eq!(app.tab_mru_order, [2, 1, 3, 0]);
-        let order = |app: &App| app.tabs.iter().map(|tab| tab.editor.navigation_id).collect::<Vec<_>>();
+        let order = |app: &App| {
+            app.tabs
+                .iter()
+                .map(|tab| tab.editor.navigation_id)
+                .collect::<Vec<_>>()
+        };
         let before = order(&app);
         assert_eq!(
-            app.tabs.iter().map(|tab| tab.editor.file_name()).collect::<Vec<_>>(),
+            app.tabs
+                .iter()
+                .map(|tab| tab.editor.file_name())
+                .collect::<Vec<_>>(),
             ["a.txt", "b.txt", "d.txt", "c.txt"]
         );
         app.open_file(&path("a.txt"));
@@ -79,7 +93,10 @@ fn replacing_a_preview_keeps_the_new_tab_adjacent_and_the_last_edit_addressable(
     assert!(app.tabs[1].preview);
     assert_eq!(app.tab_mru_order, [1, 0, 2]);
     assert_eq!(
-        app.tabs.iter().map(|tab| tab.editor.file_name()).collect::<Vec<_>>(),
+        app.tabs
+            .iter()
+            .map(|tab| tab.editor.file_name())
+            .collect::<Vec<_>>(),
         ["b.txt", "d.txt", "c.txt"]
     );
     app.execute_palette_command("goto_last_edit");
@@ -94,7 +111,9 @@ fn opening_inside_a_named_tab_group_keeps_the_group_together() {
     for name in ["a.txt", "b.txt", "c.txt"] {
         app.open_file(&path(name));
     }
-    app.desks.selected_tabs.extend(app.tabs[..2].iter().map(|tab| tab.editor.navigation_id));
+    app.desks
+        .selected_tabs
+        .extend(app.tabs[..2].iter().map(|tab| tab.editor.navigation_id));
     app.group_selected_tabs("Work", None);
     let group = app.tab_group(&app.tabs[0]).unwrap().id;
     app.open_file(&path("a.txt"));
@@ -102,7 +121,11 @@ fn opening_inside_a_named_tab_group_keeps_the_group_together() {
 
     assert_eq!(app.active_tab, 1);
     assert_eq!(app.tabs[1].editor.file_name(), "d.txt");
-    assert!(app.tabs[..3].iter().all(|tab| app.tab_group(tab).is_some_and(|named| named.id == group)));
+    assert!(
+        app.tabs[..3]
+            .iter()
+            .all(|tab| app.tab_group(tab).is_some_and(|named| named.id == group))
+    );
     assert!(app.tab_group(&app.tabs[3]).is_none());
 }
 
@@ -110,7 +133,10 @@ fn opening_inside_a_named_tab_group_keeps_the_group_together() {
 fn workspace_search_results_follow_the_preview_setting_and_replace_loading_previews() {
     for enabled in [false, true] {
         let (directory, mut app) = workspace();
-        app.apply_settings(&Settings { enable_preview_tabs: Some(enabled), ..Default::default() });
+        app.apply_settings(&Settings {
+            enable_preview_tabs: Some(enabled),
+            ..Default::default()
+        });
         let a = directory.path().join("a.txt");
         let b = directory.path().join("b.txt");
         open_search_result(&mut app, &a, 1, 0);
@@ -122,7 +148,13 @@ fn workspace_search_results_follow_the_preview_setting_and_replace_loading_previ
         wait_for_files(&mut app);
         assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(&b));
         assert_eq!(app.editor().unwrap().rope.to_string(), "b.txt\n");
-        assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (0, 2));
+        assert_eq!(
+            (
+                app.editor().unwrap().cursor_line,
+                app.editor().unwrap().cursor_col
+            ),
+            (0, 2)
+        );
         assert_eq!(app.tabs[app.active_tab].preview, enabled);
     }
 }
@@ -139,10 +171,22 @@ fn workspace_search_results_in_the_same_file_keep_its_preview_and_latest_cursor(
     assert_eq!(app.editor().unwrap().navigation_id, identity);
     assert!(app.tabs[0].preview);
     wait_for_files(&mut app);
-    assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (1, 5));
+    assert_eq!(
+        (
+            app.editor().unwrap().cursor_line,
+            app.editor().unwrap().cursor_col
+        ),
+        (1, 5)
+    );
     open_search_result(&mut app, &a, 3, 1);
     assert!(app.tabs[0].preview);
-    assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (2, 1));
+    assert_eq!(
+        (
+            app.editor().unwrap().cursor_line,
+            app.editor().unwrap().cursor_col
+        ),
+        (2, 1)
+    );
     open_search_result(&mut app, &directory.path().join("b.txt"), 1, 0);
     assert_eq!(app.tabs.len(), 1);
     assert!(app.tabs[0].preview);
@@ -153,11 +197,18 @@ fn workspace_search_preserves_existing_permanent_pinned_and_edited_tabs() {
     for state in ["permanent", "pinned", "edited"] {
         let (directory, mut app) = workspace();
         let a = directory.path().join("a.txt");
-        if state == "permanent" { app.open_file(&a); }
-        else { app.open_file_preview(&a); }
+        if state == "permanent" {
+            app.open_file(&a);
+        } else {
+            app.open_file_preview(&a);
+        }
         wait_for_files(&mut app);
-        if state == "pinned" { app.tabs[0].pinned = true; }
-        if state == "edited" { app.editor_mut().unwrap().insert_char('!'); }
+        if state == "pinned" {
+            app.tabs[0].pinned = true;
+        }
+        if state == "edited" {
+            app.editor_mut().unwrap().insert_char('!');
+        }
         let identity = app.editor().unwrap().navigation_id;
         let text = app.editor().unwrap().rope.to_string();
         open_search_result(&mut app, &a, 1, 1);
@@ -338,7 +389,10 @@ fn snapshot_and_agent_diffs_follow_the_preview_setting() {
         app.set_preview_tabs_enabled(enabled);
         app.new_snapshot_diff_tab();
         assert_eq!(app.tabs[app.active_tab].preview, enabled);
-        app.open_acp_diff(&vtcode::acp::protocol::Diff::new(directory.path().join("a.txt"), "new\n").old_text("old\n"));
+        app.open_acp_diff(
+            &vtcode::acp::protocol::Diff::new(directory.path().join("a.txt"), "new\n")
+                .old_text("old\n"),
+        );
         assert_eq!(app.tabs.len(), if enabled { 1 } else { 2 });
         assert_eq!(app.tabs[app.active_tab].preview, enabled);
         assert!(app.should_render_diff_for_active_editor());
@@ -359,10 +413,13 @@ fn line_heavy_agent_diff_builds_in_background_and_uses_the_latest_algorithm() {
     app.set_diff_algorithm(Smart);
     let base = "\n".repeat(2100);
     let target = format!("{base}new\n");
-    let diff = vtcode::acp::protocol::Diff::new(directory.path().join("a.txt"), &target)
-        .old_text(&base);
+    let diff =
+        vtcode::acp::protocol::Diff::new(directory.path().join("a.txt"), &target).old_text(&base);
     app.open_acp_diff(&diff);
-    assert!(app.bg_diff_refresh_running, "line count alone should defer preparation");
+    assert!(
+        app.bg_diff_refresh_running,
+        "line count alone should defer preparation"
+    );
 
     app.set_diff_algorithm(Classic);
     app.wait_for_background(std::time::Duration::from_secs(5), |app| {
@@ -371,7 +428,9 @@ fn line_heavy_agent_diff_builds_in_background_and_uses_the_latest_algorithm() {
     assert_eq!(app.compare_base_content.as_deref(), Some(base.as_str()));
     assert_eq!(app.editor().unwrap().rope.to_string(), target);
     assert_eq!(
-        app.compare_diff_lines.last().map(|(kind, text)| (*kind, text.as_str())),
+        app.compare_diff_lines
+            .last()
+            .map(|(kind, text)| (*kind, text.as_str())),
         Some(('+', "new")),
     );
 }

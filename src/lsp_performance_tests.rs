@@ -12,11 +12,14 @@ fn lsp_performance_response_dispatch_and_repeated_diagnostics() {
     let mut manager = LspManager::new(directory.path().to_path_buf());
     manager.clients.push(client);
     manager.sync_document_owned(&path, 1, "value".into());
-    let items: Vec<_> = (0..10_000).map(|i| CompletionItem {
-        label: format!("value_{:05}", (i * 7919) % 10_000),
-        documentation: Some(Documentation::String("Completion documentation".repeat(10))),
-        detail: Some("function".into()), ..Default::default()
-    }).collect();
+    let items: Vec<_> = (0..10_000)
+        .map(|i| CompletionItem {
+            label: format!("value_{:05}", (i * 7919) % 10_000),
+            documentation: Some(Documentation::String("Completion documentation".repeat(10))),
+            detail: Some("function".into()),
+            ..Default::default()
+        })
+        .collect();
     let mut preparation = Vec::new();
     let mut dispatch = Vec::new();
     for _ in 0..7 {
@@ -27,22 +30,29 @@ fn lsp_performance_response_dispatch_and_repeated_diagnostics() {
         let prepared = completion::prepare_completions(raw, Some("value_1"));
         preparation.push(start.elapsed());
         server.queue_event(LspEvent::CompletionResponse {
-            request_id: manager.active_completion_id.unwrap(), items: prepared,
+            request_id: manager.active_completion_id.unwrap(),
+            items: prepared,
         });
         let start = Instant::now();
         manager.poll();
         dispatch.push(start.elapsed());
         assert_eq!(manager.completion_items.len(), 10_000);
     }
-    preparation.sort(); dispatch.sort();
-    println!("LSP 10,000 completions: sorting/row preparation removed from UI={:?}; prepared-event UI dispatch={:?} (median of 7; excludes JSON and server analysis)", preparation[3], dispatch[3]);
+    preparation.sort();
+    dispatch.sort();
+    println!(
+        "LSP 10,000 completions: sorting/row preparation removed from UI={:?}; prepared-event UI dispatch={:?} (median of 7; excludes JSON and server analysis)",
+        preparation[3], dispatch[3]
+    );
 
-    let diagnostics: Vec<_> = (0..2_000).map(|i| Diagnostic {
-        range: Range::new(Position::new(i, 0), Position::new(i, 5)),
-        message: format!("diagnostic {i}"),
-        data: Some(serde_json::json!({"fix":{"payload":"detail".repeat(200)}})),
-        ..Default::default()
-    }).collect();
+    let diagnostics: Vec<_> = (0..2_000)
+        .map(|i| Diagnostic {
+            range: Range::new(Position::new(i, 0), Position::new(i, 5)),
+            message: format!("diagnostic {i}"),
+            data: Some(serde_json::json!({"fix":{"payload":"detail".repeat(200)}})),
+            ..Default::default()
+        })
+        .collect();
     manager.receive_diagnostics(path.clone(), Some(0), diagnostics.clone(), Instant::now());
     let revision = manager.diagnostics_version;
     let mut previous = Vec::new();
@@ -53,11 +63,17 @@ fn lsp_performance_response_dispatch_and_repeated_diagnostics() {
         // Previous publication retained a deep context copy and rebuilt every
         // display row, even for the same report. Include their destruction.
         let context = incoming.clone();
-        let display: Vec<_> = incoming.into_iter().map(|d| LspDiagnostic {
-            line:d.range.start.line as usize, col:d.range.start.character as usize,
-            end_line:d.range.end.line as usize, end_col:d.range.end.character as usize,
-            message:d.message, severity:d.severity.unwrap_or(DiagnosticSeverity::INFORMATION),
-        }).collect();
+        let display: Vec<_> = incoming
+            .into_iter()
+            .map(|d| LspDiagnostic {
+                line: d.range.start.line as usize,
+                col: d.range.start.character as usize,
+                end_line: d.range.end.line as usize,
+                end_col: d.range.end.character as usize,
+                message: d.message,
+                severity: d.severity.unwrap_or(DiagnosticSeverity::INFORMATION),
+            })
+            .collect();
         black_box((&context, &display));
         drop((context, display));
         previous.push(start.elapsed());
@@ -67,8 +83,12 @@ fn lsp_performance_response_dispatch_and_repeated_diagnostics() {
         current.push(start.elapsed());
         assert_eq!(manager.diagnostics_version, revision);
     }
-    previous.sort(); current.sort();
-    println!("LSP repeated 2,000-diagnostic report with fix data: deep copy/rebuild={:?}; shared report/unchanged display={:?} (median of 15; excludes parsing and UI redraw savings)", previous[7], current[7]);
+    previous.sort();
+    current.sort();
+    println!(
+        "LSP repeated 2,000-diagnostic report with fix data: deep copy/rebuild={:?}; shared report/unchanged display={:?} (median of 15; excludes parsing and UI redraw savings)",
+        previous[7], current[7]
+    );
 }
 
 #[test]
@@ -81,16 +101,26 @@ fn lsp_performance_completion_detail_lookup_and_cache() {
     manager.clients.push(client);
     manager.sync_document_owned(&path, 1, "value".into());
     manager.request_completion(&path, 0, 5, "value");
-    let items: Vec<_> = (0..10_000).map(|i| serde_json::json!({
-        "label":"value", "data":{"index":i}, "detail":"candidate overload"
-    })).collect();
+    let items: Vec<_> = (0..10_000)
+        .map(|i| {
+            serde_json::json!({
+                "label":"value", "data":{"index":i}, "detail":"candidate overload"
+            })
+        })
+        .collect();
     server.respond(serde_json::json!({"id":manager.active_completion_id,"result":items}));
     manager.poll();
     let index = 9_999;
-    let original = manager.completion_items[index].original_item.clone().unwrap();
+    let original = manager.completion_items[index]
+        .original_item
+        .clone()
+        .unwrap();
     let started = Instant::now();
     for _ in 0..200 {
-        let found = manager.completion_items.iter().position(|item| item.original_item.as_ref() == Some(black_box(&original)));
+        let found = manager
+            .completion_items
+            .iter()
+            .position(|item| item.original_item.as_ref() == Some(black_box(&original)));
         assert_eq!(black_box(found), Some(index));
     }
     let scan_time = started.elapsed();
@@ -107,8 +137,13 @@ fn lsp_performance_completion_detail_lookup_and_cache() {
     manager.poll();
     assert_eq!(server.take_messages().len(), 1);
     let started = Instant::now();
-    for _ in 0..10_000 { assert!(manager.request_completion_resolve(&path, index)); }
-    println!("LSP completion details: 10,000 rows, 200 reply lookups; scan={scan_time:?}, index={index_time:?}; 10,000 cache visits={:?}, zero additional requests", started.elapsed());
+    for _ in 0..10_000 {
+        assert!(manager.request_completion_resolve(&path, index));
+    }
+    println!(
+        "LSP completion details: 10,000 rows, 200 reply lookups; scan={scan_time:?}, index={index_time:?}; 10,000 cache visits={:?}, zero additional requests",
+        started.elapsed()
+    );
     assert!(server.take_messages().is_empty());
 }
 

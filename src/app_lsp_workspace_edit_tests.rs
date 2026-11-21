@@ -201,7 +201,10 @@ fn workspace_edit_targets_the_exact_case_with_a_different_sibling_active() {
     app.wait_for_background(Duration::from_secs(5), |app| {
         app.tabs.iter().all(|tab| !tab.editor.bg_loading)
     });
-    assert_eq!(app.editor().unwrap().file_path.as_deref(), Some(lower.as_path()));
+    assert_eq!(
+        app.editor().unwrap().file_path.as_deref(),
+        Some(lower.as_path())
+    );
     let process = app.lsp_manager.clients[0].child.id();
     app.queue_lsp_workspace_edit(
         workspace(std::slice::from_ref(&upper)),
@@ -210,9 +213,22 @@ fn workspace_edit_targets_the_exact_case_with_a_different_sibling_active() {
         None,
     );
     assert!(app.poll_lsp_workspace_edits());
-    assert_eq!(server.take_messages().into_iter().find(|message| message["id"] == 7).unwrap()["result"]["applied"], true);
-    assert_eq!(app.find_editor_mut_by_path(&upper).unwrap().rope, "renamed = 1\n");
-    assert_eq!(app.find_editor_mut_by_path(&lower).unwrap().rope, "value = 2\n");
+    assert_eq!(
+        server
+            .take_messages()
+            .into_iter()
+            .find(|message| message["id"] == 7)
+            .unwrap()["result"]["applied"],
+        true
+    );
+    assert_eq!(
+        app.find_editor_mut_by_path(&upper).unwrap().rope,
+        "renamed = 1\n"
+    );
+    assert_eq!(
+        app.find_editor_mut_by_path(&lower).unwrap().rope,
+        "value = 2\n"
+    );
 }
 
 #[test]

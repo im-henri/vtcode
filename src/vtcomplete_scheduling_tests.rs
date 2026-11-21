@@ -69,7 +69,12 @@ fn automatic_comment_queries_suggest_buffer_words() {
         || false,
     )
     .unwrap();
-    assert!(result.suggestions.iter().any(|word| word == "commentIdentifier"));
+    assert!(
+        result
+            .suggestions
+            .iter()
+            .any(|word| word == "commentIdentifier")
+    );
     let result = compute_contextual_invoked(
         &active,
         "co",
@@ -92,13 +97,32 @@ fn quoted_queries_offer_suggestions_only_when_explicit() {
     active.cursor_col = active.rope.line(1).len_chars();
     let mut cache = CompletionCache::default();
     let result = compute_contextual_invoked(
-        &active, "identifierU", "Rust", &Default::default(), &mut cache, false, || false,
-    ).unwrap();
+        &active,
+        "identifierU",
+        "Rust",
+        &Default::default(),
+        &mut cache,
+        false,
+        || false,
+    )
+    .unwrap();
     assert!(result.suggestions.is_empty());
     let result = compute_contextual_invoked(
-        &active, "identifierU", "Rust", &Default::default(), &mut cache, true, || false,
-    ).unwrap();
-    assert!(result.suggestions.iter().any(|word| word == "identifierUseful"));
+        &active,
+        "identifierU",
+        "Rust",
+        &Default::default(),
+        &mut cache,
+        true,
+        || false,
+    )
+    .unwrap();
+    assert!(
+        result
+            .suggestions
+            .iter()
+            .any(|word| word == "identifierUseful")
+    );
 }
 
 #[test]

@@ -44,7 +44,6 @@ fn a_visible_suffix_can_bind_a_target_not_yet_seen_on_the_left() {
     local.collect(&query, source, true);
     assert!(local.candidates().any(|word| word == "payloadNew"));
     assert!(local.probability("payloadNew", 0.05) > 0.05);
-
 }
 
 #[test]
@@ -58,7 +57,10 @@ fn suffix_target_binding_needs_a_repeated_target_and_fixed_operation_anchors() {
         let query = Query::new("dispatch(", right);
         let mut evidence = Evidence::default();
         evidence.collect(&query, source, true);
-        assert!(!evidence.candidates().any(|word| word == "payloadNew"), "{right}");
+        assert!(
+            !evidence.candidates().any(|word| word == "payloadNew"),
+            "{right}"
+        );
     }
     let mut evidence = Evidence::default();
     evidence.collect(
@@ -78,11 +80,19 @@ fn suffix_binding_keeps_left_mappings_and_both_directions_injective() {
     );
     let mut evidence = Evidence::default();
     evidence.collect(&query, source, true);
-    assert!(!evidence.candidates().any(|word| matches!(word, "firstNew" | "secondNew")));
+    assert!(
+        !evidence
+            .candidates()
+            .any(|word| matches!(word, "firstNew" | "secondNew"))
+    );
 
     let query = Query::new("dispatch(", ", sharedNew); validate(sharedNew)");
     let mut evidence = Evidence::default();
-    evidence.collect(&query, "dispatch(payloadOld, channelOld); validate(payloadOld)", true);
+    evidence.collect(
+        &query,
+        "dispatch(payloadOld, channelOld); validate(payloadOld)",
+        true,
+    );
     assert!(!evidence.candidates().any(|word| word == "sharedNew"));
 
     let mut evidence = Evidence::default();
@@ -91,7 +101,11 @@ fn suffix_binding_keeps_left_mappings_and_both_directions_injective() {
         "dispatch(payloadOld); verify(payloadOld, payloadOld)",
         true,
     );
-    assert!(!evidence.candidates().any(|word| matches!(word, "firstNew" | "secondNew")));
+    assert!(
+        !evidence
+            .candidates()
+            .any(|word| matches!(word, "firstNew" | "secondNew"))
+    );
 }
 
 #[test]
@@ -185,7 +199,11 @@ fn suffix_incompatible_long_context_backs_off_to_a_shorter_compatible_witness() 
     let compatible = "choose(channel, rightPayload, finalMode)";
     let mut probabilities = Vec::new();
     for reverse in [false, true] {
-        let sources = if reverse { [compatible, incompatible] } else { [incompatible, compatible] };
+        let sources = if reverse {
+            [compatible, incompatible]
+        } else {
+            [incompatible, compatible]
+        };
         let mut evidence = Evidence::default();
         for source in sources {
             evidence.collect(&query, source, true);
@@ -199,7 +217,6 @@ fn suffix_incompatible_long_context_backs_off_to_a_shorter_compatible_witness() 
         probabilities.push(evidence.probability("rightPayload", 0.1));
     }
     assert_eq!(probabilities[0], probabilities[1]);
-
 }
 
 #[test]
@@ -215,7 +232,9 @@ fn compatible_long_context_keeps_priority_and_disables_short_context_fallback() 
     evidence.collect(&query, exact, true);
     assert!(evidence.candidates().any(|word| word == "exactPayload"));
     assert!(!evidence.candidates().any(|word| word == "genericPayload"));
-    assert!(evidence.probability("exactPayload", 0.1) > evidence.probability("genericPayload", 0.1));
+    assert!(
+        evidence.probability("exactPayload", 0.1) > evidence.probability("genericPayload", 0.1)
+    );
     assert!(!evidence.limited);
 }
 
@@ -241,7 +260,11 @@ fn target_collision_fallback_requires_a_literal_seed_and_still_verifies_suffix_m
     let left = "choose(channel, rightPayload, finalMode)\nprepare(channel); choose(channel, rightSpecific, finalMode)\nprepare(channel); choose(channel, ";
     let query = Query::new(left, ", finalMode)");
     let data = parse(left);
-    let at = data.tokens.iter().position(|&t| data.word(t) == Some("rightSpecific")).unwrap();
+    let at = data
+        .tokens
+        .iter()
+        .position(|&t| data.word(t) == Some("rightSpecific"))
+        .unwrap();
     let mut renamed = Evidence::default();
     renamed.observe(&query, &data, at, 8, true, 2, 1);
     assert_eq!(renamed.mass(), 0.);

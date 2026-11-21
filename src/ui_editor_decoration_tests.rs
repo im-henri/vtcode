@@ -384,7 +384,10 @@ fn clipped_error_lens_matches_full_paragraph_for_wide_combining_and_zwj_edges() 
                 super::advance_error_lens_width(&mut occupied, &prefix, width);
                 let mut expected_occupied = occupied;
                 super::append_error_lens(
-                    &mut super::prepared_text::Rows::new(Rect::new(0, 0, width as u16, 1), Style::default()),
+                    &mut super::prepared_text::Rows::new(
+                        Rect::new(0, 0, width as u16, 1),
+                        Style::default(),
+                    ),
                     &mut expected,
                     &mut String::new(),
                     &mut expected_occupied,
@@ -395,7 +398,10 @@ fn clipped_error_lens_matches_full_paragraph_for_wide_combining_and_zwj_edges() 
                     true,
                 );
                 super::append_error_lens(
-                    &mut super::prepared_text::Rows::new(Rect::new(0, 0, width as u16, 1), Style::default()),
+                    &mut super::prepared_text::Rows::new(
+                        Rect::new(0, 0, width as u16, 1),
+                        Style::default(),
+                    ),
                     &mut actual,
                     &mut String::new(),
                     &mut occupied,
@@ -407,7 +413,10 @@ fn clipped_error_lens_matches_full_paragraph_for_wide_combining_and_zwj_edges() 
                 );
                 let second = Style::default().fg(Color::Red).bg(Color::Green);
                 super::append_error_lens(
-                    &mut super::prepared_text::Rows::new(Rect::new(0, 0, width as u16, 1), Style::default()),
+                    &mut super::prepared_text::Rows::new(
+                        Rect::new(0, 0, width as u16, 1),
+                        Style::default(),
+                    ),
                     &mut expected,
                     &mut String::new(),
                     &mut expected_occupied,
@@ -418,7 +427,10 @@ fn clipped_error_lens_matches_full_paragraph_for_wide_combining_and_zwj_edges() 
                     true,
                 );
                 super::append_error_lens(
-                    &mut super::prepared_text::Rows::new(Rect::new(0, 0, width as u16, 1), Style::default()),
+                    &mut super::prepared_text::Rows::new(
+                        Rect::new(0, 0, width as u16, 1),
+                        Style::default(),
+                    ),
                     &mut actual,
                     &mut String::new(),
                     &mut occupied,

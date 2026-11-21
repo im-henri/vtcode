@@ -123,7 +123,10 @@ fn imported_workbench_layers_match_upstream_roles_on_different_surfaces() {
         if kind.starts_with("hc") {
             assert_eq!(ui.search_match_background.over(Color::Black), None);
         } else {
-            check(ui.search_match_background, "editor.findMatchHighlightBackground");
+            check(
+                ui.search_match_background,
+                "editor.findMatchHighlightBackground",
+            );
         }
         for (control, prefix) in [
             (ui.input_colors, "input"),
@@ -685,15 +688,10 @@ fn rendered_nested_brackets(
     app.sticky_scroll = false;
     app.cursor_visible = false;
     app.bracket_pair_colorization = colorize;
-    let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 8)).unwrap();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(40, 8)).unwrap();
     terminal
         .draw(|frame| {
-            crate::ui_editor::draw_editor(
-                frame,
-                &mut app,
-                ratatui::layout::Rect::new(0, 0, 40, 8),
-            );
+            crate::ui_editor::draw_editor(frame, &mut app, ratatui::layout::Rect::new(0, 0, 40, 8));
         })
         .unwrap();
     let code = app.code_area.unwrap();
@@ -702,9 +700,7 @@ fn rendered_nested_brackets(
     for y in code.top()..code.bottom() {
         for x in code.left()..code.right() {
             let cell = &buffer[(x, y)];
-            if let Some(ch @ ('(' | ')' | '[' | ']' | '{' | '}')) =
-                cell.symbol().chars().next()
-            {
+            if let Some(ch @ ('(' | ')' | '[' | ']' | '{' | '}')) = cell.symbol().chars().next() {
                 brackets.push((ch, cell.fg, cell.bg));
             }
         }

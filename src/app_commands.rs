@@ -1,13 +1,10 @@
-use crate::app::{
-    ActivePane, App, CallHierarchyMode, PaletteCommand, TabKind,
-    TypeHierarchyMode,
-};
+#[cfg(test)]
+use crate::app::Tab;
+use crate::app::{ActivePane, App, CallHierarchyMode, PaletteCommand, TabKind, TypeHierarchyMode};
 use crate::app_theme::config_key_from_command_id;
 use crate::app_vtcomplete_settings::InlineEagerness;
 use crate::editor::Editor;
 use std::time::Duration;
-#[cfg(test)]
-use crate::app::Tab;
 
 fn about_information(headless: Option<(&str, u32)>) -> String {
     use std::fmt::Write;
@@ -17,12 +14,20 @@ fn about_information(headless: Option<(&str, u32)>) -> String {
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
-        if cfg!(debug_assertions) { "Debug" } else { "Release" },
+        if cfg!(debug_assertions) {
+            "Debug"
+        } else {
+            "Release"
+        },
         env!("CARGO_PKG_LICENSE"),
         crate::remote::VERSION,
     );
     if let Some((version, protocol)) = headless {
-        let version = if version.is_empty() { "Unknown" } else { version };
+        let version = if version.is_empty() {
+            "Unknown"
+        } else {
+            version
+        };
         let _ = write!(info, "\nHeadless: VTCode {version} (protocol {protocol})");
     }
     info.push_str("\n\nhttps://github.com/im-henri/vtcode");
@@ -81,10 +86,22 @@ impl App {
     }
 
     pub(crate) fn execute_palette_command(&mut self, id: &str) -> bool {
-        if self.detached_chrome_command(id) { return true; }
+        if self.detached_chrome_command(id) {
+            return true;
+        }
         self.copy_animation.clear();
         self.record_navigation();
-        if matches!(id, "goto_last_edit" | "next_bookmark" | "prev_bookmark" | "next_diagnostic" | "prev_diagnostic" | "goto_bracket" | "next_diff_hunk" | "prev_diff_hunk") {
+        if matches!(
+            id,
+            "goto_last_edit"
+                | "next_bookmark"
+                | "prev_bookmark"
+                | "next_diagnostic"
+                | "prev_diagnostic"
+                | "goto_bracket"
+                | "next_diff_hunk"
+                | "prev_diff_hunk"
+        ) {
             self.push_nav_history();
         }
         let handled = self.execute_palette_command_inner(id);
@@ -93,18 +110,45 @@ impl App {
         // command must update them too. Keep text/navigation commands off this
         // serialization and disk-write path.
         if config_key_from_command_id(id).is_some()
-            || matches!(id,
-                "toggle_indent_rainbow" | "toggle_color_preview" | "toggle_bracket_pair_colorization"
-                | "toggle_error_lens" | "toggle_inlay_hints" | "toggle_code_lens"
-                | "toggle_on_type_formatting" | "toggle_semantic_tokens" | "toggle_sticky_scroll"
-                | "toggle_screencast_mode" | "toggle_minimap" | "toggle_line_numbers"
-                | "toggle_indent_guides" | "toggle_breadcrumbs" | "toggle_activity_bar"
-                | "toggle_activity_bar_position"
-                | "toggle_status_bar" | "toggle_tab_bar" | "toggle_menu_bar" | "toggle_relative_lines"
-                | "toggle_word_wrap" | "toggle_whitespace" | "toggle_cursor_style"
-                | "toggle_cursor_blinking" | "toggle_focus_mode" | "toggle_sidebar_position"
-                | "toggle_zen" | "toggle_maximized" | "toggle_explorer" | "toggle_sidebar" | "toggle_sidebar_auto_hide"
-                | "toggle_panel" | "ruler_80" | "ruler_120" | "ruler_clear" | "toggle_vim_mode")
+            || matches!(
+                id,
+                "toggle_indent_rainbow"
+                    | "toggle_color_preview"
+                    | "toggle_bracket_pair_colorization"
+                    | "toggle_error_lens"
+                    | "toggle_inlay_hints"
+                    | "toggle_code_lens"
+                    | "toggle_on_type_formatting"
+                    | "toggle_semantic_tokens"
+                    | "toggle_sticky_scroll"
+                    | "toggle_screencast_mode"
+                    | "toggle_minimap"
+                    | "toggle_line_numbers"
+                    | "toggle_indent_guides"
+                    | "toggle_breadcrumbs"
+                    | "toggle_activity_bar"
+                    | "toggle_activity_bar_position"
+                    | "toggle_status_bar"
+                    | "toggle_tab_bar"
+                    | "toggle_menu_bar"
+                    | "toggle_relative_lines"
+                    | "toggle_word_wrap"
+                    | "toggle_whitespace"
+                    | "toggle_cursor_style"
+                    | "toggle_cursor_blinking"
+                    | "toggle_focus_mode"
+                    | "toggle_sidebar_position"
+                    | "toggle_zen"
+                    | "toggle_maximized"
+                    | "toggle_explorer"
+                    | "toggle_sidebar"
+                    | "toggle_sidebar_auto_hide"
+                    | "toggle_panel"
+                    | "ruler_80"
+                    | "ruler_120"
+                    | "ruler_clear"
+                    | "toggle_vim_mode"
+            )
         {
             self.flush_live_settings();
         }
@@ -118,13 +162,23 @@ impl App {
         }
         if !self.has_open_folder() {
             match id {
-                "new_folder" | "goto_workspace_symbol" => { crate::ui_workspaces::open_folder(self); return true; }
-                "open_workspace_settings_json" => { self.notify_warn("Open a folder to edit Folder settings"); return true; }
+                "new_folder" | "goto_workspace_symbol" => {
+                    crate::ui_workspaces::open_folder(self);
+                    return true;
+                }
+                "open_workspace_settings_json" => {
+                    self.notify_warn("Open a folder to edit Folder settings");
+                    return true;
+                }
                 _ => {}
             }
         }
-        if crate::ui_logs::command(self, id) { return true; }
-        if self.route_explorer_edit_command(id) { return true; }
+        if crate::ui_logs::command(self, id) {
+            return true;
+        }
+        if self.route_explorer_edit_command(id) {
+            return true;
+        }
         match id {
             "toggle_vim_mode" => {
                 let on = !self.vim.enabled;
@@ -146,61 +200,128 @@ impl App {
                 }
                 return true;
             }
-            "about" => { self.show_about(); return true; }
-            "remote" | "remote_connect" => { self.open_remote_sidebar(); return true; }
-            "remote_target_add" => { self.open_remote_sidebar(); self.edit_remote_target(None, false); return true; }
-            "remote_target_save_current" => { self.open_remote_sidebar(); self.save_current_remote_target(); return true; }
-            "remote_targets_refresh" => { self.reload_remote_targets(); return true; }
-            "remote_targets_config" => { self.open_remote_targets_config(); return true; }
+            "about" => {
+                self.show_about();
+                return true;
+            }
+            "remote" | "remote_connect" => {
+                self.open_remote_sidebar();
+                return true;
+            }
+            "remote_target_add" => {
+                self.open_remote_sidebar();
+                self.edit_remote_target(None, false);
+                return true;
+            }
+            "remote_target_save_current" => {
+                self.open_remote_sidebar();
+                self.save_current_remote_target();
+                return true;
+            }
+            "remote_targets_refresh" => {
+                self.reload_remote_targets();
+                return true;
+            }
+            "remote_targets_config" => {
+                self.open_remote_targets_config();
+                return true;
+            }
             "remote_target_edit" | "remote_target_duplicate" | "remote_target_remove" => {
                 self.open_remote_sidebar();
                 if let Some(index) = self.remote_targets.selected_index() {
                     let action = match id {
                         "remote_target_edit" => crate::app_remote_targets::Action::Edit(index),
-                        "remote_target_duplicate" => crate::app_remote_targets::Action::Duplicate(index),
+                        "remote_target_duplicate" => {
+                            crate::app_remote_targets::Action::Duplicate(index)
+                        }
                         _ => crate::app_remote_targets::Action::Remove(index),
                     };
                     crate::ui_remote_targets::activate(self, action);
                 }
                 return true;
             }
-            "remote_disconnect" => { self.workspaces.request = Some(crate::app_workspaces::Request::CloseRemote); return true; }
+            "remote_disconnect" => {
+                self.workspaces.request = Some(crate::app_workspaces::Request::CloseRemote);
+                return true;
+            }
             "remote_connection_status" => {
                 if self.remote_workspace.is_some() {
-                    if self.remote_connection.phase == crate::app_remote_connection::Phase::Connected {
-                        self.remote_connection.message = "Connected. Editing and undo run locally.".into();
+                    if self.remote_connection.phase
+                        == crate::app_remote_connection::Phase::Connected
+                    {
+                        self.remote_connection.message =
+                            "Connected. Editing and undo run locally.".into();
                     }
                     self.publish_remote_connection_notice(true);
                 }
                 return true;
             }
-            "show_output" => { self.show_output(); return true; }
-            "remote_connection_diagnostics" => { self.show_remote_diagnostics(); return true; }
+            "show_output" => {
+                self.show_output();
+                return true;
+            }
+            "remote_connection_diagnostics" => {
+                self.show_remote_diagnostics();
+                return true;
+            }
             "remote_connection_sign_in" => {
                 self.show_workspace_connection_sign_in();
                 return true;
             }
-            "remote_connection_diagnostics_copy" => { self.copy_remote_diagnostics(); return true; }
-            "remote_capture_cpu" => { self.capture_remote_cpu(); return true; }
-            "remote_reconnect" => { self.retry_remote_connection(); return true; }
-            "remote_reconnect_stop" => { self.stop_remote_reconnect(); return true; }
+            "remote_connection_diagnostics_copy" => {
+                self.copy_remote_diagnostics();
+                return true;
+            }
+            "remote_capture_cpu" => {
+                self.capture_remote_cpu();
+                return true;
+            }
+            "remote_reconnect" => {
+                self.retry_remote_connection();
+                return true;
+            }
+            "remote_reconnect_stop" => {
+                self.stop_remote_reconnect();
+                return true;
+            }
             _ => {}
         }
-        if crate::ui_desks::command(self, id) { return true; }
+        if crate::ui_desks::command(self, id) {
+            return true;
+        }
         if self.diff_selection_owns_cursor()
-            && matches!(id, "undo" | "redo" | "toggle_comment" | "toggle_block_comment"
-                | "move_line_up" | "move_line_down" | "transpose_words"
-                | "eol_lf" | "eol_crlf")
+            && matches!(
+                id,
+                "undo"
+                    | "redo"
+                    | "toggle_comment"
+                    | "toggle_block_comment"
+                    | "move_line_up"
+                    | "move_line_down"
+                    | "transpose_words"
+                    | "eol_lf"
+                    | "eol_crlf"
+            )
         {
             return true;
         }
-        if self.dispatch_extension_editor_command(id) { return true; }
-        if matches!(id, "format_document" | "format_selection")
-            && self.tabs.get(self.active_tab).is_some_and(|tab| tab.kind == TabKind::GitRevision) {
-            self.show_formatting_error("Historical versions are read-only. Open the working file to format it.");
+        if self.dispatch_extension_editor_command(id) {
             return true;
         }
-        if self.execute_acp_command(id) { return true; }
+        if matches!(id, "format_document" | "format_selection")
+            && self
+                .tabs
+                .get(self.active_tab)
+                .is_some_and(|tab| tab.kind == TabKind::GitRevision)
+        {
+            self.show_formatting_error(
+                "Historical versions are read-only. Open the working file to format it.",
+            );
+            return true;
+        }
+        if self.execute_acp_command(id) {
+            return true;
+        }
         let search_edit = match id {
             "undo" | "redo" => self.file_search_history_snapshot(id == "redo"),
             _ => self.file_search_edit_snapshot(),
@@ -235,7 +356,9 @@ impl App {
             "save" => self.save_current_file(),
             "save_all" => {
                 if self.paste_in_progress() {
-                    self.notify_warn("Paste is still in progress; Save All after it finishes or cancel it first");
+                    self.notify_warn(
+                        "Paste is still in progress; Save All after it finishes or cancel it first",
+                    );
                     return true;
                 }
                 let mut saved = self.queue_custom_document_actions(0);
@@ -285,13 +408,23 @@ impl App {
             }
             "tab_close_all" => self.close_all_tabs(),
             "save_as" => {
-                if self.amend_tab_is_active() { return true; }
-                if self.editor().is_some_and(|editor| self.pending_paste_document() == Some(editor.save_identity)) {
+                if self.amend_tab_is_active() {
+                    return true;
+                }
+                if self.editor().is_some_and(|editor| {
+                    self.pending_paste_document() == Some(editor.save_identity)
+                }) {
                     self.notify_warn("Paste is still being prepared; Save As after it finishes or cancel it first");
                     return true;
                 }
-                if self.tabs.get(self.active_tab).is_some_and(|tab| tab.kind == TabKind::GitRevision) {
-                    self.notify("Historical versions are read-only. Open the working file to edit.");
+                if self
+                    .tabs
+                    .get(self.active_tab)
+                    .is_some_and(|tab| tab.kind == TabKind::GitRevision)
+                {
+                    self.notify(
+                        "Historical versions are read-only. Open the working file to edit.",
+                    );
                     return true;
                 }
                 self.modal = crate::ui_modal::ModalState::default();
@@ -303,16 +436,31 @@ impl App {
                         || {
                             self.explorer
                                 .root
-                                .join(self.editor().and_then(|e| e.suggested_file_name.as_deref()).unwrap_or("untitled.txt"))
+                                .join(
+                                    self.editor()
+                                        .and_then(|e| e.suggested_file_name.as_deref())
+                                        .unwrap_or("untitled.txt"),
+                                )
                                 .to_string_lossy()
                                 .into_owned()
                         },
                         |p| p.to_string_lossy().into_owned(),
                     );
-                if let Some(remote) = self.remote_workspace.as_ref().filter(|_| self.editor_uses_remote_files()) {
-                    self.save_as_query = self.editor().and_then(|editor| editor.file_path.as_deref())
+                if let Some(remote) = self
+                    .remote_workspace
+                    .as_ref()
+                    .filter(|_| self.editor_uses_remote_files())
+                {
+                    self.save_as_query = self
+                        .editor()
+                        .and_then(|editor| editor.file_path.as_deref())
                         .and_then(|key| remote.display_path(key).ok())
-                        .unwrap_or_else(|| remote.initial_save_path(self.editor().and_then(|editor| editor.suggested_file_name.as_deref())));
+                        .unwrap_or_else(|| {
+                            remote.initial_save_path(
+                                self.editor()
+                                    .and_then(|editor| editor.suggested_file_name.as_deref()),
+                            )
+                        });
                 }
                 self.save_as_cursor = self.save_as_query.len();
                 self.save_as_selection_anchor = None;
@@ -349,8 +497,14 @@ impl App {
                     };
                     if let Some(new_ext) = counterpart_ext {
                         let new_path = path.with_extension(new_ext);
-                        if self.remote_workspace.is_some() && crate::remote::workspace::is_view_key(&new_path) {
-                            self.open_remote_location(new_path, None, crate::app_remote_navigation::Source::FileCommand);
+                        if self.remote_workspace.is_some()
+                            && crate::remote::workspace::is_view_key(&new_path)
+                        {
+                            self.open_remote_location(
+                                new_path,
+                                None,
+                                crate::app_remote_navigation::Source::FileCommand,
+                            );
                         } else if new_path.exists() {
                             self.open_file(&new_path);
                         } else {
@@ -381,13 +535,19 @@ impl App {
                     self.copy_terminal_selection(index);
                     return true;
                 }
-                if self.copy_diff_selection() { return true; }
+                if self.copy_diff_selection() {
+                    return true;
+                }
                 self.copy_editor_selection();
             }
             "cut" => {
-                if self.focused_terminal_index().is_some() { return true; }
+                if self.focused_terminal_index().is_some() {
+                    return true;
+                }
                 if (self.editor().is_some_and(|editor| editor.read_only)
-                    || self.diff_selection_owns_cursor()) && self.copy_diff_selection() {
+                    || self.diff_selection_owns_cursor())
+                    && self.copy_diff_selection()
+                {
                     return true;
                 }
                 if let Some(ed) = self.editor_mut() {
@@ -408,7 +568,9 @@ impl App {
                     self.paste_terminal_clipboard(index);
                     return true;
                 }
-                if self.diff_selection_owns_cursor() { return true; }
+                if self.diff_selection_owns_cursor() {
+                    return true;
+                }
                 self.paste_editor_clipboard(true);
             }
             "paste_plain" => {
@@ -416,16 +578,23 @@ impl App {
                     self.paste_terminal_clipboard(index);
                     return true;
                 }
-                if self.diff_selection_owns_cursor() { return true; }
+                if self.diff_selection_owns_cursor() {
+                    return true;
+                }
                 self.paste_editor_clipboard(false);
             }
             "select_all" => {
                 if self.source_control_has_focus()
-                    && !self.source_control_input_mode && !self.sc_graph_focused {
+                    && !self.source_control_input_mode
+                    && !self.sc_graph_focused
+                {
                     self.select_all_source_control_files();
                     return true;
                 }
-                if self.diff_selection_key(crossterm::event::KeyCode::Char('a'), crossterm::event::KeyModifiers::CONTROL) {
+                if self.diff_selection_key(
+                    crossterm::event::KeyCode::Char('a'),
+                    crossterm::event::KeyModifiers::CONTROL,
+                ) {
                     return true;
                 }
                 if let Some(ed) = self.editor_mut() {
@@ -504,10 +673,17 @@ impl App {
                     Some(crate::app_workspaces::Request::Switch(id)) => *id,
                     _ => self.workspaces.active,
                 };
-                let index = entries.iter().position(|entry| entry.id == selected).unwrap_or(0);
-                let next = if id == "workspace_next" { (index + 1) % entries.len() }
-                    else { (index + entries.len() - 1) % entries.len() };
-                self.workspaces.request = Some(crate::app_workspaces::Request::Switch(entries[next].id));
+                let index = entries
+                    .iter()
+                    .position(|entry| entry.id == selected)
+                    .unwrap_or(0);
+                let next = if id == "workspace_next" {
+                    (index + 1) % entries.len()
+                } else {
+                    (index + entries.len() - 1) % entries.len()
+                };
+                self.workspaces.request =
+                    Some(crate::app_workspaces::Request::Switch(entries[next].id));
             }
             "open_parent" => {
                 if let Some(parent) = self.explorer.root.parent() {
@@ -530,7 +706,9 @@ impl App {
                 }
             }
             "extensions" => {
-                if self.sidebar_view == crate::app::SidebarView::Extensions && self.sidebar_is_visible() {
+                if self.sidebar_view == crate::app::SidebarView::Extensions
+                    && self.sidebar_is_visible()
+                {
                     self.show_explorer = false;
                 } else {
                     self.open_extensions_sidebar();
@@ -566,7 +744,9 @@ impl App {
                 self.close_terminal_tab();
             }
             "rename_terminal" => {
-                let index = self.focused_terminal_index().unwrap_or(self.active_terminal);
+                let index = self
+                    .focused_terminal_index()
+                    .unwrap_or(self.active_terminal);
                 self.begin_terminal_rename(index);
             }
             "rename_context_terminal" => self.rename_context_terminal(),
@@ -576,7 +756,10 @@ impl App {
             }
             "move_terminal_to_right" => {
                 if self.terminal_is_open(self.active_terminal) {
-                    self.move_terminal_to_dock(self.active_terminal, crate::app::TerminalDock::Right);
+                    self.move_terminal_to_dock(
+                        self.active_terminal,
+                        crate::app::TerminalDock::Right,
+                    );
                 }
             }
             "detach_terminal_to_tab" => {
@@ -634,13 +817,18 @@ impl App {
                     },
                 };
                 if let Err(error) = crate::settings::ensure_file(&path) {
-                    self.notify(format!("Could not create settings file {}: {error}", path.display()));
+                    self.notify(format!(
+                        "Could not create settings file {}: {error}",
+                        path.display()
+                    ));
                     return false;
                 }
                 self.open_file(&path);
             }
             "find" => {
-                if self.editor().is_none() { return false; }
+                if self.editor().is_none() {
+                    return false;
+                }
                 self.push_search_history();
                 if !self.search_active {
                     self.search_pre_cursor = self
@@ -664,7 +852,9 @@ impl App {
                 }
             }
             "find_replace" => {
-                if self.editor().is_none() { return false; }
+                if self.editor().is_none() {
+                    return false;
+                }
                 self.push_search_history();
                 if !self.search_active {
                     self.search_pre_cursor = self
@@ -772,7 +962,9 @@ impl App {
                 }
             }
             "new_folder" => {
-                if self.explorer.find.open { self.close_explorer_find(); }
+                if self.explorer.find.open {
+                    self.close_explorer_find();
+                }
                 if self.remote_workspace.is_some() {
                     self.begin_remote_creation(self.explorer.root.clone(), true);
                     return false;
@@ -817,7 +1009,8 @@ impl App {
                     if let Some(fp) = ed.file_path.as_ref() {
                         let fp = fp.clone();
                         let line = ed.cursor_line as u32;
-                        let col = crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
+                        let col =
+                            crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
                         if !self.lsp_manager.request_definition(&fp, line, col) {
                             self.notify("No LSP definition provider available");
                         } else {
@@ -831,7 +1024,8 @@ impl App {
                     if let Some(fp) = ed.file_path.as_ref() {
                         let fp = fp.clone();
                         let line = ed.cursor_line as u32;
-                        let col = crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
+                        let col =
+                            crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
                         if !self.lsp_manager.request_type_definition(&fp, line, col) {
                             self.notify("No LSP type definition provider available");
                         } else {
@@ -845,7 +1039,8 @@ impl App {
                     if let Some(fp) = ed.file_path.as_ref() {
                         let fp = fp.clone();
                         let line = ed.cursor_line as u32;
-                        let col = crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
+                        let col =
+                            crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
                         if !self.lsp_manager.request_implementation(&fp, line, col) {
                             self.notify("No LSP implementation provider available");
                         } else {
@@ -859,7 +1054,8 @@ impl App {
                     if let Some(fp) = ed.file_path.as_ref() {
                         let fp = fp.clone();
                         let line = ed.cursor_line as u32;
-                        let col = crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
+                        let col =
+                            crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
                         if !self.lsp_manager.request_declaration(&fp, line, col) {
                             self.notify("No LSP declaration provider available");
                         } else {
@@ -876,7 +1072,8 @@ impl App {
                     if let Some(fp) = ed.file_path.as_ref() {
                         let fp = fp.clone();
                         let line = ed.cursor_line as u32;
-                        let col = crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
+                        let col =
+                            crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
                         if self.lsp_manager.request_references(&fp, line, col) {
                             self.lsp_references_pending = true;
                             self.lsp_references_active = false;
@@ -887,12 +1084,22 @@ impl App {
                     }
                 }
             }
-            "format_document" => { self.request_format(false, false); }
-            "format_selection" => { self.request_format(true, false); }
-            "configure_formatter" => { self.open_formatter_settings(None); }
+            "format_document" => {
+                self.request_format(false, false);
+            }
+            "format_selection" => {
+                self.request_format(true, false);
+            }
+            "configure_formatter" => {
+                self.open_formatter_settings(None);
+            }
             "goto_last_edit" => {
                 if let Some((view, line, col)) = self.last_edit_position {
-                    if let Some(index) = self.tabs.iter().position(|tab| tab.editor.navigation_id == view) {
+                    if let Some(index) = self
+                        .tabs
+                        .iter()
+                        .position(|tab| tab.editor.navigation_id == view)
+                    {
                         self.active_tab = index;
                         if let Some(ed) = self.editor_mut() {
                             ed.clear_selection();
@@ -963,9 +1170,13 @@ impl App {
             "rename_symbol" => {
                 // Try prepareRename first if LSP is available
                 let pos_info = self.editor().and_then(|ed| {
-                    ed.file_path
-                        .as_ref()
-                        .map(|fp| (fp.clone(), ed.cursor_line as u32, crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col)))
+                    ed.file_path.as_ref().map(|fp| {
+                        (
+                            fp.clone(),
+                            ed.cursor_line as u32,
+                            crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col),
+                        )
+                    })
                 });
                 if let Some((fp, line, col)) = pos_info {
                     if self.lsp_manager.request_prepare_rename(&fp, line, col) {
@@ -993,7 +1204,11 @@ impl App {
                             if let Some(fp) = ed.file_path.as_ref() {
                                 let fp = fp.clone();
                                 let line = ed.cursor_line as u32;
-                                let col = crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
+                                let col = crate::lsp_positions::to_utf16(
+                                    &ed.rope,
+                                    ed.cursor_line,
+                                    ed.cursor_col,
+                                );
                                 let diags = self.lsp_manager.code_action_diagnostics(&fp, line);
                                 self.lsp_code_action_active = self.lsp_manager.request_code_action(
                                     &crate::lsp::CodeActionParams {
@@ -1021,7 +1236,11 @@ impl App {
                             if let Some(fp) = ed.file_path.as_ref() {
                                 let fp = fp.clone();
                                 let line = ed.cursor_line as u32;
-                                let col = crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
+                                let col = crate::lsp_positions::to_utf16(
+                                    &ed.rope,
+                                    ed.cursor_line,
+                                    ed.cursor_col,
+                                );
                                 if self
                                     .lsp_manager
                                     .request_prepare_call_hierarchy(&fp, line, col)
@@ -1048,7 +1267,11 @@ impl App {
                             if let Some(fp) = ed.file_path.as_ref() {
                                 let fp = fp.clone();
                                 let line = ed.cursor_line as u32;
-                                let col = crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
+                                let col = crate::lsp_positions::to_utf16(
+                                    &ed.rope,
+                                    ed.cursor_line,
+                                    ed.cursor_col,
+                                );
                                 if self
                                     .lsp_manager
                                     .request_prepare_type_hierarchy(&fp, line, col)
@@ -1074,7 +1297,10 @@ impl App {
                     self.notify(format!("Tab {state}"));
                 }
             }
-            id if id.strip_prefix("goto_tab_").is_some_and(|n| n.parse::<usize>().is_ok()) => {
+            id if id
+                .strip_prefix("goto_tab_")
+                .is_some_and(|n| n.parse::<usize>().is_ok()) =>
+            {
                 let index = id["goto_tab_".len()..].parse::<usize>().unwrap_or(0);
                 if (1..=self.tabs.len()).contains(&index) {
                     self.clear_transient_editor_state();
@@ -1113,7 +1339,12 @@ impl App {
                 }
             }
             "open_folder" => {
-                if let Some(parent) = self.editor().and_then(|e| e.file_path.as_ref()).and_then(|p| p.parent()).map(|p| p.to_path_buf()) {
+                if let Some(parent) = self
+                    .editor()
+                    .and_then(|e| e.file_path.as_ref())
+                    .and_then(|p| p.parent())
+                    .map(|p| p.to_path_buf())
+                {
                     self.open_external(crate::external_open::Request::SystemApp(parent));
                 }
             }
@@ -1241,7 +1472,16 @@ impl App {
 
         let mut entries: Vec<(usize, usize, lsp_types::DiagnosticSeverity, String)> = diagnostics
             .iter()
-            .map(|diag| (diag.line, self.editor().map_or(0, |ed| crate::lsp_positions::from_utf16(&ed.rope, diag.line, diag.col as u32)), diag.severity, diag.message.clone()))
+            .map(|diag| {
+                (
+                    diag.line,
+                    self.editor().map_or(0, |ed| {
+                        crate::lsp_positions::from_utf16(&ed.rope, diag.line, diag.col as u32)
+                    }),
+                    diag.severity,
+                    diag.message.clone(),
+                )
+            })
             .collect();
         entries.sort_by_key(|&(line, col, _, _)| (line, col));
 
@@ -1421,7 +1661,8 @@ mod tests {
         app.active_tab = 0;
         app.lsp_manager.diagnostics.insert(path.clone(), Vec::new());
         app.lsp_document_highlights.push((0, 0, 0, 3));
-        app.lsp_inlay_hints.push(crate::app::InlayHintDisplay::new(0, 3, ": i32", None));
+        app.lsp_inlay_hints
+            .push(crate::app::InlayHintDisplay::new(0, 3, ": i32", None));
 
         app.execute_palette_command("undo");
 
@@ -1430,7 +1671,10 @@ mod tests {
             "int first;\nint second;\nint value;\n"
         );
         assert_eq!(app.lsp_document_highlights, vec![(0, 0, 0, 3)]);
-        assert_eq!(app.lsp_inlay_hints, vec![crate::app::InlayHintDisplay::new(0, 3, ": i32", None)]);
+        assert_eq!(
+            app.lsp_inlay_hints,
+            vec![crate::app::InlayHintDisplay::new(0, 3, ": i32", None)]
+        );
         assert!(app.lsp_manager.diagnostic_dirty_documents.contains(&path));
         assert_eq!(app.editor().unwrap().syntax_dirty_from, Some(2));
     }
@@ -1446,10 +1690,11 @@ mod tests {
         assert!(app.split_active());
         assert_eq!(app.tabs.len(), 1);
         assert_eq!(app.tabs[0].editor.file_name(), "second.txt");
-        assert!(app
-            .groups
-            .iter()
-            .any(|g| g.tabs.iter().any(|t| t.editor.file_name() == "first.txt")));
+        assert!(
+            app.groups
+                .iter()
+                .any(|g| g.tabs.iter().any(|t| t.editor.file_name() == "first.txt"))
+        );
         let last_msg = app
             .notification_history
             .last()

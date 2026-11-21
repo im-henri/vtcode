@@ -74,9 +74,7 @@ pub(crate) struct PaneSizes {
 
 impl Default for PaneSizes {
     fn default() -> Self {
-        Self {
-            overview: 260,
-        }
+        Self { overview: 260 }
     }
 }
 
@@ -204,10 +202,18 @@ impl CommitDetails {
         modifiers: crossterm::event::KeyModifiers,
         paste: Option<&str>,
     ) {
-        let copy = paste.is_none() && modifiers.intersects(crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SUPER)
+        let copy = paste.is_none()
+            && modifiers.intersects(
+                crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SUPER,
+            )
             && !modifiers.contains(crossterm::event::KeyModifiers::ALT)
-            && matches!(code, crossterm::event::KeyCode::Char('c' | 'C') | crossterm::event::KeyCode::Insert);
-        if !copy { self.query_viewport = None; }
+            && matches!(
+                code,
+                crossterm::event::KeyCode::Char('c' | 'C') | crossterm::event::KeyCode::Insert
+            );
+        if !copy {
+            self.query_viewport = None;
+        }
         let mut input = crate::text_input::TextInput::new(
             &mut self.query,
             &mut self.query_cursor,
@@ -249,7 +255,12 @@ pub(crate) struct CommitDiff {
 }
 
 #[cfg(test)]
-pub(crate) fn load_diff(root: &Path, hash: &str, file: &CommitFile, limit: u64) -> Result<CommitDiff, String> {
+pub(crate) fn load_diff(
+    root: &Path,
+    hash: &str,
+    file: &CommitFile,
+    limit: u64,
+) -> Result<CommitDiff, String> {
     load_diff_with_algorithm(root, hash, file, limit, Default::default())
 }
 
@@ -260,7 +271,10 @@ fn load_diff_with_algorithm(
     limit: u64,
     algorithm: crate::diff_algorithm::DiffAlgorithm,
 ) -> Result<CommitDiff, String> {
-    Ok(prepare_diff_with_algorithm(read_diff(root, hash, file, limit)?, algorithm))
+    Ok(prepare_diff_with_algorithm(
+        read_diff(root, hash, file, limit)?,
+        algorithm,
+    ))
 }
 
 /// Repository reads happen beside the files; comparison and render preparation
@@ -345,10 +359,18 @@ pub(crate) fn prepare_diff_with_algorithm(
     contents: DiffContents,
     algorithm: crate::diff_algorithm::DiffAlgorithm,
 ) -> CommitDiff {
-    let DiffContents { path, base, target, labels } = contents;
+    let DiffContents {
+        path,
+        base,
+        target,
+        labels,
+    } = contents;
     let target_rope = ropey::Rope::from_str(&target);
     let prepared = crate::background::PreparedDiffRefresh::new(
-        base.into(), &target, target_rope.len_lines(), algorithm,
+        base.into(),
+        &target,
+        target_rope.len_lines(),
+        algorithm,
     );
     CommitDiff {
         path,
@@ -513,7 +535,9 @@ impl App {
     }
 
     pub(crate) fn open_source_control_commit_details(&mut self, idx: usize) {
-        if !self.source_control_enabled { return; }
+        if !self.source_control_enabled {
+            return;
+        }
         let Some(info) = self.git_log.get(idx).cloned() else {
             return;
         };
@@ -528,23 +552,29 @@ impl App {
             references: info.branches,
             ..CommitData::default()
         };
-        if self.with_source_control_preview(|app, _| {
-            // Commit details have one shared inspector. Reuse that inspector
-            // in the preview pane even if it was previously opened elsewhere.
-            if let Some((group, index)) = app.tab_kind_location(TabKind::CommitDetails)
-                && group != app.active_group
-            {
-                app.move_tab_between_groups(group, index, app.active_group);
-            }
-            app.open_commit_details(root.clone(), data.clone());
-            !app.tabs[app.active_tab].pinned
-        }).is_none() {
+        if self
+            .with_source_control_preview(|app, _| {
+                // Commit details have one shared inspector. Reuse that inspector
+                // in the preview pane even if it was previously opened elsewhere.
+                if let Some((group, index)) = app.tab_kind_location(TabKind::CommitDetails)
+                    && group != app.active_group
+                {
+                    app.move_tab_between_groups(group, index, app.active_group);
+                }
+                app.open_commit_details(root.clone(), data.clone());
+                !app.tabs[app.active_tab].pinned
+            })
+            .is_none()
+        {
             self.open_commit_details(root, data);
         }
     }
 
     pub(crate) fn commit_details_root(&self) -> &Path {
-        self.commit_details.root.as_deref().unwrap_or_else(|| self.source_control_root())
+        self.commit_details
+            .root
+            .as_deref()
+            .unwrap_or_else(|| self.source_control_root())
     }
 
     fn commit_details_root_matches(&self, root: &Path) -> bool {
@@ -555,7 +585,9 @@ impl App {
     }
 
     pub(crate) fn open_commit_details(&mut self, root: PathBuf, data: CommitData) {
-        if !self.source_control_enabled { return; }
+        if !self.source_control_enabled {
+            return;
+        }
         let generation = self.commit_details.generation.wrapping_add(1);
         self.source_control_input_mode = false;
         self.suspend_diff_tab();
@@ -594,8 +626,10 @@ impl App {
         self.touch_tab_mru(tab);
         self.ensure_active_tab_visible();
         self.sync_diff_tab();
-        if self.commit_details.active && self.commit_details.data.hash == data.hash
-            && self.commit_details.root.as_ref() == Some(&root) {
+        if self.commit_details.active
+            && self.commit_details.data.hash == data.hash
+            && self.commit_details.root.as_ref() == Some(&root)
+        {
             return;
         }
         self.commit_details.cancel_open_diff();
@@ -622,7 +656,9 @@ impl App {
     }
 
     pub(crate) fn load_commit_details(&mut self) {
-        if !self.source_control_enabled { return; }
+        if !self.source_control_enabled {
+            return;
+        }
         self.commit_details.cancel_open_diff();
         self.commit_details.review.pending = None;
         self.commit_details.loading = true;
@@ -635,14 +671,22 @@ impl App {
         let remote = self.remote_workspace.clone();
         let log = self.git_output();
         self.background.spawn("commit-details", move || {
-            if sender.is_cancelled() { return; }
-            let operation = remote.is_none().then(|| crate::git_output::native(&log, "Read commit details", &root));
+            if sender.is_cancelled() {
+                return;
+            }
+            let operation = remote
+                .is_none()
+                .then(|| crate::git_output::native(&log, "Read commit details", &root));
             let result = match remote {
-                Some(remote) => remote.commit_details(&root, hash).map_err(|error| error.to_string()),
+                Some(remote) => remote
+                    .commit_details(&root, hash)
+                    .map_err(|error| error.to_string()),
                 None => load(&root, &hash),
             };
             if let Some(operation) = &operation {
-                operation.result(&result, |data| format!("{} changed files", data.files.len()));
+                operation.result(&result, |data| {
+                    format!("{} changed files", data.files.len())
+                });
             }
             let _ = sender.send(BackgroundResult::CommitDetails(DetailsResult {
                 root,
@@ -665,7 +709,10 @@ impl App {
             Ok(data) => {
                 // Newly loaded files start collapsed; metadata refreshes keep
                 // files the user has already expanded in this inspector.
-                self.commit_details.review.collapsed.extend(self.commit_details.data.files.len()..data.files.len());
+                self.commit_details
+                    .review
+                    .collapsed
+                    .extend(self.commit_details.data.files.len()..data.files.len());
                 if self.commit_details.data.message != data.message {
                     self.commit_details.message_hit.clear();
                     self.commit_details.message_selection = Default::default();
@@ -678,7 +725,9 @@ impl App {
     }
 
     pub(crate) fn adjacent_commit(&self, newer: bool) -> Option<usize> {
-        if !self.current_repository_matches(self.commit_details_root()) { return None; }
+        if !self.current_repository_matches(self.commit_details_root()) {
+            return None;
+        }
         let current = self
             .git_log
             .iter()
@@ -691,7 +740,9 @@ impl App {
     }
 
     pub(crate) fn request_commit_diff(&mut self) {
-        if !self.source_control_enabled { return; }
+        if !self.source_control_enabled {
+            return;
+        }
         let file = self.commit_details.selected_file();
         if !self.commit_details.active
             || self.commit_details.loading
@@ -701,11 +752,19 @@ impl App {
             return;
         }
         if let Some(file) = file
-            && self.activate_commit_review_file(file) { return; }
-        if self.commit_details.review.pending.is_some() { return; }
+            && self.activate_commit_review_file(file)
+        {
+            return;
+        }
+        if self.commit_details.review.pending.is_some() {
+            return;
+        }
         if file == self.commit_details.diff_file
-            && (self.commit_details.diff_full_cache.is_some() || self.commit_details.diff_error.is_some())
-        { return; }
+            && (self.commit_details.diff_full_cache.is_some()
+                || self.commit_details.diff_error.is_some())
+        {
+            return;
+        }
         self.stash_commit_review_file();
         self.commit_details.diff_file = file;
         self.commit_details.diff_error = None;
@@ -718,10 +777,15 @@ impl App {
     }
 
     pub(crate) fn queue_commit_review_file(&mut self, index: usize) {
-        if !self.source_control_enabled || !self.commit_details.active
-            || self.commit_details.loading || self.commit_details.error.is_some()
+        if !self.source_control_enabled
+            || !self.commit_details.active
+            || self.commit_details.loading
+            || self.commit_details.error.is_some()
             || self.commit_details.review.pending.is_some()
-            || index >= self.commit_details.data.files.len() { return; }
+            || index >= self.commit_details.data.files.len()
+        {
+            return;
+        }
         self.commit_details.review.pending = Some(index);
         if self.commit_details.selected_file() == Some(index) {
             self.commit_details.diff_loading = true;
@@ -740,7 +804,12 @@ impl App {
         let Some(file) = self.commit_details.data.files.get(index).cloned() else {
             return;
         };
-        if self.commit_details.opening_diff.as_ref().is_some_and(|open| open.file == index) {
+        if self
+            .commit_details
+            .opening_diff
+            .as_ref()
+            .is_some_and(|open| open.file == index)
+        {
             return;
         }
         self.commit_details.cancel_open_diff();
@@ -777,9 +846,13 @@ impl App {
             if sender.is_cancelled() || open.as_ref().is_some_and(CancellationToken::is_cancelled) {
                 return;
             }
-            let operation = remote.is_none().then(|| crate::git_output::native(&log, "Read commit diff", &root));
+            let operation = remote
+                .is_none()
+                .then(|| crate::git_output::native(&log, "Read commit diff", &root));
             let result = match remote {
-                Some(remote) => remote.commit_diff(&root, hash, file, limit, algorithm).map_err(|error| error.to_string()),
+                Some(remote) => remote
+                    .commit_diff(&root, hash, file, limit, algorithm)
+                    .map_err(|error| error.to_string()),
                 None => load_diff_with_algorithm(&root, &hash, &file, limit, algorithm),
             };
             if let Some(operation) = &operation {
@@ -806,7 +879,10 @@ impl App {
         request: CancellationToken,
         result: DiffResult,
     ) -> bool {
-        let Some(open) = self.commit_details.opening_diff.as_ref()
+        let Some(open) = self
+            .commit_details
+            .opening_diff
+            .as_ref()
             .filter(|open| open.request.same_task(&request))
         else {
             return false;
@@ -842,13 +918,16 @@ impl App {
             || !self.commit_details_root_matches(&result.root)
             || result.generation != self.commit_details.generation
             || (self.commit_details.review.pending != Some(result.file)
-                && (self.commit_details.review.pending.is_some() || Some(result.file) != self.commit_details.diff_file))
+                && (self.commit_details.review.pending.is_some()
+                    || Some(result.file) != self.commit_details.diff_file))
         {
             return false;
         }
         self.commit_details.review.pending = None;
         let selected = self.commit_details.selected_file() == Some(result.file);
-        if selected { self.commit_details.diff_loading = false; }
+        if selected {
+            self.commit_details.diff_loading = false;
+        }
         match result.result {
             Ok(diff) if diff.prepared.render_cache.algorithm != self.diff_algorithm => {
                 self.queue_commit_review_file(result.file);
@@ -856,7 +935,9 @@ impl App {
             Ok(diff) => {
                 self.commit_details.review.errors.remove(&result.file);
                 if selected {
-                    if self.commit_details.diff_file != Some(result.file) { self.stash_commit_review_file(); }
+                    if self.commit_details.diff_file != Some(result.file) {
+                        self.stash_commit_review_file();
+                    }
                     self.commit_details.diff_file = Some(result.file);
                     self.commit_details.diff_error = None;
                     self.install_commit_diff(diff);
@@ -866,8 +947,13 @@ impl App {
                 }
             }
             Err(error) => {
-                self.commit_details.review.errors.insert(result.file, error.clone());
-                if selected { self.commit_details.diff_error = Some(error); }
+                self.commit_details
+                    .review
+                    .errors
+                    .insert(result.file, error.clone());
+                if selected {
+                    self.commit_details.diff_error = Some(error);
+                }
             }
         }
         true

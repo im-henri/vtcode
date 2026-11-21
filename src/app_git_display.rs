@@ -48,8 +48,12 @@ fn line_diff_from_ops(old_len: usize, new_len: usize, ops: &[similar::DiffOp]) -
     let mut result = vec![' '; new_len.max(usize::from(old_len > 0 && new_len == 0))];
     for op in ops {
         let (start, len, marker) = match *op {
-            similar::DiffOp::Insert { new_index, new_len, .. } => (new_index, new_len, 'A'),
-            similar::DiffOp::Replace { new_index, new_len, .. } => (new_index, new_len, 'M'),
+            similar::DiffOp::Insert {
+                new_index, new_len, ..
+            } => (new_index, new_len, 'A'),
+            similar::DiffOp::Replace {
+                new_index, new_len, ..
+            } => (new_index, new_len, 'M'),
             _ => continue,
         };
         result[start..start + len].fill(marker);
@@ -73,29 +77,44 @@ fn merge_kind(left: char, right: char) -> char {
 
 /// Both marker sets must use worktree coordinates. Reuse the unstaged diff's
 /// equal ranges and project overlapping staged changes onto the worktree edit.
-pub(crate) fn compute_worktree_line_diffs(staged: &[char], index: &[&str], worktree: &[&str], anchors: &[usize]) -> (Vec<char>, Vec<char>) {
+pub(crate) fn compute_worktree_line_diffs(
+    staged: &[char],
+    index: &[&str],
+    worktree: &[&str],
+    anchors: &[usize],
+) -> (Vec<char>, Vec<char>) {
     let diff = similar::TextDiff::from_slices(index, worktree);
-    let ops = crate::line_changes::anchor_insertions(diff.ops(), anchors, |a, b| Some(worktree[a] == worktree[b]))
-        .expect("uncancelled gutter alignment");
+    let ops = crate::line_changes::anchor_insertions(diff.ops(), anchors, |a, b| {
+        Some(worktree[a] == worktree[b])
+    })
+    .expect("uncancelled gutter alignment");
     let unstaged = line_diff_from_ops(index.len(), worktree.len(), &ops);
     let mut mapped = vec![' '; worktree.len().max(1)];
     for op in ops.iter() {
-        if let similar::DiffOp::Equal { old_index, new_index, len } = *op
+        if let similar::DiffOp::Equal {
+            old_index,
+            new_index,
+            len,
+        } = *op
             && let Some(source) = staged.get(old_index..old_index + len)
         {
             mapped[new_index..new_index + len].copy_from_slice(source);
         }
     }
     for op in ops.iter().filter(|op| op.tag() != similar::DiffTag::Equal) {
-        let Some(source) = staged.get(op.old_range()) else { continue; };
+        let Some(source) = staged.get(op.old_range()) else {
+            continue;
+        };
         let target = op.new_range();
         for (offset, &kind) in source.iter().enumerate().filter(|(_, kind)| **kind != ' ') {
-            let line = (target.start + offset.min(target.len().saturating_sub(1)))
-                .min(mapped.len() - 1);
+            let line =
+                (target.start + offset.min(target.len().saturating_sub(1))).min(mapped.len() - 1);
             mapped[line] = merge_kind(mapped[line], kind);
         }
     }
-    if index.is_empty() && staged.first() == Some(&'D') { mapped[0] = 'D'; }
+    if index.is_empty() && staged.first() == Some(&'D') {
+        mapped[0] = 'D';
+    }
     (mapped, unstaged)
 }
 
@@ -286,12 +305,18 @@ mod tests {
 
     #[test]
     fn format_time_ago_months() {
-        assert_eq!(App::format_time_ago(1000000, 1000000 - 86400 * 60), "2mo ago");
+        assert_eq!(
+            App::format_time_ago(1000000, 1000000 - 86400 * 60),
+            "2mo ago"
+        );
     }
 
     #[test]
     fn format_time_ago_years() {
-        assert_eq!(App::format_time_ago(100000000, 100000000 - 86400 * 400), "1y ago");
+        assert_eq!(
+            App::format_time_ago(100000000, 100000000 - 86400 * 400),
+            "1y ago"
+        );
     }
 
     // --- compute_line_diff tests ---
@@ -306,9 +331,8 @@ mod tests {
     fn blank_insertion_anchors_project_staged_rows_past_the_inserted_line() {
         let index = ["one", "", "", "last"];
         let worktree = ["one", "", "", "", "last"];
-        let (staged, unstaged) = compute_worktree_line_diffs(
-            &[' ', 'A', 'M', ' '], &index, &worktree, &[1],
-        );
+        let (staged, unstaged) =
+            compute_worktree_line_diffs(&[' ', 'A', 'M', ' '], &index, &worktree, &[1]);
         assert_eq!(staged, [' ', ' ', 'A', 'M', ' ']);
         assert_eq!(unstaged, [' ', 'A', ' ', ' ', ' ']);
     }
@@ -318,7 +342,10 @@ mod tests {
         let index = ["A", "", "B", "B", "A", "B", "", "B", ""];
         let worktree = ["B", "A", "", "", "", ""];
         let (staged, _) = compute_worktree_line_diffs(
-            &[' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 'A'], &index, &worktree, &[3, 4],
+            &[' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', 'A'],
+            &index,
+            &worktree,
+            &[3, 4],
         );
         assert_eq!(staged, [' ', ' ', ' ', ' ', ' ', 'A']);
     }
@@ -367,20 +394,14 @@ mod tests {
 
     #[test]
     fn target_markers_addition() {
-        let diff = vec![
-            (' ', "context".to_string()),
-            ('+', "added".to_string()),
-        ];
+        let diff = vec![(' ', "context".to_string()), ('+', "added".to_string())];
         let markers = target_line_markers_from_compare_diff(&diff, 2);
         assert_eq!(markers, vec![' ', 'A']);
     }
 
     #[test]
     fn target_markers_deletion() {
-        let diff = vec![
-            (' ', "context".to_string()),
-            ('-', "deleted".to_string()),
-        ];
+        let diff = vec![(' ', "context".to_string()), ('-', "deleted".to_string())];
         let markers = target_line_markers_from_compare_diff(&diff, 2);
         assert_eq!(markers[1], 'D');
     }
@@ -472,13 +493,17 @@ mod tests {
             header: "header\n".to_string(),
             hunks: vec![
                 GitDiffHunk {
-                    old_start: 1, old_count: 3,
-                    new_start: 1, new_count: 4,
+                    old_start: 1,
+                    old_count: 3,
+                    new_start: 1,
+                    new_count: 4,
                     text: "hunk1\n".to_string(),
                 },
                 GitDiffHunk {
-                    old_start: 10, old_count: 2,
-                    new_start: 11, new_count: 3,
+                    old_start: 10,
+                    old_count: 2,
+                    new_start: 11,
+                    new_count: 3,
                     text: "hunk2\n".to_string(),
                 },
             ],
@@ -493,8 +518,10 @@ mod tests {
         let patch = GitFilePatch {
             header: "header\n".to_string(),
             hunks: vec![GitDiffHunk {
-                old_start: 1, old_count: 3,
-                new_start: 1, new_count: 3,
+                old_start: 1,
+                old_count: 3,
+                new_start: 1,
+                new_count: 3,
                 text: "hunk\n".to_string(),
             }],
         };
@@ -506,8 +533,10 @@ mod tests {
         let patch = GitFilePatch {
             header: "h\n".to_string(),
             hunks: vec![GitDiffHunk {
-                old_start: 5, old_count: 2,
-                new_start: 10, new_count: 3,
+                old_start: 5,
+                old_count: 2,
+                new_start: 10,
+                new_count: 3,
                 text: "text\n".to_string(),
             }],
         };

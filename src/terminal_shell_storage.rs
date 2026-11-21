@@ -15,7 +15,9 @@ pub(super) fn install_in(directory: &Path, name: &str, contents: &str) -> io::Re
     // Windows can deny competing replacements even when every staged file is
     // complete. Recheck under one lock so other shell starts reuse the winner.
     static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _install_guard = INSTALL_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let _install_guard = INSTALL_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     fs::create_dir_all(directory)?;
     let path = directory.join(name);
     match fs::read(&path) {

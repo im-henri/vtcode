@@ -54,9 +54,7 @@ fn desk_tab_lists(app: &App) -> impl Iterator<Item = &[Tab]> {
         app.groups
             .iter()
             .enumerate()
-            .filter(|(index, group)| {
-                *index != app.active_group && group.desk == app.desks.active
-            })
+            .filter(|(index, group)| *index != app.active_group && group.desk == app.desks.active)
             .map(|(_, group)| group.tabs.as_slice()),
     )
 }
@@ -258,7 +256,17 @@ impl TabNameDuplicates {
         scroll: usize,
         width: u16,
     ) -> Option<Self> {
-        Self::for_candidates(app, tabs, active, scroll, if width == 0 { 0 } else { usize::from(width) / 2 + 2 })
+        Self::for_candidates(
+            app,
+            tabs,
+            active,
+            scroll,
+            if width == 0 {
+                0
+            } else {
+                usize::from(width) / 2 + 2
+            },
+        )
     }
 
     /// Continuous scrolling needs widths across the whole strip. Share the
@@ -267,7 +275,13 @@ impl TabNameDuplicates {
         Self::for_candidates(app, tabs, active, 0, usize::MAX)
     }
 
-    fn for_candidates(app: &App, tabs: &[Tab], active: usize, scroll: usize, limit: usize) -> Option<Self> {
+    fn for_candidates(
+        app: &App,
+        tabs: &[Tab],
+        active: usize,
+        scroll: usize,
+        limit: usize,
+    ) -> Option<Self> {
         let count = desk_tab_lists(app).map(|tabs| tabs.len()).sum::<usize>();
         if count <= 64 || limit == 0 {
             return None;
@@ -378,14 +392,21 @@ fn format_context(path: &Path, required: usize, shared: usize) -> String {
     if crate::remote::workspace::is_view_key(path) {
         // Decode components after selecting the suffix: a remote literal
         // backslash must not turn into a local path separator on Windows.
-        for (index, part) in components[start..components.len() - tail].iter().enumerate() {
+        for (index, part) in components[start..components.len() - tail]
+            .iter()
+            .enumerate()
+        {
             if index > 0
                 && *part != Component::RootDir
-                && !matches!(components[start + index - 1], Component::RootDir | Component::Prefix(_))
+                && !matches!(
+                    components[start + index - 1],
+                    Component::RootDir | Component::Prefix(_)
+                )
             {
                 result.push(std::path::MAIN_SEPARATOR);
             }
-            if let Some(bytes) = crate::remote::workspace::display_component(path, part.as_os_str()) {
+            if let Some(bytes) = crate::remote::workspace::display_component(path, part.as_os_str())
+            {
                 push_visible_bytes(&mut result, &bytes, true);
             } else {
                 push_visible(&mut result, part.as_os_str());

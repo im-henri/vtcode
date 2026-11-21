@@ -8,8 +8,12 @@ use crate::{
 impl App {
     pub(crate) fn refresh_language_servers(&mut self, restart: bool) {
         let settings = self.settings_for_scope(SettingsScope::Workspace);
-        let diagnostic_delay = settings.lsp_diagnostic_delay_ms.unwrap_or(crate::lsp::diagnostics::DEFAULT_DELAY_MS);
-        self.lsp_manager.diagnostic_publication.set_delay_ms(diagnostic_delay);
+        let diagnostic_delay = settings
+            .lsp_diagnostic_delay_ms
+            .unwrap_or(crate::lsp::diagnostics::DEFAULT_DELAY_MS);
+        self.lsp_manager
+            .diagnostic_publication
+            .set_delay_ms(diagnostic_delay);
         let mut configs = Vec::new();
         if settings.lsp_enabled.unwrap_or(true) {
             // Explicit preferences take precedence over extension defaults.
@@ -29,11 +33,20 @@ impl App {
                 }
             }
         }
-        let associations: crate::file_associations::Associations = self.language_associations.iter()
-            .map(|(pattern, language)| (pattern.clone(), crate::file_associations::language_id(language)))
+        let associations: crate::file_associations::Associations = self
+            .language_associations
+            .iter()
+            .map(|(pattern, language)| {
+                (
+                    pattern.clone(),
+                    crate::file_associations::language_id(language),
+                )
+            })
             .collect();
-        if !restart && self.lsp_manager.configs == configs
-            && *self.lsp_manager.file_associations == associations {
+        if !restart
+            && self.lsp_manager.configs == configs
+            && *self.lsp_manager.file_associations == associations
+        {
             return;
         }
         if self.lsp_format_pending {
@@ -43,7 +56,9 @@ impl App {
             LspManager::new_with_wake(self.explorer.root.clone(), self.background.wake_handle());
         manager.remote_workspace = self.remote_workspace.clone();
         manager.file_associations = std::sync::Arc::new(associations);
-        manager.diagnostic_publication.set_delay_ms(diagnostic_delay);
+        manager
+            .diagnostic_publication
+            .set_delay_ms(diagnostic_delay);
         manager.diagnostics_version = self.lsp_manager.diagnostics_version.wrapping_add(1);
         manager.completion_revision = self.lsp_manager.completion_revision.wrapping_add(1);
         manager.signature_revision = self.lsp_manager.signature_revision.wrapping_add(1);
@@ -122,7 +137,8 @@ mod tests {
             command: command.into(),
             args: vec![],
             file_patterns: vec!["*.rs".into()],
-            settings: None, init_options: None,
+            settings: None,
+            init_options: None,
         }
     }
 
@@ -147,20 +163,45 @@ mod tests {
             app.begin_numeric_setting_edit(id, "1500");
             app.settings_value_buffer = input.into();
             assert!(app.commit_numeric_setting_edit());
-            assert_eq!(app.lsp_manager.clients.len(), 1, "delay edits must not restart LSP");
-            assert_eq!(app.current_settings().lsp_diagnostic_delay_ms, Some(expected));
-            assert_eq!(crate::settings::load_from_file(&app.settings_workspace_path).lsp_diagnostic_delay_ms, Some(expected));
-            assert_eq!(app.settings_items().iter().find(|item| item.2 == id).unwrap().1, expected.to_string());
+            assert_eq!(
+                app.lsp_manager.clients.len(),
+                1,
+                "delay edits must not restart LSP"
+            );
+            assert_eq!(
+                app.current_settings().lsp_diagnostic_delay_ms,
+                Some(expected)
+            );
+            assert_eq!(
+                crate::settings::load_from_file(&app.settings_workspace_path)
+                    .lsp_diagnostic_delay_ms,
+                Some(expected)
+            );
+            assert_eq!(
+                app.settings_items()
+                    .iter()
+                    .find(|item| item.2 == id)
+                    .unwrap()
+                    .1,
+                expected.to_string()
+            );
         }
         assert!(app.reset_setting_in_selected_scope(id));
         assert_eq!(app.lsp_manager.diagnostic_publication.delay_ms(), 1_500);
         assert_eq!(app.lsp_manager.clients.len(), 1);
         app.settings_global.lsp_diagnostic_delay_ms = None;
         app.apply_effective_settings();
-        assert_eq!(app.lsp_manager.diagnostic_publication.delay_ms(), crate::lsp::diagnostics::DEFAULT_DELAY_MS);
+        assert_eq!(
+            app.lsp_manager.diagnostic_publication.delay_ms(),
+            crate::lsp::diagnostics::DEFAULT_DELAY_MS
+        );
         app.settings_global.lsp_diagnostic_delay_ms = Some(2_000);
         app.refresh_language_servers(true);
-        assert_eq!(app.lsp_manager.diagnostic_publication.delay_ms(), 2_000, "restarts retain the preference");
+        assert_eq!(
+            app.lsp_manager.diagnostic_publication.delay_ms(),
+            2_000,
+            "restarts retain the preference"
+        );
     }
 
     #[test]

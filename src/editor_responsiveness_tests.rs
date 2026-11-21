@@ -35,7 +35,12 @@ fn reference_visible(editor: &Editor, from: usize, count: usize) -> Vec<usize> {
     // A restored view can contain overlapping folds. Visibility is the union
     // of their hidden bodies, just as it is for the scroll range.
     (from..editor.line_count())
-        .filter(|&line| !editor.folded_ranges.iter().any(|(&start, &end)| start < line && line < end))
+        .filter(|&line| {
+            !editor
+                .folded_ranges
+                .iter()
+                .any(|(&start, &end)| start < line && line < end)
+        })
         .take(count)
         .collect()
 }
@@ -96,7 +101,9 @@ fn fold_hint_cache_handles_batched_line_shifts_and_same_version_replacement() {
 #[test]
 fn typing_does_not_scan_offscreen_fold_hints() {
     let mut editor = Editor::test_with_text(&"root\n    child\n".repeat(3_000));
-    for line in 0..4_000 { editor.can_fold_line(line); }
+    for line in 0..4_000 {
+        editor.can_fold_line(line);
+    }
     let visits = editor.fold_hint_cache.borrow().invalidation_visits;
     let builds = editor.fold_hint_cache.borrow().builds;
     editor.cursor_line = 2_000;
@@ -105,17 +112,24 @@ fn typing_does_not_scan_offscreen_fold_hints() {
         assert_eq!(editor.can_fold_line(line), reference_hint(&editor, line));
     }
     assert_eq!(editor.fold_hint_cache.borrow().builds - builds, 2);
-    assert_eq!(editor.fold_hint_cache.borrow().invalidation_visits - visits, 2);
+    assert_eq!(
+        editor.fold_hint_cache.borrow().invalidation_visits - visits,
+        2
+    );
 }
 
 #[test]
 fn fold_hint_blank_span_index_survives_eviction_and_separated_edits() {
     let mut editor = Editor::test_with_text(&"root\n\n\n    child\n\nnext\n".repeat(900));
     for pass in 0..4 {
-        for line in 0..4_096 { editor.can_fold_line(line); }
+        for line in 0..4_096 {
+            editor.can_fold_line(line);
+        }
         // Trigger bounded cache eviction, including its dependency index.
         editor.can_fold_line(4_100);
-        for line in (0..editor.line_count()).step_by(7) { editor.can_fold_line(line); }
+        for line in (0..editor.line_count()).step_by(7) {
+            editor.can_fold_line(line);
+        }
         for line in [1, 8, 2_000, 4_098, 4_101] {
             editor.cursor_line = line;
             editor.cursor_col = 0;
@@ -137,21 +151,32 @@ fn benchmark_typing_with_populated_fold_cache() {
             let source = "root\n    child\n".repeat(3_000);
             let mut editor = Editor::test_with_text(&source);
             editor.cursor_line = 2_000;
-            for line in 0..4_000 { editor.can_fold_line(line); }
+            for line in 0..4_000 {
+                editor.can_fold_line(line);
+            }
             let start = Instant::now();
             for _ in 0..1_000 {
                 editor.insert_char('x');
-                for line in 1_980..2_040 { black_box(editor.can_fold_line(line)); }
+                for line in 1_980..2_040 {
+                    black_box(editor.can_fold_line(line));
+                }
                 editor.backspace();
-                for line in 1_980..2_040 { black_box(editor.can_fold_line(line)); }
+                for line in 1_980..2_040 {
+                    black_box(editor.can_fold_line(line));
+                }
             }
             timings[usize::from(reference)].push(start.elapsed() / 2_000);
             assert_eq!(editor.rope.to_string(), source);
         }
     }
     REFERENCE_FOLD_INVALIDATION.set(false);
-    for times in &mut timings { times.sort(); }
-    eprintln!("typing + 60 gutter hints with 4000 visited rows: before={:?}, after={:?}", timings[1][3], timings[0][3]);
+    for times in &mut timings {
+        times.sort();
+    }
+    eprintln!(
+        "typing + 60 gutter hints with 4000 visited rows: before={:?}, after={:?}",
+        timings[1][3], timings[0][3]
+    );
 }
 
 #[test]

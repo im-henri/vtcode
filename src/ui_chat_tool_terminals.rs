@@ -129,7 +129,9 @@ pub(super) fn parse(tool: &p::ToolCall, revision: u64) -> Option<Arc<ReportedTer
         && let Ok(exit) = exit.parse::<i64>()
     {
         code = code.or(Some(exit));
-        if let Some(start) = raw_text.rfind("<shellId: ") { raw_text.truncate(start); }
+        if let Some(start) = raw_text.rfind("<shellId: ") {
+            raw_text.truncate(start);
+        }
     }
     let styled = vtcode::acp::terminal_style::parse(&raw_text);
     let lines: Vec<String> = styled.iter().map(|line| line.text.clone()).collect();

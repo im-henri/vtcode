@@ -8,7 +8,11 @@ fn negotiated_incremental_sync_is_installed_before_deferred_open() {
         manager.clients[0].initialized = false;
         let mut rope = Rope::from_str("# 😀\r\nvalue = 1\r\n");
         manager.sync_document(&path, 1, rope.clone());
-        server.queue_event(LspEvent::Initialized { capabilities: Box::new(Some(serde_json::from_value(json!({"textDocumentSync":sync})).unwrap())) });
+        server.queue_event(LspEvent::Initialized {
+            capabilities: Box::new(Some(
+                serde_json::from_value(json!({"textDocumentSync":sync})).unwrap(),
+            )),
+        });
         manager.poll();
         let messages = server.take_messages();
         assert_eq!(messages[0]["method"], "initialized");
@@ -17,7 +21,10 @@ fn negotiated_incremental_sync_is_installed_before_deferred_open() {
         manager.sync_document(&path, 2, rope);
         let change = server.take_messages();
         assert_eq!(change[0]["params"]["contentChanges"][0]["text"], "2");
-        assert_eq!(change[0]["params"]["contentChanges"][0]["range"]["start"], json!({"line":1,"character":8}));
+        assert_eq!(
+            change[0]["params"]["contentChanges"][0]["range"]["start"],
+            json!({"line":1,"character":8})
+        );
     }
 }
 
@@ -31,18 +38,29 @@ fn polling_rotates_between_servers_and_wakes_for_remaining_work() {
     manager.sync_document_owned(&cpp, 1, "int value;".into());
     manager.request_completion(&cpp, 0, 5, "v");
     for _ in 0..200 {
-        first.queue_event(LspEvent::Diagnostics { uri: Url::from_file_path(&path).unwrap(), version: None, diagnostics: vec![] });
+        first.queue_event(LspEvent::Diagnostics {
+            uri: Url::from_file_path(&path).unwrap(),
+            version: None,
+            diagnostics: vec![],
+        });
     }
     second.respond(json!({"id":manager.active_completion_id,"result":[{"label":"value"}]}));
     let generation = manager.wake.generation();
     // At most one first-server event precedes the other server's response.
     // A time-budget yield under load is fine; the next poll resumes there.
-    for _ in 0..2 { manager.poll(); }
+    for _ in 0..2 {
+        manager.poll();
+    }
     assert_eq!(manager.completion_items[0].label, "value");
     assert!(manager.diagnostics_version < 200);
     assert!(manager.wake.generation() > generation);
-    for _ in 0..200 { manager.poll(); }
-    assert_eq!(manager.diagnostics_version, 1, "identical reports must not invalidate render caches");
+    for _ in 0..200 {
+        manager.poll();
+    }
+    assert_eq!(
+        manager.diagnostics_version, 1,
+        "identical reports must not invalidate render caches"
+    );
 }
 
 #[test]
@@ -57,7 +75,11 @@ fn cancelling_dismissed_suggestions_releases_server_work_and_pending_ids() {
     manager.cancel_signature_request();
     let messages = server.take_messages();
     for id in ids {
-        assert!(messages.iter().any(|m| m["method"] == "$/cancelRequest" && m["params"]["id"].as_i64() == id));
+        assert!(
+            messages
+                .iter()
+                .any(|m| m["method"] == "$/cancelRequest" && m["params"]["id"].as_i64() == id)
+        );
     }
     assert!(server.pending_requests.lock().unwrap().is_empty());
     manager.cancel_completion_request();
@@ -71,7 +93,11 @@ fn cancelling_dismissed_suggestions_releases_server_work_and_pending_ids() {
     server.take_messages();
     manager.cancel_completion_request();
     let messages = server.take_messages();
-    assert!(messages.iter().any(|m| m["method"] == "$/cancelRequest" && m["params"]["id"] == id));
+    assert!(
+        messages
+            .iter()
+            .any(|m| m["method"] == "$/cancelRequest" && m["params"]["id"] == id)
+    );
     assert!(server.pending_requests.lock().unwrap().is_empty());
 }
 
@@ -85,7 +111,11 @@ fn shared_deadline_yields_lsp_bursts_and_preserves_other_servers_responses() {
     manager.sync_document_owned(&cpp, 1, "int value;".into());
     manager.request_completion(&cpp, 0, 5, "v");
     for _ in 0..200 {
-        first.queue_event(LspEvent::Diagnostics { uri: Url::from_file_path(&path).unwrap(), version: None, diagnostics: vec![] });
+        first.queue_event(LspEvent::Diagnostics {
+            uri: Url::from_file_path(&path).unwrap(),
+            version: None,
+            diagnostics: vec![],
+        });
     }
     second.respond(json!({"id":manager.active_completion_id,"result":[{"label":"value"}]}));
     let generation = manager.wake.generation();
@@ -113,18 +143,30 @@ fn reader_prepares_completions_using_request_prefix_and_dispatch_adopts_the_same
             "replace":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}}},
          "additionalTextEdits":[{"range":{"start":{"line":1,"character":0},"end":{"line":1,"character":0}},"newText":"import beta\n"}]}
     ]}).to_string(), &server.pending_requests).unwrap();
-    let LspEvent::CompletionResponse { items, .. } = &event else { panic!("missing prepared completions"); };
-    assert_eq!(items[0].label, "beta", "reader must use the prefix registered before send");
+    let LspEvent::CompletionResponse { items, .. } = &event else {
+        panic!("missing prepared completions");
+    };
+    assert_eq!(
+        items[0].label, "beta",
+        "reader must use the prefix registered before send"
+    );
     assert_eq!(items[0].text_edit_range, Some(((0, 0), (0, 4))));
     assert_eq!(items[0].insert_text, "beta(${1:value})");
     assert!(items[0].is_snippet);
     assert_eq!(items[0].documentation.as_deref(), Some("docs"));
     assert_eq!(items[0].additional_text_edits.len(), 1);
-    assert_eq!(items[0].original_item.as_ref().unwrap().data, Some(json!({"resolve":17})));
+    assert_eq!(
+        items[0].original_item.as_ref().unwrap().data,
+        Some(json!({"resolve":17}))
+    );
     let storage = items.as_ptr();
     server.queue_event(event);
     manager.poll();
-    assert_eq!(manager.completion_items.as_ptr(), storage, "UI dispatch must not rebuild rows");
+    assert_eq!(
+        manager.completion_items.as_ptr(),
+        storage,
+        "UI dispatch must not rebuild rows"
+    );
 }
 
 #[test]
@@ -137,13 +179,21 @@ fn already_prepared_cancelled_completion_cannot_replace_a_newer_list() {
     manager.request_completion(&path, 0, 2, "be");
     let current = manager.active_completion_id.unwrap();
     server.respond(json!({"id":current,"result":[{"label":"alpha"},{"label":"beta"}]}));
-    for _ in 0..2 { manager.poll(); }
+    for _ in 0..2 {
+        manager.poll();
+    }
     assert_eq!(manager.completion_items[0].label, "beta");
     manager.cancel_completion_request();
     manager.completion_items.clear();
     server.queue_event(LspEvent::CompletionResponse {
         request_id: current,
-        items: completion::prepare_completions(vec![CompletionItem { label:"late".into(), ..Default::default() }], Some("")),
+        items: completion::prepare_completions(
+            vec![CompletionItem {
+                label: "late".into(),
+                ..Default::default()
+            }],
+            Some(""),
+        ),
     });
     manager.poll();
     assert!(manager.completion_items.is_empty());
@@ -176,7 +226,9 @@ fn filesystem_bursts_send_one_complete_notification_to_each_initialized_server()
     let (mut manager, first, root, _) = fixture();
     let (client, second) = LspClient::test_pair("cpp", &["*.cpp"]);
     manager.clients.push(client);
-    let paths: Vec<_> = (0..1_000).map(|index| root.path().join(format!("source {index}.rs"))).collect();
+    let paths: Vec<_> = (0..1_000)
+        .map(|index| root.path().join(format!("source {index}.rs")))
+        .collect();
     manager.notify_did_change_watched_files(paths.iter().map(PathBuf::as_path));
     for server in [&first, &second] {
         let messages = server.take_messages();
@@ -201,7 +253,9 @@ fn filesystem_bursts_send_one_complete_notification_to_each_initialized_server()
 fn filesystem_notification_batches_bound_long_paths_without_losing_or_reordering_events() {
     let (mut manager, server, root, _) = fixture();
     let directory = root.path().join("segment/".repeat(200));
-    let paths: Vec<_> = (0..1_000).map(|index| directory.join(format!("source {index}.rs"))).collect();
+    let paths: Vec<_> = (0..1_000)
+        .map(|index| directory.join(format!("source {index}.rs")))
+        .collect();
     manager.notify_did_change_watched_files(paths.iter().map(PathBuf::as_path));
     let messages = server.take_messages();
     assert!(messages.len() > 1 && messages.len() < 20);
@@ -209,10 +263,21 @@ fn filesystem_notification_batches_bound_long_paths_without_losing_or_reordering
     for message in messages {
         assert_eq!(message["method"], "workspace/didChangeWatchedFiles");
         assert!(message.to_string().len() < 300_000);
-        received.extend(message["params"]["changes"].as_array().unwrap().iter()
-            .map(|change| change["uri"].as_str().unwrap().to_owned()));
+        received.extend(
+            message["params"]["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|change| change["uri"].as_str().unwrap().to_owned()),
+        );
     }
-    assert_eq!(received, paths.iter().map(|path| Url::from_file_path(path).unwrap().to_string()).collect::<Vec<_>>());
+    assert_eq!(
+        received,
+        paths
+            .iter()
+            .map(|path| Url::from_file_path(path).unwrap().to_string())
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -530,7 +595,7 @@ fn framing_bounds_headers_and_body_before_allocating_and_rejects_ambiguous_lengt
         "Content-Length: nope\r\n\r\n".to_owned(),
         "Content-Length: 2\r\nContent-Length: 3\r\n\r\n{}".to_owned(),
         "Content-Length: 2\r\n".to_owned(),
-        "x".repeat(16*1024+1),
+        "x".repeat(16 * 1024 + 1),
     ] {
         assert!(LspClient::read_message(&mut std::io::Cursor::new(message)).is_err());
     }

@@ -969,11 +969,21 @@ mod tests {
             "slot10 = a\nother20 = b\ns",
             "slot20 = a\nslot5 = b\ns",
         ] {
-            assert!(words(source, "s").iter().all(|word| {
-                !word.chars().any(|ch| ch.is_ascii_digit())
-            }), "{source}");
+            assert!(
+                words(source, "s")
+                    .iter()
+                    .all(|word| { !word.chars().any(|ch| ch.is_ascii_digit()) }),
+                "{source}"
+            );
         }
-        let conflict = predict("slot10 = fixed\nslot20 = fixed\n", " = wrong", "s", true, &|| false).unwrap();
+        let conflict = predict(
+            "slot10 = fixed\nslot20 = fixed\n",
+            " = wrong",
+            "s",
+            true,
+            &|| false,
+        )
+        .unwrap();
         assert!(!conflict.active());
         assert!(words("load_user(one)\nstore_user(one)\nload_order(two)\ns", "s").is_empty());
     }

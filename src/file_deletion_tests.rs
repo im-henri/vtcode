@@ -287,7 +287,11 @@ fn deletion_guard_rejects_a_case_distinct_sibling() {
 
     let selected = selected.canonicalize().unwrap();
     let mut guard = io::Root::new(&selected).unwrap();
-    let entry = walkdir::WalkDir::new(&file).into_iter().next().unwrap().unwrap();
+    let entry = walkdir::WalkDir::new(&file)
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
     assert!(guard.remove(&entry).is_err());
     assert_eq!(std::fs::read_to_string(file).unwrap(), "separate directory");
 }

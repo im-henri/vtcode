@@ -458,10 +458,14 @@ impl Editor {
         if let Some((start, end)) = dirty {
             // Seek directly to affected rows, including every cached width
             // and tab size. Typing must not scan thousands of visited lines.
-            let invalid: Vec<_> = self.wrap_cache
+            let invalid: Vec<_> = self
+                .wrap_cache
                 .range((start, 0, 0)..=(end, usize::MAX, usize::MAX))
-                .map(|(&key, _)| key).collect();
-            for key in invalid { self.wrap_cache.remove(&key); }
+                .map(|(&key, _)| key)
+                .collect();
+            for key in invalid {
+                self.wrap_cache.remove(&key);
+            }
             let bounded = end - start < MAX_INCREMENTAL_WRAP_LINES
                 && self.rope.line_to_byte(end + 1) - self.rope.line_to_byte(start)
                     <= MAX_INCREMENTAL_WRAP_BYTES;
@@ -546,7 +550,12 @@ impl Editor {
         let mut len = line.len_chars();
         let mut tail = line.chars_at(len).reversed();
         match tail.next() {
-            Some('\n') => { len -= 1; if tail.next() == Some('\r') { len -= 1; } }
+            Some('\n') => {
+                len -= 1;
+                if tail.next() == Some('\r') {
+                    len -= 1;
+                }
+            }
             Some('\r') => len -= 1,
             _ => {}
         }
@@ -673,16 +682,29 @@ impl Editor {
             // neither a complete String nor a document-sized Vec<char> is
             // needed for the range map used by painting/pointer navigation.
             let len = line_slice.len_chars()
-                - line_slice.chars_at(line_slice.len_chars()).reversed()
-                    .take_while(|&c| c == '\n' || c == '\r').count();
+                - line_slice
+                    .chars_at(line_slice.len_chars())
+                    .reversed()
+                    .take_while(|&c| c == '\n' || c == '\r')
+                    .count();
             let mut ranges = Vec::new();
             if line_slice.len_bytes() == line_slice.len_chars() {
-                visit_ascii_wrap_ranges(line_slice.chunks(), len, wrap_width.max(1), &|| false,
-                    ascii_wrap_break, |start, end| ranges.push((start, end)))
-                    .expect("uncancelled line wrapping");
+                visit_ascii_wrap_ranges(
+                    line_slice.chunks(),
+                    len,
+                    wrap_width.max(1),
+                    &|| false,
+                    ascii_wrap_break,
+                    |start, end| ranges.push((start, end)),
+                )
+                .expect("uncancelled line wrapping");
             } else {
-                visit_unicode_wrap_map(line_slice.chunks().flat_map(str::chars), len,
-                    wrap_width.max(1), |start, end| ranges.push((start, end)));
+                visit_unicode_wrap_map(
+                    line_slice.chunks().flat_map(str::chars),
+                    len,
+                    wrap_width.max(1),
+                    |start, end| ranges.push((start, end)),
+                );
             }
             ranges
         };
@@ -693,7 +715,11 @@ impl Editor {
             // Reclaim just the next slot. Dropping half the map in one input
             // frame caused periodic stalls after browsing a large document.
             #[cfg(test)]
-            let keep = if REFERENCE_WRAP_EVICTION.get() { 5000 } else { MAX_CACHED_WRAP_LINES - 1 };
+            let keep = if REFERENCE_WRAP_EVICTION.get() {
+                5000
+            } else {
+                MAX_CACHED_WRAP_LINES - 1
+            };
             #[cfg(not(test))]
             let keep = MAX_CACHED_WRAP_LINES - 1;
             while self.wrap_cache.len() > keep {
@@ -961,13 +987,16 @@ impl Editor {
             // Deep scrolling into one long logical line must seek directly to
             // the first visible segment, not revisit every preceding segment.
             for (seg, (start_col, end_col)) in ranges.iter().copied().enumerate().skip(skip) {
-                visit(self, WrappedRowInfo {
-                    line_idx: line,
-                    start_col,
-                    end_col,
-                    line_len,
-                    is_first: seg == 0,
-                });
+                visit(
+                    self,
+                    WrappedRowInfo {
+                        line_idx: line,
+                        start_col,
+                        end_col,
+                        line_len,
+                        is_first: seg == 0,
+                    },
+                );
                 emitted += 1;
                 if emitted >= count {
                     break;
@@ -991,7 +1020,8 @@ impl Editor {
         let width = wrap_width.max(1);
         let total_lines = self.line_count();
         let clamped_target_line = target_line.min(total_lines.saturating_sub(1));
-        let clamped_target_line = self.line_for_visible_row(self.visible_row_for_line(clamped_target_line));
+        let clamped_target_line =
+            self.line_for_visible_row(self.visible_row_for_line(clamped_target_line));
 
         // Prefix lookup avoids updating every later offset after a local edit.
         if !self.ensure_row_offsets(width) {
@@ -1023,7 +1053,9 @@ impl Editor {
     /// again through the Rope duplicated tree walks on every wrapped move.
     fn wrapped_line_len(&self, _line: usize, ranges: &[(usize, usize)]) -> usize {
         #[cfg(test)]
-        if REFERENCE_WRAP_LOOKUPS.get() { return self.line_len(_line); }
+        if REFERENCE_WRAP_LOOKUPS.get() {
+            return self.line_len(_line);
+        }
         ranges.last().map_or(0, |&(_, end)| end)
     }
 
@@ -1036,7 +1068,9 @@ impl Editor {
     ) -> (usize, usize) {
         let target_row = start_row.saturating_add(screen_row);
         if let Some(row) = self.wrapped_row_at(target_row, wrap_width) {
-            let col = self.source_column_at_cell(row.line_idx, row.start_col, row.end_col, screen_col).0;
+            let col = self
+                .source_column_at_cell(row.line_idx, row.start_col, row.end_col, screen_col)
+                .0;
             return (row.line_idx, col);
         }
         let line = self.line_count().saturating_sub(1);
@@ -1049,7 +1083,8 @@ impl Editor {
         // wrapped ranges of a multi-megabyte line here duplicated paint work
         // and could stall the input thread immediately after installing a map.
         let top_line = if self.ensure_row_offsets(width) {
-            self.cached_row_offsets.as_ref()
+            self.cached_row_offsets
+                .as_ref()
                 .and_then(|(_, offsets)| offsets.line_for_row(self.wrap_scroll_offset))
                 .map_or(self.cursor_line, |(line, _)| line)
         } else {
@@ -1061,11 +1096,12 @@ impl Editor {
 
     pub(crate) fn max_wrap_scroll_offset(&mut self) -> usize {
         let wrap_width = self.effective_wrap_width();
-        self.wrapped_total_rows(wrap_width).saturating_sub(if self.scroll_past_end {
-            1
-        } else {
-            self.viewport_height.max(1)
-        })
+        self.wrapped_total_rows(wrap_width)
+            .saturating_sub(if self.scroll_past_end {
+                1
+            } else {
+                self.viewport_height.max(1)
+            })
     }
 
     pub(crate) fn set_wrap_scroll_offset(&mut self, offset: usize) {
@@ -1095,7 +1131,9 @@ impl Editor {
         count: usize,
         mut visit: impl FnMut(WrappedRowInfo),
     ) {
-        let end_row = start_row.saturating_add(count).min(self.visible_line_count());
+        let end_row = start_row
+            .saturating_add(count)
+            .min(self.visible_line_count());
         for row in start_row..end_row {
             let line = self.line_for_visible_row(row);
             let line_len = self.line_len(line);
@@ -1113,12 +1151,22 @@ impl Editor {
     /// including the folded fallback while a large file's wrap layout is pending.
     /// Return (source line, first visual row) using metadata, without decoding text.
     pub(crate) fn source_line_at_screen(&mut self, screen_row: usize) -> Option<(usize, bool)> {
-        let visible_rows = if self.word_wrap { self.viewport_height.max(1) } else { self.viewport_height };
-        if screen_row >= visible_rows { return None; }
+        let visible_rows = if self.word_wrap {
+            self.viewport_height.max(1)
+        } else {
+            self.viewport_height
+        };
+        if screen_row >= visible_rows {
+            return None;
+        }
         if self.word_wrap {
             let target = self.wrap_scroll_offset.saturating_add(screen_row);
             if self.ensure_row_offsets(self.effective_wrap_width()) {
-                return self.cached_row_offsets.as_ref()?.1.line_for_row(target)
+                return self
+                    .cached_row_offsets
+                    .as_ref()?
+                    .1
+                    .line_for_row(target)
                     .map(|(line, base)| (line, base == target));
             }
             let line = self.line_for_visible_row(target);
@@ -1161,7 +1209,8 @@ impl Editor {
     }
 
     pub(crate) fn overview_total_rows(&self) -> usize {
-        self.overview_wrap_offsets().map_or_else(|| self.visible_line_count(), |offsets| offsets.total)
+        self.overview_wrap_offsets()
+            .map_or_else(|| self.visible_line_count(), |offsets| offsets.total)
     }
 
     pub(crate) fn overview_row_for_line(&self, line: usize) -> usize {
@@ -1175,11 +1224,15 @@ impl Editor {
     /// markers belong to their fold header; wrapped markers use the first row
     /// of their source line. Range queries remain bounded by overview height.
     pub(crate) fn overview_source_boundary(&self, row: usize) -> usize {
-        if row == 0 { return 0; }
+        if row == 0 {
+            return 0;
+        }
         if let Some(offsets) = self.overview_wrap_offsets() {
-            return offsets.line_for_row(row - 1).map_or(self.line_count(), |(line, _)| {
-                self.line_for_visible_row(self.visible_row_for_line(line) + 1)
-            });
+            return offsets
+                .line_for_row(row - 1)
+                .map_or(self.line_count(), |(line, _)| {
+                    self.line_for_visible_row(self.visible_row_for_line(line) + 1)
+                });
         }
         self.line_for_visible_row(row)
     }

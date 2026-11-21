@@ -70,7 +70,11 @@ fn repeated_navigation_keeps_the_caret_painted_on_tabbed_and_wide_lines() {
     use ratatui::style::Color;
     let caret = Color::Rgb(251, 17, 139);
     for bounded in [false, true] {
-        for source in ["\t\t\t\t\t\t\t\t\tEND", "界界界界界界界界界界界界界界界界界END", " \t界 a\t界界\t b\t END"] {
+        for source in [
+            "\t\t\t\t\t\t\t\t\tEND",
+            "界界界界界界界界界界界界界界界界界END",
+            " \t界 a\t界界\t b\t END",
+        ] {
             let mut app = App::test_new();
             let mut editor = Editor::test_with_text(source);
             editor.large_file_mode = bounded;
@@ -83,7 +87,9 @@ fn repeated_navigation_keeps_the_caret_painted_on_tabbed_and_wide_lines() {
             app.show_indent_guides = false;
             app.cursor_visible = true;
             app.colors.bg_cursor = caret;
-            for effect in AnimationEffect::ALL { app.animation_settings.set(effect, false); }
+            for effect in AnimationEffect::ALL {
+                app.animation_settings.set(effect, false);
+            }
             let area = Rect::new(0, 0, 30, 8);
             draw(&mut app, area);
             let len = app.editor().unwrap().line_len(0);
@@ -91,9 +97,11 @@ fn repeated_navigation_keeps_the_caret_painted_on_tabbed_and_wide_lines() {
                 app.editor_mut().unwrap().set_cursor(0, col);
                 let buffer = draw(&mut app, area);
                 let code = app.code_area.unwrap();
-                assert!((code.x..code.right()).any(|x| buffer[(x, code.y)].bg == caret),
+                assert!(
+                    (code.x..code.right()).any(|x| buffer[(x, code.y)].bg == caret),
                     "missing caret: bounded={bounded} source={source:?} col={col} scroll={}",
-                    app.editor().unwrap().horizontal_scroll);
+                    app.editor().unwrap().horizontal_scroll
+                );
             }
         }
     }
@@ -252,14 +260,26 @@ fn newline_batches_retain_prefix_and_match_fresh_frames_through_undo_and_selecti
     app.editor_mut().unwrap().cursor_line = 15;
     let area = Rect::new(0, 0, 100, 24);
     draw(&mut app, area);
-    let prefix = app.editor().unwrap().render_line_cache.borrow().cached_line(2).unwrap();
+    let prefix = app
+        .editor()
+        .unwrap()
+        .render_line_cache
+        .borrow()
+        .cached_line(2)
+        .unwrap();
     for operation in 0..9 {
         let editor = app.editor_mut().unwrap();
         match operation {
             0 => editor.insert_newline(),
             1 => editor.backspace(),
-            2 => { editor.insert_newline(); editor.backspace(); }
-            3 => { editor.insert_newline(); editor.insert_char('界'); }
+            2 => {
+                editor.insert_newline();
+                editor.backspace();
+            }
+            3 => {
+                editor.insert_newline();
+                editor.insert_char('界');
+            }
             4 | 7 => editor.undo(),
             5 | 8 => editor.redo(),
             _ => {
@@ -270,8 +290,17 @@ fn newline_batches_retain_prefix_and_match_fresh_frames_through_undo_and_selecti
             }
         }
         assert_fresh_glyph_frame(&mut app, area);
-        let retained = app.editor().unwrap().render_line_cache.borrow().cached_line(2).unwrap();
-        assert!(std::rc::Rc::ptr_eq(&prefix, &retained), "operation={operation} rebuilt untouched prefix");
+        let retained = app
+            .editor()
+            .unwrap()
+            .render_line_cache
+            .borrow()
+            .cached_line(2)
+            .unwrap();
+        assert!(
+            std::rc::Rc::ptr_eq(&prefix, &retained),
+            "operation={operation} rebuilt untouched prefix"
+        );
     }
 }
 
@@ -283,9 +312,15 @@ fn benchmark_newline_editor_frames() {
     for full in [true, false] {
         let mut app = editing_fixture();
         app.editor_mut().unwrap().cursor_line = 18;
-        app.editor().unwrap().render_line_cache.borrow_mut().full_invalidation = full;
+        app.editor()
+            .unwrap()
+            .render_line_cache
+            .borrow_mut()
+            .full_invalidation = full;
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-        terminal.draw(|frame| super::draw_editor(frame, &mut app, area)).unwrap();
+        terminal
+            .draw(|frame| super::draw_editor(frame, &mut app, area))
+            .unwrap();
         states.push((app, terminal));
     }
     let mut samples = [Vec::new(), Vec::new()];
@@ -295,16 +330,25 @@ fn benchmark_newline_editor_frames() {
             let started = std::time::Instant::now();
             for _ in 0..30 {
                 app.editor_mut().unwrap().insert_newline();
-                terminal.draw(|frame| super::draw_editor(frame, app, area)).unwrap();
+                terminal
+                    .draw(|frame| super::draw_editor(frame, app, area))
+                    .unwrap();
                 app.editor_mut().unwrap().backspace();
-                terminal.draw(|frame| super::draw_editor(frame, app, area)).unwrap();
+                terminal
+                    .draw(|frame| super::draw_editor(frame, app, area))
+                    .unwrap();
                 std::hint::black_box(terminal.backend().buffer());
             }
             samples[index].push(started.elapsed() / 60);
         }
     }
-    for times in &mut samples { times.sort(); }
-    eprintln!("newline editing frame: full={:?} retained prefix={:?}", samples[0][3], samples[1][3]);
+    for times in &mut samples {
+        times.sort();
+    }
+    eprintln!(
+        "newline editing frame: full={:?} retained prefix={:?}",
+        samples[0][3], samples[1][3]
+    );
 }
 
 #[test]
@@ -317,16 +361,30 @@ fn benchmark_syntax_refresh_editor_frames() {
         let path = std::path::PathBuf::from("syntax-refresh.rs");
         app.editor_mut().unwrap().file_path = Some(path.clone());
         let rope = app.editor().unwrap().rope.clone();
-        let job = app.highlighter.prepare_job(&rope, &path, 0, None, 0..32, None, &app.syntax_theme).unwrap();
+        let job = app
+            .highlighter
+            .prepare_job(&rope, &path, 0, None, 0..32, None, &app.syntax_theme)
+            .unwrap();
         let (syntaxes, themes) = app.highlighter.shared_sets();
-        let batch = job.run_with_budget(&rope, &syntaxes, &themes, &mut || false, std::time::Duration::from_secs(10));
+        let batch = job.run_with_budget(
+            &rope,
+            &syntaxes,
+            &themes,
+            &mut || false,
+            std::time::Duration::from_secs(10),
+        );
         assert!(app.highlighter.apply_batch(batch.clone()));
         app.highlighter.replace_unchanged_snapshots = replace;
         let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-        terminal.draw(|frame| super::draw_editor(frame, &mut app, area)).unwrap();
+        terminal
+            .draw(|frame| super::draw_editor(frame, &mut app, area))
+            .unwrap();
         states.push((app, terminal, batch));
     }
-    assert_eq!(states[0].1.backend().buffer(), states[1].1.backend().buffer());
+    assert_eq!(
+        states[0].1.backend().buffer(),
+        states[1].1.backend().buffer()
+    );
     let mut samples = [Vec::new(), Vec::new()];
     for round in 0..7 {
         for index in if round % 2 == 0 { [0, 1] } else { [1, 0] } {
@@ -338,16 +396,26 @@ fn benchmark_syntax_refresh_editor_frames() {
                 let batch = template.clone();
                 let started = std::time::Instant::now();
                 assert!(app.highlighter.apply_batch(batch));
-                terminal.draw(|frame| super::draw_editor(frame, app, area)).unwrap();
+                terminal
+                    .draw(|frame| super::draw_editor(frame, app, area))
+                    .unwrap();
                 elapsed += started.elapsed();
                 std::hint::black_box(terminal.backend().buffer());
             }
             samples[index].push(elapsed / 30);
         }
-        assert_eq!(states[0].1.backend().buffer(), states[1].1.backend().buffer());
+        assert_eq!(
+            states[0].1.backend().buffer(),
+            states[1].1.backend().buffer()
+        );
     }
-    for times in &mut samples { times.sort(); }
-    eprintln!("syntax refresh + editor frame: replace={:?} reuse={:?}", samples[0][3], samples[1][3]);
+    for times in &mut samples {
+        times.sort();
+    }
+    eprintln!(
+        "syntax refresh + editor frame: replace={:?} reuse={:?}",
+        samples[0][3], samples[1][3]
+    );
 }
 
 #[test]

@@ -102,27 +102,57 @@ fn shared_recovery_base_roundtrips_undo_redo_and_reuses_current_rope() {
     before.remove(5..6);
     let mut after = base.clone();
     after.insert(10, "new");
-    let states = [snapshot(before, 1), snapshot(base.clone(), 2), snapshot(after, 3)];
+    let states = [
+        snapshot(before, 1),
+        snapshot(base.clone(), 2),
+        snapshot(after, 3),
+    ];
     for split in 0..=states.len() {
         let undo = &states[..split];
         let redo: Vec<_> = states[split..].iter().rev().cloned().collect();
         let mut bytes = Vec::new();
         let digest = write_with_base(&mut bytes, undo, &redo, Some(&base)).unwrap();
-        assert!(bytes.len() < 1024, "only changes, not a second document: {}", bytes.len());
-        let (restored_undo, restored_redo) = read_with_base(Cursor::new(&bytes), metadata(undo),
-            metadata(&redo), digest, Some(base.clone())).unwrap();
+        assert!(
+            bytes.len() < 1024,
+            "only changes, not a second document: {}",
+            bytes.len()
+        );
+        let (restored_undo, restored_redo) = read_with_base(
+            Cursor::new(&bytes),
+            metadata(undo),
+            metadata(&redo),
+            digest,
+            Some(base.clone()),
+        )
+        .unwrap();
         assert_eq!(restored_undo, undo);
         assert_eq!(restored_redo, redo);
-        assert!(restored_undo.iter().chain(&restored_redo)
-            .find(|entry| entry.1 == 2).unwrap().0.is_instance(&base));
-        assert!(read(Cursor::new(&bytes), metadata(undo), metadata(&redo), digest).is_err(),
-            "shared-base histories must never be decoded without their base");
+        assert!(
+            restored_undo
+                .iter()
+                .chain(&restored_redo)
+                .find(|entry| entry.1 == 2)
+                .unwrap()
+                .0
+                .is_instance(&base)
+        );
+        assert!(
+            read(Cursor::new(&bytes), metadata(undo), metadata(&redo), digest).is_err(),
+            "shared-base histories must never be decoded without their base"
+        );
     }
     for base in [Rope::new(), "é\r\n🦀".into()] {
         let entries = [snapshot(base.clone(), 1), snapshot(Rope::new(), 2)];
         let mut bytes = Vec::new();
         let digest = write_with_base(&mut bytes, &entries, &[], Some(&base)).unwrap();
-        let (restored, _) = read_with_base(Cursor::new(bytes), metadata(&entries), vec![], digest, Some(base)).unwrap();
+        let (restored, _) = read_with_base(
+            Cursor::new(bytes),
+            metadata(&entries),
+            vec![],
+            digest,
+            Some(base),
+        )
+        .unwrap();
         assert_eq!(restored, entries);
     }
 }
@@ -578,29 +608,61 @@ fn recovery_storage_roundtrip(bytes: usize) {
     tab.undo_entries = Some(undo.clone());
     tab.redo_entries = Some(redo.clone());
     let started = std::time::Instant::now();
-    session::save_session(project.root(), &Session { tabs: vec![tab], ..Default::default() }).unwrap();
+    session::save_session(
+        project.root(),
+        &Session {
+            tabs: vec![tab],
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let elapsed = started.elapsed();
-    let stored_bytes: u64 = std::fs::read_dir(session::unsaved_dir(project.root())).unwrap()
-        .map(|entry| entry.unwrap().metadata().unwrap().len()).sum();
-    assert!(stored_bytes < rope.len_bytes() as u64 + 16 * 1024,
-        "recovery duplicated the document: {stored_bytes} bytes for {} bytes", rope.len_bytes());
-    let mut saved = session::load_session(project.root()).unwrap().tabs.remove(0);
+    let stored_bytes: u64 = std::fs::read_dir(session::unsaved_dir(project.root()))
+        .unwrap()
+        .map(|entry| entry.unwrap().metadata().unwrap().len())
+        .sum();
+    assert!(
+        stored_bytes < rope.len_bytes() as u64 + 16 * 1024,
+        "recovery duplicated the document: {stored_bytes} bytes for {} bytes",
+        rope.len_bytes()
+    );
+    let mut saved = session::load_session(project.root())
+        .unwrap()
+        .tabs
+        .remove(0);
     let manifest = saved.clone();
     session::hydrate_saved_tab(project.root(), &mut saved);
     assert_eq!(saved.pending_unsaved_content.as_ref().unwrap(), &rope);
     assert_eq!(saved.undo_entries.as_ref().unwrap(), &undo);
     assert_eq!(saved.redo_entries.as_ref().unwrap(), &redo);
     let restored = saved.pending_unsaved_content.as_ref().unwrap();
-    assert!(leaf_bytes(std::iter::once(restored).chain(saved.undo_entries.as_ref().unwrap().iter()
-        .chain(saved.redo_entries.as_ref().unwrap()).map(|entry| &entry.0))) < rope.len_bytes() * 2);
+    assert!(
+        leaf_bytes(
+            std::iter::once(restored).chain(
+                saved
+                    .undo_entries
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .chain(saved.redo_entries.as_ref().unwrap())
+                    .map(|entry| &entry.0)
+            )
+        ) < rope.len_bytes() * 2
+    );
 
     // Retaining a manifest before hydration must keep the base as well as its
     // patches, without rewriting either file or requiring the original file.
-    let retained = Session { tabs: vec![manifest], ..Default::default() };
+    let retained = Session {
+        tabs: vec![manifest],
+        ..Default::default()
+    };
     let original_file = project.root().join("test.txt");
     std::fs::write(&original_file, "unrelated external content").unwrap();
     session::save_session(project.root(), &retained).unwrap();
-    let mut restored = session::load_session(project.root()).unwrap().tabs.remove(0);
+    let mut restored = session::load_session(project.root())
+        .unwrap()
+        .tabs
+        .remove(0);
     session::hydrate_saved_tab(project.root(), &mut restored);
     assert_eq!(restored.pending_unsaved_content.as_ref().unwrap(), &rope);
     assert_eq!(restored.undo_entries.as_ref().unwrap()[0].0, original);
@@ -623,12 +685,25 @@ fn shared_base_checksum_rejects_stale_history_without_replacing_recovery_text() 
     use crate::session::{self, Session};
     let project = Project::new();
     let tab = session::tests::recovery_test_tab("original recovery text");
-    session::save_session(project.root(), &Session { tabs: vec![tab], ..Default::default() }).unwrap();
-    let mut saved = session::load_session(project.root()).unwrap().tabs.remove(0);
+    session::save_session(
+        project.root(),
+        &Session {
+            tabs: vec![tab],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut saved = session::load_session(project.root())
+        .unwrap()
+        .tabs
+        .remove(0);
     let text_path = session::unsaved_dir(project.root()).join(saved.unsaved_file.as_ref().unwrap());
     std::fs::write(text_path, "modified recovery text").unwrap(); // Same byte length.
     session::hydrate_saved_tab(project.root(), &mut saved);
-    assert_eq!(saved.pending_unsaved_content.as_ref().unwrap(), "modified recovery text");
+    assert_eq!(
+        saved.pending_unsaved_content.as_ref().unwrap(),
+        "modified recovery text"
+    );
     assert!(saved.undo_entries.is_none() && saved.redo_entries.is_none());
 }
 
@@ -641,7 +716,8 @@ fn persisted_history_trims_each_stack_without_an_external_base_dependency() {
     let redo: Vec<_> = entries.iter().rev().cloned().collect();
     let mut retained = HashSet::new();
     let name =
-        crate::session::save_test_undo_history(project.root(), &entries, &redo, &mut retained).unwrap();
+        crate::session::save_test_undo_history(project.root(), &entries, &redo, &mut retained)
+            .unwrap();
     assert_eq!(retained.len(), 2);
     let (undo, restored_redo) = crate::session::load_undo_history(project.root(), &name).unwrap();
     assert_eq!(undo, entries[25..]);
@@ -712,8 +788,8 @@ fn invalid_manifests_or_payloads_do_not_replace_recovered_live_text() {
     use crate::session::{self, SavedTab};
     let project = Project::new();
     let entries = [snapshot("previous text".into(), 0)];
-    let name =
-        session::save_test_undo_history(project.root(), &entries, &[], &mut HashSet::new()).unwrap();
+    let name = session::save_test_undo_history(project.root(), &entries, &[], &mut HashSet::new())
+        .unwrap();
     let path = session::unsaved_dir(project.root()).join(&name);
     let original = std::fs::read(&path).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&original).unwrap();

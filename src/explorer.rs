@@ -1,5 +1,8 @@
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::{path::{Path, PathBuf}, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[path = "explorer_width.rs"]
 mod width;
@@ -87,7 +90,9 @@ impl GitStatusSummary {
     pub(crate) fn primary_visible(self, visibility: GitBadgeVisibility) -> GitStatus {
         match visibility {
             GitBadgeVisibility::None => GitStatus::Unmodified,
-            GitBadgeVisibility::Tracked => Self(self.0 & !Self::bit(GitStatus::Untracked)).primary(),
+            GitBadgeVisibility::Tracked => {
+                Self(self.0 & !Self::bit(GitStatus::Untracked)).primary()
+            }
             GitBadgeVisibility::All => self.primary(),
         }
     }
@@ -179,8 +184,13 @@ impl ExplorerIndices {
         self.paths.reserve(entries.len());
         let mut ancestors = Vec::<usize>::new();
         for (index, entry) in entries.iter().enumerate() {
-            self.paths.entry(FileExplorer::path_key(&entry.path)).or_insert(index);
-            while ancestors.last().is_some_and(|&parent| entries[parent].depth >= entry.depth) {
+            self.paths
+                .entry(FileExplorer::path_key(&entry.path))
+                .or_insert(index);
+            while ancestors
+                .last()
+                .is_some_and(|&parent| entries[parent].depth >= entry.depth)
+            {
                 ancestors.pop();
             }
             self.parents.push(ancestors.last().copied());
@@ -199,12 +209,24 @@ impl ExplorerPresentation {
         matches: crate::explorer_find::Matches,
     ) -> ExplorerRefresh {
         FileExplorer::decorate_entries(
-            &mut entries, &self.root, &canonical_root, &self.statuses, &self.untracked, self.git_enabled,
+            &mut entries,
+            &self.root,
+            &canonical_root,
+            &self.statuses,
+            &self.untracked,
+            self.git_enabled,
         );
         let widths = width::measure_rows(&entries, &matches, self.show_match_counts);
         let mut indices = ExplorerIndices::default();
         indices.rebuild(&entries);
-        ExplorerRefresh { canonical_root, entries, matches, presentation: self, indices, widths }
+        ExplorerRefresh {
+            canonical_root,
+            entries,
+            matches,
+            presentation: self,
+            indices,
+            widths,
+        }
     }
 }
 
@@ -216,14 +238,21 @@ impl ExplorerRefresh {
             && Arc::ptr_eq(&view.untracked, &explorer.git_untracked_directories)
             && view.git_enabled == explorer.ignore_cache.enabled()
             && view.show_match_counts == !explorer.find.filter
-            && view.collapsed.as_ref() == explorer.find.filtering().then_some(&explorer.find.collapsed)
+            && view.collapsed.as_ref()
+                == explorer
+                    .find
+                    .filtering()
+                    .then_some(&explorer.find.collapsed)
     }
 
     /// A Git reply or a filter toggle can arrive during the scan. Reuse the
     /// collected tree, applying the latest decorations and projection off-thread.
     pub(crate) fn reprepare(self, presentation: ExplorerPresentation) -> Self {
         let entries = if self.presentation.collapsed != presentation.collapsed {
-            presentation.collapsed.as_ref().and_then(|collapsed| self.matches.filtered_entries(collapsed))
+            presentation
+                .collapsed
+                .as_ref()
+                .and_then(|collapsed| self.matches.filtered_entries(collapsed))
                 .unwrap_or(self.entries)
         } else {
             self.entries
@@ -232,7 +261,11 @@ impl ExplorerRefresh {
     }
 
     pub(crate) fn is_large(&self) -> bool {
-        self.entries.len().max(self.matches.rows.len()).max(self.presentation.statuses.len()) >= 4096
+        self.entries
+            .len()
+            .max(self.matches.rows.len())
+            .max(self.presentation.statuses.len())
+            >= 4096
     }
 }
 
@@ -262,7 +295,10 @@ pub struct FileExplorer {
 }
 
 fn default_exclusions() -> std::sync::Arc<crate::search_paths::ExcludeRules> {
-    std::sync::Arc::new(crate::search_paths::ExcludeRules::new(&crate::settings::default_files_exclude(), &Default::default()))
+    std::sync::Arc::new(crate::search_paths::ExcludeRules::new(
+        &crate::settings::default_files_exclude(),
+        &Default::default(),
+    ))
 }
 
 impl FileExplorer {
@@ -278,20 +314,31 @@ impl FileExplorer {
     }
 
     pub(crate) fn set_sort_locale(&mut self, locale: &str) -> bool {
-        if self.ordering.locale() == locale { return true; }
-        let Some(ordering) = crate::file_order::FileOrder::new(locale) else { return false };
+        if self.ordering.locale() == locale {
+            return true;
+        }
+        let Some(ordering) = crate::file_order::FileOrder::new(locale) else {
+            return false;
+        };
         self.ordering = std::sync::Arc::new(ordering);
         // Directory data is independent of collation. In-flight projections
         // retain their own immutable ordering while sharing the disk snapshot.
         true
     }
     pub(crate) fn set_files_exclude(&mut self, patterns: &crate::settings::ExcludePatterns) {
-        if *self.exclude_patterns == *patterns { return; }
+        if *self.exclude_patterns == *patterns {
+            return;
+        }
         self.exclude_patterns = std::sync::Arc::new(patterns.clone());
-        self.exclude_rules = std::sync::Arc::new(crate::search_paths::ExcludeRules::new(patterns, &Default::default()));
+        self.exclude_rules = std::sync::Arc::new(crate::search_paths::ExcludeRules::new(
+            patterns,
+            &Default::default(),
+        ));
     }
     pub(crate) fn insert_remote_placeholder(&mut self, path: PathBuf, name: String, is_dir: bool) {
-        if self.find_path(&path).is_some() { return; }
+        if self.find_path(&path).is_some() {
+            return;
+        }
         let parent = path.parent().unwrap_or(&self.root);
         let (position, depth) = match self.find_path(parent) {
             Some(index) => {
@@ -301,17 +348,33 @@ impl FileExplorer {
             }
             None => (0, 0),
         };
-        self.entries.insert(position, FileEntry { path, name, is_dir, depth, expanded: false,
-            git_status: GitStatus::Unmodified, git_status_summary: Default::default() });
-        self.rebuild_parent_indices(); self.selected = position; self.ensure_selection_visible();
+        self.entries.insert(
+            position,
+            FileEntry {
+                path,
+                name,
+                is_dir,
+                depth,
+                expanded: false,
+                git_status: GitStatus::Unmodified,
+                git_status_summary: Default::default(),
+            },
+        );
+        self.rebuild_parent_indices();
+        self.selected = position;
+        self.ensure_selection_visible();
     }
-    pub(crate) fn expanded_snapshot(&self) -> FxHashSet<PathBuf> { self.expanded_dirs.clone() }
+    pub(crate) fn expanded_snapshot(&self) -> FxHashSet<PathBuf> {
+        self.expanded_dirs.clone()
+    }
     pub(crate) fn cancel_unloaded_expansions(&mut self, paths: FxHashSet<PathBuf>) {
         for path in paths {
             self.expanded_dirs.remove(&path);
             // Filtered results have a complete local tree and independent
             // collapse state; cancelling an old normal scan must not alter it.
-            if !self.find.filtering() && let Some(index) = self.find_path(&path) {
+            if !self.find.filtering()
+                && let Some(index) = self.find_path(&path)
+            {
                 self.entries[index].expanded = false;
             }
         }
@@ -374,7 +437,11 @@ impl FileExplorer {
     }
 
     pub(crate) fn refresh(&mut self) {
-        if self.root.as_os_str().is_empty() { self.entries.clear(); self.git_statuses = Default::default(); return; }
+        if self.root.as_os_str().is_empty() {
+            self.entries.clear();
+            self.git_statuses = Default::default();
+            return;
+        }
         self.invalidate_directory_cache();
         self.canonical_root = self.directory_cache.canonical_root(&self.root);
         // Collect currently expanded dirs before clearing entries
@@ -387,7 +454,8 @@ impl FileExplorer {
         self.entries.clear();
         let root = self.root.clone();
         self.scan_dir(&root, 0, None, None);
-        self.ignore_cache.mark_ignored(&self.root, &self.canonical_root, &mut self.entries, None);
+        self.ignore_cache
+            .mark_ignored(&self.root, &self.canonical_root, &mut self.entries, None);
         self.rebuild_parent_indices();
     }
 
@@ -406,12 +474,19 @@ impl FileExplorer {
         }
     }
 
-    pub(crate) fn headless_request(&mut self, expanded: FxHashSet<PathBuf>, sort: ExplorerSortMode,
-        find: Option<crate::explorer_find::Query>, cancel: crate::background::CancellationToken) -> ExplorerRefreshRequest {
+    pub(crate) fn headless_request(
+        &mut self,
+        expanded: FxHashSet<PathBuf>,
+        sort: ExplorerSortMode,
+        find: Option<crate::explorer_find::Query>,
+        cancel: crate::background::CancellationToken,
+    ) -> ExplorerRefreshRequest {
         self.expanded_dirs = expanded;
         self.sort_mode = sort;
         let mut request = self.refresh_request();
-        request.find = find; request.cancel = Some(cancel); request
+        request.find = find;
+        request.cancel = Some(cancel);
+        request
     }
 
     pub(crate) fn build_refresh_entries(
@@ -422,7 +497,10 @@ impl FileExplorer {
         // Typed paths may use a case alias or an alternate native prefix.
         // Resolve these on the worker using the filesystem's actual spelling;
         // matching must still distinguish names on case-sensitive directories.
-        if !request.cancel.as_ref().is_some_and(|token| token.is_cancelled())
+        if !request
+            .cancel
+            .as_ref()
+            .is_some_and(|token| token.is_cancelled())
             && let Some(query) = request.find.as_mut()
             && let Some(directory) = &query.directory
             && let Ok(canonical) = std::fs::canonicalize(directory)
@@ -455,7 +533,11 @@ impl FileExplorer {
             exclude_rules: request.exclude_rules,
             exclude_patterns: request.exclude_patterns,
         };
-        let matcher = request.find.as_ref().map(crate::explorer_find::NameMatcher::new).transpose();
+        let matcher = request
+            .find
+            .as_ref()
+            .map(crate::explorer_find::NameMatcher::new)
+            .transpose();
         let matcher = match matcher {
             Ok(matcher) => matcher,
             Err(error) => {
@@ -463,18 +545,40 @@ impl FileExplorer {
                 // tree in highlight mode; filter mode shows the error without hits.
                 if request.find.as_ref().is_some_and(|query| !query.filter) {
                     explorer.scan_dir(&root, 0, None, request.cancel.as_ref());
-                    explorer.ignore_cache.mark_ignored(&root, &canonical_root, &mut explorer.entries, request.cancel.as_ref());
+                    explorer.ignore_cache.mark_ignored(
+                        &root,
+                        &canonical_root,
+                        &mut explorer.entries,
+                        request.cancel.as_ref(),
+                    );
                 }
-                return (canonical_root, explorer.entries, crate::explorer_find::Matches {
-                    error: Some(error), ..Default::default()
-                });
+                return (
+                    canonical_root,
+                    explorer.entries,
+                    crate::explorer_find::Matches {
+                        error: Some(error),
+                        ..Default::default()
+                    },
+                );
             }
         };
         explorer.scan_dir(&root, 0, request.find.as_ref(), request.cancel.as_ref());
-        let decorate = |entries: &mut [FileEntry]| explorer.ignore_cache.mark_ignored(
-            &root, &canonical_root, entries, request.cancel.as_ref());
+        let decorate = |entries: &mut [FileEntry]| {
+            explorer.ignore_cache.mark_ignored(
+                &root,
+                &canonical_root,
+                entries,
+                request.cancel.as_ref(),
+            )
+        };
         let (entries, matches) = if let Some((query, matcher)) = request.find.zip(matcher) {
-            crate::explorer_find::project(explorer.entries, &query, &matcher, request.cancel.as_ref(), decorate)
+            crate::explorer_find::project(
+                explorer.entries,
+                &query,
+                &matcher,
+                request.cancel.as_ref(),
+                decorate,
+            )
         } else {
             decorate(&mut explorer.entries);
             (explorer.entries, Default::default())
@@ -492,7 +596,9 @@ impl FileExplorer {
     }
 
     pub(crate) fn set_source_control_enabled(&mut self, enabled: bool) {
-        if self.ignore_cache.enabled() == enabled { return; }
+        if self.ignore_cache.enabled() == enabled {
+            return;
+        }
         self.ignore_cache.set_enabled(enabled);
         if !enabled {
             self.git_statuses = Default::default();
@@ -501,20 +607,31 @@ impl FileExplorer {
         }
     }
 
-    pub(crate) fn invalidate_directory_paths<'a>(&self, paths: impl IntoIterator<Item = &'a Path>, structural: bool) {
+    pub(crate) fn invalidate_directory_paths<'a>(
+        &self,
+        paths: impl IntoIterator<Item = &'a Path>,
+        structural: bool,
+    ) {
         // Content-only saves cannot change ignore matching. Collect references,
         // not copies, and cap pending work during large watcher bursts.
         let mut affected = Vec::new();
-        self.directory_cache.invalidate_paths(paths.into_iter().inspect(|path| {
-            if affected.len() <= 1_024 && (structural || path.file_name().is_some_and(|name| name == ".gitignore")) {
-                affected.push(*path);
-            }
-        }), structural);
+        self.directory_cache.invalidate_paths(
+            paths.into_iter().inspect(|path| {
+                if affected.len() <= 1_024
+                    && (structural || path.file_name().is_some_and(|name| name == ".gitignore"))
+                {
+                    affected.push(*path);
+                }
+            }),
+            structural,
+        );
         self.ignore_cache.invalidate_paths(affected);
     }
 
     fn event_path<'a>(&self, path: &'a Path) -> std::borrow::Cow<'a, Path> {
-        if self.canonical_root != self.root && let Ok(relative) = path.strip_prefix(&self.canonical_root) {
+        if self.canonical_root != self.root
+            && let Ok(relative) = path.strip_prefix(&self.canonical_root)
+        {
             return std::borrow::Cow::Owned(self.root.join(relative));
         }
         std::borrow::Cow::Borrowed(path)
@@ -522,17 +639,24 @@ impl FileExplorer {
 
     /// Generic metadata notifications can replace a directory with a file.
     pub(crate) fn changed_path_kind(&self, path: &Path, is_dir: Option<bool>) -> bool {
-        let Some(is_dir) = is_dir else { return false; };
+        let Some(is_dir) = is_dir else {
+            return false;
+        };
         let normalized = self.event_path(path);
         let path = normalized.as_ref();
-        self.indices.paths.get(&Self::path_key(path)).and_then(|&index| self.entries.get(index))
+        self.indices
+            .paths
+            .get(&Self::path_key(path))
+            .and_then(|&index| self.entries.get(index))
             .is_some_and(|entry| entry.path == path && entry.is_dir != is_dir)
     }
 
     /// Watch all project paths, but rebuild only listings the tree can display.
     /// Recursive filename searches own a wider scope than collapsed folders.
     pub(crate) fn changed_path_affects_tree(&self, path: &Path, is_dir: Option<bool>) -> bool {
-        if self.indices.parents.len() != self.entries.len() { return true; }
+        if self.indices.parents.len() != self.entries.len() {
+            return true;
+        }
         let normalized = self.event_path(path);
         let path = normalized.as_ref();
         if self.find.open && !self.find.query.is_empty() {
@@ -544,30 +668,53 @@ impl FileExplorer {
                     || (self.exclude_rules.requires_siblings()
                         && path.parent().is_some_and(|parent| crate::native_paths::strip_prefix(directory, parent).is_some()))
             }) { return true; }
-            if self.find.filter { return false; }
+            if self.find.filter {
+                return false;
+            }
         }
-        if self.root.starts_with(path) { return true; }
+        if self.root.starts_with(path) {
+            return true;
+        }
         // Missing paths are normal here. Interactive lookup's linear fallback
         // would turn a burst of new files into paths × tree rows work.
         if let Some(&index) = self.indices.paths.get(&Self::path_key(path)) {
-            let Some(entry) = self.entries.get(index).filter(|entry| entry.path == path) else { return true; };
-            return !(is_dir == Some(true) && entry.is_dir && !entry.expanded
-                && matches!(self.sort_mode, ExplorerSortMode::Name | ExplorerSortMode::Type));
+            let Some(entry) = self.entries.get(index).filter(|entry| entry.path == path) else {
+                return true;
+            };
+            return !(is_dir == Some(true)
+                && entry.is_dir
+                && !entry.expanded
+                && matches!(
+                    self.sort_mode,
+                    ExplorerSortMode::Name | ExplorerSortMode::Type
+                ));
         }
         for parent in path.ancestors().skip(1) {
-            let visible = if parent == self.root { true }
-            else if let Some(&index) = self.indices.paths.get(&Self::path_key(parent)) {
+            let visible = if parent == self.root {
+                true
+            } else if let Some(&index) = self.indices.paths.get(&Self::path_key(parent)) {
                 match self.entries.get(index).filter(|entry| entry.path == parent) {
                     Some(entry) if entry.is_dir => entry.expanded,
                     _ => true,
                 }
-            } else { continue; };
-            if !visible { return false; }
+            } else {
+                continue;
+            };
+            if !visible {
+                return false;
+            }
             // Conditional sibling rules may require IO. Defer those to the
             // worker; unconditional exclusions can suppress invisible changes.
-            return !path.ancestors().take_while(|ancestor| *ancestor != parent).any(|ancestor| {
-                self.exclude_rules.excludes_with(&crate::search_paths::Candidate::new(ancestor), &self.root, |_| false)
-            });
+            return !path
+                .ancestors()
+                .take_while(|ancestor| *ancestor != parent)
+                .any(|ancestor| {
+                    self.exclude_rules.excludes_with(
+                        &crate::search_paths::Candidate::new(ancestor),
+                        &self.root,
+                        |_| false,
+                    )
+                });
         }
         false
     }
@@ -578,11 +725,15 @@ impl FileExplorer {
         let path = normalized.as_ref();
         let mut child = path;
         for parent in path.ancestors().skip(1) {
-            if parent == self.root { return (child != path).then(|| child.to_path_buf()); }
+            if parent == self.root {
+                return (child != path).then(|| child.to_path_buf());
+            }
             if let Some(&index) = self.indices.paths.get(&Self::path_key(parent))
                 && let Some(entry) = self.entries.get(index).filter(|entry| entry.path == parent)
             {
-                if !entry.is_dir { return Some(parent.to_path_buf()); }
+                if !entry.is_dir {
+                    return Some(parent.to_path_buf());
+                }
                 return (child != path).then(|| child.to_path_buf());
             }
             child = parent;
@@ -603,20 +754,29 @@ impl FileExplorer {
         matches: crate::explorer_find::Matches,
     ) {
         let entries = if self.find.filtering() {
-            matches.filtered_entries(&self.find.collapsed).unwrap_or(entries)
+            matches
+                .filtered_entries(&self.find.collapsed)
+                .unwrap_or(entries)
         } else {
             entries
         };
-        let snapshot = self.presentation().prepare(canonical_root, entries, matches);
+        let snapshot = self
+            .presentation()
+            .prepare(canonical_root, entries, matches);
         self.apply_prepared_refresh(snapshot);
     }
 
-    pub(crate) fn apply_prepared_refresh(&mut self, mut snapshot: ExplorerRefresh) -> ExplorerRefresh {
+    pub(crate) fn apply_prepared_refresh(
+        &mut self,
+        mut snapshot: ExplorerRefresh,
+    ) -> ExplorerRefresh {
         let selected_path = self
             .entries
             .get(self.selected)
             .map(|entry| entry.path.clone());
-        let scroll_anchor = self.entries.get(self.scroll_offset)
+        let scroll_anchor = self
+            .entries
+            .get(self.scroll_offset)
             .filter(|_| self.scroll_offset > 0)
             .map(|entry| entry.path.clone());
         std::mem::swap(&mut self.canonical_root, &mut snapshot.canonical_root);
@@ -624,7 +784,8 @@ impl FileExplorer {
         std::mem::swap(&mut self.entries, &mut snapshot.entries);
         std::mem::swap(&mut self.indices, &mut snapshot.indices);
         self.find.loading = false;
-        self.horizontal.install_widths(&self.entries, snapshot.widths);
+        self.horizontal
+            .install_widths(&self.entries, snapshot.widths);
         let reveal_path = self.pending_reveal.take();
         let revealed = reveal_path
             .as_ref()
@@ -633,7 +794,11 @@ impl FileExplorer {
             self.center_reveal_pending = false;
         }
         self.selected = revealed
-            .or_else(|| selected_path.as_ref().and_then(|path| self.find_visible_selection(path)))
+            .or_else(|| {
+                selected_path
+                    .as_ref()
+                    .and_then(|path| self.find_visible_selection(path))
+            })
             .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)));
         let select_first_match = std::mem::take(&mut self.find.select_first);
         if select_first_match {
@@ -644,10 +809,15 @@ impl FileExplorer {
         } else {
             // Background updates must not follow an offscreen selection. Keep
             // the current top entry stable when rows change above the viewport.
-            self.scroll_offset = scroll_anchor.as_deref()
+            self.scroll_offset = scroll_anchor
+                .as_deref()
                 .and_then(|path| self.find_indexed_path(path))
                 .unwrap_or(self.scroll_offset)
-                .min(self.entries.len().saturating_sub(self.visible_height.max(1)));
+                .min(
+                    self.entries
+                        .len()
+                        .saturating_sub(self.visible_height.max(1)),
+                );
         }
         if self.center_reveal_pending {
             self.center_selection();
@@ -658,15 +828,21 @@ impl FileExplorer {
     /// A filtered folder toggle changes visibility only, not the search results.
     /// Keep background filesystem refreshes independent of these local changes.
     pub(crate) fn rebuild_filtered_entries(&mut self) -> bool {
-        if !self.find.filtering() { return false; }
+        if !self.find.filtering() {
+            return false;
+        }
         let Some(entries) = self.find.results.filtered_entries(&self.find.collapsed) else {
             return false;
         };
-        let selected_path = self.entries.get(self.selected).map(|entry| entry.path.clone());
+        let selected_path = self
+            .entries
+            .get(self.selected)
+            .map(|entry| entry.path.clone());
         self.entries = entries;
         self.rebuild_parent_indices();
         self.refresh_visible_git_statuses();
-        self.selected = selected_path.as_ref()
+        self.selected = selected_path
+            .as_ref()
             .and_then(|path| self.find_visible_selection(path))
             .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)));
         self.ensure_selection_visible();
@@ -677,7 +853,8 @@ impl FileExplorer {
         if self.find.filtering() {
             // Collapse All can hide the selection. Select its visible ancestor
             // instead of an unrelated row that happens to occupy its old index.
-            path.ancestors().find_map(|path| self.find_indexed_path(path))
+            path.ancestors()
+                .find_map(|path| self.find_indexed_path(path))
         } else {
             self.find_indexed_path(path)
         }
@@ -712,13 +889,21 @@ impl FileExplorer {
     pub(crate) fn select_find_match(&mut self, backwards: bool, first: bool) {
         let is_match = |&i: &usize| {
             let entry = &self.entries[i];
-            self.find.results.rows.get(&entry.path).is_some_and(|matched| {
-                matched.matched || (!entry.expanded && matched.descendants > 0)
-            })
+            self.find
+                .results
+                .rows
+                .get(&entry.path)
+                .is_some_and(|matched| {
+                    matched.matched || (!entry.expanded && matched.descendants > 0)
+                })
         };
         let end = self.entries.len();
         let next = if first {
-            if backwards { (0..end).rev().find(is_match) } else { (0..end).find(is_match) }
+            if backwards {
+                (0..end).rev().find(is_match)
+            } else {
+                (0..end).find(is_match)
+            }
         } else if backwards {
             let split = self.selected.min(end);
             (0..split).rev().chain((split..end).rev()).find(is_match)
@@ -734,7 +919,8 @@ impl FileExplorer {
 
     pub(crate) fn set_viewport_height(&mut self, height: usize) {
         self.visible_height = height;
-        if height > 0 && self.pending_reveal.is_none()
+        if height > 0
+            && self.pending_reveal.is_none()
             && std::mem::take(&mut self.center_reveal_pending)
         {
             self.center_selection();
@@ -742,7 +928,9 @@ impl FileExplorer {
     }
 
     fn center_selection(&mut self) {
-        if self.visible_height == 0 { return; }
+        if self.visible_height == 0 {
+            return;
+        }
         self.scroll_offset = self.selected.saturating_sub(self.visible_height / 2);
         self.ensure_selection_visible();
     }
@@ -754,17 +942,17 @@ impl FileExplorer {
         } else if self.selected >= self.scroll_offset.saturating_add(visible_height) {
             self.scroll_offset = self.selected.saturating_sub(visible_height - 1);
         }
-        self.scroll_offset = self.scroll_offset.min(
-            self.entries
-                .len()
-                .saturating_sub(visible_height),
-        );
+        self.scroll_offset = self
+            .scroll_offset
+            .min(self.entries.len().saturating_sub(visible_height));
         // Sticky folders cover the first rows of the scrolled slice. A selected
         // folder is still visible in that header; other covered entries need
         // enough space above them to clear it.
         let sticky = self.sticky_indices(visible_height);
         if self.selected < self.scroll_offset + sticky.len() && !sticky.contains(&self.selected) {
-            self.scroll_offset = self.selected.saturating_sub(Self::sticky_limit(visible_height));
+            self.scroll_offset = self
+                .selected
+                .saturating_sub(Self::sticky_limit(visible_height));
         }
     }
 
@@ -795,13 +983,18 @@ impl FileExplorer {
     }
 
     pub(crate) fn find_path(&self, path: &Path) -> Option<usize> {
-        self.find_indexed_path(path).or_else(|| self.entries.iter().position(|entry| entry.path == path))
+        self.find_indexed_path(path)
+            .or_else(|| self.entries.iter().position(|entry| entry.path == path))
     }
 
     fn find_indexed_path(&self, path: &Path) -> Option<usize> {
         let &index = self.indices.paths.get(&Self::path_key(path))?;
         // A fingerprint collision must still use exact lexical-path comparison.
-        if self.entries.get(index).is_some_and(|entry| entry.path == path) {
+        if self
+            .entries
+            .get(index)
+            .is_some_and(|entry| entry.path == path)
+        {
             Some(index)
         } else {
             self.entries.iter().position(|entry| entry.path == path)
@@ -815,9 +1008,9 @@ impl FileExplorer {
         // Tests/extensions may construct entries directly; normal refreshes
         // always install the index together with the rebuilt tree.
         let depth = self.entries.get(index)?.depth;
-        (0..index).rev().find(|&parent| {
-            self.entries[parent].is_dir && self.entries[parent].depth < depth
-        })
+        (0..index)
+            .rev()
+            .find(|&parent| self.entries[parent].is_dir && self.entries[parent].depth < depth)
     }
 
     pub(crate) fn viewport_offset(&self, height: usize) -> usize {
@@ -839,7 +1032,9 @@ impl FileExplorer {
             let Some(entry) = self.entries.get(index) else {
                 break;
             };
-            let min_depth = sticky.last().map_or(0, |&parent| self.entries[parent].depth + 1);
+            let min_depth = sticky
+                .last()
+                .map_or(0, |&parent| self.entries[parent].depth + 1);
             if sticky
                 .last()
                 .is_some_and(|&parent| !entry.path.starts_with(&self.entries[parent].path))
@@ -885,8 +1080,13 @@ impl FileExplorer {
         })
     }
 
-    fn scan_dir(&mut self, dir: &Path, depth: usize, find: Option<&crate::explorer_find::Query>,
-        cancel: Option<&crate::background::CancellationToken>) {
+    fn scan_dir(
+        &mut self,
+        dir: &Path,
+        depth: usize,
+        find: Option<&crate::explorer_find::Query>,
+        cancel: Option<&crate::background::CancellationToken>,
+    ) {
         // Prevent stack overflow from symlink loops or extremely deep directories
         const MAX_DEPTH: usize = 64;
         if depth >= MAX_DEPTH || cancel.is_some_and(|token| token.is_cancelled()) {
@@ -904,7 +1104,10 @@ impl FileExplorer {
                     .filter_map(|e| {
                         let name = e.file_name();
                         if crate::fs_ops::is_copy_temporary_name(&name)
-                            || name.to_str().is_some_and(|name| name.starts_with(crate::formatters::TEMP_DIR_PREFIX)) {
+                            || name.to_str().is_some_and(|name| {
+                                name.starts_with(crate::formatters::TEMP_DIR_PREFIX)
+                            })
+                        {
                             return None;
                         }
                         let ft = e.file_type().ok()?;
@@ -938,22 +1141,47 @@ impl FileExplorer {
             };
 
             Some(items)
-        }) else { return; };
+        }) else {
+            return;
+        };
 
         let fold_names = cfg!(any(windows, target_os = "macos"));
-        let siblings = self.exclude_rules.requires_siblings().then(|| items.iter().map(|(path, _, _, _, name)| {
-            if fold_names { std::ffi::OsStr::new(name) } else { path.file_name().unwrap_or_default() }
-        }).collect::<std::collections::HashSet<_>>());
+        let siblings = self.exclude_rules.requires_siblings().then(|| {
+            items
+                .iter()
+                .map(|(path, _, _, _, name)| {
+                    if fold_names {
+                        std::ffi::OsStr::new(name)
+                    } else {
+                        path.file_name().unwrap_or_default()
+                    }
+                })
+                .collect::<std::collections::HashSet<_>>()
+        });
         for (path, is_dir, _, _, _) in items.iter() {
-            if self.exclude_rules.excludes_with(&crate::search_paths::Candidate::new(path), &self.root,
-                |sibling| siblings.as_ref().is_some_and(|names| {
-                    let name = sibling.file_name().unwrap_or_default();
-                    if fold_names { names.contains(std::ffi::OsStr::new(&name.to_string_lossy().to_lowercase())) }
-                    else { names.contains(name) }
-                })) { continue; }
+            if self.exclude_rules.excludes_with(
+                &crate::search_paths::Candidate::new(path),
+                &self.root,
+                |sibling| {
+                    siblings.as_ref().is_some_and(|names| {
+                        let name = sibling.file_name().unwrap_or_default();
+                        if fold_names {
+                            names.contains(std::ffi::OsStr::new(
+                                &name.to_string_lossy().to_lowercase(),
+                            ))
+                        } else {
+                            names.contains(name)
+                        }
+                    })
+                },
+            ) {
+                continue;
+            }
             let path = path.clone();
             let is_dir = *is_dir;
-            if cancel.is_some_and(|token| token.is_cancelled()) { return; }
+            if cancel.is_some_and(|token| token.is_cancelled()) {
+                return;
+            }
             let name = path
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -973,9 +1201,10 @@ impl FileExplorer {
             // Search only the selected subtree and the ancestors needed to
             // reach it. Highlight mode also retains the normally expanded tree.
             let search_directory = find.is_some_and(|query| query.searches_directory(&path));
-            let recurse = (is_dir && (search_directory
-                || (already_expanded && find.is_none_or(|query| !query.filter))))
-                .then(|| path.clone());
+            let recurse = (is_dir
+                && (search_directory
+                    || (already_expanded && find.is_none_or(|query| !query.filter))))
+            .then(|| path.clone());
 
             self.entries.push(FileEntry {
                 path,
@@ -1047,15 +1276,20 @@ impl FileExplorer {
 
             // Update expanded_dirs incrementally
             if self.find.filtering() {
-                if was_expanded { self.find.collapsed.insert(path.clone()); }
-                else { self.find.collapsed.remove(&path); }
+                if was_expanded {
+                    self.find.collapsed.insert(path.clone());
+                } else {
+                    self.find.collapsed.remove(&path);
+                }
             } else if was_expanded {
                 self.expanded_dirs.remove(&path);
             } else {
                 self.expanded_dirs.insert(path.clone());
             }
 
-            if was_expanded { self.remove_collapsed_descendants(self.selected); }
+            if was_expanded {
+                self.remove_collapsed_descendants(self.selected);
+            }
 
             (None, true)
         } else {
@@ -1080,8 +1314,11 @@ impl FileExplorer {
         let entry = &self.entries[self.selected];
         if entry.is_dir && entry.expanded {
             let path = entry.path.clone();
-            if self.find.filtering() { self.find.collapsed.insert(path); }
-            else { self.expanded_dirs.remove(&path); }
+            if self.find.filtering() {
+                self.find.collapsed.insert(path);
+            } else {
+                self.expanded_dirs.remove(&path);
+            }
             self.entries[self.selected].expanded = false;
             self.remove_collapsed_descendants(self.selected);
             true
@@ -1105,9 +1342,18 @@ impl FileExplorer {
     pub(crate) fn collapse_all_deferred(&mut self) -> bool {
         if self.find.filtering() {
             let changed = self.entries.iter().any(|e| e.is_dir && e.expanded);
-            let tree = self.find.results.filtered_tree.as_ref().unwrap_or(&self.entries);
-            self.find.collapsed.extend(tree.iter().filter(|e| e.is_dir).map(|e| e.path.clone()));
-            for entry in &mut self.entries { entry.expanded = false; }
+            let tree = self
+                .find
+                .results
+                .filtered_tree
+                .as_ref()
+                .unwrap_or(&self.entries);
+            self.find
+                .collapsed
+                .extend(tree.iter().filter(|e| e.is_dir).map(|e| e.path.clone()));
+            for entry in &mut self.entries {
+                entry.expanded = false;
+            }
             self.scroll_offset = 0;
             return changed;
         }
@@ -1116,12 +1362,21 @@ impl FileExplorer {
         for entry in &mut self.entries {
             entry.expanded = false;
         }
-        let selected_root = self.entries.get(self.selected).and_then(|entry|
-            self.entries[..=self.selected].iter().rfind(|root| root.depth == 0 && entry.path.starts_with(&root.path)))
+        let selected_root = self
+            .entries
+            .get(self.selected)
+            .and_then(|entry| {
+                self.entries[..=self.selected]
+                    .iter()
+                    .rfind(|root| root.depth == 0 && entry.path.starts_with(&root.path))
+            })
             .map(|entry| entry.path.clone());
         self.entries.retain(|entry| entry.depth == 0);
         self.rebuild_parent_indices();
-        self.selected = selected_root.as_deref().and_then(|path| self.find_path(path)).unwrap_or(0);
+        self.selected = selected_root
+            .as_deref()
+            .and_then(|path| self.find_path(path))
+            .unwrap_or(0);
         self.scroll_offset = 0;
         changed
     }
@@ -1130,7 +1385,10 @@ impl FileExplorer {
     /// Keep sibling rows and path indices aligned while a refresh is pending.
     fn remove_collapsed_descendants(&mut self, index: usize) {
         let depth = self.entries[index].depth;
-        let count = self.entries[index + 1..].iter().take_while(|entry| entry.depth > depth).count();
+        let count = self.entries[index + 1..]
+            .iter()
+            .take_while(|entry| entry.depth > depth)
+            .count();
         if count != 0 {
             self.entries.drain(index + 1..index + 1 + count);
             self.rebuild_parent_indices();
@@ -1141,15 +1399,20 @@ impl FileExplorer {
     pub(crate) fn select_path(&mut self, target: &Path) {
         // A search result can be inside ancestors absent from the normal tree.
         // Record the complete chain before scanning, not just cached entries.
-        self.expanded_dirs.extend(self.entries.iter()
-            .filter(|entry| entry.is_dir && entry.expanded).map(|entry| entry.path.clone()));
+        self.expanded_dirs.extend(
+            self.entries
+                .iter()
+                .filter(|entry| entry.is_dir && entry.expanded)
+                .map(|entry| entry.path.clone()),
+        );
         self.expand_ancestors(target);
         self.pending_reveal = None;
         self.center_reveal_pending = false;
         self.entries.clear();
         let root = self.root.clone();
         self.scan_dir(&root, 0, None, None);
-        self.ignore_cache.mark_ignored(&self.root, &self.canonical_root, &mut self.entries, None);
+        self.ignore_cache
+            .mark_ignored(&self.root, &self.canonical_root, &mut self.entries, None);
         self.rebuild_parent_indices();
         if let Some(pos) = self.find_path(target) {
             self.selected = pos;
@@ -1176,11 +1439,18 @@ impl FileExplorer {
                     .and_then(|relative| statuses.get(&canonical_root.join(relative)).copied())
             })
             .or_else(|| {
-                if directories.is_empty() { return None; }
-                let canonical = path.strip_prefix(root).ok().map(|path| canonical_root.join(path));
+                if directories.is_empty() {
+                    return None;
+                }
+                let canonical = path
+                    .strip_prefix(root)
+                    .ok()
+                    .map(|path| canonical_root.join(path));
                 (path.ancestors().any(|path| directories.contains(path))
-                    || canonical.as_ref().is_some_and(|path| path.ancestors().any(|path| directories.contains(path))))
-                    .then(|| GitStatus::Untracked.into())
+                    || canonical.as_ref().is_some_and(|path| {
+                        path.ancestors().any(|path| directories.contains(path))
+                    }))
+                .then(|| GitStatus::Untracked.into())
             })
             .unwrap_or_default()
     }
@@ -1192,28 +1462,50 @@ impl FileExplorer {
     ) -> bool {
         // Every inserted status is propagated to all ancestors. Encountering
         // it again therefore proves the rest of this ancestor walk is done.
-        if statuses.get(path).is_some_and(|summary| summary.contains(status)) {
+        if statuses
+            .get(path)
+            .is_some_and(|summary| summary.contains(status))
+        {
             return false;
         }
-        statuses.entry(path.to_path_buf()).or_default().insert(status);
+        statuses
+            .entry(path.to_path_buf())
+            .or_default()
+            .insert(status);
         true
     }
 
     fn refresh_visible_git_statuses(&mut self) {
         self.horizontal.invalidate();
-        Self::decorate_entries(&mut self.entries, &self.root, &self.canonical_root,
-            &self.git_statuses, &self.git_untracked_directories, self.ignore_cache.enabled());
+        Self::decorate_entries(
+            &mut self.entries,
+            &self.root,
+            &self.canonical_root,
+            &self.git_statuses,
+            &self.git_untracked_directories,
+            self.ignore_cache.enabled(),
+        );
     }
 
-    fn decorate_entries(entries: &mut [FileEntry], root: &Path, canonical_root: &Path,
-        statuses: &FxHashMap<PathBuf, GitStatusSummary>, untracked: &FxHashSet<PathBuf>, enabled: bool,
+    fn decorate_entries(
+        entries: &mut [FileEntry],
+        root: &Path,
+        canonical_root: &Path,
+        statuses: &FxHashMap<PathBuf, GitStatusSummary>,
+        untracked: &FxHashSet<PathBuf>,
+        enabled: bool,
     ) {
         for entry in entries {
             // Ignore state belongs to the Explorer snapshot. Git's change list
             // omits these paths and must not erase their cached decoration.
             let ignored = enabled && entry.git_status_summary.contains(GitStatus::Ignored);
-            entry.git_status_summary =
-                Self::git_status_summary_for_path(statuses, untracked, root, canonical_root, &entry.path);
+            entry.git_status_summary = Self::git_status_summary_for_path(
+                statuses,
+                untracked,
+                root,
+                canonical_root,
+                &entry.path,
+            );
             if ignored {
                 entry.git_status_summary.0 &= !GitStatusSummary::bit(GitStatus::Untracked);
                 entry.git_status_summary.insert(GitStatus::Ignored);
@@ -1240,7 +1532,11 @@ impl FileExplorer {
         changes: impl IntoIterator<Item = (&'a str, char)>,
     ) {
         let workdir = workdir.unwrap_or(&self.canonical_root).to_owned();
-        self.apply_git_repository_changes(changes.into_iter().map(|(path, status)| (workdir.as_path(), path, status, false)));
+        self.apply_git_repository_changes(
+            changes
+                .into_iter()
+                .map(|(path, status)| (workdir.as_path(), path, status, false)),
+        );
     }
 
     /// Combine repository snapshots in one pass without allocating temporary
@@ -1249,7 +1545,9 @@ impl FileExplorer {
         &mut self,
         changes: impl IntoIterator<Item = (&'a Path, &'a str, char, bool)>,
     ) {
-        if !self.ignore_cache.enabled() { return; }
+        if !self.ignore_cache.enabled() {
+            return;
+        }
         let mut statuses = FxHashMap::default();
         let mut untracked = FxHashSet::default();
 
@@ -1275,11 +1573,7 @@ impl FileExplorer {
             // It is computed once per background refresh, so drawing remains a
             // constant-time lookup per entry.
             for path in full_path.ancestors() {
-                if !Self::insert_git_status(
-                    &mut statuses,
-                    path,
-                    status,
-                ) {
+                if !Self::insert_git_status(&mut statuses, path, status) {
                     break;
                 }
             }
@@ -1289,25 +1583,35 @@ impl FileExplorer {
             // Add alternate spellings after propagation. An alias can equal a
             // yet-unvisited ancestor (notably for roots containing `..`), so
             // adding it during the walk would invalidate the early-stop proof.
-            let aliases: Vec<_> = statuses.iter().filter_map(|(path, summary)| {
-                path.strip_prefix(&self.canonical_root)
-                    .ok().map(|relative| self.root.join(relative))
-                    .or_else(|| path.strip_prefix(&self.root).ok()
-                        .map(|relative| self.canonical_root.join(relative)))
-                    .map(|path| (path, *summary))
-            }).collect();
+            let aliases: Vec<_> = statuses
+                .iter()
+                .filter_map(|(path, summary)| {
+                    path.strip_prefix(&self.canonical_root)
+                        .ok()
+                        .map(|relative| self.root.join(relative))
+                        .or_else(|| {
+                            path.strip_prefix(&self.root)
+                                .ok()
+                                .map(|relative| self.canonical_root.join(relative))
+                        })
+                        .map(|path| (path, *summary))
+                })
+                .collect();
             for (path, summary) in aliases {
                 statuses.entry(path).or_default().0 |= summary.0;
             }
         }
 
         let same_untracked = *self.git_untracked_directories == untracked;
-        if *self.git_statuses == statuses && same_untracked { return; }
+        if *self.git_statuses == statuses && same_untracked {
+            return;
+        }
         let previous = std::mem::replace(&mut self.git_statuses, Arc::new(statuses));
         if !same_untracked {
             self.git_untracked_directories = Arc::new(untracked);
         }
-        if same_untracked && self.indices.parents.len() == self.entries.len()
+        if same_untracked
+            && self.indices.parents.len() == self.entries.len()
             && previous.len() + self.git_statuses.len() <= self.entries.len() / 4
         {
             self.refresh_changed_git_rows(&previous);
@@ -1318,17 +1622,29 @@ impl FileExplorer {
 
     fn refresh_changed_git_rows(&mut self, previous: &FxHashMap<PathBuf, GitStatusSummary>) {
         let statuses = Arc::clone(&self.git_statuses);
-        let paths = previous.iter()
+        let paths = previous
+            .iter()
             .filter(|(path, status)| statuses.get(*path) != Some(*status))
             .map(|(path, _)| path)
             .chain(statuses.keys().filter(|path| !previous.contains_key(*path)));
         for path in paths {
-            let Some(index) = self.find_indexed_path(path) else { continue; };
+            let Some(index) = self.find_indexed_path(path) else {
+                continue;
+            };
             let entry = &mut self.entries[index];
             let widths = width::measure_row(entry, &self.find.results, !self.find.filter);
-            Self::decorate_entries(std::slice::from_mut(entry), &self.root, &self.canonical_root,
-                &statuses, &self.git_untracked_directories, true);
-            self.horizontal.update_widths(widths, width::measure_row(entry, &self.find.results, !self.find.filter));
+            Self::decorate_entries(
+                std::slice::from_mut(entry),
+                &self.root,
+                &self.canonical_root,
+                &statuses,
+                &self.git_untracked_directories,
+                true,
+            );
+            self.horizontal.update_widths(
+                widths,
+                width::measure_row(entry, &self.find.results, !self.find.filter),
+            );
         }
     }
 
@@ -1363,11 +1679,14 @@ impl FileExplorer {
         }
         // An automatic editor reveal must not clear the query or repeatedly
         // rebuild a filtered tree that intentionally excludes this file.
-        if self.find.filtering() { return false; }
+        if self.find.filtering() {
+            return false;
+        }
 
         // Opening/revealing a known path can precede its create notification.
         // Refresh missing ancestors, but reuse listings for cached closed folders.
-        let missing: Vec<_> = file_path.ancestors()
+        let missing: Vec<_> = file_path
+            .ancestors()
             .take_while(|path| *path != self.root && path.starts_with(&self.root))
             .take_while(|path| !self.directory_cache.contains_path(path, self.sort_mode))
             .collect();
@@ -1408,13 +1727,20 @@ impl FileExplorer {
         // Check the rendered rows before revealing scrolls the selection into
         // view. Visible files must stay put so a preview click can be repeated.
         let already_visible = self.find_path(file_path).is_some_and(|position| {
-            self.viewport_indices(self.visible_height).contains(&position)
+            self.viewport_indices(self.visible_height)
+                .contains(&position)
         });
         let refresh = self.reveal_file_deferred(file_path);
-        if already_visible { return refresh; }
+        if already_visible {
+            return refresh;
+        }
         if self.pending_reveal.as_deref() == Some(file_path) {
             self.center_reveal_pending = true;
-        } else if self.entries.get(self.selected).is_some_and(|entry| entry.path == file_path) {
+        } else if self
+            .entries
+            .get(self.selected)
+            .is_some_and(|entry| entry.path == file_path)
+        {
             self.center_reveal_pending = true;
             self.center_selection();
         }
@@ -1468,20 +1794,35 @@ mod tests {
     fn prepared_tree_can_be_reprojected_after_git_and_filter_changes() {
         let root = PathBuf::from("/project");
         let folder = FileEntry {
-            path: root.join("folder"), name: "folder".into(), is_dir: true, depth: 0,
-            expanded: true, git_status: GitStatus::Unmodified, git_status_summary: Default::default(),
+            path: root.join("folder"),
+            name: "folder".into(),
+            is_dir: true,
+            depth: 0,
+            expanded: true,
+            git_status: GitStatus::Unmodified,
+            git_status_summary: Default::default(),
         };
         let file = FileEntry {
-            path: folder.path.join("広い-file.rs"), name: "広い-file.rs".into(), is_dir: false, depth: 1,
-            expanded: false, git_status: GitStatus::Unmodified, git_status_summary: Default::default(),
+            path: folder.path.join("広い-file.rs"),
+            name: "広い-file.rs".into(),
+            is_dir: false,
+            depth: 1,
+            expanded: false,
+            git_status: GitStatus::Unmodified,
+            git_status_summary: Default::default(),
         };
         let mut explorer = make_explorer(vec![folder.clone(), file.clone()]);
         explorer.find.open = true;
         explorer.find.filter = true;
         explorer.find.query = "file".into();
-        let initial = explorer.presentation().prepare(root.clone(), vec![folder.clone(), file], crate::explorer_find::Matches {
-            filtered_tree: Some(explorer.entries.clone()), ..Default::default()
-        });
+        let initial = explorer.presentation().prepare(
+            root.clone(),
+            vec![folder.clone(), file],
+            crate::explorer_find::Matches {
+                filtered_tree: Some(explorer.entries.clone()),
+                ..Default::default()
+            },
+        );
         assert!(initial.matches_presentation(&explorer));
 
         explorer.find.collapsed.insert(folder.path.clone());
@@ -1494,19 +1835,32 @@ mod tests {
         assert!(!explorer.entries[0].expanded);
         assert_eq!(explorer.entries[0].git_status, GitStatus::Modified);
         assert_eq!(explorer.find_indexed_path(&folder.path), Some(0));
-        assert_eq!(explorer.content_width(GitBadgeVisibility::All),
-            explorer.row_width(&explorer.entries[0], GitBadgeVisibility::All));
+        assert_eq!(
+            explorer.content_width(GitBadgeVisibility::All),
+            explorer.row_width(&explorer.entries[0], GitBadgeVisibility::All)
+        );
     }
 
     #[test]
     fn sparse_git_changes_keep_the_expanded_tree_width_current() {
-        let entries = (0..128).map(|index| {
-            let name = if index == 64 { "the-widest-filename".into() } else { format!("file-{index}") };
-            FileEntry {
-                path: Path::new("/project").join(&name), name, is_dir: false, depth: 0, expanded: false,
-                git_status: GitStatus::Unmodified, git_status_summary: Default::default(),
-            }
-        }).collect();
+        let entries = (0..128)
+            .map(|index| {
+                let name = if index == 64 {
+                    "the-widest-filename".into()
+                } else {
+                    format!("file-{index}")
+                };
+                FileEntry {
+                    path: Path::new("/project").join(&name),
+                    name,
+                    is_dir: false,
+                    depth: 0,
+                    expanded: false,
+                    git_status: GitStatus::Unmodified,
+                    git_status_summary: Default::default(),
+                }
+            })
+            .collect();
         let mut explorer = make_explorer(entries);
         let width = explorer.content_width(GitBadgeVisibility::All);
         explorer.apply_git_status_changes(None, [("the-widest-filename", 'M')]);
@@ -1519,28 +1873,44 @@ mod tests {
 
     /// Frozen original propagation: visit every ancestor and insert both
     /// lexical spellings immediately, even when this repeats completed work.
-    fn reference_git_statuses(root: &Path, canonical: &Path, workdir: &Path,
-        changes: &[(String, char)]) -> FxHashMap<PathBuf, GitStatusSummary>
-    {
+    fn reference_git_statuses(
+        root: &Path,
+        canonical: &Path,
+        workdir: &Path,
+        changes: &[(String, char)],
+    ) -> FxHashMap<PathBuf, GitStatusSummary> {
         let mut statuses = FxHashMap::<PathBuf, GitStatusSummary>::default();
         reference_apply_git_statuses(&mut statuses, root, canonical, workdir, changes);
         statuses
     }
 
-    fn reference_apply_git_statuses(statuses: &mut FxHashMap<PathBuf, GitStatusSummary>,
-        root: &Path, canonical: &Path, workdir: &Path, changes: &[(String, char)])
-    {
+    fn reference_apply_git_statuses(
+        statuses: &mut FxHashMap<PathBuf, GitStatusSummary>,
+        root: &Path,
+        canonical: &Path,
+        workdir: &Path,
+        changes: &[(String, char)],
+    ) {
         statuses.clear();
         for (relative, marker) in changes {
             let status = match marker {
-                'A' => GitStatus::Added, 'D' => GitStatus::Deleted,
-                '?' => GitStatus::Untracked, 'M' => GitStatus::Modified,
-                'R' => GitStatus::Renamed, _ => continue,
+                'A' => GitStatus::Added,
+                'D' => GitStatus::Deleted,
+                '?' => GitStatus::Untracked,
+                'M' => GitStatus::Modified,
+                'R' => GitStatus::Renamed,
+                _ => continue,
             };
             let full = workdir.join(relative);
             for path in full.ancestors() {
-                statuses.entry(path.to_path_buf()).or_default().insert(status);
-                let alias = path.strip_prefix(canonical).ok().map(|p| root.join(p))
+                statuses
+                    .entry(path.to_path_buf())
+                    .or_default()
+                    .insert(status);
+                let alias = path
+                    .strip_prefix(canonical)
+                    .ok()
+                    .map(|p| root.join(p))
                     .or_else(|| path.strip_prefix(root).ok().map(|p| canonical.join(p)));
                 if let Some(alias) = alias {
                     statuses.entry(alias).or_default().insert(status);
@@ -1551,10 +1921,14 @@ mod tests {
 
     #[test]
     fn git_status_ancestor_deduplication_matches_original_with_aliases_and_mixed_states() {
-        let mut changes: Vec<_> = (0..250).map(|index| {
-            (format!("src/package-{}/nested/file-{index}.rs", index % 13),
-                ['A', 'D', '?', 'M', 'R', '!'][index % 6])
-        }).collect();
+        let mut changes: Vec<_> = (0..250)
+            .map(|index| {
+                (
+                    format!("src/package-{}/nested/file-{index}.rs", index % 13),
+                    ['A', 'D', '?', 'M', 'R', '!'][index % 6],
+                )
+            })
+            .collect();
         changes.extend([
             ("src/package-0/nested/file-0.rs".into(), 'M'),
             ("src/package-0/nested/file-0.rs".into(), '?'),
@@ -1570,15 +1944,27 @@ mod tests {
         ] {
             for workdir in [root, canonical, "/repo", "/repo/src/deeper"] {
                 for reversed in [false, true] {
-                    if reversed { changes.reverse(); }
+                    if reversed {
+                        changes.reverse();
+                    }
                     let mut explorer = FileExplorer::new_deferred(PathBuf::from(root));
                     explorer.canonical_root = PathBuf::from(canonical);
-                    explorer.apply_git_status_changes(Some(Path::new(workdir)),
-                        changes.iter().map(|(path, marker)| (path.as_str(), *marker)));
-                    assert_eq!(*explorer.git_statuses,
-                        reference_git_statuses(Path::new(root), Path::new(canonical),
-                            Path::new(workdir), &changes),
-                        "root={root} canonical={canonical} workdir={workdir}");
+                    explorer.apply_git_status_changes(
+                        Some(Path::new(workdir)),
+                        changes
+                            .iter()
+                            .map(|(path, marker)| (path.as_str(), *marker)),
+                    );
+                    assert_eq!(
+                        *explorer.git_statuses,
+                        reference_git_statuses(
+                            Path::new(root),
+                            Path::new(canonical),
+                            Path::new(workdir),
+                            &changes
+                        ),
+                        "root={root} canonical={canonical} workdir={workdir}"
+                    );
                 }
             }
         }
@@ -1589,8 +1975,13 @@ mod tests {
     fn benchmark_shared_explorer_git_ancestors() {
         let root = Path::new("/workspace");
         let canonical = Path::new("/canonical/workspace");
-        let changes: Vec<_> = (0..20_000).map(|index|
-            (format!("src/packages/shared/deep/tree/modules/component/file-{index}.rs"), 'M'))
+        let changes: Vec<_> = (0..20_000)
+            .map(|index| {
+                (
+                    format!("src/packages/shared/deep/tree/modules/component/file-{index}.rs"),
+                    'M',
+                )
+            })
             .collect();
         let expected = reference_git_statuses(root, canonical, canonical, &changes);
         let mut explorer = FileExplorer::new_deferred(root.to_path_buf());
@@ -1601,11 +1992,21 @@ mod tests {
             for optimized in [sample % 2 == 0, sample % 2 != 0] {
                 let started = std::time::Instant::now();
                 let actual = if optimized {
-                    explorer.apply_git_status_changes(Some(canonical),
-                        changes.iter().map(|(path, marker)| (path.as_str(), *marker)));
+                    explorer.apply_git_status_changes(
+                        Some(canonical),
+                        changes
+                            .iter()
+                            .map(|(path, marker)| (path.as_str(), *marker)),
+                    );
                     explorer.git_statuses.as_ref()
                 } else {
-                    reference_apply_git_statuses(&mut original, root, canonical, canonical, &changes);
+                    reference_apply_git_statuses(
+                        &mut original,
+                        root,
+                        canonical,
+                        canonical,
+                        &changes,
+                    );
                     samples[0].push(started.elapsed());
                     assert_eq!(std::hint::black_box(&original), &expected);
                     continue;
@@ -1615,8 +2016,10 @@ mod tests {
             }
         }
         samples.iter_mut().for_each(|samples| samples.sort());
-        eprintln!("Explorer 20,000 changed files sharing eight ancestors: original={:?}, deduplicated={:?}",
-            samples[0][3], samples[1][3]);
+        eprintln!(
+            "Explorer 20,000 changed files sharing eight ancestors: original={:?}, deduplicated={:?}",
+            samples[0][3], samples[1][3]
+        );
     }
 
     fn dir_entry(path: &str, name: &str, depth: usize) -> FileEntry {
@@ -1646,23 +2049,40 @@ mod tests {
     fn reference_sticky_indices(explorer: &FileExplorer, height: usize) -> Vec<usize> {
         let offset = explorer.viewport_offset(height);
         let mut sticky: Vec<usize> = Vec::new();
-        if offset == 0 { return sticky; }
+        if offset == 0 {
+            return sticky;
+        }
         for row in 0..FileExplorer::sticky_limit(height) {
             let index = offset + row;
-            let Some(entry) = explorer.entries.get(index) else { break; };
-            let min_depth = sticky.last().map_or(0, |&parent| explorer.entries[parent].depth + 1);
-            if sticky.last().is_some_and(|&parent| !entry.path.starts_with(&explorer.entries[parent].path)) { break; }
+            let Some(entry) = explorer.entries.get(index) else {
+                break;
+            };
+            let min_depth = sticky
+                .last()
+                .map_or(0, |&parent| explorer.entries[parent].depth + 1);
+            if sticky
+                .last()
+                .is_some_and(|&parent| !entry.path.starts_with(&explorer.entries[parent].path))
+            {
+                break;
+            }
             let mut depth = entry.depth;
             let mut ancestor = None;
             for i in (0..index).rev() {
-                if depth <= min_depth { break; }
+                if depth <= min_depth {
+                    break;
+                }
                 let parent = &explorer.entries[i];
                 if parent.depth < depth {
                     depth = parent.depth;
-                    if parent.is_dir && parent.expanded { ancestor = Some(i); }
+                    if parent.is_dir && parent.expanded {
+                        ancestor = Some(i);
+                    }
                 }
             }
-            let Some(ancestor) = ancestor else { break; };
+            let Some(ancestor) = ancestor else {
+                break;
+            };
             sticky.push(ancestor);
         }
         sticky
@@ -1672,25 +2092,49 @@ mod tests {
         let mut root = dir_entry("/project/wide", "wide", 0);
         root.expanded = true;
         let mut entries = vec![root];
-        entries.extend((0..count).map(|index| {
-            file_entry(&format!("/project/wide/file-{index}.rs"), "file.rs", 1)
-        }));
+        entries.extend(
+            (0..count)
+                .map(|index| file_entry(&format!("/project/wide/file-{index}.rs"), "file.rs", 1)),
+        );
         make_explorer(entries)
     }
 
     fn reference_find_next(explorer: &FileExplorer, backwards: bool, first: bool) -> Option<usize> {
-        let matches: Vec<_> = explorer.entries.iter().enumerate().filter_map(|(i, entry)| {
-            explorer.find.results.rows.get(&entry.path).filter(|matched| {
-                matched.matched || (!entry.expanded && matched.descendants > 0)
-            }).map(|_| i)
-        }).collect();
+        let matches: Vec<_> = explorer
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(i, entry)| {
+                explorer
+                    .find
+                    .results
+                    .rows
+                    .get(&entry.path)
+                    .filter(|matched| {
+                        matched.matched || (!entry.expanded && matched.descendants > 0)
+                    })
+                    .map(|_| i)
+            })
+            .collect();
         if first {
-            if backwards { matches.last() } else { matches.first() }
+            if backwards {
+                matches.last()
+            } else {
+                matches.first()
+            }
         } else if backwards {
-            matches.iter().rev().find(|&&i| i < explorer.selected).or_else(|| matches.last())
+            matches
+                .iter()
+                .rev()
+                .find(|&&i| i < explorer.selected)
+                .or_else(|| matches.last())
         } else {
-            matches.iter().find(|&&i| i > explorer.selected).or_else(|| matches.first())
-        }.copied()
+            matches
+                .iter()
+                .find(|&&i| i > explorer.selected)
+                .or_else(|| matches.first())
+        }
+        .copied()
     }
 
     #[test]
@@ -1699,11 +2143,14 @@ mod tests {
         for stride in [1, 3, 11, 100] {
             explorer.find.results.rows.clear();
             for (i, entry) in explorer.entries.iter().enumerate() {
-                explorer.find.results.rows.insert(entry.path.clone(), crate::explorer_find::Match {
-                    matched: i > 0 && i % stride == 0,
-                    descendants: usize::from(i == 0),
-                    ..Default::default()
-                });
+                explorer.find.results.rows.insert(
+                    entry.path.clone(),
+                    crate::explorer_find::Match {
+                        matched: i > 0 && i % stride == 0,
+                        descendants: usize::from(i == 0),
+                        ..Default::default()
+                    },
+                );
             }
             for expanded in [true, false] {
                 explorer.entries[0].expanded = expanded;
@@ -1711,7 +2158,8 @@ mod tests {
                     for backwards in [false, true] {
                         for first in [false, true] {
                             explorer.selected = selected;
-                            let expected = reference_find_next(&explorer, backwards, first).unwrap_or(selected);
+                            let expected = reference_find_next(&explorer, backwards, first)
+                                .unwrap_or(selected);
                             explorer.select_find_match(backwards, first);
                             assert_eq!(explorer.selected, expected);
                         }
@@ -1729,9 +2177,13 @@ mod tests {
         let mut explorer = wide_explorer(50_000);
         explorer.visible_height = 40;
         for entry in &explorer.entries {
-            explorer.find.results.rows.insert(entry.path.clone(), crate::explorer_find::Match {
-                matched: true, ..Default::default()
-            });
+            explorer.find.results.rows.insert(
+                entry.path.clone(),
+                crate::explorer_find::Match {
+                    matched: true,
+                    ..Default::default()
+                },
+            );
         }
         let mut samples = [Vec::new(), Vec::new()];
         for round in 0..7 {
@@ -1739,9 +2191,11 @@ mod tests {
                 explorer.selected = 0;
                 let started = std::time::Instant::now();
                 for step in 0..300 {
-                    if fast { explorer.select_find_match(step % 3 == 0, false); }
-                    else {
-                        explorer.selected = reference_find_next(&explorer, step % 3 == 0, false).unwrap();
+                    if fast {
+                        explorer.select_find_match(step % 3 == 0, false);
+                    } else {
+                        explorer.selected =
+                            reference_find_next(&explorer, step % 3 == 0, false).unwrap();
                         explorer.ensure_selection_visible();
                     }
                     std::hint::black_box(explorer.selected);
@@ -1749,8 +2203,13 @@ mod tests {
                 samples[usize::from(fast)].push(started.elapsed() / 300);
             }
         }
-        for times in &mut samples { times.sort(); }
-        eprintln!("Explorer next match / 50k rows: scan={:?} indexed={:?}", samples[0][3], samples[1][3]);
+        for times in &mut samples {
+            times.sort();
+        }
+        eprintln!(
+            "Explorer next match / 50k rows: scan={:?} indexed={:?}",
+            samples[0][3], samples[1][3]
+        );
     }
 
     #[test]
@@ -1759,7 +2218,10 @@ mod tests {
         for height in [0, 1, 2, 5, 20] {
             for offset in [0, 1, 2, 100, 9_990, 10_000] {
                 explorer.scroll_offset = offset;
-                assert_eq!(explorer.sticky_indices(height), reference_sticky_indices(&explorer, height));
+                assert_eq!(
+                    explorer.sticky_indices(height),
+                    reference_sticky_indices(&explorer, height)
+                );
             }
         }
         explorer.selected = 9_999;
@@ -1779,7 +2241,8 @@ mod tests {
         // A compact fingerprint is only a hint: a colliding/stale candidate
         // must never reveal the wrong file.
         explorer
-            .indices.paths
+            .indices
+            .paths
             .insert(FileExplorer::path_key(&path), 1);
         assert_eq!(explorer.find_path(&path), Some(15_000));
         explorer.entries[15_000].path = PathBuf::from("/project/replacement.rs");
@@ -1865,7 +2328,10 @@ mod tests {
         for _ in 0..7 {
             let started = std::time::Instant::now();
             for _ in 0..500 {
-                std::hint::black_box(reference_sticky_indices(std::hint::black_box(&explorer), 20));
+                std::hint::black_box(reference_sticky_indices(
+                    std::hint::black_box(&explorer),
+                    20,
+                ));
             }
             scanning.push(started.elapsed());
             let started = std::time::Instant::now();
@@ -1876,7 +2342,10 @@ mod tests {
         }
         scanning.sort();
         indexed.sort();
-        eprintln!("explorer sticky headers 50,000 siblings, 500 scrolls: scan={:?}, indexed={:?}", scanning[3], indexed[3]);
+        eprintln!(
+            "explorer sticky headers 50,000 siblings, 500 scrolls: scan={:?}, indexed={:?}",
+            scanning[3], indexed[3]
+        );
     }
 
     #[test]
@@ -1900,13 +2369,20 @@ mod tests {
                 .map(|e| e.name.as_str())
                 .collect::<Vec<_>>(),
             [
-                "arm_cache", "axi_rv32", "HiRISC", "HiRISC_s7", "HiRISC_v2", "alpha.txt", "README.md"
+                "arm_cache",
+                "axi_rv32",
+                "HiRISC",
+                "HiRISC_s7",
+                "HiRISC_v2",
+                "alpha.txt",
+                "README.md"
             ]
         );
 
         explorer.selected = 2;
         explorer.toggle_or_open_deferred();
-        let (root, entries, matches) = FileExplorer::build_refresh_entries(explorer.refresh_request());
+        let (root, entries, matches) =
+            FileExplorer::build_refresh_entries(explorer.refresh_request());
         explorer.apply_refresh_entries(root, entries, matches);
         assert_eq!(
             explorer
@@ -1915,8 +2391,15 @@ mod tests {
                 .map(|e| e.name.as_str())
                 .collect::<Vec<_>>(),
             [
-                "arm_cache", "axi_rv32", "HiRISC", "beta.rs", "Zulu.rs", "HiRISC_s7",
-                "HiRISC_v2", "alpha.txt", "README.md"
+                "arm_cache",
+                "axi_rv32",
+                "HiRISC",
+                "beta.rs",
+                "Zulu.rs",
+                "HiRISC_s7",
+                "HiRISC_v2",
+                "alpha.txt",
+                "README.md"
             ]
         );
     }
@@ -2049,8 +2532,11 @@ mod tests {
         explorer.visible_height = 11;
         for offset in [0, 20, 90] {
             explorer.scroll_offset = offset;
-            let visible_files: Vec<_> = explorer.viewport_indices(11).into_iter()
-                .filter(|&index| !explorer.entries[index].is_dir).collect();
+            let visible_files: Vec<_> = explorer
+                .viewport_indices(11)
+                .into_iter()
+                .filter(|&index| !explorer.entries[index].is_dir)
+                .collect();
             for selected in visible_files {
                 let target = explorer.entries[selected].path.clone();
                 // Both the preview and the subsequent permanent open leave
@@ -2074,13 +2560,29 @@ mod tests {
             explorer.selected = selected;
             explorer.scroll_down(40);
             let selected_path = explorer.entries[selected].path.clone();
-            let visible: Vec<_> = explorer.viewport_indices(9).into_iter()
-                .map(|index| explorer.entries[index].path.clone()).collect();
-            explorer.apply_refresh_entries(explorer.root.clone(), explorer.entries.clone(), Default::default());
-            assert_eq!(explorer.scroll_offset, 40, "selection at {selected} must not move the viewport");
+            let visible: Vec<_> = explorer
+                .viewport_indices(9)
+                .into_iter()
+                .map(|index| explorer.entries[index].path.clone())
+                .collect();
+            explorer.apply_refresh_entries(
+                explorer.root.clone(),
+                explorer.entries.clone(),
+                Default::default(),
+            );
+            assert_eq!(
+                explorer.scroll_offset, 40,
+                "selection at {selected} must not move the viewport"
+            );
             assert_eq!(explorer.entries[explorer.selected].path, selected_path);
-            assert_eq!(explorer.viewport_indices(9).into_iter()
-                .map(|index| explorer.entries[index].path.clone()).collect::<Vec<_>>(), visible);
+            assert_eq!(
+                explorer
+                    .viewport_indices(9)
+                    .into_iter()
+                    .map(|index| explorer.entries[index].path.clone())
+                    .collect::<Vec<_>>(),
+                visible
+            );
         }
     }
 
@@ -2091,17 +2593,29 @@ mod tests {
         explorer.selected = 45;
         explorer.scroll_down(40);
         let selected_path = explorer.entries[explorer.selected].path.clone();
-        let visible: Vec<_> = explorer.viewport_indices(9).into_iter()
-            .map(|index| explorer.entries[index].path.clone()).collect();
+        let visible: Vec<_> = explorer
+            .viewport_indices(9)
+            .into_iter()
+            .map(|index| explorer.entries[index].path.clone())
+            .collect();
         for inserting in [true, false] {
             let mut entries = explorer.entries.clone();
-            if inserting { entries.insert(1, file_entry("/project/wide/added.rs", "added.rs", 1)); }
-            else { entries.remove(1); }
+            if inserting {
+                entries.insert(1, file_entry("/project/wide/added.rs", "added.rs", 1));
+            } else {
+                entries.remove(1);
+            }
             explorer.apply_refresh_entries(explorer.root.clone(), entries, Default::default());
             assert_eq!(explorer.scroll_offset, if inserting { 41 } else { 40 });
             assert_eq!(explorer.entries[explorer.selected].path, selected_path);
-            assert_eq!(explorer.viewport_indices(9).into_iter()
-                .map(|index| explorer.entries[index].path.clone()).collect::<Vec<_>>(), visible);
+            assert_eq!(
+                explorer
+                    .viewport_indices(9)
+                    .into_iter()
+                    .map(|index| explorer.entries[index].path.clone())
+                    .collect::<Vec<_>>(),
+                visible
+            );
         }
     }
 
@@ -2119,7 +2633,10 @@ mod tests {
         let mut entries = explorer.entries.clone();
         entries.truncate(20);
         explorer.apply_refresh_entries(explorer.root.clone(), entries, Default::default());
-        assert_eq!(explorer.scroll_offset, 11, "a shorter tree should stay on its last page");
+        assert_eq!(
+            explorer.scroll_offset, 11,
+            "a shorter tree should stay on its last page"
+        );
         explorer.apply_refresh_entries(explorer.root.clone(), Vec::new(), Default::default());
         assert_eq!(explorer.scroll_offset, 0);
         assert_eq!(explorer.selected, 0);
@@ -2139,7 +2656,11 @@ mod tests {
         let manual = explorer.scroll_offset;
         explorer.set_viewport_height(9);
         assert_eq!(explorer.scroll_offset, manual);
-        explorer.apply_refresh_entries(explorer.root.clone(), explorer.entries.clone(), Default::default());
+        explorer.apply_refresh_entries(
+            explorer.root.clone(),
+            explorer.entries.clone(),
+            Default::default(),
+        );
         assert_eq!(explorer.scroll_offset, manual);
     }
 
@@ -2158,9 +2679,15 @@ mod tests {
         let request = explorer.refresh_request();
         let (root, entries, matches) = FileExplorer::build_refresh_entries(request);
         explorer.apply_refresh_entries(root, entries, matches);
-        assert_eq!(explorer.entries[explorer.viewport_indices(11)[5]].path, target);
+        assert_eq!(
+            explorer.entries[explorer.viewport_indices(11)[5]].path,
+            target
+        );
         explorer.set_viewport_height(9);
-        assert_eq!(explorer.entries[explorer.viewport_indices(9)[4]].path, target);
+        assert_eq!(
+            explorer.entries[explorer.viewport_indices(9)[4]].path,
+            target
+        );
     }
 
     #[test]
@@ -2174,7 +2701,10 @@ mod tests {
         let mut explorer = FileExplorer::new_deferred(temp.path().to_path_buf());
         explorer.visible_height = 2;
         assert!(explorer.reveal_file_deferred(&target));
-        assert!(explorer.entries.is_empty(), "UI path must not scan directories");
+        assert!(
+            explorer.entries.is_empty(),
+            "UI path must not scan directories"
+        );
 
         let request = explorer.refresh_request();
         let (canonical_root, entries, matches) = FileExplorer::build_refresh_entries(request);
@@ -2308,10 +2838,7 @@ mod tests {
             file_entry("/project/src/new.rs", "new.rs", 1),
         ]);
 
-        explorer.apply_git_status_changes(
-            None,
-            [("src/changed.rs", 'M'), ("src/new.rs", 'A')],
-        );
+        explorer.apply_git_status_changes(None, [("src/changed.rs", 'M'), ("src/new.rs", 'A')]);
 
         assert_eq!(explorer.entries[0].git_status, GitStatus::Added);
         assert_eq!(
@@ -2347,7 +2874,10 @@ mod tests {
         // This fixture lives under the checkout's ignored test-output folder.
         // Give it its own repository so those parent rules do not apply.
         let repo = git2::Repository::init(&root).expect("isolated fixture repository");
-        repo.config().unwrap().set_str("core.excludesFile", "").unwrap();
+        repo.config()
+            .unwrap()
+            .set_str("core.excludesFile", "")
+            .unwrap();
         let canonical_root = std::fs::canonicalize(&root).expect("canonical root");
         let mut explorer = FileExplorer::new(root.clone());
 

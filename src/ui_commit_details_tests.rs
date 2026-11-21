@@ -569,8 +569,12 @@ fn commit_review_adapts_to_small_screens_and_keeps_explicit_layout_choices() {
 #[test]
 fn commit_review_find_context_survives_neighbour_paints_and_closes_cleanly() {
     let mut app = review_fixture(3);
-    let base = (0..20).map(|line| format!("let value_{line} = {line};\n")).collect::<String>();
-    let target = base.replace("value_2 ", "changed_2 ").replace("value_18 ", "changed_18 ");
+    let base = (0..20)
+        .map(|line| format!("let value_{line} = {line};\n"))
+        .collect::<String>();
+    let target = base
+        .replace("value_2 ", "changed_2 ")
+        .replace("value_18 ", "changed_18 ");
     app.set_commit_diff_context(true, 0);
     set_diff(&mut app, &base, &target);
     app.commit_details.focus = Focus::Diff;
@@ -580,7 +584,13 @@ fn commit_review_find_context_survives_neighbour_paints_and_closes_cleanly() {
     app.editor_mut().unwrap().set_cursor(10, 0);
     let mut terminal = Terminal::new(TestBackend::new(90, 50)).unwrap();
     terminal.draw(|f| draw(f, &mut app)).unwrap();
-    assert!(app.commit_details.review.visible.iter().any(|card| card.file != 0));
+    assert!(
+        app.commit_details
+            .review
+            .visible
+            .iter()
+            .any(|card| card.file != 0)
+    );
     assert_eq!(app.commit_details.context_revealed_line, Some(10));
     assert!(app.diff_render_cache.visible_target_lines.contains(&10));
     app.search_active = false;
@@ -594,8 +604,18 @@ fn commit_review_find_context_survives_neighbour_paints_and_closes_cleanly() {
 
 #[test]
 fn commit_review_follows_target_cursor_after_a_large_inline_replacement() {
-    let base = format!("before\n{}after\n", (0..100).map(|line| format!("old_{line};\n")).collect::<String>());
-    let target = format!("before\n{}after\n", (0..100).map(|line| format!("replacement_{line};\n")).collect::<String>());
+    let base = format!(
+        "before\n{}after\n",
+        (0..100)
+            .map(|line| format!("old_{line};\n"))
+            .collect::<String>()
+    );
+    let target = format!(
+        "before\n{}after\n",
+        (0..100)
+            .map(|line| format!("replacement_{line};\n"))
+            .collect::<String>()
+    );
     for compact in [false, true] {
         let mut app = fixture();
         app.commit_details.data.files.truncate(1);
@@ -610,11 +630,19 @@ fn commit_review_follows_target_cursor_after_a_large_inline_replacement() {
             app.editor_mut().unwrap().set_cursor(line, 0);
             terminal.draw(|f| draw(f, &mut app)).unwrap();
             let code = app.code_area.unwrap();
-            let row = app.diff_render_cache.inline_text_row_for_target_line(line).unwrap();
+            let row = app
+                .diff_render_cache
+                .inline_text_row_for_target_line(line)
+                .unwrap();
             let first = app.diff_inline_scroll.row;
-            assert!(row >= first && row - first < code.height as usize,
-                "commit review must follow target text: compact={compact}, line={line}, row={row}, first={first}");
-            assert_eq!(terminal.backend().buffer()[(code.x, code.y + (row - first) as u16)].symbol(), "r");
+            assert!(
+                row >= first && row - first < code.height as usize,
+                "commit review must follow target text: compact={compact}, line={line}, row={row}, first={first}"
+            );
+            assert_eq!(
+                terminal.backend().buffer()[(code.x, code.y + (row - first) as u16)].symbol(),
+                "r"
+            );
         }
     }
 }
@@ -622,7 +650,10 @@ fn commit_review_follows_target_cursor_after_a_large_inline_replacement() {
 #[test]
 fn commit_review_scrolls_to_the_wrapped_tail_of_a_file_card() {
     let target = format!("{}WRAPPED_TAIL\n", "word ".repeat(80));
-    for mode in [crate::app::DiffMode::SideBySide, crate::app::DiffMode::Inline] {
+    for mode in [
+        crate::app::DiffMode::SideBySide,
+        crate::app::DiffMode::Inline,
+    ] {
         let mut app = fixture();
         app.commit_details.data.files.truncate(1);
         set_diff(&mut app, "old\n", &target);
@@ -637,7 +668,14 @@ fn commit_review_scrolls_to_the_wrapped_tail_of_a_file_card() {
         app.editor_mut().unwrap().set_cursor(0, 400);
         terminal.draw(|f| draw(f, &mut app)).unwrap();
         let buffer = terminal.backend().buffer();
-        assert!(buffer.content.iter().map(|cell| cell.symbol()).collect::<String>().contains("WRAPPED_TAIL"));
+        assert!(
+            buffer
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
+                .contains("WRAPPED_TAIL")
+        );
     }
 }
 
@@ -689,8 +727,15 @@ fn commit_review_stale_header_cannot_open_a_different_filtered_file() {
     let mut app = review_fixture(3);
     let mut terminal = Terminal::new(TestBackend::new(90, 44)).unwrap();
     terminal.draw(|f| draw(f, &mut app)).unwrap();
-    let old = *app.commit_details.review.visible.iter().find(|card| card.file == 1).unwrap();
-    app.commit_details.edit_filter(KeyCode::Null, KeyModifiers::NONE, Some("review_0.rs"));
+    let old = *app
+        .commit_details
+        .review
+        .visible
+        .iter()
+        .find(|card| card.file == 1)
+        .unwrap();
+    app.commit_details
+        .edit_filter(KeyCode::Null, KeyModifiers::NONE, Some("review_0.rs"));
     click(&mut app, old.open.x + 1, old.open.y);
     assert_eq!(app.tabs.len(), 1);
     assert_eq!(app.commit_details.selected_file(), Some(0));
@@ -975,7 +1020,10 @@ fn commit_review_can_expand_common_lines_below_the_last_change() {
         .chain((32..72).map(|line| format!("common {line}\n")))
         .collect();
     let target = base.replace("old ", "new ");
-    for mode in [crate::app::DiffMode::Inline, crate::app::DiffMode::SideBySide] {
+    for mode in [
+        crate::app::DiffMode::Inline,
+        crate::app::DiffMode::SideBySide,
+    ] {
         let mut app = fixture();
         app.commit_details.data.files.truncate(1);
         set_diff(&mut app, &base, &target);
@@ -1015,7 +1063,10 @@ fn commit_review_can_expand_common_lines_below_the_last_change() {
             &remaining,
             ContextExpansion::All,
         );
-        assert_eq!(app.commit_details.review.expanded_context_for(0), &[trailing]);
+        assert_eq!(
+            app.commit_details.review.expanded_context_for(0),
+            &[trailing]
+        );
         assert!(app.diff_render_cache.visible_target_lines.contains(&71));
     }
 }
@@ -1237,9 +1288,17 @@ fn commit_inspector_context_expansions_follow_the_clicked_file_after_it_reloads(
     assert!(app.commit_details.review.expanded_context_for(1).is_empty());
     handle_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
     terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-    assert!(app.commit_details.review.context_buttons.iter().any(|button| {
-        button.file == 1 && button.gap == (0..22) && button.expansion == ContextExpansion::All
-    }));
+    assert!(
+        app.commit_details
+            .review
+            .context_buttons
+            .iter()
+            .any(|button| {
+                button.file == 1
+                    && button.gap == (0..22)
+                    && button.expansion == ContextExpansion::All
+            })
+    );
     assert!(app.activate_commit_review_file(1));
     assert_eq!(app.diff_render_cache.visible_target_lines, compact);
 }
@@ -1273,23 +1332,37 @@ fn commit_inspector_context_uses_native_layouts_syntax_selection_and_scrollbars(
         let visible = app.diff_render_cache.visible_target_lines.clone();
         assert_eq!(visible, (17..=23).chain(177..=183).collect::<Vec<_>>());
         let code = app.code_area.unwrap();
-        let body = app.commit_details.review.visible.iter()
-            .find(|card| Some(card.file) == app.commit_details.diff_file).unwrap().body;
+        let body = app
+            .commit_details
+            .review
+            .visible
+            .iter()
+            .find(|card| Some(card.file) == app.commit_details.diff_file)
+            .unwrap()
+            .body;
         let mode_name = if mode == crate::app::DiffMode::SideBySide {
             "side-by-side"
         } else {
             "inline"
         };
         crate::ui_control_visibility_tests::snapshot(
-            terminal.backend().buffer(), &format!("commit-context-gutters-{mode_name}"),
+            terminal.backend().buffer(),
+            &format!("commit-context-gutters-{mode_name}"),
         );
         let buttons = &app.commit_details.review.context_buttons;
-        assert!(!buttons.is_empty(), "{mode_name} needs visible context controls");
-        for button in buttons.iter().filter(|button| button.expansion == ContextExpansion::All) {
+        assert!(
+            !buttons.is_empty(),
+            "{mode_name} needs visible context controls"
+        );
+        for button in buttons
+            .iter()
+            .filter(|button| button.expansion == ContextExpansion::All)
+        {
             let row = button.area.y;
             let buffer = terminal.backend().buffer();
             let text: String = (body.x..body.right() - 1)
-                .map(|column| buffer[(column, row)].symbol()).collect();
+                .map(|column| buffer[(column, row)].symbol())
+                .collect();
             assert!(text.contains(&format!("+{} common lines", button.gap.len())));
             assert!(!text.contains("value_") && !text.contains("unchanged lines hidden"));
             assert_eq!(buffer[(body.x, row)].bg, app.colors.bg_dark);
@@ -2049,7 +2122,10 @@ fn commit_inspector_toolbar_skips_unavailable_controls_and_recovers_focus_after_
     app.commit_details.focus = Focus::Action(4);
     handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     assert_eq!(app.commit_details.focus, Focus::Action(9));
-    handle_key(&mut app, KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT));
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+    );
     assert_eq!(app.commit_details.focus, Focus::Action(4));
     app.commit_details.focus = Focus::Action(7);
     let mut narrow = Terminal::new(TestBackend::new(40, 34)).unwrap();
@@ -2156,7 +2232,10 @@ fn commit_inspector_copies_a_rendered_message_selection_through_the_keyboard_rou
     terminal.draw(|f| draw(f, &mut app)).unwrap();
     assert_eq!(app.commit_details.focus, Focus::Message);
     assert_ne!(terminal.backend().buffer()[(start, area.y)].bg, normal);
-    assert_eq!(terminal.backend().buffer()[(area.x, author_row)].bg, author_bg);
+    assert_eq!(
+        terminal.backend().buffer()[(area.x, author_row)].bg,
+        author_bg
+    );
 
     let copy = |app: &mut App, modifiers| {
         crate::input_keyboard::handle_keyboard_event(
@@ -2541,7 +2620,10 @@ fn commit_filter_wheel_moves_the_view_without_changing_the_query_or_panes() {
     let x = area.x + 4;
     let y = area.y;
     let original = app.commit_details.query_hit.as_ref().unwrap().byte_at(x, y);
-    let scrolls = (app.commit_details.message_scroll, app.commit_details.review.scroll);
+    let scrolls = (
+        app.commit_details.message_scroll,
+        app.commit_details.review.scroll,
+    );
     for (left, right) in [
         (MouseEventKind::ScrollUp, MouseEventKind::ScrollDown),
         (MouseEventKind::ScrollLeft, MouseEventKind::ScrollRight),
@@ -2554,7 +2636,13 @@ fn commit_filter_wheel_moves_the_view_without_changing_the_query_or_panes() {
         assert_eq!(app.commit_details.query_cursor, saved_query.len());
         assert_eq!(app.commit_details.query_anchor, Some(0));
         assert_eq!(app.commit_details.focus, Focus::Message);
-        assert_eq!((app.commit_details.message_scroll, app.commit_details.review.scroll), scrolls);
+        assert_eq!(
+            (
+                app.commit_details.message_scroll,
+                app.commit_details.review.scroll
+            ),
+            scrolls
+        );
         assert!(handle_mouse(&mut app, mouse_at(right, x, y)));
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         assert!(app.commit_details.query_hit.as_ref().unwrap().byte_at(x, y) > scrolled);
@@ -2566,7 +2654,10 @@ fn commit_filter_wheel_moves_the_view_without_changing_the_query_or_panes() {
     app.commit_details.focus = Focus::Filter;
     handle_key(&mut app, KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
     terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-    assert_eq!(app.commit_details.query_hit.as_ref().unwrap().byte_at(x, y), original);
+    assert_eq!(
+        app.commit_details.query_hit.as_ref().unwrap().byte_at(x, y),
+        original
+    );
     assert_eq!(app.commit_details.query, saved_query);
 }
 
@@ -2759,7 +2850,8 @@ fn commit_inspector_workbench_previews_use_a_native_tab_and_leave_source_control
             .data
             .files
             .iter()
-            .map(|file| crate::app::GitFileChange { directory: false,
+            .map(|file| crate::app::GitFileChange {
+                directory: false,
                 path: file.path.clone(),
                 original_path: file.old_path.clone(),
                 status: file.status,

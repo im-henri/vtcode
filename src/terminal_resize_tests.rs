@@ -210,7 +210,9 @@ fn resize_defers_large_output_backlog_without_changing_viewport() {
 
     for _ in 0..MAX_PTY_BYTES_PER_TICK / PTY_PARSE_QUANTUM + 2 {
         terminal.resize(20, 5);
-        if terminal.last_size == (20, 5) { break; }
+        if terminal.last_size == (20, 5) {
+            break;
+        }
     }
     assert_eq!(terminal.last_size, (20, 5));
     assert_eq!(row_text(&terminal.grid.scrollback[0]), "FIRST");
@@ -236,7 +238,9 @@ fn conpty_resize_repaint_preserves_rows_displaced_by_coalesced_input() {
             for line in first_visible..6 {
                 repaint.push_str(&format!("PRIMARY_LOG_{line:02}\x1b[K\r\n"));
             }
-            repaint.push_str("WRAPabcdefghijklmnopqrstuvwxyz0123456789END\x1b[K\r\nRESIZE_READY\x1b[K\r\n");
+            repaint.push_str(
+                "WRAPabcdefghijklmnopqrstuvwxyz0123456789END\x1b[K\r\nRESIZE_READY\x1b[K\r\n",
+            );
             if first_visible >= 2 {
                 repaint.push_str("MOVE_0\x1b[K\r\n");
             }
@@ -254,11 +258,20 @@ fn conpty_resize_repaint_preserves_rows_displaced_by_coalesced_input() {
                 terminal.test_queue_output(chunk);
                 terminal.process();
             }
-            let output: String = terminal.grid.scrollback.iter().chain(&terminal.grid.cells)
-                .map(|row| row_text(row)).collect();
+            let output: String = terminal
+                .grid
+                .scrollback
+                .iter()
+                .chain(&terminal.grid.cells)
+                .map(|row| row_text(row))
+                .collect();
             for line in 0..6 {
                 let marker = format!("PRIMARY_LOG_{line:02}");
-                assert_eq!(output.matches(&marker).count(), 1, "first row {first_visible}, chunk {chunk_size}: {output:?}");
+                assert_eq!(
+                    output.matches(&marker).count(),
+                    1,
+                    "first row {first_visible}, chunk {chunk_size}: {output:?}"
+                );
             }
             assert!(output.contains("WRAPabcdefghijklmnopqrstuvwxyz0123456789END"));
             assert_eq!(output.matches("ACK_MOVE_0").count(), 1);
@@ -289,7 +302,8 @@ fn conpty_resize_repaint_preserves_rows_displaced_while_narrowing_and_growing() 
         );
         terminal.process();
         terminal.resize(80, 12);
-        let output: String = terminal.grid
+        let output: String = terminal
+            .grid
             .scrollback
             .iter()
             .chain(&terminal.grid.cells)
@@ -311,7 +325,9 @@ fn conpty_resize_repaint_preserves_rows_displaced_while_narrowing_and_growing() 
 #[test]
 fn conpty_resize_recovery_keeps_repeated_rows_and_their_styles() {
     let mut terminal = TerminalEmulator::test_with_output(
-        20, 8, "\x1b[31mrepeat\r\nrepeat\r\n\x1b[0munique\r\nlast\r\n",
+        20,
+        8,
+        "\x1b[31mrepeat\r\nrepeat\r\n\x1b[0munique\r\nlast\r\n",
     );
     terminal.grid.is_conpty = true;
     terminal.resize(30, 6);
@@ -319,8 +335,13 @@ fn conpty_resize_recovery_keeps_repeated_rows_and_their_styles() {
         b"\x1b[?25l\x1b[Hrepeat\x1b[K\r\nunique\x1b[K\r\nlast\x1b[K\r\nnew\x1b[K\r\n\x1b[J\x1b[?25h",
     );
     terminal.process();
-    let output: String = terminal.grid.scrollback.iter().chain(&terminal.grid.cells)
-        .map(|row| row_text(row)).collect();
+    let output: String = terminal
+        .grid
+        .scrollback
+        .iter()
+        .chain(&terminal.grid.cells)
+        .map(|row| row_text(row))
+        .collect();
     assert_eq!(output, "repeatrepeatuniquelastnew");
     assert_eq!(terminal.grid.scrollback[0][0].fg, Color::Red);
 }
@@ -330,9 +351,7 @@ fn conpty_resize_recovery_does_not_resurrect_a_cleared_screen() {
     let mut terminal = TerminalEmulator::test_with_output(20, 8, "old\r\nkeep\r\nlast\r\n");
     terminal.grid.is_conpty = true;
     terminal.resize(30, 6);
-    terminal.test_queue_output(
-        b"\x1b[?25l\x1b[2J\x1b[Hkeep\r\nlast\r\n\x1b[?25h",
-    );
+    terminal.test_queue_output(b"\x1b[?25l\x1b[2J\x1b[Hkeep\r\nlast\r\n\x1b[?25h");
     terminal.process();
     assert!(terminal.grid.scrollback.is_empty());
     assert_eq!(row_text(&terminal.grid.cells[0]), "keep");
@@ -341,14 +360,12 @@ fn conpty_resize_recovery_does_not_resurrect_a_cleared_screen() {
 
 #[test]
 fn conpty_resize_recovery_preserves_a_displaced_wrapped_line() {
-    let mut terminal = TerminalEmulator::test_with_output(
-        8, 4, "start\r\n\x1b[31mabcdefghij\x1b[0m\r\nready\r\n",
-    );
+    let mut terminal =
+        TerminalEmulator::test_with_output(8, 4, "start\r\n\x1b[31mabcdefghij\x1b[0m\r\nready\r\n");
     terminal.grid.is_conpty = true;
     terminal.resize(4, 8);
-    terminal.test_queue_output(
-        b"\x1b[?25l\x1b[Hij\x1b[K\r\nready\x1b[K\r\nnext\r\n\x1b[J\x1b[?25h",
-    );
+    terminal
+        .test_queue_output(b"\x1b[?25l\x1b[Hij\x1b[K\r\nready\x1b[K\r\nnext\r\n\x1b[J\x1b[?25h");
     terminal.process();
     assert_eq!(row_text(&terminal.grid.scrollback[2]), "abcd");
     assert_eq!(row_text(&terminal.grid.scrollback[3]), "efgh");
@@ -356,8 +373,13 @@ fn conpty_resize_recovery_preserves_a_displaced_wrapped_line() {
     assert!(terminal.grid.scrollback_wrapped[3]);
     assert_eq!(terminal.grid.scrollback[2][0].fg, Color::Red);
     terminal.resize(20, 8);
-    let output: String = terminal.grid.scrollback.iter().chain(&terminal.grid.cells)
-        .map(|row| row_text(row)).collect();
+    let output: String = terminal
+        .grid
+        .scrollback
+        .iter()
+        .chain(&terminal.grid.cells)
+        .map(|row| row_text(row))
+        .collect();
     assert_eq!(output, "startabcdefghijreadynext");
 }
 
@@ -378,9 +400,7 @@ fn conpty_resize_recovery_does_not_archive_alternate_screen_rows() {
     let mut terminal = TerminalEmulator::test_with_output(20, 8, "old\r\nkeep\r\nlast\r\n");
     terminal.grid.is_conpty = true;
     terminal.resize(30, 6);
-    terminal.test_queue_output(
-        b"\x1b[?1049h\x1b[?25l\x1b[Hkeep\r\nlast\r\n\x1b[?25h\x1b[?1049l",
-    );
+    terminal.test_queue_output(b"\x1b[?1049h\x1b[?25l\x1b[Hkeep\r\nlast\r\n\x1b[?25h\x1b[?1049l");
     terminal.process();
     assert!(terminal.grid.conpty_resize.is_none());
     assert!(terminal.grid.scrollback.is_empty());
@@ -682,7 +702,8 @@ fn reference_reflow(grid: &mut TermGrid, width: usize, height: usize) {
     grid.wrapped = output_wrapped.split_off(live_start);
     grid.scrollback = output.into();
     grid.scrollback_wrapped = output_wrapped.into();
-    grid.cells.resize_with(height, || vec![TermCell::default(); width].into());
+    grid.cells
+        .resize_with(height, || vec![TermCell::default(); width].into());
     grid.wrapped.resize(height, false);
     grid.cursor_row = mapped[0].0.saturating_sub(live_start);
     grid.cursor_col = mapped[0].1;

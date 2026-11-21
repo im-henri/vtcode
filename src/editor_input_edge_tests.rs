@@ -27,7 +27,12 @@ fn warm_columns(editor: &Editor, through: usize) {
 
 #[test]
 fn cached_columns_match_cold_rope_queries_with_partial_rows_and_clamped_ranges() {
-    for source in ["\t abc\tdef\r\nlast", "é 界 é\t 👩‍💻\rnext", "", "plain ASCII\n"] {
+    for source in [
+        "\t abc\tdef\r\nlast",
+        "é 界 é\t 👩‍💻\rnext",
+        "",
+        "plain ASCII\n",
+    ] {
         for through in [0, 1, 3, 9, usize::MAX] {
             for tab in [1, 4, 8] {
                 let mut cold = Editor::test_with_text(source);
@@ -38,12 +43,16 @@ fn cached_columns_match_cold_rope_queries_with_partial_rows_and_clamped_ranges()
                 for line in 0..cold.line_count() + 1 {
                     for start in [0, 2, 10, 1000] {
                         for end in [0, 1, 8, usize::MAX] {
-                            assert_eq!(warm.cell_at_source_column(line, start, end),
-                                cold.cell_at_source_column(line, start, end));
+                            assert_eq!(
+                                warm.cell_at_source_column(line, start, end),
+                                cold.cell_at_source_column(line, start, end)
+                            );
                             for cell in [0, 1, 5, 20, 1000] {
-                                assert_eq!(warm.source_column_at_cell(line, start, end, cell),
+                                assert_eq!(
+                                    warm.source_column_at_cell(line, start, end, cell),
                                     cold.source_column_at_cell(line, start, end, cell),
-                                    "source={source:?}, through={through}, line={line}, start={start}, end={end}, cell={cell}");
+                                    "source={source:?}, through={through}, line={line}, start={start}, end={end}, cell={cell}"
+                                );
                             }
                         }
                     }

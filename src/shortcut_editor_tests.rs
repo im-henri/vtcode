@@ -567,11 +567,17 @@ fn warmed_shortcut_index_tracks_in_place_reassignments_and_resets() {
     assert!(app.resolve_shortcut(shortcut, None).is_none());
 
     app.keybindings[reopen].assign(shortcut.0, shortcut.1, None);
-    assert_eq!(app.resolve_shortcut(shortcut, None).unwrap().id, "reopen_closed");
+    assert_eq!(
+        app.resolve_shortcut(shortcut, None).unwrap().id,
+        "reopen_closed"
+    );
     app.keybindings[reopen].reset();
     assert!(app.resolve_shortcut(shortcut, None).is_none());
     assert_eq!(
-        app.lookup_keybinding(KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('T')),
+        app.lookup_keybinding(
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('T')
+        ),
         Some("reopen_closed")
     );
 }
@@ -676,7 +682,8 @@ fn formerly_hardcoded_aliases_work_by_default_and_follow_reassignment() {
             .unwrap()
     };
     let mut app = fixture();
-    app.tabs.push(Tab::new_file(Editor::test_with_text("second\n")));
+    app.tabs
+        .push(Tab::new_file(Editor::test_with_text("second\n")));
     let text = |app: &App| app.tabs[0].editor.rope.to_string();
     let original = text(&app);
     app.tabs[0].editor.select_all();
@@ -686,7 +693,8 @@ fn formerly_hardcoded_aliases_work_by_default_and_follow_reassignment() {
     assert_eq!(app.active_tab, 1, "Alt+2 default opens the second editor");
 
     let mut app = fixture();
-    app.tabs.push(Tab::new_file(Editor::test_with_text("second\n")));
+    app.tabs
+        .push(Tab::new_file(Editor::test_with_text("second\n")));
     let case = position(&app, "toggle_case", "Alt+U");
     let tab = position(&app, "goto_tab_2", "Alt+2");
     let delete = position(&app, "delete_line", "Alt+D");

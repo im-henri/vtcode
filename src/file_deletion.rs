@@ -350,16 +350,29 @@ impl crate::app::App {
                 };
                 let result = match remote {
                     Some(remote) => (|| -> std::io::Result<_> {
-                        let paths = targets.iter().map(|path| remote.remote_path(path)).collect::<std::io::Result<_>>()?;
-                        remote.filesystem(crate::remote::fs::Task::Delete { paths }, &cancel, |progress| reporter.publish(progress, true))
-                    })().map_err(|error| error.to_string()),
-                    None => Ok(perform(targets, &cancel, |progress, force| reporter.publish(progress, force))),
+                        let paths = targets
+                            .iter()
+                            .map(|path| remote.remote_path(path))
+                            .collect::<std::io::Result<_>>()?;
+                        remote.filesystem(
+                            crate::remote::fs::Task::Delete { paths },
+                            &cancel,
+                            |progress| reporter.publish(progress, true),
+                        )
+                    })()
+                    .map_err(|error| error.to_string()),
+                    None => Ok(perform(targets, &cancel, |progress, force| {
+                        reporter.publish(progress, force)
+                    })),
                 };
                 let result = BackgroundResult::FilesystemActionDone {
                     action: "Delete",
                     result,
                 };
-                let _ = sender.send(BackgroundResult::WorkspaceResult { generation, result: Box::new(result) });
+                let _ = sender.send(BackgroundResult::WorkspaceResult {
+                    generation,
+                    result: Box::new(result),
+                });
             });
         self.file_deletion = Some(Deletion {
             shared,

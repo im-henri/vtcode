@@ -6,35 +6,35 @@
 //! mode ([`insert`]), the command line and Ex commands ([`cmdline`], [`ex`]),
 //! and key mappings ([`map`]). The workbench talks to it through [`Host`].
 
+pub(crate) mod app_host;
+#[cfg(test)]
+mod app_tests;
+pub(crate) mod cmdline;
+pub(crate) mod ex;
+pub(crate) mod exec;
+pub(crate) mod feedback;
+pub(crate) mod insert;
 pub(crate) mod keys;
-pub(crate) mod text;
+pub(crate) mod map;
 pub(crate) mod motion;
-pub(crate) mod textobj;
+pub(crate) mod ops;
+#[cfg(test)]
+mod parity_tests;
 pub(crate) mod parse;
 pub(crate) mod register;
 pub(crate) mod search;
-pub(crate) mod map;
-pub(crate) mod exec;
-pub(crate) mod ops;
-pub(crate) mod insert;
-pub(crate) mod cmdline;
-pub(crate) mod ex;
-pub(crate) mod app_host;
-pub(crate) mod ui;
-pub(crate) mod feedback;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod parity_tests;
-#[cfg(test)]
-mod app_tests;
+pub(crate) mod text;
+pub(crate) mod textobj;
+pub(crate) mod ui;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::editor::Editor;
-pub(crate) use keys::Key;
 use keys::K;
+pub(crate) use keys::Key;
 use parse::{Ctx, Parsed};
 pub(crate) use text::Pos;
 
@@ -50,7 +50,11 @@ pub(crate) struct BlockArea {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum VisualKind { Char, Line, Block }
+pub(crate) enum VisualKind {
+    Char,
+    Line,
+    Block,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LastVisual {
@@ -86,7 +90,8 @@ pub(crate) struct BufState {
 /// Keep [`BufState::trailing_empty`] in step with an edit: a buffer whose
 /// last line had no line break and now ends with one has an empty last line.
 pub(crate) fn update_trailing(ed: &mut Editor, had_eol: bool) {
-    let has_eol = ed.rope.len_chars() > 0 && matches!(ed.rope.char(ed.rope.len_chars() - 1), '\n' | '\r');
+    let has_eol =
+        ed.rope.len_chars() > 0 && matches!(ed.rope.char(ed.rope.len_chars() - 1), '\n' | '\r');
     if !has_eol {
         ed.vim_buf.trailing_empty = false;
     } else if !had_eol {
@@ -102,10 +107,14 @@ impl BufState {
     /// Keep marks on the same text across a line insertion/deletion.
     pub(crate) fn shift_lines(&mut self, from_line: usize, delta: isize) {
         let fix = |p: &mut Pos| -> bool {
-            if p.line < from_line { return true; }
+            if p.line < from_line {
+                return true;
+            }
             if delta < 0 {
                 let removed = (-delta) as usize;
-                if p.line < from_line + removed { return false; }
+                if p.line < from_line + removed {
+                    return false;
+                }
                 p.line -= removed;
             } else {
                 p.line += delta as usize;
@@ -117,22 +126,36 @@ impl BufState {
         for (c, p) in self.marks.iter_mut() {
             if !fix(p) {
                 // Lowercase marks on deleted lines are deleted, as in Vim.
-                if c.is_ascii_lowercase() { gone.push(*c); } else { p.line = from_line.saturating_sub(1); }
+                if c.is_ascii_lowercase() {
+                    gone.push(*c);
+                } else {
+                    p.line = from_line.saturating_sub(1);
+                }
             }
         }
-        for c in gone { self.marks.remove(&c); }
+        for c in gone {
+            self.marks.remove(&c);
+        }
         let mut kept = Vec::with_capacity(self.global_lines.len());
         for &l in &self.global_lines {
             let mut p = Pos::new(l, 0);
-            if fix(&mut p) { kept.push(p.line); }
+            if fix(&mut p) {
+                kept.push(p.line);
+            }
         }
         self.global_lines = kept;
         for p in &mut self.changes {
-            if !fix(p) { p.line = from_line; }
+            if !fix(p) {
+                p.line = from_line;
+            }
         }
         if let Some(v) = &mut self.last_visual {
-            if !fix(&mut v.start) { v.start.line = from_line; }
-            if !fix(&mut v.end) { v.end.line = from_line; }
+            if !fix(&mut v.start) {
+                v.start.line = from_line;
+            }
+            if !fix(&mut v.end) {
+                v.end.line = from_line;
+            }
         }
     }
 }
@@ -233,41 +256,73 @@ impl Default for Options {
 
 /// Quickfix-style commands, which act on the Problems panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Quickfix { Open, Close, Next, Prev }
+pub(crate) enum Quickfix {
+    Open,
+    Close,
+    Next,
+    Prev,
+}
 
 /// App-level actions requested by the engine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Act {
     /// A workbench command id, as used by the Command Palette.
     Command(String),
-    Write { path: Option<String>, force: bool },
+    Write {
+        path: Option<String>,
+        force: bool,
+    },
     WriteAll,
-    Quit { force: bool },
-    QuitAll { force: bool },
+    Quit {
+        force: bool,
+    },
+    QuitAll {
+        force: bool,
+    },
     WriteQuitAll,
     /// `:wq`/`:x`: save the current buffer and close its window.
-    WriteQuit { force: bool },
-    Edit { path: Option<String>, force: bool },
+    WriteQuit {
+        force: bool,
+    },
+    Edit {
+        path: Option<String>,
+        force: bool,
+    },
     NewBuffer,
     Window(parse::Window, usize),
     TabNext(Option<usize>),
     TabPrev(usize),
-    TabClose { force: bool },
+    TabClose {
+        force: bool,
+    },
     TabOnly,
     BufferNext(usize),
     BufferPrev(usize),
     Buffer(String),
-    BufferDelete { force: bool },
+    BufferDelete {
+        force: bool,
+    },
     Alternate,
-    JumpTo { nav_id: u64, path: Option<std::path::PathBuf>, pos: Pos },
+    JumpTo {
+        nav_id: u64,
+        path: Option<std::path::PathBuf>,
+        pos: Pos,
+    },
     Explore,
     /// `:copen`, `:cclose`, `:cnext`, `:cprevious` on the Problems panel.
     Quickfix(Quickfix),
     Terminal(Option<String>),
-    SetOption { name: String, value: String },
+    SetOption {
+        name: String,
+        value: String,
+    },
     Cd(Option<String>),
     /// Highlight a yanked range briefly.
-    YankFlash { start: Pos, end: Pos, linewise: bool },
+    YankFlash {
+        start: Pos,
+        end: Pos,
+        linewise: bool,
+    },
 }
 
 /// What the engine needs from the workbench.
@@ -280,10 +335,16 @@ pub(crate) trait Host {
     /// `o`/`O`: open a line below/above the cursor and put the cursor on
     /// it. The default copies the current line's indent ('autoindent').
     fn open_line(&mut self, above: bool, autoindent: bool) {
-        let Some(ed) = self.ed() else { return; };
+        let Some(ed) = self.ed() else {
+            return;
+        };
         let t = text::Text::of(&ed.rope, ed.vim_buf.trailing_empty);
         let line = ed.cursor_line.min(t.last_line());
-        let indent = if autoindent { indent_like(ed, &t, line) } else { String::new() };
+        let indent = if autoindent {
+            indent_like(ed, &t, line)
+        } else {
+            String::new()
+        };
         let mut tx = exec::Tx::default();
         if above {
             let at = t.line_start(line);
@@ -302,12 +363,20 @@ pub(crate) trait Host {
     fn clip_set(&mut self, text: &str, linewise: bool);
     fn act(&mut self, act: Act) -> Result<(), String>;
     fn file_name(&self) -> Option<String>;
-    fn cwd(&self) -> Option<std::path::PathBuf> { None }
+    fn cwd(&self) -> Option<std::path::PathBuf> {
+        None
+    }
     /// Visible popups (completion) that should receive Insert-mode keys.
-    fn completion_visible(&self) -> bool { false }
+    fn completion_visible(&self) -> bool {
+        false
+    }
     /// Names for `:b` completion and listing: (index, name, modified).
-    fn buffers(&self) -> Vec<(usize, String, bool)> { Vec::new() }
-    fn commands(&self) -> Vec<String> { Vec::new() }
+    fn buffers(&self) -> Vec<(usize, String, bool)> {
+        Vec::new()
+    }
+    fn commands(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// 'autoindent': the indent of `line` as tabs/spaces per 'expandtab'.
@@ -316,14 +385,22 @@ pub(crate) fn indent_like(ed: &Editor, t: &text::Text<'_>, line: usize) -> Strin
     let ws = chars.iter().take_while(|&&c| c == ' ' || c == '\t').count();
     let ts = ed.tab_size.max(1);
     let width = t.vcol(line, ws, ts);
-    if ed.use_tabs { format!("{}{}", "\t".repeat(width / ts), " ".repeat(width % ts)) } else { " ".repeat(width) }
+    if ed.use_tabs {
+        format!("{}{}", "\t".repeat(width / ts), " ".repeat(width % ts))
+    } else {
+        " ".repeat(width)
+    }
 }
 
 pub(crate) struct HostClip<'a>(pub(crate) &'a mut dyn Host);
 
 impl register::Clipboard for HostClip<'_> {
-    fn get(&mut self) -> Option<String> { self.0.clip_get() }
-    fn set(&mut self, text: &str, linewise: bool) { self.0.clip_set(text, linewise) }
+    fn get(&mut self) -> Option<String> {
+        self.0.clip_get()
+    }
+    fn set(&mut self, text: &str, linewise: bool) {
+        self.0.clip_set(text, linewise)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -480,11 +557,19 @@ impl Default for VimState {
 const KEY_BUDGET: usize = 200_000;
 
 impl VimState {
-    pub(crate) fn is_insert(&self) -> bool { matches!(self.mode, Mode::Insert | Mode::Replace) }
-    pub(crate) fn is_visual(&self) -> bool { matches!(self.mode, Mode::Visual(_)) }
+    pub(crate) fn is_insert(&self) -> bool {
+        matches!(self.mode, Mode::Insert | Mode::Replace)
+    }
+    pub(crate) fn is_visual(&self) -> bool {
+        matches!(self.mode, Mode::Visual(_))
+    }
 
     pub(crate) fn set_message(&mut self, text: impl Into<String>) {
-        self.message = Some(Message { text: text.into(), error: false, lines: Vec::new() });
+        self.message = Some(Message {
+            text: text.into(),
+            error: false,
+            lines: Vec::new(),
+        });
     }
     pub(crate) fn set_error(&mut self, text: impl Into<String>) {
         let text = text.into();
@@ -494,12 +579,22 @@ impl VimState {
             self.set_message(info.to_string());
             return;
         }
-        self.message = Some(Message { text, error: true, lines: Vec::new() });
-        if self.replaying > 0 { self.error_in_replay = true; }
+        self.message = Some(Message {
+            text,
+            error: true,
+            lines: Vec::new(),
+        });
+        if self.replaying > 0 {
+            self.error_in_replay = true;
+        }
         self.abort_macro();
     }
     pub(crate) fn set_lines(&mut self, lines: Vec<String>) {
-        self.message = Some(Message { text: String::new(), error: false, lines });
+        self.message = Some(Message {
+            text: String::new(),
+            error: false,
+            lines,
+        });
     }
 
     /// A failed command: Vim beeps and flushes typeahead that was not
@@ -536,13 +631,21 @@ impl VimState {
     fn expects_char_arg(&self) -> bool {
         match self.mode {
             Mode::Normal | Mode::Visual(_) => {
-                if self.pending.is_empty() { return false; }
-                let ctx = if self.is_visual() { Ctx::Visual } else { Ctx::Normal };
+                if self.pending.is_empty() {
+                    return false;
+                }
+                let ctx = if self.is_visual() {
+                    Ctx::Visual
+                } else {
+                    Ctx::Normal
+                };
                 let mut probe = self.pending.clone();
                 probe.push(Key::ch('\u{E000}'));
                 parse::parse(&probe, ctx) != Parsed::Bad
             }
-            Mode::Insert | Mode::Replace => self.insert.as_ref().is_some_and(|s| s.awaiting.is_some()),
+            Mode::Insert | Mode::Replace => {
+                self.insert.as_ref().is_some_and(|s| s.awaiting.is_some())
+            }
             Mode::Cmdline => self.cmdline.as_ref().is_some_and(|c| c.awaiting_register),
         }
     }
@@ -561,7 +664,11 @@ impl VimState {
         if let Some((_, keys)) = &mut self.recording {
             keys.push(key);
         }
-        self.typeahead.push_back(Typed { key, remap: true, from_macro: false });
+        self.typeahead.push_back(Typed {
+            key,
+            remap: true,
+            from_macro: false,
+        });
         self.drain(host, false);
     }
 
@@ -570,18 +677,42 @@ impl VimState {
     /// loops in that one loop instead of nesting a call per round, which
     /// would overflow the stack. A runaway one stops at the key budget.
     pub(crate) fn queue_keys(&mut self, keys: &[Key], remap: bool, from_macro: bool) {
-        if self.key_budget == 0 { self.key_budget = KEY_BUDGET; }
+        if self.key_budget == 0 {
+            self.key_budget = KEY_BUDGET;
+        }
         for (i, &key) in keys.iter().enumerate() {
-            self.typeahead.insert(i, Typed { key, remap, from_macro });
+            self.typeahead.insert(
+                i,
+                Typed {
+                    key,
+                    remap,
+                    from_macro,
+                },
+            );
         }
     }
 
     /// Run keys as if typed, synchronously (`:normal`, macros, tests).
-    pub(crate) fn feed_keys(&mut self, host: &mut dyn Host, keys: &[Key], remap: bool, from_macro: bool) {
+    pub(crate) fn feed_keys(
+        &mut self,
+        host: &mut dyn Host,
+        keys: &[Key],
+        remap: bool,
+        from_macro: bool,
+    ) {
         // Nested calls (`:normal` inside a macro) share the outer budget.
-        if self.key_budget == 0 { self.key_budget = KEY_BUDGET; }
+        if self.key_budget == 0 {
+            self.key_budget = KEY_BUDGET;
+        }
         for (i, &key) in keys.iter().enumerate() {
-            self.typeahead.insert(i, Typed { key, remap, from_macro });
+            self.typeahead.insert(
+                i,
+                Typed {
+                    key,
+                    remap,
+                    from_macro,
+                },
+            );
         }
         self.drain(host, false);
     }
@@ -602,7 +733,9 @@ impl VimState {
     /// The deadline for a pending mapping, for the event loop's poll timeout.
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
         let since = self.map_wait_since?;
-        self.opts.timeout.then(|| since + Duration::from_millis(self.opts.timeoutlen))
+        self.opts
+            .timeout
+            .then(|| since + Duration::from_millis(self.opts.timeoutlen))
     }
 
     fn drain(&mut self, host: &mut dyn Host, timed_out: bool) {
@@ -622,7 +755,12 @@ impl VimState {
             let first = self.typeahead[0];
             if first.remap && !self.expects_char_arg() {
                 let mode = self.map_mode();
-                let seq: Vec<Key> = self.typeahead.iter().take_while(|t| t.remap).map(|t| t.key).collect();
+                let seq: Vec<Key> = self
+                    .typeahead
+                    .iter()
+                    .take_while(|t| t.remap)
+                    .map(|t| t.key)
+                    .collect();
                 match self.maps.lookup(mode, &seq) {
                     map::Lookup::Prefix if !timed_out => {
                         self.map_wait_since.get_or_insert_with(Instant::now);
@@ -648,9 +786,13 @@ impl VimState {
             self.map_wait_since = None;
             let t = self.typeahead.pop_front().unwrap();
             // Keys a macro replays do not record changes for `.`.
-            if t.from_macro { self.replaying += 1; }
+            if t.from_macro {
+                self.replaying += 1;
+            }
             self.process(host, t.key);
-            if t.from_macro { self.replaying -= 1; }
+            if t.from_macro {
+                self.replaying -= 1;
+            }
             if self.error_in_replay {
                 self.error_in_replay = false;
                 self.abort_macro();
@@ -660,9 +802,18 @@ impl VimState {
 
     fn apply_mapping(&mut self, len: usize, rhs: Vec<Key>, noremap: bool) {
         let from_macro = self.typeahead.iter().take(len).any(|t| t.from_macro);
-        for _ in 0..len { self.typeahead.pop_front(); }
+        for _ in 0..len {
+            self.typeahead.pop_front();
+        }
         for (i, key) in rhs.into_iter().enumerate() {
-            self.typeahead.insert(i, Typed { key, remap: !noremap, from_macro });
+            self.typeahead.insert(
+                i,
+                Typed {
+                    key,
+                    remap: !noremap,
+                    from_macro,
+                },
+            );
         }
     }
 
@@ -674,7 +825,10 @@ impl VimState {
         }
         // A `<C-o>` one-shot waiting before this key (also through `:`).
         let armed = self.insert_oneshot.is_some()
-            || self.cmdline.as_ref().is_some_and(|c| c.resume_insert.is_some());
+            || self
+                .cmdline
+                .as_ref()
+                .is_some_and(|c| c.resume_insert.is_some());
         let before = host.ed_ref().map(|ed| (ed.cursor_line, ed.cursor_col));
         match self.mode {
             Mode::Insert | Mode::Replace => insert::key(self, host, key),
@@ -682,7 +836,10 @@ impl VimState {
             Mode::Normal | Mode::Visual(_) => self.normal_key(host, key),
         }
         // `<C-o>`: once the one Normal-mode command is complete, resume Insert mode.
-        if armed && self.mode == Mode::Normal && self.pending.is_empty() && self.cmdline.is_none()
+        if armed
+            && self.mode == Mode::Normal
+            && self.pending.is_empty()
+            && self.cmdline.is_none()
             && let Some(r) = self.insert_oneshot.take()
         {
             insert::resume(self, host, r, before);
@@ -693,14 +850,22 @@ impl VimState {
         if self.message.as_ref().is_some_and(|m| !m.error) && self.pending.is_empty() {
             self.message = None;
         }
-        let ctx = if self.is_visual() { Ctx::Visual } else { Ctx::Normal };
+        let ctx = if self.is_visual() {
+            Ctx::Visual
+        } else {
+            Ctx::Normal
+        };
         if self.pending.is_empty() && key == Key::ch('q') && self.recording.is_some() {
             // Stop recording: the register gets the typed keys without `q`.
             let (r, mut keys) = self.recording.take().unwrap();
             keys.pop();
             let text = ops::keys_to_text(&keys);
             let mut clip = HostClip(host);
-            self.regs.set(r, register::Reg::new(text, register::RegKind::Char), &mut clip);
+            self.regs.set(
+                r,
+                register::Reg::new(text, register::RegKind::Char),
+                &mut clip,
+            );
             return;
         }
         self.pending.push(key);
@@ -748,7 +913,9 @@ impl VimState {
     }
 
     pub(crate) fn op_pending(&self) -> bool {
-        self.mode == Mode::Normal && !self.pending.is_empty() && op_pending(&self.pending, Ctx::Normal)
+        self.mode == Mode::Normal
+            && !self.pending.is_empty()
+            && op_pending(&self.pending, Ctx::Normal)
     }
 
     pub(crate) fn showcmd(&self) -> String {
@@ -764,7 +931,9 @@ impl VimState {
     }
 
     pub(crate) fn recording_label(&self) -> Option<String> {
-        self.recording.as_ref().map(|(r, _)| format!("recording @{r}"))
+        self.recording
+            .as_ref()
+            .map(|(r, _)| format!("recording @{r}"))
     }
 
     /// Leave any mode for Normal mode without side effects on the buffer
@@ -827,13 +996,23 @@ impl VimState {
 
 /// Keys Vim leaves to the workbench in Normal mode.
 pub(crate) fn unclaimed(key: Key, opts: &Options) -> bool {
-    if key.alt { return true; }
-    if matches!(key.k, K::F(_)) { return true; }
+    if key.alt {
+        return true;
+    }
+    if matches!(key.k, K::F(_)) {
+        return true;
+    }
     if key.ctrl {
-        if !opts.ctrl_keys || key.shift { return true; }
+        if !opts.ctrl_keys || key.shift {
+            return true;
+        }
         // Ctrl keys that Vim does not define in Normal mode.
         return match key.k {
-            K::Char(c) => matches!(c, 'k' | 's' | 'z' | 'p' | 'n' | 'q' | '\\' | '/' | '.' | '`' | ',' | '=' | '-' | '0'..='9' | ' ' | '\''),
+            K::Char(c) => matches!(
+                c,
+                'k' | 's' | 'z' | 'p' | 'n' | 'q' | '\\' | '/' | '.' | '`' | ',' | '=' | '-' | '0'
+                    ..='9' | ' ' | '\''
+            ),
             _ => true,
         };
     }
@@ -849,12 +1028,20 @@ fn op_pending(pending: &[Key], ctx: Ctx) -> bool {
             Some('"') => i += 2,
             Some(c) if c.is_ascii_digit() && c != '0' => {
                 i += 1;
-                while pending.get(i).and_then(|k| k.char()).is_some_and(|c| c.is_ascii_digit()) { i += 1; }
+                while pending
+                    .get(i)
+                    .and_then(|k| k.char())
+                    .is_some_and(|c| c.is_ascii_digit())
+                {
+                    i += 1;
+                }
             }
             _ => break,
         }
     }
-    if ctx == Ctx::Visual { return false; }
+    if ctx == Ctx::Visual {
+        return false;
+    }
     let rest = &pending[i.min(pending.len())..];
     let first = rest.first().and_then(|k| k.char());
     let second = rest.get(1).and_then(|k| k.char());

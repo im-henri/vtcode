@@ -2,7 +2,7 @@
 //! CommonMark renderer; tool cards retain protocol identities across updates.
 use crate::{
     app::{ActivePane, App},
-    app_acp::{ChatAction, ChatHit, Picker, OutputDetail},
+    app_acp::{ChatAction, ChatHit, OutputDetail, Picker},
     app_theme::ThemeColors,
     text_input::{TextInputHitMap, TextInputId},
     ui_colors::disabled_text_color,
@@ -28,38 +28,35 @@ mod context;
 #[path = "ui_chat_surfaces.rs"]
 mod surfaces;
 pub(crate) use surfaces::{draw_surfaces, queue_editor};
-#[path = "ui_chat_tabs.rs"]
-mod tabs;
+#[path = "ui_chat_activity.rs"]
+mod activity;
 #[path = "ui_chat_agents.rs"]
 mod agents;
+#[path = "ui_chat_tabs.rs"]
+mod tabs;
+#[path = "ui_chat_tasks.rs"]
+mod tasks;
 #[path = "ui_chat_terminals.rs"]
 mod terminals;
 #[path = "ui_chat_tool_terminals.rs"]
 mod tool_terminals;
 #[path = "ui_chat_tools.rs"]
 mod tools;
-#[path = "ui_chat_tasks.rs"]
-mod tasks;
-#[path = "ui_chat_activity.rs"]
-mod activity;
 pub(crate) use activity::{ActivityAnimation, advance_activity_frame, next_activity_frame};
+#[path = "ui_chat_header.rs"]
+mod header;
 #[path = "ui_chat_permissions.rs"]
 mod permissions;
 #[path = "ui_chat_queue.rs"]
 mod queue;
 #[path = "ui_chat_widgets.rs"]
 mod widgets;
-#[path = "ui_chat_header.rs"]
-mod header;
 use header::draw as draw_header;
 #[cfg(test)]
 use header::layout as header_layout;
 #[cfg(test)]
-#[path = "ui_chat_terminal_tests.rs"]
-mod terminal_tests;
-#[cfg(test)]
-#[path = "ui_chat_presentation_tests.rs"]
-mod presentation_tests;
+#[path = "ui_chat_activity_tests.rs"]
+mod activity_tests;
 #[cfg(test)]
 #[path = "ui_chat_controls_tests.rs"]
 mod controls_tests;
@@ -67,20 +64,23 @@ mod controls_tests;
 #[path = "ui_chat_followups_tests.rs"]
 mod followups_tests;
 #[cfg(test)]
-#[path = "ui_chat_thinking_tests.rs"]
-mod thinking_tests;
-#[cfg(test)]
 #[path = "ui_chat_model_picker_tests.rs"]
 mod model_picker_tests;
 #[cfg(test)]
 #[path = "ui_chat_picker_hover_tests.rs"]
 mod picker_hover_tests;
 #[cfg(test)]
+#[path = "ui_chat_presentation_tests.rs"]
+mod presentation_tests;
+#[cfg(test)]
 #[path = "ui_chat_tasks_tests.rs"]
 mod tasks_tests;
 #[cfg(test)]
-#[path = "ui_chat_activity_tests.rs"]
-mod activity_tests;
+#[path = "ui_chat_terminal_tests.rs"]
+mod terminal_tests;
+#[cfg(test)]
+#[path = "ui_chat_thinking_tests.rs"]
+mod thinking_tests;
 
 #[derive(Clone)]
 struct ChatRow {
@@ -104,7 +104,9 @@ impl ChatCache {
         self.entries.get(index).map_or(0, |entry| entry.2.len())
     }
     pub(crate) fn entry_has_terminal(&self, index: usize) -> bool {
-        self.entries.get(index).is_some_and(|entry| entry.2.iter().any(|row| row.terminal.is_some()))
+        self.entries
+            .get(index)
+            .is_some_and(|entry| entry.2.iter().any(|row| row.terminal.is_some()))
     }
 }
 
@@ -179,10 +181,18 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let border = if app.chat.resizing || app.mouse_col == area.x {
         c.ui.sash_hover_border
     } else {
-        c.ui.sidebar_border.or(c.ui.border_sidebar
-            .map(crate::theme_workbench::ColorLayer::opaque).unwrap_or_default())
-            .or(crate::theme_workbench::ColorLayer::opaque(c.ui.fg_group_border))
-    }.border(c.bg_sidebar).unwrap_or(c.bg_sidebar);
+        c.ui.sidebar_border
+            .or(c
+                .ui
+                .border_sidebar
+                .map(crate::theme_workbench::ColorLayer::opaque)
+                .unwrap_or_default())
+            .or(crate::theme_workbench::ColorLayer::opaque(
+                c.ui.fg_group_border,
+            ))
+    }
+    .border(c.bg_sidebar)
+    .unwrap_or(c.bg_sidebar);
     f.render_widget(
         Block::default()
             .borders(Borders::LEFT)
@@ -214,7 +224,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .is_some_and(|i| !i.auth_methods.is_empty());
 
     let width = body.width.saturating_sub(6).max(1) as usize;
-    app.chat.connection.input_layout.layout(&app.chat.connection.input, width);
+    app.chat
+        .connection
+        .input_layout
+        .layout(&app.chat.connection.input, width);
     let input_height = (app.chat.input_layout.rows.len() as u16).clamp(2, 6);
     let message_input = app.chat.terminal_input.is_none() && !app.chat.loading_id;
     let attachments_height = if !message_input {
@@ -225,7 +238,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         u16::from(app.chat.files.attaching.contains_key(&app.chat.selected))
     };
     let review_files: Vec<_> = if message_input && app.chat.rollback.enabled {
-        app.chat.session().into_iter()
+        app.chat
+            .session()
+            .into_iter()
             .flat_map(|session| session.rollback.pending_files())
             .map(|(path, count)| (path.to_path_buf(), count))
             .collect()
@@ -240,21 +255,28 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             .saturating_sub(input_height + attachments_height + review_height + 10)
             .clamp(1, 4),
     );
-    let composer_height =
-        (input_height + 5 + attachments_height + review_height + selectors.height.saturating_sub(1))
-            .min(body.height.saturating_sub(4));
+    let composer_height = (input_height
+        + 5
+        + attachments_height
+        + review_height
+        + selectors.height.saturating_sub(1))
+    .min(body.height.saturating_sub(4));
     let composer = Rect::new(
         body.x + 1,
         body.bottom().saturating_sub(composer_height),
         body.width.saturating_sub(2),
         composer_height,
     );
-    let permission_height = permissions::height(app, body.width.saturating_sub(2))
-        .min(body.height / 2);
-    let queue_height = queue::height(app).min(body.height.saturating_sub(composer_height + permission_height + 8));
+    let permission_height =
+        permissions::height(app, body.width.saturating_sub(2)).min(body.height / 2);
+    let queue_height = queue::height(app).min(
+        body.height
+            .saturating_sub(composer_height + permission_height + 8),
+    );
     let error_height = u16::from(app.chat.error.is_some()) * 3;
     let tasks_height = tasks::height(app).min(body.height.saturating_sub(
-        header_height + composer_height + permission_height + queue_height + error_height + 3));
+        header_height + composer_height + permission_height + queue_height + error_height + 3,
+    ));
     let content_bottom = composer
         .y
         .saturating_sub(tasks_height)
@@ -273,15 +295,24 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     if app.chat.loading_conversation() {
         let label = format!("◌ {}", app.chat.status);
         let width = (label.width() as u16).min(transcript.width);
-        f.render_widget(Paragraph::new(elide(&label, width as usize))
-            .style(Style::default().fg(app.colors.fg_accent_blue)),
-            Rect::new(transcript.x + transcript.width.saturating_sub(width) / 2,
-                transcript.y + transcript.height / 2, width, u16::from(transcript.height > 0)));
+        f.render_widget(
+            Paragraph::new(elide(&label, width as usize))
+                .style(Style::default().fg(app.colors.fg_accent_blue)),
+            Rect::new(
+                transcript.x + transcript.width.saturating_sub(width) / 2,
+                transcript.y + transcript.height / 2,
+                width,
+                u16::from(transcript.height > 0),
+            ),
+        );
     } else if let Some(session) = app.chat.session() {
         let _ = session;
-        let expanded = (0..session.entries.len()).filter(|&i| app.chat.entry_expanded(i)).collect();
+        let expanded = (0..session.entries.len())
+            .filter(|&i| app.chat.entry_expanded(i))
+            .collect();
         let session = app
-            .chat.connection
+            .chat
+            .connection
             .sessions
             .get(app.chat.selected.as_ref().unwrap())
             .unwrap();
@@ -299,16 +330,30 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             app.chat.output_detail,
         );
         if let Some(id) = app.chat.reveal_terminal.take()
-            && let Some(index) = app.chat.cache.rows.iter()
+            && let Some(index) = app
+                .chat
+                .cache
+                .rows
+                .iter()
                 .position(|r| r.terminal.as_ref().is_some_and(|t| t.id == id))
         {
             app.chat.scroll = index;
         }
         if let Some((index, before)) = app.chat.expansion_scroll.take() {
-            app.chat.scroll = app.chat.scroll.saturating_add(app.chat.cache.entry_height(index).saturating_sub(before));
+            app.chat.scroll = app
+                .chat
+                .scroll
+                .saturating_add(app.chat.cache.entry_height(index).saturating_sub(before));
         }
         if let Some(index) = app.chat.reveal_entry.take() {
-            app.chat.scroll = app.chat.cache.entries.iter().take(index).map(|entry| entry.2.len()).sum();
+            app.chat.scroll = app
+                .chat
+                .cache
+                .entries
+                .iter()
+                .take(index)
+                .map(|entry| entry.2.len())
+                .sum();
         }
         // Activity is a transient row at the live end, never transcript content.
         // Keep it outside the layout cache so animation cannot reflow messages.
@@ -324,7 +369,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         app.chat.scroll = app.chat.scroll.min(app.chat.max_scroll);
         let hovered_message = transcript
             .contains((app.mouse_col, app.mouse_row).into())
-            .then(|| app.chat.cache.rows.get(app.chat.scroll + (app.mouse_row - transcript.y) as usize))
+            .then(|| {
+                app.chat
+                    .cache
+                    .rows
+                    .get(app.chat.scroll + (app.mouse_row - transcript.y) as usize)
+            })
             .flatten()
             .and_then(|r| r.action.clone())
             .filter(|a| matches!(a, ChatAction::Picker(Picker::Message(..))));
@@ -332,8 +382,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         for offset in 0..transcript.height as usize {
             let index = app.chat.scroll + offset;
             let row = if index == app.chat.cache.rows.len() {
-                if activity.is_some() && (app.chat.permission().is_none()
-                        || app.chat.session().is_some_and(|s| s.cancelling)) {
+                if activity.is_some()
+                    && (app.chat.permission().is_none()
+                        || app.chat.session().is_some_and(|s| s.cancelling))
+                {
                     app.chat.activity.show();
                 }
                 activity.clone()
@@ -359,7 +411,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                     || (hovered_message.is_some() && row.action == hovered_message));
             let mut line = row.line.clone();
             let background = row.background.unwrap_or(app.colors.bg_sidebar);
-            let mut style = Style::default().fg(app.colors.ui.sidebar_text_color(background)).bg(background);
+            let mut style = Style::default()
+                .fg(app.colors.ui.sidebar_text_color(background))
+                .bg(background);
             if hover {
                 let c = &app.colors;
                 style = if row.action == app.chat.focus {
@@ -367,14 +421,22 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     let user = matches!(row.action, Some(ChatAction::Picker(Picker::Message(..))));
                     if user {
-                        let hover_bg = c.ui.chat_request_hover_background.over(background).unwrap_or(background);
+                        let hover_bg =
+                            c.ui.chat_request_hover_background
+                                .over(background)
+                                .unwrap_or(background);
                         Style::default().bg(hover_bg).fg(c.ui.readable_foreground(
-                            c.ui.list_hover_foreground.over(hover_bg).unwrap_or_else(|| c.ui.sidebar_text_color(hover_bg)),
-                            hover_bg, 4.5))
+                            c.ui.list_hover_foreground
+                                .over(hover_bg)
+                                .unwrap_or_else(|| c.ui.sidebar_text_color(hover_bg)),
+                            hover_bg,
+                            4.5,
+                        ))
                     } else {
                         c.ui.list_row_style(c.ui.sidebar_foreground, background, false, true, true)
                     }
-                }.add_modifier(Modifier::BOLD);
+                }
+                .add_modifier(Modifier::BOLD);
                 // Span colors take precedence over Paragraph styles. Replace both
                 // sides of the pair, including avatars and inline code, on hover.
                 line.style = line.style.patch(style);
@@ -386,9 +448,17 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             // surface. Guard the foreground that will actually reach each cell.
             if !row.separator {
                 for span in &mut line.spans {
-                    let foreground = span.style.fg.or(line.style.fg).or(style.fg)
+                    let foreground = span
+                        .style
+                        .fg
+                        .or(line.style.fg)
+                        .or(style.fg)
                         .unwrap_or(app.colors.ui.fg_sidebar);
-                    let background = span.style.bg.or(line.style.bg).or(style.bg)
+                    let background = span
+                        .style
+                        .bg
+                        .or(line.style.bg)
+                        .or(style.bg)
                         .unwrap_or(app.colors.bg_sidebar);
                     span.style = span.style.fg(contrast.foreground(foreground, background));
                 }
@@ -412,39 +482,69 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             }
             if let Some(action) = row.action.clone() {
                 if matches!(action, ChatAction::Picker(Picker::Message(..)))
-                    && let Some(previous) = app.chat.hits.last_mut()
+                    && let Some(previous) = app
+                        .chat
+                        .hits
+                        .last_mut()
                         .filter(|h| h.action == action && h.area.bottom() == rect.y)
                 {
                     previous.area.height += 1;
                 } else {
-                    app.chat.hits.push(ChatHit { area: rect, action: action.clone() });
+                    app.chat.hits.push(ChatHit {
+                        area: rect,
+                        action: action.clone(),
+                    });
                     if let ChatAction::ToggleEntry(index) = action
-                        && let Some(ChatEntry::Tool(tool)) = app.chat.session().and_then(|s| s.entries.get(index))
+                        && let Some(ChatEntry::Tool(tool)) =
+                            app.chat.session().and_then(|s| s.entries.get(index))
                         && tools::location(tool).is_some()
                         && rect.width > 5
                     {
                         // The chevron shares the header's full-row toggle target.
-                        f.render_widget(Paragraph::new(if app.chat.entry_expanded(index) { " ▾ " } else { " ▸ " })
-                            .style(style), Rect::new(rect.right() - 3, rect.y, 3, 1));
+                        f.render_widget(
+                            Paragraph::new(if app.chat.entry_expanded(index) {
+                                " ▾ "
+                            } else {
+                                " ▸ "
+                            })
+                            .style(style),
+                            Rect::new(rect.right() - 3, rect.y, 3, 1),
+                        );
                     }
                 }
             }
         }
         if app.chat.max_scroll > 0 && transcript.height > 0 {
-            draw_scrollbar(f, app, crate::app_acp::ChatScrollbar {
-                area: Rect::new(body.right() - 2, transcript.y, 2, transcript.height),
-                first: app.chat.scroll, total: row_count, visible: transcript.height as usize, terminal: None, picker: None,
-            });
+            draw_scrollbar(
+                f,
+                app,
+                crate::app_acp::ChatScrollbar {
+                    area: Rect::new(body.right() - 2, transcript.y, 2, transcript.height),
+                    first: app.chat.scroll,
+                    total: row_count,
+                    visible: transcript.height as usize,
+                    terminal: None,
+                    picker: None,
+                },
+            );
         }
         for (id, area) in app.chat.terminal_areas.clone() {
             if let Some(view) = app.chat.terminal_views.get(&id)
                 && let Some(page) = &view.page
                 && page.total > view.height
             {
-                draw_scrollbar(f, app, crate::app_acp::ChatScrollbar {
-                    area: Rect::new(area.right() - 1, area.y, 1, area.height),
-                    first: page.first, total: page.total, visible: view.height, terminal: Some(id), picker: None,
-                });
+                draw_scrollbar(
+                    f,
+                    app,
+                    crate::app_acp::ChatScrollbar {
+                        area: Rect::new(area.right() - 1, area.y, 1, area.height),
+                        first: page.first,
+                        total: page.total,
+                        visible: view.height,
+                        terminal: Some(id),
+                        picker: None,
+                    },
+                );
             }
         }
         if !app.chat.follow && app.chat.scroll < app.chat.max_scroll && transcript.height > 1 {
@@ -514,15 +614,42 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             app,
             Rect::new(
                 body.x + 1,
-                composer.y.saturating_sub(tasks_height + permission_height + queue_height),
+                composer
+                    .y
+                    .saturating_sub(tasks_height + permission_height + queue_height),
                 body.width.saturating_sub(2),
                 permission_height,
             ),
         );
     }
-    queue::draw(f, app, Rect::new(composer.x, composer.y.saturating_sub(tasks_height + queue_height), composer.width, queue_height));
-    tasks::draw(f, app, Rect::new(composer.x, composer.y.saturating_sub(tasks_height), composer.width, tasks_height));
-    draw_composer(f, app, composer, selectors, attachments_height, &review_files);
+    queue::draw(
+        f,
+        app,
+        Rect::new(
+            composer.x,
+            composer.y.saturating_sub(tasks_height + queue_height),
+            composer.width,
+            queue_height,
+        ),
+    );
+    tasks::draw(
+        f,
+        app,
+        Rect::new(
+            composer.x,
+            composer.y.saturating_sub(tasks_height),
+            composer.width,
+            tasks_height,
+        ),
+    );
+    draw_composer(
+        f,
+        app,
+        composer,
+        selectors,
+        attachments_height,
+        &review_files,
+    );
     app.chat.files.popup = None;
     if app.chat.picker.is_some() {
         draw_picker(f, app, body, composer);
@@ -538,19 +665,24 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_scrollbar(f: &mut Frame, app: &mut App, bar: crate::app_acp::ChatScrollbar) {
     let (start, size) = bar.thumb();
-    let hovered = bar.area.contains((app.mouse_col, app.mouse_row).into()) || app.chat.scroll_drag.is_some();
+    let hovered =
+        bar.area.contains((app.mouse_col, app.mouse_row).into()) || app.chat.scroll_drag.is_some();
     let surface = crate::ui_widgets::surface_background(f, bar.area, app.colors.bg_sidebar);
-    let (track, thumb) = app.colors.ui.scrollbar_colors(surface, hovered, app.chat.scroll_drag.is_some());
+    let (track, thumb) =
+        app.colors
+            .ui
+            .scrollbar_colors(surface, hovered, app.chat.scroll_drag.is_some());
     for y in 0..bar.area.height {
         let in_thumb = (start..start + size).contains(&(y as usize));
         let color = if in_thumb { thumb } else { track };
-        f.render_widget(Paragraph::new(if in_thumb { "█" } else { " " }.repeat(bar.area.width as usize))
-            .style(Style::default().fg(color).bg(color)),
-            Rect::new(bar.area.x, bar.area.y + y, bar.area.width, 1));
+        f.render_widget(
+            Paragraph::new(if in_thumb { "█" } else { " " }.repeat(bar.area.width as usize))
+                .style(Style::default().fg(color).bg(color)),
+            Rect::new(bar.area.x, bar.area.y + y, bar.area.width, 1),
+        );
     }
     app.chat.scrollbars.push(bar);
 }
-
 
 fn elide(text: &str, width: usize) -> String {
     let text = clean(text);
@@ -653,7 +785,10 @@ fn secondary_button(
     enabled: bool,
 ) {
     widgets::draw_button(
-        f, app, area, label,
+        f,
+        app,
+        area,
+        label,
         action,
         enabled,
         widgets::ButtonKind::Toolbar,
@@ -669,8 +804,19 @@ fn button(
     enabled: bool,
     primary: bool,
 ) {
-    widgets::draw_button(f, app, area, label, action, enabled,
-        if primary { widgets::ButtonKind::Primary } else { widgets::ButtonKind::Quiet });
+    widgets::draw_button(
+        f,
+        app,
+        area,
+        label,
+        action,
+        enabled,
+        if primary {
+            widgets::ButtonKind::Primary
+        } else {
+            widgets::ButtonKind::Quiet
+        },
+    );
 }
 
 fn draw_composer(
@@ -686,14 +832,31 @@ fn draw_composer(
     }
     // Keep the input and controls usable in short panes. Each file section
     // can collapse to its list button when there is only room for the header.
-    let file_room = area.height.saturating_sub(7 + selectors.height.saturating_sub(1));
+    let file_room = area
+        .height
+        .saturating_sub(7 + selectors.height.saturating_sub(1));
     let attachment_reserve = attachments_height.min(2).min(file_room / 2);
     let review_height = review_files_height(review_files.len()).min(file_room - attachment_reserve);
     let attachments_height = attachments_height.min(file_room - review_height);
-    draw_attached_files(f, app, Rect { height: attachments_height, ..area });
+    draw_attached_files(
+        f,
+        app,
+        Rect {
+            height: attachments_height,
+            ..area
+        },
+    );
     area.y += attachments_height;
     area.height -= attachments_height;
-    draw_review_files(f, app, Rect { height: review_height, ..area }, review_files);
+    draw_review_files(
+        f,
+        app,
+        Rect {
+            height: review_height,
+            ..area
+        },
+        review_files,
+    );
     area.y += review_height;
     area.height -= review_height;
     let focused = app.active_pane == ActivePane::Chat
@@ -716,8 +879,13 @@ fn draw_composer(
     };
     let input_style = app.colors.ui.input_style(app.colors.bg_sidebar);
     let input_bg = input_style.bg.unwrap_or(app.colors.bg_sidebar);
-    let border = (if focused || dropping { app.colors.ui.focus_border } else { app.colors.ui.input_colors.border })
-        .border(input_bg).unwrap_or(input_bg);
+    let border = (if focused || dropping {
+        app.colors.ui.focus_border
+    } else {
+        app.colors.ui.input_colors.border
+    })
+    .border(input_bg)
+    .unwrap_or(input_bg);
     let caret_style = app.colors.ui.input_caret_style(input_bg);
     let selection_style = app.colors.ui.input_selection_style(input_bg);
     if selectors.height > area.height.saturating_sub(5) {
@@ -745,11 +913,15 @@ fn draw_composer(
         area.width.saturating_sub(4),
         input_bottom.saturating_sub(area.y + 1),
     );
-    app.chat.connection
+    app.chat
+        .connection
         .input_layout
         .layout(&app.chat.connection.input, inside.width.max(1) as usize);
     app.chat.input_layout.height = inside.height as usize;
-    app.chat.connection.input_layout.reveal(app.chat.connection.cursor);
+    app.chat
+        .connection
+        .input_layout
+        .reveal(app.chat.connection.cursor);
     let cursor_row = app.chat.input_layout.cursor_row(app.chat.cursor);
     let selected = App::inline_selection_range(app.chat.cursor, app.chat.anchor);
     let mut hit_rows = Vec::new();
@@ -781,11 +953,7 @@ fn draw_composer(
                     && app.chat.cursor == range.end;
                 spans.push(Span::styled(
                     " ",
-                    if caret {
-                        caret_style
-                    } else {
-                        input_style
-                    },
+                    if caret { caret_style } else { input_style },
                 ));
             }
             hits.resize(inside.width as usize, range.end);
@@ -827,8 +995,12 @@ fn draw_composer(
         area.width.saturating_sub(2),
         1,
     );
-    let has_draft = !app.chat.input.trim().is_empty() || !app.chat.files.attached.is_empty() || app.chat.files.attaching.contains_key(&app.chat.selected);
-    let queuing = !terminal && !app.chat.loading_id && has_draft
+    let has_draft = !app.chat.input.trim().is_empty()
+        || !app.chat.files.attached.is_empty()
+        || app.chat.files.attaching.contains_key(&app.chat.selected);
+    let queuing = !terminal
+        && !app.chat.loading_id
+        && has_draft
         && (app.chat.busy() || app.chat.has_queued_prompt() || app.chat.checkpoint_pending());
     let send_width = (if queuing { 12 } else { 8 }).min(controls.width);
     let before_send = controls.width.saturating_sub(send_width + 1);
@@ -861,7 +1033,10 @@ fn draw_composer(
             &mut x,
             actions,
             if actions.width as usize >= FILES_BUTTON.width()
-                && (!app.chat.session().is_some_and(|s| !s.commands.is_empty() || app.chat.rollback.enabled)
+                && (!app
+                    .chat
+                    .session()
+                    .is_some_and(|s| !s.commands.is_empty() || app.chat.rollback.enabled)
                     || actions.width as usize > FILES_BUTTON.width() + COMMANDS_BUTTON.width())
             {
                 FILES_BUTTON
@@ -871,7 +1046,11 @@ fn draw_composer(
             ChatAction::Attach,
             true,
         );
-        if app.chat.session().is_some_and(|s| !s.commands.is_empty() || app.chat.rollback.enabled) {
+        if app
+            .chat
+            .session()
+            .is_some_and(|s| !s.commands.is_empty() || app.chat.rollback.enabled)
+        {
             small_button(
                 f,
                 app,
@@ -912,7 +1091,11 @@ fn draw_composer(
                 .is_some_and(|id| app.chat.deleting_sessions.contains(id))
             && (busy || !app.chat.control_busy)
             && (busy || terminal || has_draft),
-        if busy && !queuing { widgets::ButtonKind::Secondary } else { widgets::ButtonKind::Primary },
+        if busy && !queuing {
+            widgets::ButtonKind::Secondary
+        } else {
+            widgets::ButtonKind::Primary
+        },
     );
     if selectors.height > 0 {
         draw_selectors(
@@ -973,7 +1156,11 @@ fn draw_context_usage(f: &mut Frame, app: &mut App, bounds: Rect) -> u16 {
         } else {
             COMMANDS_BUTTON.width() + 1
         };
-    let minimum_actions = 3 + if session.commands.is_empty() { 0 } else { COMMANDS_BUTTON.width() + 1 };
+    let minimum_actions = 3 + if session.commands.is_empty() {
+        0
+    } else {
+        COMMANDS_BUTTON.width() + 1
+    };
     let percentage = format!(" {percent} ");
     let label = if full.width() + actions_width < bounds.width as usize {
         full
@@ -988,11 +1175,12 @@ fn draw_context_usage(f: &mut Frame, app: &mut App, bounds: Rect) -> u16 {
     let area = Rect::new(bounds.right() - width, bounds.y, width, 1);
     let hovered = area.contains((app.mouse_col, app.mouse_row).into());
     let style = c.ui.toolbar_style(color, c.bg_input, hovered, false, false);
-    let style = if hovered { style.add_modifier(Modifier::UNDERLINED) } else { style };
-    f.render_widget(
-        Paragraph::new(label).style(style),
-        area,
-    );
+    let style = if hovered {
+        style.add_modifier(Modifier::UNDERLINED)
+    } else {
+        style
+    };
+    f.render_widget(Paragraph::new(label).style(style), area);
     app.chat.context_usage_area = Some(area);
     width
 }
@@ -1053,11 +1241,20 @@ fn draw_context_usage_tooltip(f: &mut Frame, app: &App) {
                 format!("{} tokens used", token_count(usage.used)),
                 c.ui.hover_colors.foreground,
             ),
-            ("Context limit not reported".into(), c.ui.description_foreground),
+            (
+                "Context limit not reported".into(),
+                c.ui.description_foreground,
+            ),
         ],
         None => vec![
-            ("The agent has not reported".into(), c.ui.description_foreground),
-            ("context usage for this session.".into(), c.ui.description_foreground),
+            (
+                "The agent has not reported".into(),
+                c.ui.description_foreground,
+            ),
+            (
+                "context usage for this session.".into(),
+                c.ui.description_foreground,
+            ),
         ],
     };
     // Wrap counts as well as prose so even large values fit narrow terminals.
@@ -1066,26 +1263,22 @@ fn draw_context_usage_tooltip(f: &mut Frame, app: &App) {
     let mut layers = Vec::new();
     for (line, color) in lines {
         let first = rows.len();
-        wrapped(
-            &mut rows,
-            &line,
-            width,
-            Color::Reset,
-            None,
-        );
+        wrapped(&mut rows, &line, width, Color::Reset, None);
         layers.extend((first..rows.len()).map(|index| (index, color)));
     }
-    let mut tooltip = crate::ui_widgets::Tooltip::hover(
-        rows.into_iter().map(|row| row.line).collect(),
-        c,
-    )
-    .title(
-        "Context usage",
-        Style::default()
-            .add_modifier(Modifier::BOLD),
-    );
+    let mut tooltip =
+        crate::ui_widgets::Tooltip::hover(rows.into_iter().map(|row| row.line).collect(), c).title(
+            "Context usage",
+            Style::default().add_modifier(Modifier::BOLD),
+        );
     for (index, foreground) in layers {
-        tooltip = tooltip.line_colors(index, crate::theme_workbench::ControlColors { foreground, ..Default::default() });
+        tooltip = tooltip.line_colors(
+            index,
+            crate::theme_workbench::ControlColors {
+                foreground,
+                ..Default::default()
+            },
+        );
     }
     tooltip.render(f, anchor.x, anchor.y);
 }
@@ -1099,8 +1292,10 @@ struct ComposerSelector {
 
 impl ComposerSelector {
     fn width(&self) -> usize {
-        self.name.as_ref().map_or(0, |s| s.width() + if self.picker == Picker::Models { 3 } else { 2 })
-            + self.value.width() + 4
+        self.name.as_ref().map_or(0, |s| {
+            s.width() + if self.picker == Picker::Models { 3 } else { 2 }
+        }) + self.value.width()
+            + 4
     }
 
     fn label(&self, width: usize) -> String {
@@ -1112,7 +1307,11 @@ impl ComposerSelector {
             .value
             .width()
             .min(width.saturating_sub(4).max(width / 2));
-        let separator = if self.picker == Picker::Models { " · " } else { ": " };
+        let separator = if self.picker == Picker::Models {
+            " · "
+        } else {
+            ": "
+        };
         let name_width = width.saturating_sub(value_width + separator.width());
         if name_width < 2 {
             return elide(&self.value, width);
@@ -1161,8 +1360,13 @@ fn composer_selectors(app: &App, width: u16, max_rows: u16) -> ComposerSelectors
             .iter()
             .filter(|o| crate::app_acp::config_supported(o))
         {
-            let thinking = app.chat.thinking_option().is_some_and(|o| o.id == option.id);
-            if thinking && model.is_some() { continue; }
+            let thinking = app
+                .chat
+                .thinking_option()
+                .is_some_and(|o| o.id == option.id);
+            if thinking && model.is_some() {
+                continue;
+            }
             if model.is_some_and(|o| o.id == option.id) {
                 let (effort, reason) = app.chat.thinking_status();
                 selectors.push(ComposerSelector {
@@ -1210,12 +1414,18 @@ fn composer_selectors(app: &App, width: u16, max_rows: u16) -> ComposerSelectors
             });
         }
     }
-    let thinking_picker = if model.is_some() { Picker::Models } else {
-        app.chat.thinking_option()
+    let thinking_picker = if model.is_some() {
+        Picker::Models
+    } else {
+        app.chat
+            .thinking_option()
             .filter(|o| crate::app_acp::config_changeable(o))
             .map_or(Picker::ThinkingInfo, |o| Picker::Values(o.id.to_string()))
     };
-    let thinking = selectors.iter().find(|s| s.picker == thinking_picker).cloned();
+    let thinking = selectors
+        .iter()
+        .find(|s| s.picker == thinking_picker)
+        .cloned();
     let (mut x, mut y) = (0u16, 0u16);
     for selector in selectors {
         let item_width = selector.width().min(width as usize) as u16;
@@ -1247,16 +1457,21 @@ fn composer_selectors(app: &App, width: u16, max_rows: u16) -> ComposerSelectors
         }
         // Keep the effort visible even when other settings need the overflow menu.
         if width >= 8
-            && !layout.items.iter().any(|(_, s)| s.picker == thinking_picker)
+            && !layout
+                .items
+                .iter()
+                .any(|(_, s)| s.picker == thinking_picker)
             && let Some(thinking) = thinking
         {
             let item_width = thinking.width().min(width.saturating_sub(4) as usize) as u16;
             let x = width - 4 - item_width;
             let y = layout.height.saturating_sub(1);
-            layout.items.retain(|(rect, _)| {
-                rect.y < y || rect.right().saturating_add(1) <= x
-            });
-            layout.items.push((Rect::new(x, y, item_width, 1), thinking));
+            layout
+                .items
+                .retain(|(rect, _)| rect.y < y || rect.right().saturating_add(1) <= x);
+            layout
+                .items
+                .push((Rect::new(x, y, item_width, 1), thinking));
         }
     }
     layout
@@ -1266,7 +1481,9 @@ fn draw_selectors(f: &mut Frame, app: &mut App, area: Rect, layout: &ComposerSel
     let idle = app.chat.initialized.is_some() && !app.chat.control_busy && !app.chat.busy();
     for (rect, control) in &layout.items {
         let rect = Rect::new(area.x + rect.x, area.y + rect.y, rect.width, 1);
-        if control.picker == Picker::Models { app.chat.model_selector_area = Some(rect); }
+        if control.picker == Picker::Models {
+            app.chat.model_selector_area = Some(rect);
+        }
         selector(
             f,
             app,
@@ -1295,8 +1512,15 @@ fn selector(f: &mut Frame, app: &mut App, area: Rect, label: &str, picker: Picke
     }
     let label = elide(label, area.width.saturating_sub(4) as usize);
     let padding = area.width.saturating_sub(label.width() as u16 + 3) as usize;
-    let label = format!(" {label}{}{} ", " ".repeat(padding),
-        if picker == Picker::ThinkingInfo { "⊘" } else { "▾" });
+    let label = format!(
+        " {label}{}{} ",
+        " ".repeat(padding),
+        if picker == Picker::ThinkingInfo {
+            "⊘"
+        } else {
+            "▾"
+        }
+    );
     widgets::draw_button(
         f,
         app,
@@ -1315,13 +1539,20 @@ fn draw_attached_files(f: &mut Frame, app: &mut App, area: Rect) {
     let count = app.chat.files.attached.len();
     let checking = app.chat.files.attaching.contains_key(&app.chat.selected);
     if checking && (count == 0 || area.width < 8) {
-        f.render_widget(Paragraph::new(" Checking attachments…").style(Style::default().fg(app.colors.fg_dim)), Rect::new(area.x, area.y, area.width, 1));
+        f.render_widget(
+            Paragraph::new(" Checking attachments…").style(Style::default().fg(app.colors.fg_dim)),
+            Rect::new(area.x, area.y, area.width, 1),
+        );
         return;
     }
     let rows = area.height.saturating_sub(1) as usize;
     let paging = rows > 0 && count > rows && area.width >= 12;
     let start = app.chat.files.scroll.min(count.saturating_sub(rows));
-    let caption = if checking { format!(" Files · {count} · Checking… ") } else { format!(" Files · {count} ▾ ") };
+    let caption = if checking {
+        format!(" Files · {count} · Checking… ")
+    } else {
+        format!(" Files · {count} ▾ ")
+    };
     button(
         f,
         app,
@@ -1397,10 +1628,18 @@ fn draw_review_files(f: &mut Frame, app: &mut App, area: Rect, files: &[(PathBuf
     }
     let paging = rows > 0 && last > 0 && area.width >= 12;
     let title_width = area.width - if paging { 6 } else { 0 };
-    let title = elide(&format!(" Unreviewed · {} ▾", files.len()), title_width as usize);
+    let title = elide(
+        &format!(" Unreviewed · {} ▾", files.len()),
+        title_width as usize,
+    );
     button(
-        f, app, Rect::new(area.x, area.y, title_width, 1), &title,
-        ChatAction::Picker(Picker::Unreviewed), true, false,
+        f,
+        app,
+        Rect::new(area.x, area.y, title_width, 1),
+        &title,
+        ChatAction::Picker(Picker::Unreviewed),
+        true,
+        false,
     );
     if paging {
         for (x, label, offset) in [
@@ -1408,8 +1647,13 @@ fn draw_review_files(f: &mut Frame, app: &mut App, area: Rect, files: &[(PathBuf
             (area.right() - 3, " ↓ ", (start + rows).min(last)),
         ] {
             button(
-                f, app, Rect::new(x, area.y, 3, 1), label,
-                ChatAction::ReviewFilesPage(offset), offset != start, false,
+                f,
+                app,
+                Rect::new(x, area.y, 3, 1),
+                label,
+                ChatAction::ReviewFilesPage(offset),
+                offset != start,
+                false,
             );
         }
     }
@@ -1424,9 +1668,13 @@ fn draw_review_files(f: &mut Frame, app: &mut App, area: Rect, files: &[(PathBuf
             elide(&label, width)
         };
         button(
-            f, app,
+            f,
+            app,
             Rect::new(area.x + 1, area.y + 1 + row as u16, area.width - 2, 1),
-            &label, ChatAction::ReviewFile(path.clone()), true, false,
+            &label,
+            ChatAction::ReviewFile(path.clone()),
+            true,
+            false,
         );
     }
 }
@@ -1467,7 +1715,13 @@ fn draw_file_completion(f: &mut Frame, app: &mut App, body: Rect, composer: Rect
         })
         .collect();
     let surface = crate::ui_widgets::surface_background(f, area, app.colors.bg_sidebar);
-    let popup_bg = app.colors.ui.suggest_colors.background.over(surface).unwrap_or(surface);
+    let popup_bg = app
+        .colors
+        .ui
+        .suggest_colors
+        .background
+        .over(surface)
+        .unwrap_or(surface);
     let popup_style = app.colors.ui.suggest_row_style(popup_bg, false, false);
     f.render_widget(ratatui::widgets::Clear, area);
     // Remove hit targets hidden beneath the popup, including keyboard targets.
@@ -1476,13 +1730,17 @@ fn draw_file_completion(f: &mut Frame, app: &mut App, body: Rect, composer: Rect
         Block::default()
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(app.colors.ui.suggest_colors.border.border(popup_bg).unwrap_or(popup_bg)))
-            .title_style(Style::default().fg(popup_style.fg.unwrap()).bg(popup_bg))
-            .style(
-                Style::default()
-                    .fg(popup_style.fg.unwrap())
-                    .bg(popup_bg),
+            .border_style(
+                Style::default().fg(app
+                    .colors
+                    .ui
+                    .suggest_colors
+                    .border
+                    .border(popup_bg)
+                    .unwrap_or(popup_bg)),
             )
+            .title_style(Style::default().fg(popup_style.fg.unwrap()).bg(popup_bg))
+            .style(Style::default().fg(popup_style.fg.unwrap()).bg(popup_bg))
             .title(if searching {
                 " Add files · searching… "
             } else {
@@ -1498,7 +1756,11 @@ fn draw_file_completion(f: &mut Frame, app: &mut App, body: Rect, composer: Rect
             } else {
                 "No matching files"
             })
-            .style(Style::default().fg(app.colors.ui.description_color(popup_bg)).bg(popup_bg)),
+            .style(
+                Style::default()
+                    .fg(app.colors.ui.description_color(popup_bg))
+                    .bg(popup_bg),
+            ),
             Rect::new(area.x + 2, area.y + 1, area.width - 4, 1),
         );
     }
@@ -1563,9 +1825,14 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
             | Picker::ThinkingInfo
     );
     let anchor_picker = if let Picker::Restore(id) = picker {
-        app.chat.session()
-            .and_then(|s| s.checkpoints.iter().find(|(_, cp)| **cp == id)
-                .map(|(index, _)| Picker::Message(*index, s.history_epoch)))
+        app.chat
+            .session()
+            .and_then(|s| {
+                s.checkpoints
+                    .iter()
+                    .find(|(_, cp)| **cp == id)
+                    .map(|(index, _)| Picker::Message(*index, s.history_epoch))
+            })
             .unwrap_or_else(|| picker.clone())
     } else {
         picker.clone()
@@ -1577,18 +1844,23 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
         .filter(|hit| hit.action == ChatAction::Picker(anchor_picker.clone()))
         .min_by_key(|hit| !hit.area.contains((app.mouse_col, app.mouse_row).into()))
         .map(|hit| hit.area)
-        .or_else(|| matches!(picker, Picker::Models | Picker::Thinking).then_some(app.chat.model_selector_area).flatten());
+        .or_else(|| {
+            matches!(picker, Picker::Models | Picker::Thinking)
+                .then_some(app.chat.model_selector_area)
+                .flatten()
+        });
     // Reserve space for every description so hovering never moves the rows
     // underneath the pointer, including when the current choice has no detail.
-    let details: Vec<_> = app
-        .chat
-        .choices
+    let details: Vec<_> = app.chat.choices.iter().map(|c| clean(&c.detail)).collect();
+    let detail = details
+        .get(app.chat.picker_selected)
+        .map_or("", String::as_str);
+    let detail_width = details
         .iter()
-        .map(|c| clean(&c.detail))
-        .collect();
-    let detail = details.get(app.chat.picker_selected).map_or("", String::as_str);
-    let detail_width = details.iter().flat_map(|s| s.lines())
-        .map(UnicodeWidthStr::width).max().unwrap_or(0);
+        .flat_map(|s| s.lines())
+        .map(UnicodeWidthStr::width)
+        .max()
+        .unwrap_or(0);
     let label_width = app
         .chat
         .choices
@@ -1597,9 +1869,14 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
         .max()
         .unwrap_or(24);
     let permission_info = picker == Picker::Permissions;
-    let width = (if picker == Picker::Tasks { composer.width } else if permission_info { 76 }
-        else { label_width.max(detail_width.min(44) + 4).clamp(28, 52) as u16 })
-        .min(area.width.saturating_sub(2));
+    let width = (if picker == Picker::Tasks {
+        composer.width
+    } else if permission_info {
+        76
+    } else {
+        label_width.max(detail_width.min(44) + 4).clamp(28, 52) as u16
+    })
+    .min(area.width.saturating_sub(2));
     let anchor_y = anchor.map_or(composer.bottom().saturating_sub(3), |r| r.y);
     let max_height = if picker == Picker::Tasks && anchor.is_some() {
         anchor_y.saturating_sub(app.chat.transcript_area.map_or(area.y + 1, |r| r.y))
@@ -1612,12 +1889,28 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
     };
     let detail_rows = if detail_width == 0 || max_height < 6 {
         0
-    } else if matches!(picker, Picker::Modes | Picker::Values(_) | Picker::ThinkingInfo | Picker::Thinking | Picker::Tasks | Picker::Display) {
+    } else if matches!(
+        picker,
+        Picker::Modes
+            | Picker::Values(_)
+            | Picker::ThinkingInfo
+            | Picker::Thinking
+            | Picker::Tasks
+            | Picker::Display
+    ) {
         let columns = width.saturating_sub(4).max(1) as usize;
-        let rows = details.iter().map(|text| {
-            text.lines().map(|line| line.width().div_ceil(columns).max(1)).sum::<usize>()
-        }).max().unwrap_or(0);
-        rows.saturating_add(1).min(6).min(max_height.saturating_sub(3) as usize) as u16
+        let rows = details
+            .iter()
+            .map(|text| {
+                text.lines()
+                    .map(|line| line.width().div_ceil(columns).max(1))
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(0);
+        rows.saturating_add(1)
+            .min(6)
+            .min(max_height.saturating_sub(3) as usize) as u16
     } else {
         3
     };
@@ -1625,11 +1918,21 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
     if permission_info {
         let (title, detail) = permissions::request_summary(app);
         for line in format!("{title}\n{detail}").lines() {
-            wrapped(&mut intro, line, width.saturating_sub(4) as usize, app.colors.fg_menu, None);
+            wrapped(
+                &mut intro,
+                line,
+                width.saturating_sub(4) as usize,
+                app.colors.fg_menu,
+                None,
+            );
         }
     }
     intro.truncate(max_height.saturating_sub(detail_rows + 5) as usize);
-    let intro_height = if intro.is_empty() { 0 } else { intro.len() as u16 + 1 };
+    let intro_height = if intro.is_empty() {
+        0
+    } else {
+        intro.len() as u16 + 1
+    };
     let height = (app.chat.choices.len().clamp(1, 8) as u16 + 2 + detail_rows + intro_height)
         .min(max_height)
         .max(3)
@@ -1641,7 +1944,11 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
         // The checklist grows upward, leaving its toggle and message input
         // fixed in place even in a tall chat pane.
         anchor_y.saturating_sub(height).max(area.y)
-    } else if matches!(anchor_picker, Picker::Message(..) | Picker::Display | Picker::Changes) && anchor.is_some() {
+    } else if matches!(
+        anchor_picker,
+        Picker::Message(..) | Picker::Display | Picker::Changes
+    ) && anchor.is_some()
+    {
         let below = anchor.unwrap().bottom();
         if below + height <= area.bottom() {
             below
@@ -1660,10 +1967,27 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
     let owner = crate::ui_widgets::surface_background(f, popup, app.colors.bg_sidebar);
     let colors = &app.colors.ui;
     let background = colors.menu_colors.background.over(owner).unwrap_or(owner);
-    let foreground = colors.menu_colors.foreground.over(background).unwrap_or(app.colors.fg_menu);
-    let selected_background = colors.menu_selection_colors.background.over(background).unwrap_or(background);
-    let selected_foreground = colors.menu_selection_colors.foreground.over(selected_background).unwrap_or(foreground);
-    let border = colors.menu_colors.border.or(colors.widget_border).border(background).unwrap_or(background);
+    let foreground = colors
+        .menu_colors
+        .foreground
+        .over(background)
+        .unwrap_or(app.colors.fg_menu);
+    let selected_background = colors
+        .menu_selection_colors
+        .background
+        .over(background)
+        .unwrap_or(background);
+    let selected_foreground = colors
+        .menu_selection_colors
+        .foreground
+        .over(selected_background)
+        .unwrap_or(foreground);
+    let border = colors
+        .menu_colors
+        .border
+        .or(colors.widget_border)
+        .border(background)
+        .unwrap_or(background);
     let separator = colors.menu_separator.over(background).unwrap_or(background);
     let description = colors.description_color(background);
     f.render_widget(ratatui::widgets::Clear, popup);
@@ -1677,16 +2001,19 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
                 " {} ",
                 elide(&title, width.saturating_sub(8) as usize)
             ))
-            .style(
-                Style::default()
-                    .fg(foreground)
-                    .bg(background),
-            ),
+            .style(Style::default().fg(foreground).bg(background)),
         popup,
     );
     let inside = popup.inner(Margin::new(1, 1));
-    let visible = inside.height.saturating_sub(detail_rows + intro_height).max(1) as usize;
-    let scrollbar_width = if app.chat.choices.len() > visible { 2.min(inside.width.saturating_sub(1)) } else { 0 };
+    let visible = inside
+        .height
+        .saturating_sub(detail_rows + intro_height)
+        .max(1) as usize;
+    let scrollbar_width = if app.chat.choices.len() > visible {
+        2.min(inside.width.saturating_sub(1))
+    } else {
+        0
+    };
     if app.chat.picker_selected < app.chat.picker_scroll {
         app.chat.picker_scroll = app.chat.picker_selected;
     }
@@ -1695,25 +2022,53 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
     }
     // Keep the pinned dropdown reachable so clicking its label also collapses
     // the open checklist. Other controls beneath a picker remain blocked.
-    let tasks_toggle = matches!(picker, Picker::Tasks | Picker::Display).then(|| app.chat.hits.iter()
-        .find(|hit| hit.action == ChatAction::Picker(picker.clone())).cloned()).flatten();
+    let tasks_toggle = matches!(picker, Picker::Tasks | Picker::Display)
+        .then(|| {
+            app.chat
+                .hits
+                .iter()
+                .find(|hit| hit.action == ChatAction::Picker(picker.clone()))
+                .cloned()
+        })
+        .flatten();
     app.chat.hits.clear();
-    if let Some(hit) = tasks_toggle { app.chat.hits.push(hit); }
+    if let Some(hit) = tasks_toggle {
+        app.chat.hits.push(hit);
+    }
     for (i, row) in intro.into_iter().enumerate() {
-        f.render_widget(Paragraph::new(row.line).style(Style::default().fg(app.colors.fg_menu)),
-            Rect::new(inside.x + 1, inside.y + i as u16, inside.width.saturating_sub(2), 1));
+        f.render_widget(
+            Paragraph::new(row.line).style(Style::default().fg(app.colors.fg_menu)),
+            Rect::new(
+                inside.x + 1,
+                inside.y + i as u16,
+                inside.width.saturating_sub(2),
+                1,
+            ),
+        );
     }
     if intro_height > 0 {
-        f.render_widget(Paragraph::new("─".repeat(inside.width.saturating_sub(2) as usize))
-            .style(Style::default().fg(separator)),
-            Rect::new(inside.x + 1, inside.y + intro_height - 1, inside.width.saturating_sub(2), 1));
+        f.render_widget(
+            Paragraph::new("─".repeat(inside.width.saturating_sub(2) as usize))
+                .style(Style::default().fg(separator)),
+            Rect::new(
+                inside.x + 1,
+                inside.y + intro_height - 1,
+                inside.width.saturating_sub(2),
+                1,
+            ),
+        );
     }
     for offset in 0..visible {
         let index = app.chat.picker_scroll + offset;
         let Some(choice) = app.chat.choices.get(index).cloned() else {
             break;
         };
-        let rect = Rect::new(inside.x, inside.y + intro_height + offset as u16, inside.width.saturating_sub(scrollbar_width), 1);
+        let rect = Rect::new(
+            inside.x,
+            inside.y + intro_height + offset as u16,
+            inside.width.saturating_sub(scrollbar_width),
+            1,
+        );
         let selected = index == app.chat.picker_selected;
         let (fg, bg) = if selected {
             (selected_foreground, selected_background)
@@ -1722,13 +2077,22 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
         };
         let fg = app.colors.ui.readable_foreground(fg, bg, 4.5);
         let task_marker = if picker == Picker::Tasks {
-            app.chat.session().and_then(|s| s.tasks.as_ref())
+            app.chat
+                .session()
+                .and_then(|s| s.tasks.as_ref())
                 .and_then(|tasks| tasks.entries.get(index))
                 .map(|entry| tasks::marker(entry.status, &app.colors))
-        } else { None };
-        let (checked, label) = if task_marker.is_some() { (false, choice.label.as_str()) }
-            else { choice.label.strip_prefix("✓ ")
-                .map_or((false, choice.label.as_str()), |label| (true, label)) };
+        } else {
+            None
+        };
+        let (checked, label) = if task_marker.is_some() {
+            (false, choice.label.as_str())
+        } else {
+            choice
+                .label
+                .strip_prefix("✓ ")
+                .map_or((false, choice.label.as_str()), |label| (true, label))
+        };
         let delete_id = if picker == Picker::Sessions {
             if let ChatAction::Switch(id) = &choice.action {
                 Some(id.clone())
@@ -1746,13 +2110,25 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
-                    task_marker.map_or(if checked { " ✓ ".into() } else { "   ".into() }, |(icon, _)| format!(" {icon} ")),
-                    Style::default().fg(if let Some((_, color)) = task_marker.filter(|_| !selected) { color }
-                    else if checked && !selected {
-                        app.colors.ui.readable_foreground(app.colors.fg_success, bg, 4.5)
-                    } else {
-                        fg
-                    }),
+                    task_marker.map_or(
+                        if checked {
+                            " ✓ ".into()
+                        } else {
+                            "   ".into()
+                        },
+                        |(icon, _)| format!(" {icon} "),
+                    ),
+                    Style::default().fg(
+                        if let Some((_, color)) = task_marker.filter(|_| !selected) {
+                            color
+                        } else if checked && !selected {
+                            app.colors
+                                .ui
+                                .readable_foreground(app.colors.fg_success, bg, 4.5)
+                        } else {
+                            fg
+                        },
+                    ),
                 ),
                 Span::raw(elide(
                     label,
@@ -1802,9 +2178,14 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
     }
     if app.chat.choices.is_empty() {
         f.render_widget(
-            Paragraph::new(if picker == Picker::Thinking && app.chat.thinking_loading() {
-                "  Changing model…"
-            } else { "  Nothing available" }).style(Style::default().fg(description)),
+            Paragraph::new(
+                if picker == Picker::Thinking && app.chat.thinking_loading() {
+                    "  Changing model…"
+                } else {
+                    "  Nothing available"
+                },
+            )
+            .style(Style::default().fg(description)),
             inside,
         );
     }
@@ -1828,16 +2209,35 @@ fn draw_picker(f: &mut Frame, app: &mut App, area: Rect, composer: Rect) {
         );
     }
     if scrollbar_width > 0 {
-        let bar = Rect::new(inside.right() - scrollbar_width, inside.y + intro_height,
-            scrollbar_width, visible as u16);
+        let bar = Rect::new(
+            inside.right() - scrollbar_width,
+            inside.y + intro_height,
+            scrollbar_width,
+            visible as u16,
+        );
         let hovered = bar.contains((app.mouse_col, app.mouse_row).into());
-        let (track, thumb) = app.colors.ui.scrollbar_colors(background, hovered, app.chat.scroll_drag.is_some());
-        crate::ui_widgets::VerticalScrollbar::new(bar.x, bar.y, bar.height,
-            app.chat.choices.len(), app.chat.picker_scroll)
-            .width(bar.width).colors(thumb, track, track).symbols('█', ' ').render(f);
+        let (track, thumb) =
+            app.colors
+                .ui
+                .scrollbar_colors(background, hovered, app.chat.scroll_drag.is_some());
+        crate::ui_widgets::VerticalScrollbar::new(
+            bar.x,
+            bar.y,
+            bar.height,
+            app.chat.choices.len(),
+            app.chat.picker_scroll,
+        )
+        .width(bar.width)
+        .colors(thumb, track, track)
+        .symbols('█', ' ')
+        .render(f);
         app.chat.scrollbars.push(crate::app_acp::ChatScrollbar {
-            area: bar, first: app.chat.picker_scroll, total: app.chat.choices.len(), visible,
-            terminal: None, picker: Some(picker.clone()),
+            area: bar,
+            first: app.chat.picker_scroll,
+            total: app.chat.choices.len(),
+            visible,
+            terminal: None,
+            picker: Some(picker.clone()),
         });
     }
     button(
@@ -1862,10 +2262,22 @@ impl ChatCache {
         output_detail: OutputDetail,
     ) {
         let c = theme.colors;
-        let inline_bg = c.ui.md_inline_background.over(c.bg_sidebar).unwrap_or(c.bg_sidebar);
-        let request_inline_bg = c.ui.md_inline_background.over(c.ui.bg_chat_request).unwrap_or(c.ui.bg_chat_request);
-        let quote_bg = c.ui.md_quote_background.over(c.bg_sidebar).unwrap_or(c.bg_sidebar);
-        let request_quote_bg = c.ui.md_quote_background.over(c.ui.bg_chat_request).unwrap_or(c.ui.bg_chat_request);
+        let inline_bg =
+            c.ui.md_inline_background
+                .over(c.bg_sidebar)
+                .unwrap_or(c.bg_sidebar);
+        let request_inline_bg =
+            c.ui.md_inline_background
+                .over(c.ui.bg_chat_request)
+                .unwrap_or(c.ui.bg_chat_request);
+        let quote_bg =
+            c.ui.md_quote_background
+                .over(c.bg_sidebar)
+                .unwrap_or(c.bg_sidebar);
+        let request_quote_bg =
+            c.ui.md_quote_background
+                .over(c.ui.bg_chat_request)
+                .unwrap_or(c.ui.bg_chat_request);
         let avatar = c.ui.chat_avatar_style(c.bg_sidebar);
         let request_avatar = c.ui.chat_avatar_style(c.ui.bg_chat_request);
         let mut colors = vec![
@@ -1884,16 +2296,24 @@ impl ChatCache {
             c.fg_md_code,
             c.ui.bg_md_inline,
             c.ui.fg_md_inline,
-            c.ui.md_code_background.over(c.bg_sidebar).unwrap_or(c.bg_md_code),
+            c.ui.md_code_background
+                .over(c.bg_sidebar)
+                .unwrap_or(c.bg_md_code),
             inline_bg,
-            c.ui.md_inline_foreground.over(inline_bg).unwrap_or(c.ui.fg_md_inline),
+            c.ui.md_inline_foreground
+                .over(inline_bg)
+                .unwrap_or(c.ui.fg_md_inline),
             c.fg_md_heading,
             c.fg_md_link,
             c.fg_md_blockquote,
             quote_bg,
             request_quote_bg,
-            c.ui.md_quote_border.over(quote_bg).unwrap_or(c.fg_md_blockquote),
-            c.ui.md_quote_border.over(request_quote_bg).unwrap_or(c.fg_md_blockquote),
+            c.ui.md_quote_border
+                .over(quote_bg)
+                .unwrap_or(c.fg_md_blockquote),
+            c.ui.md_quote_border
+                .over(request_quote_bg)
+                .unwrap_or(c.fg_md_blockquote),
             c.bg_diff_added,
             c.bg_diff_removed,
             c.ui.fg_gutter_added,
@@ -1908,8 +2328,12 @@ impl ChatCache {
             c.ui.sidebar_text_color(c.bg_sidebar),
             c.ui.sidebar_text_color(c.ui.bg_chat_request),
             request_inline_bg,
-            c.ui.md_inline_foreground.over(request_inline_bg).unwrap_or(c.ui.fg_md_inline),
-            c.ui.md_code_background.over(c.ui.bg_chat_request).unwrap_or(c.bg_md_code),
+            c.ui.md_inline_foreground
+                .over(request_inline_bg)
+                .unwrap_or(c.ui.fg_md_inline),
+            c.ui.md_code_background
+                .over(c.ui.bg_chat_request)
+                .unwrap_or(c.bg_md_code),
             c.ui.fg_chat_edited_file,
             c.ui.fg_chat_added,
             c.ui.fg_chat_removed,
@@ -1956,10 +2380,20 @@ impl ChatCache {
             {
                 continue;
             }
-            let rows = entry_rows_detail(session, index, width as usize, c, open, agent_name, syntax, output_detail, theme.diff_algorithm)
-                .into_iter()
-                .map(Arc::new)
-                .collect();
+            let rows = entry_rows_detail(
+                session,
+                index,
+                width as usize,
+                c,
+                open,
+                agent_name,
+                syntax,
+                output_detail,
+                theme.diff_algorithm,
+            )
+            .into_iter()
+            .map(Arc::new)
+            .collect();
             if index < self.entries.len() {
                 self.entries[index] = (revision, open, rows);
             } else {
@@ -1986,8 +2420,26 @@ impl ChatCache {
 }
 
 #[cfg(test)]
-fn entry_rows(session: &Session, index: usize, width: usize, c: &ThemeColors, open: bool, agent_name: &str, syntax: ChatSyntax<'_>) -> Vec<ChatRow> {
-    entry_rows_detail(session, index, width, c, open, agent_name, syntax, OutputDetail::Compact, Default::default())
+fn entry_rows(
+    session: &Session,
+    index: usize,
+    width: usize,
+    c: &ThemeColors,
+    open: bool,
+    agent_name: &str,
+    syntax: ChatSyntax<'_>,
+) -> Vec<ChatRow> {
+    entry_rows_detail(
+        session,
+        index,
+        width,
+        c,
+        open,
+        agent_name,
+        syntax,
+        OutputDetail::Compact,
+        Default::default(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2008,7 +2460,11 @@ fn entry_rows_detail(
         ChatEntry::User(text) | ChatEntry::Agent(text) => {
             let user = matches!(entry, ChatEntry::User(_));
             let name = if user { "You" } else { agent_name };
-            let surface = if user { c.ui.bg_chat_request } else { c.bg_sidebar };
+            let surface = if user {
+                c.ui.bg_chat_request
+            } else {
+                c.bg_sidebar
+            };
             plain(&mut rows, "─".repeat(width), c.ui.fg_group_border, None);
             rows.last_mut().unwrap().separator = true;
             row(
@@ -2030,15 +2486,24 @@ fn entry_rows_detail(
             );
             if user || !context::render(&mut rows, text, width, c) {
                 markdown_on_surface(
-                    &mut rows, text,
+                    &mut rows,
+                    text,
                     if user { width.saturating_sub(3) } else { width },
-                    c, usize::MAX, syntax, surface,
+                    c,
+                    usize::MAX,
+                    syntax,
+                    surface,
                 );
             }
             if user {
                 for row in &mut rows {
                     row.background = Some(c.ui.bg_chat_request);
-                    if !row.separator { row.action = Some(ChatAction::Picker(Picker::Message(index, session.history_epoch))); }
+                    if !row.separator {
+                        row.action = Some(ChatAction::Picker(Picker::Message(
+                            index,
+                            session.history_epoch,
+                        )));
+                    }
                 }
             }
             plain(&mut rows, "─".repeat(width), c.ui.fg_group_border, None);
@@ -2091,14 +2556,40 @@ fn entry_rows_detail(
                     p::ToolCallStatus::Failed => ("!", c.fg_error),
                     _ => ("◌", c.fg_accent_blue),
                 };
-                plain(&mut rows, format!("{icon}  TODOs {}/{} {}", tasks.completed(), tasks.entries.len(),
-                    if open { "▾" } else { "▸" }), color, Some(ChatAction::ToggleEntry(index)));
+                plain(
+                    &mut rows,
+                    format!(
+                        "{icon}  TODOs {}/{} {}",
+                        tasks.completed(),
+                        tasks.entries.len(),
+                        if open { "▾" } else { "▸" }
+                    ),
+                    color,
+                    Some(ChatAction::ToggleEntry(index)),
+                );
                 if open || output_detail != OutputDetail::Minimal {
-                    tasks::rows(&mut rows, &tasks, width, c, if open { usize::MAX } else { 3 });
+                    tasks::rows(
+                        &mut rows,
+                        &tasks,
+                        width,
+                        c,
+                        if open { usize::MAX } else { 3 },
+                    );
                 }
-            } else if let Some(terminal) = tool_terminals::parse(tool, session.entry_revision(index)) {
-                terminals::reported_rows(&mut rows, terminal, width, index, open, output_detail != OutputDetail::Minimal);
-                if open { tools::terminal_input_details(&mut rows, tool, width, c); }
+            } else if let Some(terminal) =
+                tool_terminals::parse(tool, session.entry_revision(index))
+            {
+                terminals::reported_rows(
+                    &mut rows,
+                    terminal,
+                    width,
+                    index,
+                    open,
+                    output_detail != OutputDetail::Minimal,
+                );
+                if open {
+                    tools::terminal_input_details(&mut rows, tool, width, c);
+                }
             } else {
                 let (icon, color) = match tool.status {
                     p::ToolCallStatus::Completed => ("✓", c.fg_success),
@@ -2108,7 +2599,17 @@ fn entry_rows_detail(
                 };
                 plain(
                     &mut rows,
-                    format!("{icon}  {}  {}", elide(&tool.title, width.saturating_sub(7)), if tools::location(tool).is_some() { "" } else if open { "▾" } else { "▸" }),
+                    format!(
+                        "{icon}  {}  {}",
+                        elide(&tool.title, width.saturating_sub(7)),
+                        if tools::location(tool).is_some() {
+                            ""
+                        } else if open {
+                            "▾"
+                        } else {
+                            "▸"
+                        }
+                    ),
                     color,
                     Some(ChatAction::ToggleEntry(index)),
                 );
@@ -2119,7 +2620,12 @@ fn entry_rows_detail(
         }
         ChatEntry::Edit(edit) => {
             if session.rollback.pending_file(&edit.path).is_some() {
-                plain(&mut rows, "●  File updated · Pending review".into(), c.fg_warning, None);
+                plain(
+                    &mut rows,
+                    "●  File updated · Pending review".into(),
+                    c.fg_warning,
+                    None,
+                );
             } else {
                 plain(&mut rows, "✓  File updated".into(), c.fg_success, None);
             }
@@ -2129,7 +2635,15 @@ fn entry_rows_detail(
         }
         ChatEntry::Terminal(id) => {
             if let Some(terminal) = session.terminals.get(id) {
-                terminals::rows(&mut rows, id, &terminal.command, width, index, open, output_detail != OutputDetail::Minimal);
+                terminals::rows(
+                    &mut rows,
+                    id,
+                    &terminal.command,
+                    width,
+                    index,
+                    open,
+                    output_detail != OutputDetail::Minimal,
+                );
             }
         }
         ChatEntry::Notice(message) => wrapped(&mut rows, message, width, c.fg_dim, None),
@@ -2141,12 +2655,15 @@ fn entry_rows_detail(
     for row in &mut rows {
         // Rules are decoration; keep their subtle theme border color rather
         // than raising it to the prose contrast threshold.
-        if row.separator { continue; }
+        if row.separator {
+            continue;
+        }
         let background = row.line.style.bg.or(row.background).unwrap_or(c.bg_sidebar);
         let foreground = row.line.style.fg.unwrap_or(c.ui.fg_sidebar);
-        row.line.style = row.line.style.fg(c.ui.readable_foreground(
-            foreground, background, 4.5,
-        ));
+        row.line.style = row
+            .line
+            .style
+            .fg(c.ui.readable_foreground(foreground, background, 4.5));
         for span in &mut row.line.spans {
             span.style = span.style.fg(c.ui.readable_foreground(
                 span.style.fg.unwrap_or(foreground),
@@ -2169,7 +2686,9 @@ fn diff_rows(
     let before = diff.old_text.as_deref().unwrap_or_default();
     // Avoid doing expensive full-file diff work on a streamed transcript frame.
     // The complete snapshots remain available in the native Review action.
-    let Some(changes) = crate::diff_algorithm::interactive_file_diff(before, &diff.new_text, algorithm) else {
+    let Some(changes) =
+        crate::diff_algorithm::interactive_file_diff(before, &diff.new_text, algorithm)
+    else {
         plain(
             rows,
             format!(
@@ -2184,30 +2703,49 @@ fn diff_rows(
     let moved = (algorithm == crate::diff_algorithm::DiffAlgorithm::Smart)
         .then(|| crate::diff_algorithm::detect_moves(&changes))
         .flatten();
-    let changed_rows = changes.iter().enumerate().filter_map(|(index, (kind, text))| {
-        (*kind != ' ').then_some((*kind, text, moved.as_ref().and_then(|moved| moved.rows[index])))
-    });
-    let added = changed_rows.clone().filter(|(kind, _, moved)| *kind == '+' && moved.is_none()).count();
-    let removed = changed_rows.clone().filter(|(kind, _, moved)| *kind == '-' && moved.is_none()).count();
-    let moved_count = changed_rows.clone().filter(|(kind, _, moved)| *kind == '-' && moved.is_some()).count();
+    let changed_rows = changes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (kind, text))| {
+            (*kind != ' ').then_some((
+                *kind,
+                text,
+                moved.as_ref().and_then(|moved| moved.rows[index]),
+            ))
+        });
+    let added = changed_rows
+        .clone()
+        .filter(|(kind, _, moved)| *kind == '+' && moved.is_none())
+        .count();
+    let removed = changed_rows
+        .clone()
+        .filter(|(kind, _, moved)| *kind == '-' && moved.is_none())
+        .count();
+    let moved_count = changed_rows
+        .clone()
+        .filter(|(kind, _, moved)| *kind == '-' && moved.is_some())
+        .count();
     let review = ChatAction::Review(Arc::new(diff.clone()));
     let mut header = vec![
-            Span::styled(
-                format!(
-                    "  ↗ {}  ",
-                    clean(&diff.path.file_name().unwrap_or_default().to_string_lossy())
-                ),
-                Style::default().fg(c.ui.fg_chat_edited_file),
+        Span::styled(
+            format!(
+                "  ↗ {}  ",
+                clean(&diff.path.file_name().unwrap_or_default().to_string_lossy())
             ),
-            Span::styled(format!("+{added}"), Style::default().fg(c.ui.fg_chat_added)),
-            Span::raw(" "),
-            Span::styled(
-                format!("−{removed}"),
-                Style::default().fg(c.ui.fg_chat_removed),
-            ),
+            Style::default().fg(c.ui.fg_chat_edited_file),
+        ),
+        Span::styled(format!("+{added}"), Style::default().fg(c.ui.fg_chat_added)),
+        Span::raw(" "),
+        Span::styled(
+            format!("−{removed}"),
+            Style::default().fg(c.ui.fg_chat_removed),
+        ),
     ];
     if let Some(moves) = &moved {
-        header.push(Span::styled(format!(" ↔{}", moves.lengths.len()), Style::default().fg(c.fg_accent_blue)));
+        header.push(Span::styled(
+            format!(" ↔{}", moves.lengths.len()),
+            Style::default().fg(c.fg_accent_blue),
+        ));
     }
     if let Some(side) = crate::diff_algorithm::missing_final_newline(before, &diff.new_text) {
         use crate::diff_algorithm::MissingFinalNewline::{Original, Target};
@@ -2244,7 +2782,12 @@ fn markdown(
     limit: usize,
     syntax: ChatSyntax<'_>,
 ) {
-    append_markdown(rows, crate::ui_markdown::chat_lines(text, width.max(1), colors, syntax), limit, colors.fg_dim);
+    append_markdown(
+        rows,
+        crate::ui_markdown::chat_lines(text, width.max(1), colors, syntax),
+        limit,
+        colors.fg_dim,
+    );
 }
 fn markdown_on_surface(
     rows: &mut Vec<ChatRow>,
@@ -2255,7 +2798,8 @@ fn markdown_on_surface(
     syntax: ChatSyntax<'_>,
     surface: Color,
 ) {
-    let lines = crate::ui_markdown::chat_lines_on_surface(text, width.max(1), colors, syntax, surface);
+    let lines =
+        crate::ui_markdown::chat_lines_on_surface(text, width.max(1), colors, syntax, surface);
     append_markdown(rows, lines, limit, colors.fg_dim);
 }
 fn append_markdown(rows: &mut Vec<ChatRow>, lines: Vec<Line<'static>>, limit: usize, dim: Color) {
@@ -2471,8 +3015,19 @@ mod tests {
             assert!(text(&terminal).contains("Context usage"));
             assert!(text(&terminal).contains("53,000 / 200,000 tokens"));
             assert!(text(&terminal).contains("147,000 tokens remaining"));
-            let hovered = terminal.backend().buffer().cell((badge.x, badge.y)).unwrap();
-            assert_eq!(hovered.bg, app.colors.ui.toolbar_hover.over(background).unwrap_or(background));
+            let hovered = terminal
+                .backend()
+                .buffer()
+                .cell((badge.x, badge.y))
+                .unwrap();
+            assert_eq!(
+                hovered.bg,
+                app.colors
+                    .ui
+                    .toolbar_hover
+                    .over(background)
+                    .unwrap_or(background)
+            );
             assert!(hovered.modifier.contains(Modifier::UNDERLINED));
             // An update refreshes the open tooltip without another mouse event.
             app.apply_acp_event(vtcode::acp::Event::Update(p::SessionNotification::new(
@@ -2490,7 +3045,9 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 cell.fg,
-                app.colors.ui.readable_foreground(app.colors.fg_warning, cell.bg, 4.5)
+                app.colors
+                    .ui
+                    .readable_foreground(app.colors.fg_warning, cell.bg, 4.5)
             );
             app.chat_action(ChatAction::Picker(Picker::Models));
             terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
@@ -2637,10 +3194,18 @@ mod tests {
                 .buffer()
                 .cell((area.x, area.y + app.chat.cache.rows.len() as u16))
                 .unwrap();
-            assert_eq!(spinner.fg, app.colors.ui.readable_foreground(app.colors.fg_accent_blue, spinner.bg, 4.5));
+            assert_eq!(
+                spinner.fg,
+                app.colors
+                    .ui
+                    .readable_foreground(app.colors.fg_accent_blue, spinner.bg, 4.5)
+            );
             assert_eq!(app.chat.session().unwrap().entries.len(), 1);
             let cached = app.chat.cache.rows[0].clone();
-            app.chat.activity.tick.set(Some(Instant::now() - ACTIVITY_INTERVAL));
+            app.chat
+                .activity
+                .tick
+                .set(Some(Instant::now() - ACTIVITY_INTERVAL));
             assert!(advance_activity_frame(&mut app));
             terminal
                 .draw(|f| draw(f, &mut app, Rect::new(0, 0, 40, 24)))
@@ -2886,11 +3451,18 @@ mod tests {
             terminal
                 .draw(|f| draw(f, &mut app, Rect::new(0, 0, 66, 30)))
                 .unwrap();
-            let agent = app.chat.hits.iter()
-                .find(|hit| matches!(hit.action, ChatAction::SwitchAgent(_))).unwrap().area;
+            let agent = app
+                .chat
+                .hits
+                .iter()
+                .find(|hit| matches!(hit.action, ChatAction::SwitchAgent(_)))
+                .unwrap()
+                .area;
             app.mouse_col = agent.x;
             app.mouse_row = agent.y;
-            terminal.draw(|f| draw(f, &mut app, Rect::new(0, 0, 66, 30))).unwrap();
+            terminal
+                .draw(|f| draw(f, &mut app, Rect::new(0, 0, 66, 30)))
+                .unwrap();
             assert!(text(&terminal).contains("Disconnected"));
         }
     }
@@ -3299,7 +3871,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::test_new();
         app.explorer.root = root.path().to_path_buf();
-        let python = std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
+        let python = std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
         let mut config = vtcode::acp::AgentConfig::new("Official SDK scenario agent", python);
         config.args = vec![
             "-u".into(),
@@ -3327,7 +3900,10 @@ mod tests {
                 .any(|s| s.contains("Silent prompt received"))
         });
         assert_eq!(app.chat.session().unwrap().entries.len(), 1);
-        app.chat.activity.tick.set(Some(Instant::now() - ACTIVITY_INTERVAL));
+        app.chat
+            .activity
+            .tick
+            .set(Some(Instant::now() - ACTIVITY_INTERVAL));
         assert!(advance_activity_frame(&mut app));
         terminal
             .draw(|f| draw(f, &mut app, Rect::new(0, 0, 58, 28)))
@@ -3428,7 +4004,8 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::test_new();
         app.explorer.root = root.path().to_path_buf();
-        let python = std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
+        let python = std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
         let mut config = vtcode::acp::AgentConfig::new("SDK selectors", python);
         config.args = vec![
             "-u".into(),
@@ -3525,7 +4102,8 @@ mod tests {
         std::fs::write(root.path().join("generated.txt"), "before\n").unwrap();
         let mut app = App::test_new();
         app.explorer.root = root.path().to_path_buf();
-        let python = std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
+        let python = std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
         let mut config = vtcode::acp::AgentConfig::new("Official SDK scenario agent", python);
         config.args = vec![
             "-u".into(),
@@ -3734,9 +4312,11 @@ mod tests {
                 app.chat.rollback.enabled = true;
                 app.chat.rollback.initialized = true;
                 app.chat.thinking_expanded = true;
-                app.chat.session_mut().unwrap().commands = serde_json::from_value(serde_json::json!([
-                    {"name":"inspect", "description":"Inspect workspace"}
-                ])).unwrap();
+                app.chat.session_mut().unwrap().commands =
+                    serde_json::from_value(serde_json::json!([
+                        {"name":"inspect", "description":"Inspect workspace"}
+                    ]))
+                    .unwrap();
             } else if name == "working" {
                 let session = app.chat.session_mut().unwrap();
                 *session = Session::new(session.id.clone());

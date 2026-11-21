@@ -51,7 +51,9 @@ fn retained_walls_reuse_only_unchanged_projection_and_bounds() {
     for frame in 0..4 {
         let painter = painter(&mut buffer, &geometry);
         cache.prepare(&painter, &geometry, GUTTER);
-        if frame == 0 { original = cache.walls.clone(); }
+        if frame == 0 {
+            original = cache.walls.clone();
+        }
         assert_eq!(cache.walls, original);
         assert_eq!(cache.wall_builds, 1);
     }
@@ -74,8 +76,12 @@ fn retained_route_keys_reuse_geometry_but_recheck_hints_and_obstructions() {
     let mut original = Vec::new();
     for frame in 0..10 {
         cache.prepare(&painter, &geometry, GUTTER);
-        let route = cache.route(&painter, &geometry, GUTTER, rows(&geometry), PAIR).unwrap();
-        if frame == 0 { original = points(route); }
+        let route = cache
+            .route(&painter, &geometry, GUTTER, rows(&geometry), PAIR)
+            .unwrap();
+        if frame == 0 {
+            original = points(route);
+        }
         assert_eq!(points(route), original);
     }
     assert_eq!(cache.key_builds, 1);
@@ -89,7 +95,11 @@ fn retained_route_keys_reuse_geometry_but_recheck_hints_and_obstructions() {
     assert_eq!(cache.builds, 2);
     painter.scope_endpoints.insert(PAIR.0, None);
     cache.prepare(&painter, &geometry, GUTTER);
-    assert!(cache.route(&painter, &geometry, GUTTER, rows(&geometry), PAIR).is_none());
+    assert!(
+        cache
+            .route(&painter, &geometry, GUTTER, rows(&geometry), PAIR)
+            .is_none()
+    );
     assert!(cache.key_builds >= 2);
 }
 

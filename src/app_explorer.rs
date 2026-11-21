@@ -122,7 +122,9 @@ impl App {
     pub(crate) fn finish_explorer_paste_reveal(&mut self) {
         let mut paths = std::mem::take(&mut self.explorer_paste_reveal);
         if self.explorer.find.filtering()
-            && paths.iter().any(|path| self.explorer.find_path(path).is_none())
+            && paths
+                .iter()
+                .any(|path| self.explorer.find_path(path).is_none())
         {
             // Keep the query available while showing items it filtered out.
             self.explorer.find.filter = false;
@@ -138,11 +140,20 @@ impl App {
         }
     }
 
-    pub(crate) fn finish_explorer_cut(&mut self, outcome: &crate::background::FilesystemActionOutcome) {
-        let Some(snapshot) = &outcome.cut_clipboard else { return; };
-        let Some(clipboard) = self.explorer_clipboard.as_mut().filter(|clipboard| {
-            clipboard.cut && Arc::ptr_eq(snapshot, &clipboard.terminal_text)
-        }) else { return; };
+    pub(crate) fn finish_explorer_cut(
+        &mut self,
+        outcome: &crate::background::FilesystemActionOutcome,
+    ) {
+        let Some(snapshot) = &outcome.cut_clipboard else {
+            return;
+        };
+        let Some(clipboard) = self
+            .explorer_clipboard
+            .as_mut()
+            .filter(|clipboard| clipboard.cut && Arc::ptr_eq(snapshot, &clipboard.terminal_text))
+        else {
+            return;
+        };
         let moved: rustc_hash::FxHashSet<_> = outcome.completed_cut_paths.iter().collect();
         clipboard.paths.retain(|path| !moved.contains(path));
         // Keep accepting the original terminal payload for the remaining paths.
@@ -152,28 +163,48 @@ impl App {
     }
 
     pub(crate) fn display_path(&self, path: &Path) -> String {
-        let display = self.remote_workspace.as_ref().and_then(|remote| remote.display_path(path).ok())
+        let display = self
+            .remote_workspace
+            .as_ref()
+            .and_then(|remote| remote.display_path(path).ok())
             .unwrap_or_else(|| path.display().to_string());
         Self::escape_path_controls(display)
     }
     /// Read-only labels use the remote machine's native spelling. Editable
     /// locators can instead need URI escaping to round-trip unusual filenames.
     pub(crate) fn display_path_label(&self, path: &Path) -> String {
-        let display = self.remote_workspace.as_ref().and_then(|remote| remote.context_path(path).ok())
+        let display = self
+            .remote_workspace
+            .as_ref()
+            .and_then(|remote| remote.context_path(path).ok())
             .unwrap_or_else(|| path.display().to_string());
         Self::escape_path_controls(display)
     }
     fn escape_path_controls(display: String) -> String {
-        if !display.chars().any(char::is_control) { return display; }
+        if !display.chars().any(char::is_control) {
+            return display;
+        }
         let mut escaped = String::with_capacity(display.len());
         for ch in display.chars() {
-            if ch.is_control() { escaped.extend(ch.escape_default()); } else { escaped.push(ch); }
+            if ch.is_control() {
+                escaped.extend(ch.escape_default());
+            } else {
+                escaped.push(ch);
+            }
         }
         escaped
     }
     pub(crate) fn explorer_target_directory(&self, target: Option<&Path>) -> std::path::PathBuf {
         match target {
-            Some(target) if target == self.explorer.root || self.explorer.find_path(target).is_some_and(|i| self.explorer.entries[i].is_dir) => target.to_owned(),
+            Some(target)
+                if target == self.explorer.root
+                    || self
+                        .explorer
+                        .find_path(target)
+                        .is_some_and(|i| self.explorer.entries[i].is_dir) =>
+            {
+                target.to_owned()
+            }
             Some(target) => target.parent().unwrap_or(&self.explorer.root).to_owned(),
             None => self.explorer.root.clone(),
         }
@@ -183,25 +214,39 @@ impl App {
         let base = if folder { "new folder" } else { "new file" };
         let mut name = base.to_owned();
         for index in 1..=10_000 {
-            if self.explorer.find_path(&directory.join(&name)).is_none() { break; }
+            if self.explorer.find_path(&directory.join(&name)).is_none() {
+                break;
+            }
             name = format!("{base} ({index})");
         }
         let path = directory.join(&name);
-        self.explorer.insert_remote_placeholder(path.clone(), name.clone(), folder);
-        self.creating_new_file = !folder; self.creating_new_folder = folder;
+        self.explorer
+            .insert_remote_placeholder(path.clone(), name.clone(), folder);
+        self.creating_new_file = !folder;
+        self.creating_new_folder = folder;
         self.begin_rename(path, name, true, true);
     }
 
-    pub(crate) fn run_remote_filesystem_action(&mut self, action: &'static str, task: crate::remote::fs::Task,
-        finish_rename: Option<std::path::PathBuf>) {
-        let Some(remote) = self.remote_workspace.clone() else { return; };
+    pub(crate) fn run_remote_filesystem_action(
+        &mut self,
+        action: &'static str,
+        task: crate::remote::fs::Task,
+        finish_rename: Option<std::path::PathBuf>,
+    ) {
+        let Some(remote) = self.remote_workspace.clone() else {
+            return;
+        };
         let cut_clipboard = if matches!(task, crate::remote::fs::Task::Paste { cut: true, .. }) {
-            self.explorer_clipboard.as_ref().map(|clipboard| clipboard.terminal_text.clone())
+            self.explorer_clipboard
+                .as_ref()
+                .map(|clipboard| clipboard.terminal_text.clone())
         } else {
             None
         };
         self.run_filesystem_action_async("remote-filesystem", action, move || {
-            let mut result = remote.filesystem(task, &crate::background::CancellationToken::new(), |_| {}).map_err(|error| error.to_string())?;
+            let mut result = remote
+                .filesystem(task, &crate::background::CancellationToken::new(), |_| {})
+                .map_err(|error| error.to_string())?;
             result.finish_rename = finish_rename;
             result.cut_clipboard = cut_clipboard;
             Ok(result)
@@ -213,8 +258,8 @@ impl App {
         worker_name: &'static str,
         action: &'static str,
         job: impl FnOnce() -> Result<crate::background::FilesystemActionOutcome, String>
-            + Send
-            + 'static,
+        + Send
+        + 'static,
     ) {
         if self.bg_filesystem_action_running {
             self.notify("Another file operation is already running");
@@ -226,8 +271,12 @@ impl App {
         let generation = self.workspace_generation;
         self.background.spawn(worker_name, move || {
             let result = job();
-            let result = crate::background::BackgroundResult::FilesystemActionDone { action, result };
-            let _ = sender.send(crate::background::BackgroundResult::WorkspaceResult { generation, result: Box::new(result) });
+            let result =
+                crate::background::BackgroundResult::FilesystemActionDone { action, result };
+            let _ = sender.send(crate::background::BackgroundResult::WorkspaceResult {
+                generation,
+                result: Box::new(result),
+            });
         });
     }
 
@@ -265,16 +314,28 @@ impl App {
 
     fn execute_explorer_action(&mut self, action: &str) -> bool {
         self.explorer_context_active = false;
-        if !self.has_open_folder() && self.explorer_context_target.as_ref().is_none_or(|path| path.as_os_str().is_empty()) {
+        if !self.has_open_folder()
+            && self
+                .explorer_context_target
+                .as_ref()
+                .is_none_or(|path| path.as_os_str().is_empty())
+        {
             match action {
-                "New File" => { self.new_file(); return false; }
-                "New Folder" => { crate::ui_workspaces::open_folder(self); return false; }
+                "New File" => {
+                    self.new_file();
+                    return false;
+                }
+                "New Folder" => {
+                    crate::ui_workspaces::open_folder(self);
+                    return false;
+                }
                 _ => {}
             }
         }
         match action {
             "Find by Name…" => {
-                let directory = self.explorer_target_directory(self.explorer_context_target.as_deref());
+                let directory =
+                    self.explorer_target_directory(self.explorer_context_target.as_deref());
                 self.open_explorer_find_in(directory);
             }
             "Find in Folder…" => {
@@ -306,7 +367,12 @@ impl App {
                 // Copy/move each tree only once, never as separate overlapping operations.
                 if targets.len() > 1 {
                     let selected: rustc_hash::FxHashSet<_> = targets.iter().cloned().collect();
-                    targets.retain(|path| !path.ancestors().skip(1).any(|parent| selected.contains(parent)));
+                    targets.retain(|path| {
+                        !path
+                            .ancestors()
+                            .skip(1)
+                            .any(|parent| selected.contains(parent))
+                    });
                 }
                 if !targets.is_empty() {
                     let cut = action == "Cut File";
@@ -318,13 +384,19 @@ impl App {
                         .to_string();
                     let mut terminal_text = String::new();
                     for (index, path) in targets.iter().enumerate() {
-                        if index > 0 { terminal_text.push('\n'); }
+                        if index > 0 {
+                            terminal_text.push('\n');
+                        }
                         terminal_text.push_str(&self.display_path(path));
                     }
                     // Keep internal file ownership even if the system clipboard
                     // is unavailable (for example a terminal without OSC 52).
                     let _ = crate::clipboard::set_text(&terminal_text);
-                    self.explorer_clipboard = Some(FileClipboard { paths: targets, cut, terminal_text: terminal_text.into() });
+                    self.explorer_clipboard = Some(FileClipboard {
+                        paths: targets,
+                        cut,
+                        terminal_text: terminal_text.into(),
+                    });
                     let verb = if cut { "Cut" } else { "Copied" };
                     if copied_count == 1 {
                         self.notify(format!("{verb}: {copied_name}"));
@@ -336,20 +408,32 @@ impl App {
             "Paste File" => {
                 if let Some(clipboard) = &self.explorer_clipboard {
                     let cut = clipboard.cut;
-                    let directory = self.explorer_target_directory(self.explorer_context_target.as_deref());
+                    let directory =
+                        self.explorer_target_directory(self.explorer_context_target.as_deref());
                     if let Some(remote) = self.remote_workspace.clone() {
-                        let task = (|| -> std::io::Result<_> { Ok(crate::remote::fs::Task::Paste {
-                            sources: clipboard.paths.iter().map(|path| remote.remote_path(path)).collect::<std::io::Result<_>>()?,
-                            directory: remote.remote_path(&directory)?, cut,
-                        }) })();
-                        match task { Ok(task) => self.run_remote_filesystem_action("Paste", task, None), Err(error) => self.notify_error(error.to_string()) }
+                        let task = (|| -> std::io::Result<_> {
+                            Ok(crate::remote::fs::Task::Paste {
+                                sources: clipboard
+                                    .paths
+                                    .iter()
+                                    .map(|path| remote.remote_path(path))
+                                    .collect::<std::io::Result<_>>()?,
+                                directory: remote.remote_path(&directory)?,
+                                cut,
+                            })
+                        })();
+                        match task {
+                            Ok(task) => self.run_remote_filesystem_action("Paste", task, None),
+                            Err(error) => self.notify_error(error.to_string()),
+                        }
                         return false;
                     }
                     let sources = clipboard.paths.clone();
                     let cut_clipboard = cut.then(|| clipboard.terminal_text.clone());
                     self.run_filesystem_action_async("explorer-paste", "Paste", move || {
-                        let mut outcome = crate::fs_ops::paste_items(sources, &directory, cut, || false)
-                            .map_err(|error| error.to_string())?;
+                        let mut outcome =
+                            crate::fs_ops::paste_items(sources, &directory, cut, || false)
+                                .map_err(|error| error.to_string())?;
                         outcome.cut_clipboard = cut_clipboard;
                         Ok(outcome)
                     });
@@ -376,9 +460,14 @@ impl App {
             "New File" => {
                 // The placeholder needs to remain visible for inline naming,
                 // even when its temporary name does not match the search.
-                if self.explorer.find.open { self.close_explorer_find(); }
+                if self.explorer.find.open {
+                    self.close_explorer_find();
+                }
                 if self.remote_workspace.is_some() {
-                    self.begin_remote_creation(self.explorer_target_directory(self.explorer_context_target.as_deref()), false);
+                    self.begin_remote_creation(
+                        self.explorer_target_directory(self.explorer_context_target.as_deref()),
+                        false,
+                    );
                     return false;
                 }
                 if let Some(target) = &self.explorer_context_target {
@@ -405,9 +494,14 @@ impl App {
                 }
             }
             "New Folder" => {
-                if self.explorer.find.open { self.close_explorer_find(); }
+                if self.explorer.find.open {
+                    self.close_explorer_find();
+                }
                 if self.remote_workspace.is_some() {
-                    self.begin_remote_creation(self.explorer_target_directory(self.explorer_context_target.as_deref()), true);
+                    self.begin_remote_creation(
+                        self.explorer_target_directory(self.explorer_context_target.as_deref()),
+                        true,
+                    );
                     return false;
                 }
                 if let Some(target) = &self.explorer_context_target {
@@ -450,7 +544,11 @@ impl App {
             }
             "Copy Path" => {
                 if let Some(target) = &self.explorer_context_target {
-                    let path = self.remote_workspace.as_ref().and_then(|remote| remote.context_path(target).ok()).unwrap_or_else(|| target.display().to_string());
+                    let path = self
+                        .remote_workspace
+                        .as_ref()
+                        .and_then(|remote| remote.context_path(target).ok())
+                        .unwrap_or_else(|| target.display().to_string());
                     if crate::clipboard::set_text(path).is_ok() {
                         self.notify("Path copied to clipboard");
                     }
@@ -463,7 +561,12 @@ impl App {
                         .unwrap_or(target)
                         .to_string_lossy()
                         .to_string();
-                    let rel = self.remote_workspace.as_ref().and_then(|remote| remote.remote_path(target).ok()).map(|path| path.display()).unwrap_or(rel);
+                    let rel = self
+                        .remote_workspace
+                        .as_ref()
+                        .and_then(|remote| remote.remote_path(target).ok())
+                        .map(|path| path.display())
+                        .unwrap_or(rel);
                     if crate::clipboard::set_text(rel).is_ok() {
                         self.notify("Relative path copied to clipboard");
                     }
@@ -512,18 +615,38 @@ impl App {
                 self.notify("Another file operation is already running");
                 return;
             }
-            let Some(target) = self.rename.target.clone() else { return; };
+            let Some(target) = self.rename.target.clone() else {
+                return;
+            };
             let name = self.rename.query.trim();
-            if name.is_empty() { self.cancel_rename(); return; }
-            if name.contains(['/', '\0']) || name == "." || name == ".." { self.notify_error("Invalid remote filename"); return; }
+            if name.is_empty() {
+                self.cancel_rename();
+                return;
+            }
+            if name.contains(['/', '\0']) || name == "." || name == ".." {
+                self.notify_error("Invalid remote filename");
+                return;
+            }
             let remote = self.remote_workspace.as_ref().unwrap();
             let task = (|| -> std::io::Result<_> {
                 let from = remote.remote_path(&target)?;
-                let to = from.parent().ok_or_else(|| std::io::Error::other("Cannot rename workspace root"))?.child(name.as_bytes())?;
-                Ok(if self.rename.placeholder_active { crate::remote::fs::Task::Create { path: to, directory: self.creating_new_folder } }
-                    else { crate::remote::fs::Task::Rename { from, to } })
+                let to = from
+                    .parent()
+                    .ok_or_else(|| std::io::Error::other("Cannot rename workspace root"))?
+                    .child(name.as_bytes())?;
+                Ok(if self.rename.placeholder_active {
+                    crate::remote::fs::Task::Create {
+                        path: to,
+                        directory: self.creating_new_folder,
+                    }
+                } else {
+                    crate::remote::fs::Task::Rename { from, to }
+                })
             })();
-            match task { Ok(task) => self.run_remote_filesystem_action("Rename", task, Some(target)), Err(error) => self.notify_error(error.to_string()) }
+            match task {
+                Ok(task) => self.run_remote_filesystem_action("Rename", task, Some(target)),
+                Err(error) => self.notify_error(error.to_string()),
+            }
             return;
         }
         let creating_file = self.creating_new_file;
@@ -560,9 +683,10 @@ impl App {
             } else {
                 &['/', '\0']
             };
-            if let Some(bad) = new_name.chars().find(|c| {
-                invalid_chars.contains(c) || *c == '\0' || (cfg!(windows) && *c < ' ')
-            }) {
+            if let Some(bad) = new_name
+                .chars()
+                .find(|c| invalid_chars.contains(c) || *c == '\0' || (cfg!(windows) && *c < ' '))
+            {
                 self.notify_error(format!("Invalid character in filename: {bad:?}"));
                 return;
             }
@@ -572,10 +696,22 @@ impl App {
             }
             #[cfg(windows)]
             {
-                let stem = new_name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
-                let port = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT"));
+                let stem = new_name
+                    .split('.')
+                    .next()
+                    .unwrap_or("")
+                    .trim_end()
+                    .to_ascii_uppercase();
+                let port = stem
+                    .strip_prefix("COM")
+                    .or_else(|| stem.strip_prefix("LPT"));
                 if matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
-                    || port.is_some_and(|suffix| matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"))
+                    || port.is_some_and(|suffix| {
+                        matches!(
+                            suffix,
+                            "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                        )
+                    })
                 {
                     self.notify_error("This filename is reserved by Windows");
                     return;
@@ -597,15 +733,27 @@ impl App {
                 }
             } else if new_path != target {
                 // Update paths in every group only after the move succeeds.
-                for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
-                    if let Some(suffix) = tab.editor.file_path.as_ref().and_then(|path| path.strip_prefix(&target).ok()) {
+                for tab in self
+                    .tabs
+                    .iter_mut()
+                    .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+                {
+                    if let Some(suffix) = tab
+                        .editor
+                        .file_path
+                        .as_ref()
+                        .and_then(|path| path.strip_prefix(&target).ok())
+                    {
                         let path = new_path.join(suffix);
                         if tab.editor.restoring_deferred_file()
                             && let Some(restore) = &mut tab.editor.pending_session_restore
                         {
                             restore.tab.file_path = Some(path.clone());
                             if restore.load == crate::session::RestoreLoad::Requested {
-                                *restore = crate::session::SessionRestore::new(restore.tab.clone(), Default::default());
+                                *restore = crate::session::SessionRestore::new(
+                                    restore.tab.clone(),
+                                    Default::default(),
+                                );
                                 restore.load = crate::session::RestoreLoad::Deferred;
                             }
                         }
@@ -634,7 +782,11 @@ impl App {
             self.save_as_active = false;
             return;
         }
-        if self.tabs.get(self.active_tab).is_some_and(|tab| tab.kind == crate::app::TabKind::GitRevision) {
+        if self
+            .tabs
+            .get(self.active_tab)
+            .is_some_and(|tab| tab.kind == crate::app::TabKind::GitRevision)
+        {
             self.save_as_active = false;
             self.notify("Historical versions are read-only. Open the working file to edit.");
             return;
@@ -654,8 +806,12 @@ impl App {
         }
         if let Some(view) = self.active_extension_view().cloned() {
             let context = self.extension_editor_context_snapshot();
-            if self.extension_manager.queue_document_action(&view.extension_id, &view.view_id,
-                crate::extension_handlers::DocumentWorkbenchAction::SaveAs { path, replace }, context) {
+            if self.extension_manager.queue_document_action(
+                &view.extension_id,
+                &view.view_id,
+                crate::extension_handlers::DocumentWorkbenchAction::SaveAs { path, replace },
+                context,
+            ) {
                 self.save_as_active = false;
                 return;
             }
@@ -665,14 +821,25 @@ impl App {
         let path_str = path.display().to_string();
         let trim = self.trim_trailing_on_save;
         let newline = self.insert_final_newline;
-        let Some(editor) = self.editor() else { return; };
+        let Some(editor) = self.editor() else {
+            return;
+        };
         let identity = editor.save_identity;
         if self.pending_save_as.contains_key(&identity)
-            || self.pending_file_saves.keys().chain(self.deferred_file_saves.keys()).any(|pending|
-                Self::paths_may_share_entry(pending, &path)
-                    || editor.file_path.as_ref().is_some_and(|source| Self::paths_may_share_entry(pending, source)))
+            || self
+                .pending_file_saves
+                .keys()
+                .chain(self.deferred_file_saves.keys())
+                .any(|pending| {
+                    Self::paths_may_share_entry(pending, &path)
+                        || editor
+                            .file_path
+                            .as_ref()
+                            .is_some_and(|source| Self::paths_may_share_entry(pending, source))
+                })
         {
-            self.modal.error = Some("Wait for the current save to finish before using Save As.".into());
+            self.modal.error =
+                Some("Wait for the current save to finish before using Save As.".into());
             return;
         }
         let request = crate::editor::BackgroundSaveRequest {
@@ -689,25 +856,44 @@ impl App {
             expected_disk: None,
         };
         if self.queue_background_save_job(request) {
-            self.pending_save_as.insert(identity, (self.workspace_generation, path));
-            for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|g| &mut g.tabs)) {
-                if tab.editor.save_identity == identity { tab.editor.break_undo_group(); }
+            self.pending_save_as
+                .insert(identity, (self.workspace_generation, path));
+            for tab in self
+                .tabs
+                .iter_mut()
+                .chain(self.groups.iter_mut().flat_map(|g| &mut g.tabs))
+            {
+                if tab.editor.save_identity == identity {
+                    tab.editor.break_undo_group();
+                }
             }
             self.notify(format!("Saving as: {path_str}..."));
             self.status_message = format!("Saving: {path_str}...");
             self.save_as_active = false;
         } else {
-            self.modal.error = Some("Save As could not start. Wait for the current file operation to finish.".into());
+            self.modal.error = Some(
+                "Save As could not start. Wait for the current file operation to finish.".into(),
+            );
         }
     }
 
     pub(crate) fn finish_save_as(&mut self, identity: u64, path: &Path) {
         let mut previous = None;
-        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|g| &mut g.tabs)) {
-            if tab.kind != crate::app::TabKind::File { continue; }
+        for tab in self
+            .tabs
+            .iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|g| &mut g.tabs))
+        {
+            if tab.kind != crate::app::TabKind::File {
+                continue;
+            }
             tab.editor.refresh_document();
-            if tab.editor.save_identity != identity { continue; }
-            if previous.is_none() { previous = tab.editor.file_path.clone(); }
+            if tab.editor.save_identity != identity {
+                continue;
+            }
+            if previous.is_none() {
+                previous = tab.editor.file_path.clone();
+            }
             tab.editor.file_path = Some(path.to_path_buf());
             tab.editor.suggested_file_name = None;
             tab.editor.publish_document();
@@ -719,7 +905,6 @@ impl App {
         }
         self.desks.sync_stamp = None;
     }
-
 }
 
 #[cfg(test)]
@@ -749,36 +934,59 @@ mod tests {
         app.update_global_search();
         let generation = app.search_generation;
         app.explorer_context_target = Some(folder.clone());
-        let action = app.explorer_context_menu_items().iter()
-            .position(|&label| label == "Find in Folder…").unwrap();
+        let action = app
+            .explorer_context_menu_items()
+            .iter()
+            .position(|&label| label == "Find in Folder…")
+            .unwrap();
         app.execute_explorer_context(action);
-        app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.bg_global_search_running);
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+            !app.bg_global_search_running
+        });
 
         assert!(app.search_generation > generation);
         assert!(app.global_search_error.is_none());
         assert_eq!(app.global_search_results.len(), 1);
-        assert_eq!(app.global_search_results[0].file_path, folder.join("match.txt"));
+        assert_eq!(
+            app.global_search_results[0].file_path,
+            folder.join("match.txt")
+        );
         assert_eq!(app.search_exclude_pattern, "skip.txt");
         assert_eq!(app.global_search_replace_query, "replacement");
-        assert_eq!(app.global_search_field_cursors[2], app.search_include_pattern.len());
+        assert_eq!(
+            app.global_search_field_cursors[2],
+            app.search_include_pattern.len()
+        );
 
         // The existing query is selected so typing can replace it immediately.
-        crate::input_keyboard::handle_keyboard_event(&mut app, crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Char('n'), crossterm::event::KeyModifiers::NONE,
-        ));
+        crate::input_keyboard::handle_keyboard_event(
+            &mut app,
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char('n'),
+                crossterm::event::KeyModifiers::NONE,
+            ),
+        );
         assert_eq!(app.global_search_query, "n");
-        app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.bg_global_search_running);
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+            !app.bg_global_search_running
+        });
 
         app.explorer_context_target = Some(outside);
-        assert!(!app.explorer_context_menu_items().contains(&"Find in Folder…"));
+        assert!(
+            !app.explorer_context_menu_items()
+                .contains(&"Find in Folder…")
+        );
     }
 
     #[test]
     fn explorer_compare_actions_open_two_closed_files_and_reuse_selection() {
         fn choose(app: &mut App, path: &std::path::Path, label: &str) {
             app.explorer_context_target = Some(path.to_path_buf());
-            let index = app.explorer_context_menu_items().iter()
-                .position(|item| *item == label).expect("compare action");
+            let index = app
+                .explorer_context_menu_items()
+                .iter()
+                .position(|item| *item == label)
+                .expect("compare action");
             app.execute_explorer_context(index);
         }
 
@@ -794,14 +1002,26 @@ mod tests {
         let mut app = App::new(workspace.path().to_path_buf());
 
         app.explorer_context_target = Some(target.clone());
-        assert!(!app.explorer_context_menu_items().contains(&"Compare with Selected"));
+        assert!(
+            !app.explorer_context_menu_items()
+                .contains(&"Compare with Selected")
+        );
         choose(&mut app, &base, "Select for Compare");
         assert!(app.tabs.is_empty(), "selecting a file should not open it");
         app.explorer_context_target = Some(base.clone());
-        assert!(!app.explorer_context_menu_items().contains(&"Compare with Selected"));
+        assert!(
+            !app.explorer_context_menu_items()
+                .contains(&"Compare with Selected")
+        );
         app.explorer_context_target = Some(folder);
-        assert!(!app.explorer_context_menu_items().contains(&"Select for Compare"));
-        assert!(!app.explorer_context_menu_items().contains(&"Compare with Selected"));
+        assert!(
+            !app.explorer_context_menu_items()
+                .contains(&"Select for Compare")
+        );
+        assert!(
+            !app.explorer_context_menu_items()
+                .contains(&"Compare with Selected")
+        );
 
         for (path, expected) in [(&target, "right\n"), (&third, "third\n")] {
             choose(&mut app, path, "Compare with Selected");
@@ -811,7 +1031,10 @@ mod tests {
             assert!(app.should_render_diff_for_active_editor());
             assert_eq!(app.compare_base_content.as_deref(), Some("left\n"));
             assert_eq!(app.editor().unwrap().file_path.as_ref(), Some(path));
-            assert_eq!(app.compare_diff_lines, crate::app::compute_file_diff("left\n", expected));
+            assert_eq!(
+                app.compare_diff_lines,
+                crate::app::compute_file_diff("left\n", expected)
+            );
             assert_eq!(app.selected_compare_path.as_ref(), Some(&base));
         }
     }
@@ -1032,7 +1255,11 @@ mod tests {
             std::fs::create_dir(workspace.path().join("occupied")).unwrap();
             let mut app = App::new(workspace.path().to_path_buf());
             app.open_explorer_workspace_context_menu(4, 8);
-            let action = app.explorer_context_menu_items().iter().position(|&label| label == "New File").unwrap();
+            let action = app
+                .explorer_context_menu_items()
+                .iter()
+                .position(|&label| label == "New File")
+                .unwrap();
             app.execute_explorer_context(action);
             let placeholder = workspace.path().join("new file");
 
@@ -1053,7 +1280,11 @@ mod tests {
             assert!(!placeholder.exists());
             let created = workspace.path().join("created.txt");
             assert!(created.is_file());
-            assert!(app.tabs.iter().any(|tab| tab.editor.file_path.as_ref() == Some(&created)));
+            assert!(
+                app.tabs
+                    .iter()
+                    .any(|tab| tab.editor.file_path.as_ref() == Some(&created))
+            );
         }
     }
 
@@ -1062,7 +1293,11 @@ mod tests {
         let workspace = tempfile::tempdir().expect("workspace");
         let mut app = App::new(workspace.path().to_path_buf());
         app.open_explorer_workspace_context_menu(4, 8);
-        let action = app.explorer_context_menu_items().iter().position(|&label| label == "New File").unwrap();
+        let action = app
+            .explorer_context_menu_items()
+            .iter()
+            .position(|&label| label == "New File")
+            .unwrap();
         app.execute_explorer_context(action);
         app.rename.query = "invalid/name".to_string();
         app.execute_rename();
@@ -1086,13 +1321,19 @@ mod tests {
             app.begin_rename(source.clone(), "important.txt".into(), true, creating);
             app.creating_new_file = creating;
             app.execute_rename();
-            assert_eq!(std::fs::read_to_string(&destination).unwrap(), "keep this file");
+            assert_eq!(
+                std::fs::read_to_string(&destination).unwrap(),
+                "keep this file"
+            );
             assert_eq!(std::fs::read_to_string(&source).unwrap(), "source contents");
             assert!(app.rename.active, "the rejected name remains editable");
             app.rename.query = "accepted.txt".into();
             app.execute_rename();
             assert!(!app.rename.active);
-            assert_eq!(std::fs::read_to_string(dir.path().join("accepted.txt")).unwrap(), "source contents");
+            assert_eq!(
+                std::fs::read_to_string(dir.path().join("accepted.txt")).unwrap(),
+                "source contents"
+            );
         }
     }
 
@@ -1102,14 +1343,22 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let source = dir.path().join("removed.txt");
             let destination = dir.path().join("destination.txt");
-            if occupied { std::fs::write(&destination, "keep this file").unwrap(); }
+            if occupied {
+                std::fs::write(&destination, "keep this file").unwrap();
+            }
             let mut app = App::new(dir.path().to_path_buf());
             app.begin_rename(source, "destination.txt".into(), true, false);
             app.execute_rename();
             if occupied {
-                assert_eq!(std::fs::read_to_string(&destination).unwrap(), "keep this file");
+                assert_eq!(
+                    std::fs::read_to_string(&destination).unwrap(),
+                    "keep this file"
+                );
             } else {
-                assert!(!destination.exists(), "a failed rename must not create an unrelated file");
+                assert!(
+                    !destination.exists(),
+                    "a failed rename must not create an unrelated file"
+                );
             }
             assert!(app.rename.active);
         }
@@ -1122,7 +1371,16 @@ mod tests {
         std::fs::write(&source, "keep").unwrap();
         let mut app = App::new(workspace.path().to_path_buf());
         let mut names = vec![".", "..", "bad\0.txt", "nested/name.txt"];
-        if cfg!(windows) { names.extend(["trailing.", "NUL.txt", "con", "lpt1.log", "COM²", "bad\u{1}.txt"]); }
+        if cfg!(windows) {
+            names.extend([
+                "trailing.",
+                "NUL.txt",
+                "con",
+                "lpt1.log",
+                "COM²",
+                "bad\u{1}.txt",
+            ]);
+        }
         for name in names {
             app.begin_rename(source.clone(), name.into(), true, false);
             app.execute_rename();
@@ -1141,8 +1399,22 @@ mod tests {
         super::rename_no_replace(&source, &source).unwrap();
         super::rename_no_replace(&source, &destination).unwrap();
         assert_eq!(std::fs::read_to_string(&destination).unwrap(), "keep");
-        assert_eq!(std::fs::read_dir(workspace.path()).unwrap().next().unwrap().unwrap().file_name(), "mixedcase.txt");
-        assert!(super::rename_no_replace(&workspace.path().join("missing"), &workspace.path().join("missing")).is_err());
+        assert_eq!(
+            std::fs::read_dir(workspace.path())
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .file_name(),
+            "mixedcase.txt"
+        );
+        assert!(
+            super::rename_no_replace(
+                &workspace.path().join("missing"),
+                &workspace.path().join("missing")
+            )
+            .is_err()
+        );
 
         let source = workspace.path().join("old-folder");
         let destination = workspace.path().join("new-folder");
@@ -1150,36 +1422,59 @@ mod tests {
         std::fs::write(source.join("child.txt"), "child").unwrap();
         super::rename_no_replace(&source, &destination).unwrap();
         assert!(!source.exists());
-        assert_eq!(std::fs::read_to_string(destination.join("child.txt")).unwrap(), "child");
+        assert_eq!(
+            std::fs::read_to_string(destination.join("child.txt")).unwrap(),
+            "child"
+        );
         std::fs::create_dir(&source).unwrap();
         assert!(super::rename_no_replace(&source, &destination).is_err());
         assert!(source.is_dir());
-        assert_eq!(std::fs::read_to_string(destination.join("child.txt")).unwrap(), "child");
+        assert_eq!(
+            std::fs::read_to_string(destination.join("child.txt")).unwrap(),
+            "child"
+        );
     }
 
     #[test]
     fn edge_case_rename_no_replace_preserves_the_loser_of_a_destination_race() {
         let workspace = tempfile::tempdir().unwrap();
-        let sources = [workspace.path().join("first"), workspace.path().join("second")];
+        let sources = [
+            workspace.path().join("first"),
+            workspace.path().join("second"),
+        ];
         let destination = workspace.path().join("destination");
-        for (index, source) in sources.iter().enumerate() { std::fs::write(source, index.to_string()).unwrap(); }
+        for (index, source) in sources.iter().enumerate() {
+            std::fs::write(source, index.to_string()).unwrap();
+        }
         let barrier = std::sync::Barrier::new(2);
         let results = std::thread::scope(|scope| {
-            let workers: Vec<_> = sources.iter().map(|source| {
-                let barrier = &barrier;
-                let destination = &destination;
-                scope.spawn(move || {
-                    barrier.wait();
-                    super::rename_no_replace(source, destination)
+            let workers: Vec<_> = sources
+                .iter()
+                .map(|source| {
+                    let barrier = &barrier;
+                    let destination = &destination;
+                    scope.spawn(move || {
+                        barrier.wait();
+                        super::rename_no_replace(source, destination)
+                    })
                 })
-            }).collect();
-            workers.into_iter().map(|worker| worker.join().unwrap()).collect::<Vec<_>>()
+                .collect();
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
         });
         assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
         let winner = results.iter().position(|result| result.is_ok()).unwrap();
-        assert_eq!(std::fs::read_to_string(&destination).unwrap(), winner.to_string());
+        assert_eq!(
+            std::fs::read_to_string(&destination).unwrap(),
+            winner.to_string()
+        );
         assert!(!sources[winner].exists());
-        assert_eq!(std::fs::read_to_string(&sources[1 - winner]).unwrap(), (1 - winner).to_string());
+        assert_eq!(
+            std::fs::read_to_string(&sources[1 - winner]).unwrap(),
+            (1 - winner).to_string()
+        );
     }
 
     #[cfg(windows)]
@@ -1187,7 +1482,9 @@ mod tests {
     fn edge_case_rename_no_replace_preserves_long_unicode_paths() {
         let workspace = tempfile::tempdir().unwrap();
         let mut directory = workspace.path().to_path_buf();
-        for _ in 0..6 { directory.push("long_directory_界_012345678901234567890123456789"); }
+        for _ in 0..6 {
+            directory.push("long_directory_界_012345678901234567890123456789");
+        }
         std::fs::create_dir_all(&directory).unwrap();
         let source = directory.join("before_🙂.txt");
         let destination = directory.join("after_界.txt");
@@ -1205,10 +1502,16 @@ mod tests {
         let destination = workspace.path().join("destination");
         std::os::unix::fs::symlink("missing", &source).unwrap();
         super::rename_no_replace(&source, &destination).unwrap();
-        assert_eq!(std::fs::read_link(&destination).unwrap(), PathBuf::from("missing"));
+        assert_eq!(
+            std::fs::read_link(&destination).unwrap(),
+            PathBuf::from("missing")
+        );
         std::fs::write(&source, "keep source").unwrap();
         assert!(super::rename_no_replace(&source, &destination).is_err());
         assert_eq!(std::fs::read_to_string(&source).unwrap(), "keep source");
-        assert_eq!(std::fs::read_link(&destination).unwrap(), PathBuf::from("missing"));
+        assert_eq!(
+            std::fs::read_link(&destination).unwrap(),
+            PathBuf::from("missing")
+        );
     }
 }

@@ -20,8 +20,11 @@ pub(crate) fn install(
     } else {
         install_local(Path::new(source), root)
     }?;
-    let restored = themes.iter().filter(|theme| removed.contains(&theme.config_key))
-        .map(|theme| theme.config_key.clone()).collect();
+    let restored = themes
+        .iter()
+        .filter(|theme| removed.contains(&theme.config_key))
+        .map(|theme| theme.config_key.clone())
+        .collect();
     crate::theme_catalog::restore(root, &restored)?;
     Ok(themes)
 }
@@ -102,7 +105,9 @@ fn read_theme_data(path: &Path) -> Result<Vec<u8>, String> {
         return Err("Theme data file exceeds 8 MiB".into());
     }
     let mut data = Vec::with_capacity(metadata.len() as usize);
-    file.take(MAX_THEME_DATA + 1).read_to_end(&mut data).map_err(err)?;
+    file.take(MAX_THEME_DATA + 1)
+        .read_to_end(&mut data)
+        .map_err(err)?;
     if data.len() as u64 > MAX_THEME_DATA {
         return Err("Theme data file exceeds 8 MiB".into());
     }
@@ -220,7 +225,13 @@ fn install_package(
             .get("path")
             .and_then(Value::as_str)
             .ok_or("Theme contribution has no path")?;
-        copy_theme_data(&source, &resolve_reference(&source, path)?, &extension, &mut copied, 0)?;
+        copy_theme_data(
+            &source,
+            &resolve_reference(&source, path)?,
+            &extension,
+            &mut copied,
+            0,
+        )?;
     }
     for name in ["package.nls.json", "LICENSE", "LICENSE.txt", "LICENSE.md"] {
         if source.join(name).is_file() {
@@ -264,8 +275,12 @@ fn copy_theme_data(
     let data = read_theme_data(&path)?;
     let output = destination.join(relative);
     std::fs::create_dir_all(output.parent().unwrap()).map_err(err)?;
-    std::fs::OpenOptions::new().create_new(true).write(true).open(output)
-        .and_then(|mut file| file.write_all(&data)).map_err(err)?;
+    std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(output)
+        .and_then(|mut file| file.write_all(&data))
+        .map_err(err)?;
     if path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("json") || e.eq_ignore_ascii_case("jsonc"))
@@ -375,8 +390,14 @@ mod tests {
             crate::fs_ops::rename_no_replace(from, to)
         });
         assert!(result.unwrap_err().contains(backup.to_str().unwrap()));
-        assert_eq!(std::fs::read_to_string(backup.join("original.json")).unwrap(), "previous");
-        assert_eq!(std::fs::read_to_string(destination.join("concurrent.json")).unwrap(), "concurrent");
+        assert_eq!(
+            std::fs::read_to_string(backup.join("original.json")).unwrap(),
+            "previous"
+        );
+        assert_eq!(
+            std::fs::read_to_string(destination.join("concurrent.json")).unwrap(),
+            "concurrent"
+        );
     }
 
     #[test]
@@ -388,7 +409,10 @@ mod tests {
         let theme = source.join("custom.json");
         let local_data = source.join("local.json");
         std::fs::write(temp.path().join("outside.json"), "invalid JSON").unwrap();
-        std::fs::File::create(&local_data).unwrap().set_len(MAX_THEME_DATA + 1).unwrap();
+        std::fs::File::create(&local_data)
+            .unwrap()
+            .set_len(MAX_THEME_DATA + 1)
+            .unwrap();
 
         for (include, expected) in [
             ("../outside.json", "escapes extension directory"),
@@ -396,12 +420,13 @@ mod tests {
             ("local.json", "exceeds 8 MiB"),
         ] {
             std::fs::write(&theme, serde_json::json!({"include": include}).to_string()).unwrap();
-            let error = install_local(&theme, &root).err().expect("unsafe theme must fail");
+            let error = install_local(&theme, &root)
+                .err()
+                .expect("unsafe theme must fail");
             assert!(error.contains(expected), "{error}");
             assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
         }
     }
-
 
     #[test]
     fn vsix_installs_all_variants_and_preserves_the_previous_install_on_failure() {

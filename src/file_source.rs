@@ -211,7 +211,10 @@ fn source_metadata(file: fs::File, allow_directory: bool) -> io::Result<(fs::Fil
 }
 
 #[cfg(windows)]
-pub fn windows_final_path(file: &fs::File, buffer: &mut Vec<u16>) -> io::Result<std::path::PathBuf> {
+pub fn windows_final_path(
+    file: &fs::File,
+    buffer: &mut Vec<u16>,
+) -> io::Result<std::path::PathBuf> {
     use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
     use windows_sys::Win32::Storage::FileSystem::GetFinalPathNameByHandleW;
 
@@ -351,7 +354,8 @@ pub fn windows_file_identity(file: &fs::File) -> Option<(u64, u128)> {
             (&mut id as *mut FILE_ID_INFO).cast(),
             std::mem::size_of::<FILE_ID_INFO>() as u32,
         )
-    } != 0 {
+    } != 0
+    {
         return Some((
             id.VolumeSerialNumber,
             u128::from_le_bytes(id.FileId.Identifier),

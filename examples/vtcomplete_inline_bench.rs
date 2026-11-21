@@ -40,12 +40,16 @@ type Bucket = (bool, u32, usize, usize, bool, usize);
 /// this benchmark replayed, to compare with their results.
 static CLASSIC: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 const CLASSIC_KINDS: &[&str] = &[
-    "py", "rs", "c", "h", "cpp", "cc", "cxx", "hpp", "hh", "js", "jsx", "mjs", "cjs", "ts", "tsx", "go",
-    "java", "kt", "kts", "cs", "rb", "php", "swift", "ex", "exs", "scala", "lua", "sh", "bash", "zsh", "dart",
+    "py", "rs", "c", "h", "cpp", "cc", "cxx", "hpp", "hh", "js", "jsx", "mjs", "cjs", "ts", "tsx",
+    "go", "java", "kt", "kts", "cs", "rb", "php", "swift", "ex", "exs", "scala", "lua", "sh",
+    "bash", "zsh", "dart",
 ];
 
 fn collect(path: &Path, files: &mut Vec<PathBuf>, exclude: &[String]) {
-    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
     if exclude.iter().any(|entry| match entry.strip_suffix('*') {
         Some(prefix) => name.starts_with(prefix),
         None => name == entry,
@@ -79,7 +83,10 @@ fn collect(path: &Path, files: &mut Vec<PathBuf>, exclude: &[String]) {
 
 /// Language of a file the model is trained on, by the editor's name for it.
 fn language(path: &Path) -> &'static str {
-    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
     match name.to_ascii_lowercase().as_str() {
         "makefile" | "gnumakefile" => return "Makefile",
         "dockerfile" => return "Dockerfile",
@@ -179,7 +186,10 @@ fn export_training(directory: &Path, all: &[(PathBuf, String)]) {
         if longest > 2000 {
             continue;
         }
-        by_language.entry(any_language(path)).or_default().push(index);
+        by_language
+            .entry(any_language(path))
+            .or_default()
+            .push(index);
     }
     let mut chosen = Vec::new();
     for (name, files) in &by_language {
@@ -194,7 +204,9 @@ fn export_training(directory: &Path, all: &[(PathBuf, String)]) {
         .iter()
         .map(|&index| &all[index])
         .partition(|(path, _)| !language(path).is_empty());
-    let threads = std::thread::available_parallelism().map_or(4, |count| count.get()).min(16);
+    let threads = std::thread::available_parallelism()
+        .map_or(4, |count| count.get())
+        .min(16);
     let share = texts.len().div_ceil(threads).max(1);
 
     // How often each piece occurs in the training files.
@@ -224,7 +236,10 @@ fn export_training(directory: &Path, all: &[(PathBuf, String)]) {
                 })
             })
             .collect();
-        workers.into_iter().map(|worker| worker.join().unwrap()).collect()
+        workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect()
     });
     let mut counts: FxHashMap<Box<[u8]>, u64> = FxHashMap::default();
     for part in counted {
@@ -235,7 +250,11 @@ fn export_training(directory: &Path, all: &[(PathBuf, String)]) {
     let total = counts.len();
     // Pieces met once or twice teach no merge worth having.
     counts.retain(|_, count| *count >= 3);
-    println!("{total} different pieces, {} kept, counted in {:.0?}", counts.len(), started.elapsed());
+    println!(
+        "{total} different pieces, {} kept, counted in {:.0?}",
+        counts.len(),
+        started.elapsed()
+    );
     // The commonest words, which a made-up language replaces.
     let mut words: Vec<(&[u8], u64)> = Vec::new();
     let mut merged_words: FxHashMap<&[u8], u64> = FxHashMap::default();
@@ -247,18 +266,29 @@ fn export_training(directory: &Path, all: &[(PathBuf, String)]) {
     }
     words.extend(merged_words);
     words.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-    let common: FxHashSet<Vec<u8>> = words.iter().take(COMMON).map(|(word, _)| word.to_vec()).collect();
+    let common: FxHashSet<Vec<u8>> = words
+        .iter()
+        .take(COMMON)
+        .map(|(word, _)| word.to_vec())
+        .collect();
 
     let started = Instant::now();
     let merges = subwords::learn(&counts, TOKENS - 256 - 1);
     drop(counts);
     let subwords = Subwords::new(merges).unwrap();
-    println!("{} tokens learned in {:.0?}", subwords.len(), started.elapsed());
+    println!(
+        "{} tokens learned in {:.0?}",
+        subwords.len(),
+        started.elapsed()
+    );
     std::fs::write(directory.join("subwords.bin"), subwords.encode_merges()).unwrap();
     let document = subwords.document();
 
     // Write the streams; each thread writes its share of the files, in order.
-    let encode_all = |files: &[&(PathBuf, String)], stream: &str, language_of: &(dyn Fn(&Path) -> u8 + Sync), made_up: bool| {
+    let encode_all = |files: &[&(PathBuf, String)],
+                      stream: &str,
+                      language_of: &(dyn Fn(&Path) -> u8 + Sync),
+                      made_up: bool| {
         let share = files.len().div_ceil(threads).max(1);
         let parts: Vec<(Vec<u8>, Vec<u8>)> = std::thread::scope(|scope| {
             let workers: Vec<_> = files
@@ -270,23 +300,29 @@ fn export_training(directory: &Path, all: &[(PathBuf, String)]) {
                         let mut cache = Cache::default();
                         let (mut train, mut valid) = (Vec::new(), Vec::new());
                         let (mut tokens, mut starts) = (Vec::new(), Vec::new());
-                        let mut write = |out: &mut Vec<u8>, text: &str, language: u8, invented: bool, cache: &mut Cache| {
-                            tokens.clear();
-                            starts.clear();
-                            tokens.push(document);
-                            subwords.encode(text, cache, &mut tokens, &mut starts);
-                            for &token in &tokens {
-                                out.extend(token.to_le_bytes());
-                                out.push(language);
-                                out.push(u8::from(invented));
-                            }
-                        };
+                        let mut write =
+                            |out: &mut Vec<u8>,
+                             text: &str,
+                             language: u8,
+                             invented: bool,
+                             cache: &mut Cache| {
+                                tokens.clear();
+                                starts.clear();
+                                tokens.push(document);
+                                subwords.encode(text, cache, &mut tokens, &mut starts);
+                                for &token in &tokens {
+                                    out.extend(token.to_le_bytes());
+                                    out.push(language);
+                                    out.push(u8::from(invented));
+                                }
+                            };
                         for (offset, (path, text)) in files.iter().enumerate() {
                             let index = part * share + offset;
                             let held_out = made_up && index % 20 == 7;
                             let out = if held_out { &mut valid } else { &mut train };
                             write(out, text, language_of(path), false, &mut cache);
-                            if made_up && !held_out && hash(&path.to_string_lossy()) % 100 < MADE_UP {
+                            if made_up && !held_out && hash(&path.to_string_lossy()) % 100 < MADE_UP
+                            {
                                 let invented = invent(text, common, hash(&path.to_string_lossy()));
                                 // Its own spellings: the made-up words are new.
                                 let mut fresh = Cache::default();
@@ -297,7 +333,10 @@ fn export_training(directory: &Path, all: &[(PathBuf, String)]) {
                     })
                 })
                 .collect();
-            workers.into_iter().map(|worker| worker.join().unwrap()).collect()
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .collect()
         });
         let (mut train, mut valid) = (Vec::new(), Vec::new());
         for (a, b) in parts {
@@ -311,7 +350,12 @@ fn export_training(directory: &Path, all: &[(PathBuf, String)]) {
         (train.len() / 4, valid.len() / 4)
     };
     let started = Instant::now();
-    let (train, valid) = encode_all(&texts, "train", &|path| inline::language_id(language(path)), true);
+    let (train, valid) = encode_all(
+        &texts,
+        "train",
+        &|path| inline::language_id(language(path)),
+        true,
+    );
     let (other, _) = encode_all(&unseen, "unseen", &|_| 0, false);
     println!(
         "{} files, {} tokens, {train} training, {valid} validation and {other} unseen-language tokens, written in {:.0?}",
@@ -370,9 +414,15 @@ fn invent(text: &str, common: &rustc_hash::FxHashSet<Vec<u8>>, seed: u64) -> Str
 /// Predict at every `<|>` mark of a file, as if the caret stood there with
 /// the other marks absent and the rest of its line not yet written, and
 /// print what would be shown beside what the line really says.
-fn try_marks(path: &Path, network: Option<Option<&inline::model::Network<'_>>>, options: inline::Options) {
+fn try_marks(
+    path: &Path,
+    network: Option<Option<&inline::model::Network<'_>>>,
+    options: inline::Options,
+) {
     const MARK: &str = "<|>";
-    let marked = std::fs::read_to_string(path).expect("readable file").replace("\r\n", "\n");
+    let marked = std::fs::read_to_string(path)
+        .expect("readable file")
+        .replace("\r\n", "\n");
     let name = any_language(path);
     let pieces: Vec<&str> = marked.split(MARK).collect();
     for mark in 1..pieces.len() {
@@ -400,14 +450,21 @@ fn try_marks(path: &Path, network: Option<Option<&inline::model::Network<'_>>>, 
         let _ = engine.predict(caret, options, &|| false);
         let warm = started.elapsed();
         let line = before.rsplit('\n').next().unwrap_or("");
-        println!("{mark:>2} {line:?}
-   is {rest:?}");
+        println!(
+            "{mark:>2} {line:?}
+   is {rest:?}"
+        );
         match prediction {
             Some(prediction) => {
                 if let Some(retype) = &prediction.retype {
                     println!("   respells the typed start as {retype:?}");
                 }
-                println!("   -> {:?}   ({:.0} ms first, {:.1} ms again)", prediction.text, cold.as_secs_f64() * 1e3, warm.as_secs_f64() * 1e3);
+                println!(
+                    "   -> {:?}   ({:.0} ms first, {:.1} ms again)",
+                    prediction.text,
+                    cold.as_secs_f64() * 1e3,
+                    warm.as_secs_f64() * 1e3
+                );
                 let mut from = 0;
                 for step in &prediction.trace {
                     let end = step.end.min(prediction.text.len());
@@ -448,7 +505,10 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn bf16(values: &[f32], out: &mut impl std::io::Write) {
-    let bytes: Vec<u8> = values.iter().flat_map(|value| ((value.to_bits() >> 16) as u16).to_le_bytes()).collect();
+    let bytes: Vec<u8> = values
+        .iter()
+        .flat_map(|value| ((value.to_bits() >> 16) as u16).to_le_bytes())
+        .collect();
     out.write_all(&bytes).unwrap();
 }
 
@@ -456,12 +516,21 @@ impl Recorder {
     fn new(directory: &Path) -> Self {
         use std::io::Write;
         std::fs::create_dir_all(directory).unwrap();
-        let open = |name: &str| std::io::BufWriter::new(std::fs::File::create(directory.join(name)).unwrap());
+        let open = |name: &str| {
+            std::io::BufWriter::new(std::fs::File::create(directory.join(name)).unwrap())
+        };
         let mut steps = open("steps.csv");
         writeln!(steps, "case,file,placement,step,right,spelling,probability,second,entropy,agreeing,chance,typed,token,bytes,traced").unwrap();
         let mut cases = open("cases.tsv");
         writeln!(cases, "case\ttyped_hex\twritten_hex\ttruth_hex").unwrap();
-        Self { steps, states: open("states.bin"), traces: open("traces.bin"), cases_file: cases, cases: 0, traced: 0 }
+        Self {
+            steps,
+            states: open("states.bin"),
+            traces: open("traces.bin"),
+            cases_file: cases,
+            cases: 0,
+            traced: 0,
+        }
     }
 
     /// The weights needed to study the model: `weights.bin` holds as f32
@@ -470,9 +539,13 @@ impl Recorder {
     /// token spelling (hex) per line.
     fn write_weights(directory: &Path, network: &inline::model::Network<'_>) {
         use std::io::Write;
-        let mut out = std::io::BufWriter::new(std::fs::File::create(directory.join("weights.bin")).unwrap());
+        let mut out =
+            std::io::BufWriter::new(std::fs::File::create(directory.join("weights.bin")).unwrap());
         let mut put = |values: &[f32]| {
-            let bytes: Vec<u8> = values.iter().flat_map(|value| value.to_le_bytes()).collect();
+            let bytes: Vec<u8> = values
+                .iter()
+                .flat_map(|value| value.to_le_bytes())
+                .collect();
             out.write_all(&bytes).unwrap();
         };
         let (token, gain, bias, output) = network.output_side();
@@ -486,14 +559,22 @@ impl Recorder {
             put(&expand_bias);
             put(&reduce);
         }
-        let mut vocab = std::io::BufWriter::new(std::fs::File::create(directory.join("vocab.txt")).unwrap());
+        let mut vocab =
+            std::io::BufWriter::new(std::fs::File::create(directory.join("vocab.txt")).unwrap());
         let subwords = network.subwords();
         for token in 0..subwords.len() {
             writeln!(vocab, "{}", hex(subwords.bytes(token as u16))).unwrap();
         }
     }
 
-    fn add(&mut self, written: &inline::model::Written, typed: usize, after: &str, placement: &str, file: usize) {
+    fn add(
+        &mut self,
+        written: &inline::model::Written,
+        typed: usize,
+        after: &str,
+        placement: &str,
+        file: usize,
+    ) {
         use std::io::Write;
         if written.evidence.is_empty() || written.states.is_empty() {
             return;
@@ -517,7 +598,8 @@ impl Recorder {
         let per_neurons = written.neurons.len() / written.evidence.len();
         let trace_case = self.cases % 4 == 0;
         let mut start = 0;
-        for (step, (evidence, &(end, _))) in written.evidence.iter().zip(&written.steps).enumerate() {
+        for (step, (evidence, &(end, _))) in written.evidence.iter().zip(&written.steps).enumerate()
+        {
             let piece = &written.bytes[typed.min(end)..end];
             let spelling = end <= typed;
             let right = after.as_bytes().starts_with(piece);
@@ -525,15 +607,36 @@ impl Recorder {
             writeln!(
                 self.steps,
                 "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-                self.cases, file, placement, step, u8::from(right), u8::from(spelling),
-                evidence.probability, evidence.second, evidence.entropy, evidence.agreeing, evidence.chance,
-                evidence.typed, written.tokens[step], end - start, if traced { self.traced as i64 } else { -1 },
+                self.cases,
+                file,
+                placement,
+                step,
+                u8::from(right),
+                u8::from(spelling),
+                evidence.probability,
+                evidence.second,
+                evidence.entropy,
+                evidence.agreeing,
+                evidence.chance,
+                evidence.typed,
+                written.tokens[step],
+                end - start,
+                if traced { self.traced as i64 } else { -1 },
             )
             .unwrap();
-            bf16(&written.states[step * width..(step + 1) * width], &mut self.states);
+            bf16(
+                &written.states[step * width..(step + 1) * width],
+                &mut self.states,
+            );
             if traced {
-                bf16(&written.traces[step * per_trace..(step + 1) * per_trace], &mut self.traces);
-                bf16(&written.neurons[step * per_neurons..(step + 1) * per_neurons], &mut self.traces);
+                bf16(
+                    &written.traces[step * per_trace..(step + 1) * per_trace],
+                    &mut self.traces,
+                );
+                bf16(
+                    &written.neurons[step * per_neurons..(step + 1) * per_neurons],
+                    &mut self.traces,
+                );
                 self.traced += 1;
             }
             start = end;
@@ -591,18 +694,32 @@ fn main() {
             "--single-line" => options.multiline = false,
             "--max-tokens" => options.tokens = number("--max-tokens") as usize,
             "--exclude" => exclude.push(args.next().expect("--exclude needs a name")),
-            "--export" => export = Some(PathBuf::from(args.next().expect("--export needs a directory"))),
+            "--export" => {
+                export = Some(PathBuf::from(
+                    args.next().expect("--export needs a directory"),
+                ))
+            }
             "--model" => model = Some(args.next().expect("--model needs a path")),
             "--no-model" => model = Some(String::new()),
             "--verify" => verify = Some(args.next().expect("--verify needs a vectors file")),
             "--bad" => only_bad = true,
             "--calibrate" => calibrate = true,
             "--classic" => CLASSIC.store(true, std::sync::atomic::Ordering::Relaxed),
-            "--dump" => dump = Some(std::io::BufWriter::new(std::fs::File::create(args.next().expect("--dump needs a path")).unwrap())),
+            "--dump" => {
+                dump = Some(std::io::BufWriter::new(
+                    std::fs::File::create(args.next().expect("--dump needs a path")).unwrap(),
+                ))
+            }
             // One line a case: file, line, placement, right or not, the
             // text before the caret, the truth and the guess.
-            "--cases" => cases = Some(std::io::BufWriter::new(std::fs::File::create(args.next().expect("--cases needs a path")).unwrap())),
-            "--budget" => options.budget = std::time::Duration::from_millis(number("--budget") as u64),
+            "--cases" => {
+                cases = Some(std::io::BufWriter::new(
+                    std::fs::File::create(args.next().expect("--cases needs a path")).unwrap(),
+                ))
+            }
+            "--budget" => {
+                options.budget = std::time::Duration::from_millis(number("--budget") as u64)
+            }
             "--sample" => sample = number("--sample") as usize,
             "--try" => tries.push(PathBuf::from(args.next().expect("--try needs a file"))),
             // With VT_RECORD set: what the model wrote at each caret, token
@@ -664,11 +781,12 @@ fn main() {
     }
     // `--model PATH` evaluates a freshly trained network; `--no-model` only
     // the pattern predictor.
-    let model_bytes = model.map(|path| {
-        (!path.is_empty()).then(|| std::fs::read(path).expect("model file"))
-    });
+    let model_bytes =
+        model.map(|path| (!path.is_empty()).then(|| std::fs::read(path).expect("model file")));
     let custom_network = model_bytes.as_ref().map(|bytes| {
-        bytes.as_deref().map(|bytes| inline::model::Network::decode(bytes).expect("valid model file"))
+        bytes
+            .as_deref()
+            .map(|bytes| inline::model::Network::decode(bytes).expect("valid model file"))
     });
     let network = custom_network.as_ref().map(Option::as_ref);
     if !tries.is_empty() {
@@ -678,20 +796,34 @@ fn main() {
         return;
     }
     if std::env::var_os("VTCODE_TIME_COLD").is_some() {
-        let network = network.flatten().or_else(|| inline::model::embedded()).expect("a model");
+        let network = network
+            .flatten()
+            .or_else(|| inline::model::embedded())
+            .expect("a model");
         let tokens = network.window() / 2;
         let mut times = inline::model::time_cold(network, tokens, 12);
         times.drain(..2);
         times.sort_by(|a, b| a.total_cmp(b));
-        println!("cold {tokens}-token pass: median {:.1} ms, best {:.1} ms", times[times.len() / 2], times[0]);
+        println!(
+            "cold {tokens}-token pass: median {:.1} ms, best {:.1} ms",
+            times[times.len() / 2],
+            times[0]
+        );
         let mut times = inline::model::time_next(network, tokens, 40);
         times.sort_by(|a, b| a.total_cmp(b));
-        println!("one more token: median {:.2} ms, worst {:.2} ms", times[times.len() / 2], times[times.len() - 1]);
+        println!(
+            "one more token: median {:.2} ms, worst {:.2} ms",
+            times[times.len() / 2],
+            times[times.len() - 1]
+        );
         return;
     }
     if let Some(path) = verify {
         let vectors = std::fs::read(&path).expect("vectors file");
-        let network = network.flatten().or_else(|| inline::model::embedded()).expect("a model");
+        let network = network
+            .flatten()
+            .or_else(|| inline::model::embedded())
+            .expect("a model");
         match network.difference(&vectors) {
             Some(worst) => println!("largest probability difference from the trainer: {worst:.2e}"),
             None => println!("the vectors do not fit this model"),
@@ -699,7 +831,10 @@ fn main() {
         return;
     }
     if let (Some(_), Some(directory)) = (record.as_ref(), record_dir.as_ref()) {
-        let network = network.flatten().or_else(|| inline::model::embedded()).expect("a model");
+        let network = network
+            .flatten()
+            .or_else(|| inline::model::embedded())
+            .expect("a model");
         Recorder::write_weights(directory, network);
     }
     let mut retriever = retrieval::Retriever::default();
@@ -711,9 +846,16 @@ fn main() {
     }
     let stride = (texts.len() / max_files.min(texts.len()).max(1)).max(1);
     let names = [
-        "append/start", "append/typed", "append/mid", "append/open",
-        "insert/start", "insert/typed", "insert/mid", "insert/open",
-        "comment/typed", "comment/mid",
+        "append/start",
+        "append/typed",
+        "append/mid",
+        "append/open",
+        "insert/start",
+        "insert/typed",
+        "insert/mid",
+        "insert/open",
+        "comment/typed",
+        "comment/mid",
     ];
     let mut tallies = vec![Tally::default(); names.len()];
     let mut times = Vec::new();
@@ -753,10 +895,15 @@ fn main() {
             if trimmed.len() < 4 {
                 continue;
             }
-            let comment = ["//", "#", "*", "/*", "--"].iter().any(|sign| content.starts_with(sign));
+            let comment = ["//", "#", "*", "/*", "--"]
+                .iter()
+                .any(|sign| content.starts_with(sign));
             // In a comment the typing starts after its sign.
             let sign = if comment {
-                content.len() - content.trim_start_matches(|ch: char| !ch.is_alphanumeric()).len()
+                content.len()
+                    - content
+                        .trim_start_matches(|ch: char| !ch.is_alphanumeric())
+                        .len()
             } else {
                 0
             };
@@ -812,7 +959,8 @@ fn main() {
                         while !text.is_char_boundary(to) {
                             to -= 1;
                         }
-                        let context = format!("{}{}", &text[from..caret], &text[below_start.min(to)..to]);
+                        let context =
+                            format!("{}{}", &text[from..caret], &text[below_start.min(to)..to]);
                         let wanted: Vec<usize> = retriever
                             .query(&context, index as u64, retrieve)
                             .into_iter()
@@ -828,7 +976,8 @@ fn main() {
                             if engine.has_reference(hash(reference)) {
                                 engine.touch_reference(hash(reference));
                             } else {
-                                let syntax = inline::Syntax::for_language(any_language(&texts[file].0));
+                                let syntax =
+                                    inline::Syntax::for_language(any_language(&texts[file].0));
                                 engine.set_reference(hash(reference), reference, syntax);
                             }
                         }
@@ -857,16 +1006,27 @@ fn main() {
                     let read = reading.elapsed();
                     let prediction = engine.predict(caret, options, &|| false);
                     times.push((started.elapsed() - read).as_secs_f64() * 1e6);
-                    if let (Some(record), Some((typed, written))) = (record.as_mut(), engine.first_written.take()) {
-                        record.add(&written, typed, &text[caret.before.len()..], names[mode + placement], index);
+                    if let (Some(record), Some((typed, written))) =
+                        (record.as_mut(), engine.first_written.take())
+                    {
+                        record.add(
+                            &written,
+                            typed,
+                            &text[caret.before.len()..],
+                            names[mode + placement],
+                            index,
+                        );
                     }
                     // How the weighing against the text below chose, when it
                     // chose another line than the greedy one.
-                    if let Some((typed, greedy, chosen)) = inline::model::RANKED.with(|ranked| ranked.borrow_mut().take()) {
+                    if let Some((typed, greedy, chosen)) =
+                        inline::model::RANKED.with(|ranked| ranked.borrow_mut().take())
+                    {
                         let after = text[caret.before.len()..].as_bytes();
                         let line_right = |line: &[u8]| {
                             let line = &line[typed.min(line.len())..];
-                            let content = &line[..line.iter().position(|&b| b == b'\n').unwrap_or(line.len())];
+                            let content = &line
+                                [..line.iter().position(|&b| b == b'\n').unwrap_or(line.len())];
                             after.starts_with(content) && after.get(content.len()) == Some(&b'\n')
                         };
                         ranks.0 += 1;
@@ -887,17 +1047,28 @@ fn main() {
                     };
                     if let Some(cases) = cases.as_mut() {
                         use std::io::Write;
-                        let guess = prediction.as_ref().map_or("", |prediction| prediction.text.as_str());
-                        let right = !guess.is_empty() && text[caret.before.len()..].starts_with(guess);
+                        let guess = prediction
+                            .as_ref()
+                            .map_or("", |prediction| prediction.text.as_str());
+                        let right =
+                            !guess.is_empty() && text[caret.before.len()..].starts_with(guess);
                         writeln!(
                             cases,
                             "{}	{}	{}	{}	{:?}	{:?}	{:?}	{:?}",
-                            path.display(), line + 1, names[mode + placement], u8::from(right), &source[..column], truth_line, guess,
+                            path.display(),
+                            line + 1,
+                            names[mode + placement],
+                            u8::from(right),
+                            &source[..column],
+                            truth_line,
+                            guess,
                             engine.stopped
                         )
                         .unwrap();
                     }
-                    let Some(prediction) = prediction else { continue };
+                    let Some(prediction) = prediction else {
+                        continue;
+                    };
                     tally.shown += 1;
                     let multi = prediction.text.contains('\n');
                     tally.multi_shown += usize::from(multi);
@@ -917,9 +1088,19 @@ fn main() {
                             } else {
                                 truth_line.starts_with(piece)
                             };
-                            let features: Vec<String> = entry.features().iter().map(|f| f.to_string()).collect();
-                            writeln!(dump, "{},{},{}", u8::from(ok), index % 2, features.join(",")).unwrap();
-                            if !ok { break; }
+                            let features: Vec<String> =
+                                entry.features().iter().map(|f| f.to_string()).collect();
+                            writeln!(
+                                dump,
+                                "{},{},{}",
+                                u8::from(ok),
+                                index % 2,
+                                features.join(",")
+                            )
+                            .unwrap();
+                            if !ok {
+                                break;
+                            }
                         }
                     }
                     if calibrate {
@@ -931,15 +1112,37 @@ fn main() {
                             } else {
                                 truth_line.starts_with(piece)
                             };
-                            let supporters = match entry.supporters { 1 => 1, 2 => 2, 3..=4 => 3, _ => 5 };
-                            let score = match entry.score as usize { 0..=5 => 0, 6..=9 => 6, 10..=15 => 10, 16..=23 => 16, _ => 24 };
+                            let supporters = match entry.supporters {
+                                1 => 1,
+                                2 => 2,
+                                3..=4 => 3,
+                                _ => 5,
+                            };
+                            let score = match entry.score as usize {
+                                0..=5 => 0,
+                                6..=9 => 6,
+                                10..=15 => 10,
+                                16..=23 => 16,
+                                _ => 24,
+                            };
                             let share = (entry.estimate * 10.).min(9.) as usize;
                             let entry_typed = entry.typed > 0;
                             let _ = (supporters, score);
-                            let slot = buckets.entry((step == 0, if entry_typed { 1 } else { 0 }, 0, 0, entry.lines > 0, share)).or_default();
+                            let slot = buckets
+                                .entry((
+                                    step == 0,
+                                    if entry_typed { 1 } else { 0 },
+                                    0,
+                                    0,
+                                    entry.lines > 0,
+                                    share,
+                                ))
+                                .or_default();
                             slot.0 += 1;
                             slot.1 += usize::from(ok);
-                            if !ok { break; }
+                            if !ok {
+                                break;
+                            }
                         }
                     }
                     if correct {
@@ -950,7 +1153,11 @@ fn main() {
                     } else {
                         tally.wrong_chars += prediction.text.len();
                     }
-                    if shown_examples < show && (mode + placement) % 4 != 1 && (!only_bad || !correct) && (line * 7 + placement) % sample == 0 {
+                    if shown_examples < show
+                        && (mode + placement) % 4 != 1
+                        && (!only_bad || !correct)
+                        && (line * 7 + placement) % sample == 0
+                    {
                         shown_examples += 1;
                         println!(
                             "{} {}:{} [{}] conf {:.2}\n  before: {:?}\n  truth:  {:?}\n  guess:  {:?}",
@@ -972,7 +1179,17 @@ fn main() {
         println!("first kind supp score nl share      n   acc%");
         for ((first, kind, supporters, score, newline, share), (n, ok)) in &buckets {
             if *n >= 25 {
-                println!("{:5} {:4} {:4} {:5} {:2} {:5} {:6} {:6.1}", u8::from(*first), kind, supporters, score, u8::from(*newline), share, n, 100. * *ok as f64 / *n as f64);
+                println!(
+                    "{:5} {:4} {:4} {:5} {:2} {:5} {:6} {:6.1}",
+                    u8::from(*first),
+                    kind,
+                    supporters,
+                    score,
+                    u8::from(*newline),
+                    share,
+                    n,
+                    100. * *ok as f64 / *n as f64
+                );
             }
         }
     }
@@ -981,7 +1198,13 @@ fn main() {
         "placement", "cases", "shown%", "correct%", "full%", "saved/case", "multi", "multi-ok%"
     );
     for (name, tally) in names.iter().zip(&tallies) {
-        let percent = |a: usize, b: usize| if b == 0 { 0. } else { 100. * a as f64 / b as f64 };
+        let percent = |a: usize, b: usize| {
+            if b == 0 {
+                0.
+            } else {
+                100. * a as f64 / b as f64
+            }
+        };
         println!(
             "{:<14} {:>6} {:>7.1} {:>9.1} {:>8.1} {:>9.1}% {:>9} {:>11.1}",
             name,
@@ -996,8 +1219,14 @@ fn main() {
     }
     // All code placements together (comments aside): shown, right when
     // shown, right of all cases, whole line right of all cases, saved.
-    let code: Vec<&Tally> = names.iter().zip(&tallies).filter(|(name, _)| !name.starts_with("comment")).map(|(_, tally)| tally).collect();
-    let sum = |field: fn(&Tally) -> usize| code.iter().map(|tally| field(tally)).sum::<usize>() as f64;
+    let code: Vec<&Tally> = names
+        .iter()
+        .zip(&tallies)
+        .filter(|(name, _)| !name.starts_with("comment"))
+        .map(|(_, tally)| tally)
+        .collect();
+    let sum =
+        |field: fn(&Tally) -> usize| code.iter().map(|tally| field(tally)).sum::<usize>() as f64;
     let (cases, shown, correct) = (sum(|t| t.cases), sum(|t| t.shown), sum(|t| t.correct));
     println!(
         "code overall: cases {cases}  shown {:.1}%  right {:.1}%  correct positions {:.1}%  whole line {:.1}%  saved {:.1}%",

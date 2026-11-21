@@ -84,7 +84,9 @@ fn parallel_search_streaming_preserves_filters_encodings_open_files_and_match_ra
             current
         };
         let cancel = CancellationToken::new();
-        let Reply::Search { hits, truncated, .. } = execute(root, make_query(), &cancel).unwrap()
+        let Reply::Search {
+            hits, truncated, ..
+        } = execute(root, make_query(), &cancel).unwrap()
         else {
             panic!()
         };
@@ -93,12 +95,13 @@ fn parallel_search_streaming_preserves_filters_encodings_open_files_and_match_ra
         let expected = normalized(hits);
         for workers in [2, 4] {
             let mut streamed = Vec::new();
-            let Reply::Search { hits, truncated, .. } =
-                execute_with_workers(root, make_query(), &cancel, workers, |hits| {
-                    streamed.extend(hits);
-                    Ok(())
-                })
-                .unwrap()
+            let Reply::Search {
+                hits, truncated, ..
+            } = execute_with_workers(root, make_query(), &cancel, workers, |hits| {
+                streamed.extend(hits);
+                Ok(())
+            })
+            .unwrap()
             else {
                 panic!()
             };
@@ -128,13 +131,14 @@ fn parallel_search_streaming_enforces_one_global_limit_and_exact_truncation() {
         current.limit = limit;
         let cancel = CancellationToken::new();
         let mut streamed = Vec::new();
-        let Reply::Search { hits, truncated, .. } =
-            execute_with_workers(dir.path(), current, &cancel, 4, |hits| {
-                assert!(!hits.is_empty() && hits.len() <= 128);
-                streamed.extend(hits);
-                Ok(())
-            })
-            .unwrap()
+        let Reply::Search {
+            hits, truncated, ..
+        } = execute_with_workers(dir.path(), current, &cancel, 4, |hits| {
+            assert!(!hits.is_empty() && hits.len() <= 128);
+            streamed.extend(hits);
+            Ok(())
+        })
+        .unwrap()
         else {
             panic!()
         };
@@ -201,7 +205,9 @@ fn benchmark_headless_search_streaming() {
             let started = Instant::now();
             let mut first = None;
             let mut count = 0;
-            let Reply::Search { hits, truncated, .. } = execute_with_workers(
+            let Reply::Search {
+                hits, truncated, ..
+            } = execute_with_workers(
                 dir.path(),
                 query("needle"),
                 &CancellationToken::new(),
@@ -212,7 +218,8 @@ fn benchmark_headless_search_streaming() {
                     Ok(())
                 },
             )
-            .unwrap() else {
+            .unwrap()
+            else {
                 panic!()
             };
             count += hits.len();

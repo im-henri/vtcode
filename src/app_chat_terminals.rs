@@ -128,24 +128,30 @@ impl App {
     pub(crate) fn poll_chat_terminals(&mut self) -> bool {
         if !self.chat.connection.terminal_views.is_empty()
             && let Some(session) = self
-            .chat
-            .selected
-            .as_ref()
-            .and_then(|id| self.chat.connection.sessions.get(id))
+                .chat
+                .selected
+                .as_ref()
+                .and_then(|id| self.chat.connection.sessions.get(id))
         {
             // Most conversations have no terminal view. Even when one is
             // open, native terminal IDs do not need a transcript-wide scan.
             let tool_ids = std::cell::OnceCell::<HashSet<&str>>::new();
             self.chat.connection.terminal_views.retain(|id, _| {
                 session.terminals.contains_key(id)
-                    || id
-                        .strip_prefix("tool:")
-                        .is_some_and(|id| tool_ids.get_or_init(|| {
-                            session.entries.iter().filter_map(|entry| match entry {
-                                ChatEntry::Tool(tool) => Some(tool.tool_call_id.0.as_ref()),
-                                _ => None,
-                            }).collect()
-                        }).contains(id))
+                    || id.strip_prefix("tool:").is_some_and(|id| {
+                        tool_ids
+                            .get_or_init(|| {
+                                session
+                                    .entries
+                                    .iter()
+                                    .filter_map(|entry| match entry {
+                                        ChatEntry::Tool(tool) => Some(tool.tool_call_id.0.as_ref()),
+                                        _ => None,
+                                    })
+                                    .collect()
+                            })
+                            .contains(id)
+                    })
             });
         }
         let changed = poll_views(&mut self.chat.terminal_views);
@@ -162,7 +168,12 @@ impl App {
         else {
             return;
         };
-        let view = self.chat.connection.terminal_views.entry(id.into()).or_default();
+        let view = self
+            .chat
+            .connection
+            .terminal_views
+            .entry(id.into())
+            .or_default();
         view.width = width;
         view.height = height;
         let key = PageKey {

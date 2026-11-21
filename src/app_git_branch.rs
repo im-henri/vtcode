@@ -17,7 +17,6 @@ pub(crate) fn checkout_branch(repo: &git2::Repository, branch_name: &str) -> Res
 }
 
 impl App {
-
     fn run_git_remote_command_async(
         &mut self,
         worker_name: &'static str,
@@ -25,7 +24,9 @@ impl App {
         args: Vec<String>,
         push: bool,
     ) {
-        if !self.source_control_enabled { return; }
+        if !self.source_control_enabled {
+            return;
+        }
         if self.repositories.discovered && self.repositories.active.is_none() {
             self.notify("Open a Git repository in Source Control first");
             return;
@@ -41,20 +42,48 @@ impl App {
         let log = self.git_output();
         let generation = self.workspace_generation;
         self.background.spawn(worker_name, move || {
-            let operation = remote.is_none().then(|| crate::git_output::native(&log,
-                match op { "fetch" => "git fetch --all --prune", "pull" => "git pull", _ => "git push" }, &root));
+            let operation = remote.is_none().then(|| {
+                crate::git_output::native(
+                    &log,
+                    match op {
+                        "fetch" => "git fetch --all --prune",
+                        "pull" => "git pull",
+                        _ => "git push",
+                    },
+                    &root,
+                )
+            });
             let result = match remote {
                 Some(remote) => (|| -> std::io::Result<_> {
                     let repo = remote.remote_path(&root)?;
-                    let crate::remote::Reply::GitNetwork(result) = remote.client.call(crate::remote::Command::GitNetwork { repo, args, push })? else { return Err(std::io::Error::other("Invalid remote Git network response")); };
+                    let crate::remote::Reply::GitNetwork(result) = remote
+                        .client
+                        .call(crate::remote::Command::GitNetwork { repo, args, push })?
+                    else {
+                        return Err(std::io::Error::other("Invalid remote Git network response"));
+                    };
                     Ok(result)
-                })().unwrap_or_else(|error| crate::remote::git::NetworkResult { stdout: String::new(), stderr: error.to_string(), success: false }),
-                None => crate::remote::git::network(&root,args,push),
+                })()
+                .unwrap_or_else(|error| crate::remote::git::NetworkResult {
+                    stdout: String::new(),
+                    stderr: error.to_string(),
+                    success: false,
+                }),
+                None => crate::remote::git::network(&root, args, push),
             };
-            if let Some(operation) = &operation { operation.network(&result); }
-            let result = crate::background::BackgroundResult::GitRemoteOp { op,
-                stdout: result.stdout, stderr: result.stderr, success: result.success };
-            let _ = sender.send(crate::background::BackgroundResult::WorkspaceResult { generation, result: Box::new(result) });
+            if let Some(operation) = &operation {
+                operation.network(&result);
+            }
+            let result = crate::background::BackgroundResult::GitRemoteOp {
+                op,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                success: result.success,
+            };
+            let _ = sender.send(crate::background::BackgroundResult::WorkspaceResult {
+                generation,
+                result: Box::new(result),
+            });
         });
         self.notify(format!("Git {op} started..."));
     }
@@ -63,7 +92,8 @@ impl App {
         self.run_git_remote_command_async(
             "git-fetch",
             "fetch",
-            vec!["fetch".into(), "--all".into(), "--prune".into()], false,
+            vec!["fetch".into(), "--all".into(), "--prune".into()],
+            false,
         );
     }
 
@@ -76,7 +106,9 @@ impl App {
     }
 
     pub(crate) fn open_git_branch_picker(&mut self) {
-        if !self.source_control_enabled { return; }
+        if !self.source_control_enabled {
+            return;
+        }
         if self.bg_git_branch_picker_running {
             return;
         }
@@ -84,7 +116,8 @@ impl App {
             self.notify("Wait for the current Git operation to finish");
             return;
         }
-        self.git_branch_dialog = crate::ui_git_branches::State::for_repository(self.source_control_root().to_owned());
+        self.git_branch_dialog =
+            crate::ui_git_branches::State::for_repository(self.source_control_root().to_owned());
         self.git_branch_picker_items.clear();
         self.git_branch_picker_query.clear();
         self.git_branch_picker_cursor = 0;
@@ -99,14 +132,24 @@ impl App {
         let remote = self.remote_workspace.clone();
         let log = self.git_output();
         self.background.spawn("git-branches", move || {
-            if sender.is_cancelled() { return; }
-            let operation = remote.is_none().then(|| crate::git_output::native(&log, "Read branches", &root));
+            if sender.is_cancelled() {
+                return;
+            }
+            let operation = remote
+                .is_none()
+                .then(|| crate::git_output::native(&log, "Read branches", &root));
             let result = match remote {
                 Some(remote) => (|| -> std::io::Result<_> {
                     let repo = remote.remote_path(&root)?;
-                    let crate::remote::Reply::GitBranches(branches) = remote.client.call(crate::remote::Command::GitBranches { repo })? else { return Err(std::io::Error::other("Invalid remote branches reply")); };
+                    let crate::remote::Reply::GitBranches(branches) = remote
+                        .client
+                        .call(crate::remote::Command::GitBranches { repo })?
+                    else {
+                        return Err(std::io::Error::other("Invalid remote branches reply"));
+                    };
                     Ok(branches)
-                })().map_err(|error| error.to_string()),
+                })()
+                .map_err(|error| error.to_string()),
                 None => branches(&root),
             };
             if let Some(operation) = &operation {
@@ -154,22 +197,23 @@ impl App {
         self.git_branch_picker_filtered_iter().cloned().collect()
     }
 
-    pub(crate) fn git_branch_picker_filtered_iter(&self) -> impl Iterator<Item = &GitBranchPickerItem> {
+    pub(crate) fn git_branch_picker_filtered_iter(
+        &self,
+    ) -> impl Iterator<Item = &GitBranchPickerItem> {
         let unfiltered = self.git_branch_picker_query.trim().is_empty();
-        self.git_branch_picker_items
-            .iter()
-            .filter(move |item| {
-                // Ordinary name queries can use borrowed fields. The label
-                // fallback preserves queries such as "local: feature".
-                unfiltered || crate::app::contains_ignore_case(
-                        item.target_branch_name(),
-                        &self.git_branch_picker_query,
-                    )
-                    || item.remote_ref().is_some_and(|remote_ref| {
-                        crate::app::contains_ignore_case(remote_ref, &self.git_branch_picker_query)
-                    })
-                    || crate::app::contains_ignore_case(&item.label(), &self.git_branch_picker_query)
-            })
+        self.git_branch_picker_items.iter().filter(move |item| {
+            // Ordinary name queries can use borrowed fields. The label
+            // fallback preserves queries such as "local: feature".
+            unfiltered
+                || crate::app::contains_ignore_case(
+                    item.target_branch_name(),
+                    &self.git_branch_picker_query,
+                )
+                || item.remote_ref().is_some_and(|remote_ref| {
+                    crate::app::contains_ignore_case(remote_ref, &self.git_branch_picker_query)
+                })
+                || crate::app::contains_ignore_case(&item.label(), &self.git_branch_picker_query)
+        })
     }
 
     pub(crate) fn git_branch_picker_create_candidate(&self) -> Option<String> {
@@ -203,25 +247,42 @@ impl App {
             self.notify("Branch name cannot be empty");
             return;
         }
-        self.queue_git_task("git-create-branch", "create branch", crate::git_tasks::Task::CreateBranch { branch_name });
+        self.queue_git_task(
+            "git-create-branch",
+            "create branch",
+            crate::git_tasks::Task::CreateBranch { branch_name },
+        );
     }
 
     fn checkout_local_branch(&mut self, branch_name: &str) {
         let branch_name = branch_name.to_string();
-        self.queue_git_task("git-checkout", "checkout", crate::git_tasks::Task::CheckoutLocal { branch_name });
+        self.queue_git_task(
+            "git-checkout",
+            "checkout",
+            crate::git_tasks::Task::CheckoutLocal { branch_name },
+        );
     }
 
     fn checkout_remote_branch(&mut self, remote_ref: &str, local_name: &str) {
         let remote_ref = remote_ref.to_string();
         let local_name = local_name.to_string();
-        self.queue_git_task("git-checkout-remote", "checkout", crate::git_tasks::Task::CheckoutRemote { remote_ref, local_name });
+        self.queue_git_task(
+            "git-checkout-remote",
+            "checkout",
+            crate::git_tasks::Task::CheckoutRemote {
+                remote_ref,
+                local_name,
+            },
+        );
     }
 }
 
-
 pub(crate) fn branches(root: &std::path::Path) -> Result<Vec<GitBranchPickerItem>, String> {
     let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
-    let current = repo.head().ok().filter(|head| head.is_branch())
+    let current = repo
+        .head()
+        .ok()
+        .filter(|head| head.is_branch())
         .and_then(|head| head.shorthand().map(str::to_owned));
     let mut items = Vec::new();
     if let Ok(branches) = repo.branches(Some(git2::BranchType::Local)) {
@@ -263,17 +324,15 @@ pub(crate) fn branches(root: &std::path::Path) -> Result<Vec<GitBranchPickerItem
     Ok(items)
 }
 
-
 pub(crate) fn current_local_branch_name(repo: &git2::Repository) -> Result<String, String> {
-        let head = repo.head().map_err(|e| format!("Git HEAD error: {e}"))?;
-        if !head.is_branch() {
-            return Err("Detached HEAD is not supported for this action".into());
-        }
-        head.shorthand()
-            .map(str::to_string)
-            .ok_or_else(|| "Current branch name is unavailable".to_string())
+    let head = repo.head().map_err(|e| format!("Git HEAD error: {e}"))?;
+    if !head.is_branch() {
+        return Err("Detached HEAD is not supported for this action".into());
     }
-
+    head.shorthand()
+        .map(str::to_string)
+        .ok_or_else(|| "Current branch name is unavailable".to_string())
+}
 
 pub(crate) fn push_command(root: &std::path::Path) -> Result<(Command, Vec<String>), String> {
     let repo = git2::Repository::open(&root).map_err(|error| error.to_string())?;

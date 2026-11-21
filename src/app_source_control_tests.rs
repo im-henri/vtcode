@@ -6,8 +6,20 @@ use std::path::Path;
 use std::time::Duration;
 
 fn grouped_changes() -> Vec<GitFileChange> {
-    [("staged.rs", true, 'M'), ("tracked.rs", false, 'M'), ("new.rs", false, '?')]
-        .into_iter().map(|(path, staged, status)| GitFileChange { directory: false, path: path.into(), staged, status, original_path: None }).collect()
+    [
+        ("staged.rs", true, 'M'),
+        ("tracked.rs", false, 'M'),
+        ("new.rs", false, '?'),
+    ]
+    .into_iter()
+    .map(|(path, staged, status)| GitFileChange {
+        directory: false,
+        path: path.into(),
+        staged,
+        status,
+        original_path: None,
+    })
+    .collect()
 }
 
 #[test]
@@ -21,17 +33,28 @@ fn untracked_filter_excludes_hidden_files_from_selection_navigation_and_actions(
     app.select_source_control_file(0, false, false);
     app.select_source_control_file(1, false, true);
     app.select_source_control_file(2, false, true);
-    assert_eq!(selection(&app), vec![("staged.rs".into(), true), ("tracked.rs".into(), false)]);
+    assert_eq!(
+        selection(&app),
+        vec![("staged.rs".into(), true), ("tracked.rs".into(), false)]
+    );
     app.select_all_source_control_files();
     assert_eq!(selection(&app).len(), 2);
-    assert!(app.source_control_group_changes(Group::Untracked).is_empty());
+    assert!(
+        app.source_control_group_changes(Group::Untracked)
+            .is_empty()
+    );
     app.source_control_selected = 0;
     crate::ui_source_control::handle_key(&mut app, KeyCode::Down, KeyModifiers::NONE);
     assert_eq!(app.source_control_selected, 1);
     crate::ui_source_control::handle_key(&mut app, KeyCode::Up, KeyModifiers::NONE);
     assert_eq!(app.source_control_selected, 0);
     app.update_source_control_files(vec![grouped_changes().pop().unwrap()]);
-    for code in [KeyCode::Enter, KeyCode::Char(' '), KeyCode::Delete, KeyCode::End] {
+    for code in [
+        KeyCode::Enter,
+        KeyCode::Char(' '),
+        KeyCode::Delete,
+        KeyCode::End,
+    ] {
         crate::ui_source_control::handle_key(&mut app, code, KeyModifiers::NONE);
     }
     assert!(selection(&app).is_empty());
@@ -51,9 +74,15 @@ fn status_refresh_prunes_selection_when_a_file_moves_into_a_hidden_group() {
     files.sort_by_key(Group::of);
     app.update_source_control_files(files);
     assert!(selection(&app).is_empty());
-    assert_eq!(app.source_control_files[app.source_control_selected].path, "tracked.rs");
+    assert_eq!(
+        app.source_control_files[app.source_control_selected].path,
+        "tracked.rs"
+    );
     app.set_source_control_visibility(Visibility::default());
-    assert!(!app.source_control_file_selected(1), "showing a group must not revive its old selection");
+    assert!(
+        !app.source_control_file_selected(1),
+        "showing a group must not revive its old selection"
+    );
 }
 
 #[test]
@@ -63,19 +92,49 @@ fn filtered_keyboard_navigation_keeps_selected_rows_in_view_across_collapsed_gro
     app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
     app.sc_graph_collapsed = true;
     app.explorer_area = Some(Rect::new(0, 0, 40, 16));
-    app.source_control_files = Group::ALL.into_iter().flat_map(|group| (0..30).map(move |index| GitFileChange { directory: false,
-        path: format!("{group:?}-{index}.txt"), staged: group == Group::Staged,
-        status: if group == Group::Merge { '!' } else if group == Group::Untracked { '?' } else { 'M' }, original_path: None,
-    })).collect();
+    app.source_control_files = Group::ALL
+        .into_iter()
+        .flat_map(|group| {
+            (0..30).map(move |index| GitFileChange {
+                directory: false,
+                path: format!("{group:?}-{index}.txt"),
+                staged: group == Group::Staged,
+                status: if group == Group::Merge {
+                    '!'
+                } else if group == Group::Untracked {
+                    '?'
+                } else {
+                    'M'
+                },
+                original_path: None,
+            })
+        })
+        .collect();
     app.set_source_control_visibility(Visibility { untracked: false });
     app.sc_changes_collapsed = true;
     let (height, _) = crate::ui_source_control::source_control_split_heights(16, true, 10);
     let visible = crate::ui_source_control::source_control_file_list_visible_rows(height);
-    for code in [KeyCode::End, KeyCode::PageUp, KeyCode::PageUp, KeyCode::Up, KeyCode::Home, KeyCode::PageDown, KeyCode::Down] {
+    for code in [
+        KeyCode::End,
+        KeyCode::PageUp,
+        KeyCode::PageUp,
+        KeyCode::Up,
+        KeyCode::Home,
+        KeyCode::PageDown,
+        KeyCode::Down,
+    ] {
         crate::ui_source_control::handle_key(&mut app, code, KeyModifiers::NONE);
         let layout = app.source_control_layout();
-        assert!(layout.rows(app.source_control_scroll).take(visible).any(|row| row == crate::source_control_rows::Row::File(app.source_control_selected)), "{code:?}");
-        assert_ne!(Group::of(&app.source_control_files[app.source_control_selected]), Group::Untracked);
+        assert!(
+            layout.rows(app.source_control_scroll).take(visible).any(
+                |row| row == crate::source_control_rows::Row::File(app.source_control_selected)
+            ),
+            "{code:?}"
+        );
+        assert_ne!(
+            Group::of(&app.source_control_files[app.source_control_selected]),
+            Group::Untracked
+        );
     }
     assert!(!app.sc_changes_collapsed);
 }
@@ -98,7 +157,11 @@ fn filter_menu_only_offers_untracked_files_and_supports_keyboard_toggle() {
     assert_eq!(app.sc_visibility, Visibility::default());
     crate::input_pickers::handle_context_menu_key(&mut app, KeyCode::Esc);
     assert!(!app.context_menu_active);
-    for command in ["git_show_staged", "git_show_unstaged", "git_changes_show_all"] {
+    for command in [
+        "git_show_staged",
+        "git_show_unstaged",
+        "git_changes_show_all",
+    ] {
         assert!(!app.execute_git_command(command));
     }
 }
@@ -113,7 +176,10 @@ fn untracked_filter_round_trips_with_workspace_session_and_defaults_to_visible()
     restored.restore_session(&session);
     assert_eq!(restored.sc_visibility, app.sc_visibility);
     let mut missing_filter = value;
-    missing_filter.as_object_mut().unwrap().remove("scVisibility");
+    missing_filter
+        .as_object_mut()
+        .unwrap()
+        .remove("scVisibility");
     let missing_filter: crate::session::Session = serde_json::from_value(missing_filter).unwrap();
     assert_eq!(missing_filter.sc_visibility, Visibility::default());
 }
@@ -124,7 +190,8 @@ fn actions_dropdown_is_clickable_in_narrow_sidebars_and_can_restore_filtered_fil
         for right in [false, true] {
             let mut app = App::test_new();
             app.sidebar_view = SidebarView::SourceControl;
-            app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
+            app.source_control_repository_state =
+                crate::app::SourceControlRepositoryState::Available;
             app.sidebar_right = right;
             app.sc_graph_collapsed = true;
             app.source_control_files = vec![grouped_changes().pop().unwrap()];
@@ -132,24 +199,66 @@ fn actions_dropdown_is_clickable_in_narrow_sidebars_and_can_restore_filtered_fil
             let area = Rect::new(5, 1, width, 20);
             app.explorer_area = Some(area);
             let mut terminal = Terminal::new(TestBackend::new(110, 28)).unwrap();
-            terminal.draw(|frame| crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)).unwrap();
+            terminal
+                .draw(|frame| {
+                    crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)
+                })
+                .unwrap();
             let button = app.source_control_actions_area.unwrap();
-            mouse(&mut app, MouseButton::Left, button.x + 1, button.y, KeyModifiers::NONE);
-            assert!(app.source_control_action_menu_open(), "width={width}, right={right}");
-            terminal.draw(|frame| {
-                crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area);
-                crate::ui_dialogs::draw_context_menu(frame, &mut app);
-            }).unwrap();
-            crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), &format!("Source control filter width {width} right {right}"));
+            mouse(
+                &mut app,
+                MouseButton::Left,
+                button.x + 1,
+                button.y,
+                KeyModifiers::NONE,
+            );
+            assert!(
+                app.source_control_action_menu_open(),
+                "width={width}, right={right}"
+            );
+            terminal
+                .draw(|frame| {
+                    crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area);
+                    crate::ui_dialogs::draw_context_menu(frame, &mut app);
+                })
+                .unwrap();
+            crate::ui_control_visibility_tests::snapshot(
+                terminal.backend().buffer(),
+                &format!("Source control filter width {width} right {right}"),
+            );
             let inner = app.context_menu_inner.unwrap();
-            let filter = app.context_menu_items.iter().position(|item| item.id == "git_show_untracked").unwrap();
-            let row = filter + app.context_menu_items[..filter].iter().filter(|item| item.separator_after).count();
-            mouse(&mut app, MouseButton::Left, inner.x + 2, inner.y + row as u16, KeyModifiers::NONE);
+            let filter = app
+                .context_menu_items
+                .iter()
+                .position(|item| item.id == "git_show_untracked")
+                .unwrap();
+            let row = filter
+                + app.context_menu_items[..filter]
+                    .iter()
+                    .filter(|item| item.separator_after)
+                    .count();
+            mouse(
+                &mut app,
+                MouseButton::Left,
+                inner.x + 2,
+                inner.y + row as u16,
+                KeyModifiers::NONE,
+            );
             assert_eq!(app.sc_visibility, Visibility::default());
-            assert!(app.source_control_action_menu_open(), "checkbox keeps the actions menu open");
+            assert!(
+                app.source_control_action_menu_open(),
+                "checkbox keeps the actions menu open"
+            );
             app.context_menu_active = false;
-            terminal.draw(|frame| crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)).unwrap();
-            crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), &format!("Source control groups width {width} right {right}"));
+            terminal
+                .draw(|frame| {
+                    crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)
+                })
+                .unwrap();
+            crate::ui_control_visibility_tests::snapshot(
+                terminal.backend().buffer(),
+                &format!("Source control groups width {width} right {right}"),
+            );
         }
     }
 }
@@ -162,22 +271,46 @@ fn unstaged_group_actions_leave_untracked_files_untouched() {
     app.set_source_control_visibility(Visibility { untracked: false });
     draw(&mut app, false);
     let stage = app.source_control_stage_all_area.unwrap();
-    mouse(&mut app, MouseButton::Left, stage.x + 1, stage.y, KeyModifiers::NONE);
+    mouse(
+        &mut app,
+        MouseButton::Left,
+        stage.x + 1,
+        stage.y,
+        KeyModifiers::NONE,
+    );
     wait(&mut app);
-    assert_eq!(index_text(directory.path(), "a.txt").as_deref(), Some("modified\n"));
+    assert_eq!(
+        index_text(directory.path(), "a.txt").as_deref(),
+        Some("modified\n")
+    );
     assert!(index_text(directory.path(), "new.txt").is_none());
     std::fs::write(directory.path().join("a.txt"), "discard this\n").unwrap();
     refresh(&mut app);
     draw(&mut app, false);
     let discard = app.source_control_discard_all_area.unwrap();
-    mouse(&mut app, MouseButton::Left, discard.x + 1, discard.y, KeyModifiers::NONE);
+    mouse(
+        &mut app,
+        MouseButton::Left,
+        discard.x + 1,
+        discard.y,
+        KeyModifiers::NONE,
+    );
     assert!(app.sc_discard_confirm_active);
     assert_eq!(app.sc_discard_request.as_ref().unwrap().changes.len(), 1);
-    assert_eq!(std::fs::read_to_string(directory.path().join("a.txt")).unwrap(), "discard this\n");
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("a.txt")).unwrap(),
+        "discard this\n"
+    );
     app.execute_source_control_discard_confirm(true);
     wait(&mut app);
-    assert_eq!(std::fs::read_to_string(directory.path().join("a.txt")).unwrap(), "modified\n");
-    assert_eq!(std::fs::read_to_string(directory.path().join("new.txt")).unwrap(), "keep\n");
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("a.txt")).unwrap(),
+        "modified\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("new.txt")).unwrap(),
+        "keep\n"
+    );
 }
 
 #[test]
@@ -187,7 +320,13 @@ fn untracked_group_actions_only_target_untracked_files_and_confirm_discard() {
     refresh(&mut app);
     draw(&mut app, false);
     let discard = app.source_control_untracked_discard_area.unwrap();
-    mouse(&mut app, MouseButton::Left, discard.x + 1, discard.y, KeyModifiers::NONE);
+    mouse(
+        &mut app,
+        MouseButton::Left,
+        discard.x + 1,
+        discard.y,
+        KeyModifiers::NONE,
+    );
     let request = app.sc_discard_request.as_ref().unwrap();
     assert_eq!(request.changes.len(), 1);
     assert_eq!(request.changes[0].path, "new.txt");
@@ -195,22 +334,41 @@ fn untracked_group_actions_only_target_untracked_files_and_confirm_discard() {
     assert!(directory.path().join("new.txt").exists());
     draw(&mut app, false);
     let stage = app.source_control_untracked_stage_area.unwrap();
-    mouse(&mut app, MouseButton::Left, stage.x + 1, stage.y, KeyModifiers::NONE);
+    mouse(
+        &mut app,
+        MouseButton::Left,
+        stage.x + 1,
+        stage.y,
+        KeyModifiers::NONE,
+    );
     wait(&mut app);
-    assert_eq!(index_text(directory.path(), "new.txt").as_deref(), Some("new\n"));
-    assert_eq!(index_text(directory.path(), "a.txt").as_deref(), Some("base\n"));
+    assert_eq!(
+        index_text(directory.path(), "new.txt").as_deref(),
+        Some("new\n")
+    );
+    assert_eq!(
+        index_text(directory.path(), "a.txt").as_deref(),
+        Some("base\n")
+    );
 }
 
 #[test]
 fn selection_distinguishes_staged_and_unstaged_paths_across_refreshes() {
-    let change = |path: &str, staged| GitFileChange { directory: false,
-        path: path.into(), staged, status: 'M', original_path: None,
+    let change = |path: &str, staged| GitFileChange {
+        directory: false,
+        path: path.into(),
+        staged,
+        status: 'M',
+        original_path: None,
     };
     let mut app = App::test_new();
     app.update_source_control_files(vec![change("same.rs", true), change("same.rs", false)]);
     app.select_source_control_file(0, false, false);
     app.select_source_control_file(1, true, false);
-    assert_eq!(selection(&app), vec![("same.rs".into(), true), ("same.rs".into(), false)]);
+    assert_eq!(
+        selection(&app),
+        vec![("same.rs".into(), true), ("same.rs".into(), false)]
+    );
     app.select_source_control_file(0, true, false);
     assert_eq!(selection(&app), vec![("same.rs".into(), false)]);
     app.update_source_control_files(vec![change("same.rs", true), change("another.rs", false)]);
@@ -227,28 +385,48 @@ fn selection_distinguishes_staged_and_unstaged_paths_across_refreshes() {
 fn benchmark_source_control_selection_lookup() {
     use std::{hint::black_box, time::Instant};
     let mut app = App::test_new();
-    app.source_control_files = (0..50_000).map(|index| GitFileChange { directory: false,
-        path: format!("src/long/module/path/file-{index}.rs"),
-        staged: index < 25_000, status: 'M', original_path: None,
-    }).collect();
+    app.source_control_files = (0..50_000)
+        .map(|index| GitFileChange {
+            directory: false,
+            path: format!("src/long/module/path/file-{index}.rs"),
+            staged: index < 25_000,
+            status: 'M',
+            original_path: None,
+        })
+        .collect();
     app.select_all_source_control_files();
     let old: FxHashSet<_> = app.source_control_files.iter().map(key).collect();
     let mut before = Vec::new();
     let mut after = Vec::new();
     for run in 0..25 {
-        for reference in if run % 2 == 0 { [true, false] } else { [false, true] } {
+        for reference in if run % 2 == 0 {
+            [true, false]
+        } else {
+            [false, true]
+        } {
             let start = Instant::now();
             let count = if reference {
-                app.source_control_files.iter().filter(|file| black_box(&old).contains(&key(file))).count()
+                app.source_control_files
+                    .iter()
+                    .filter(|file| black_box(&old).contains(&key(file)))
+                    .count()
             } else {
-                (0..app.source_control_files.len()).filter(|&index| black_box(&app).source_control_file_selected(index)).count()
+                (0..app.source_control_files.len())
+                    .filter(|&index| black_box(&app).source_control_file_selected(index))
+                    .count()
             };
             assert_eq!(count, 50_000);
-            if run >= 4 { (if reference { &mut before } else { &mut after }).push(start.elapsed()); }
+            if run >= 4 {
+                (if reference { &mut before } else { &mut after }).push(start.elapsed());
+            }
         }
     }
-    before.sort(); after.sort();
-    eprintln!("source_control_selection files=50000 before={:?} after={:?}", before[10], after[10]);
+    before.sort();
+    after.sort();
+    eprintln!(
+        "source_control_selection files=50000 before={:?} after={:?}",
+        before[10], after[10]
+    );
 }
 
 fn fixture() -> (tempfile::TempDir, App) {
@@ -331,7 +509,12 @@ fn draw(app: &mut App, modal: bool) -> Buffer {
 
 fn mouse(app: &mut App, button: MouseButton, col: u16, row: u16, modifiers: KeyModifiers) {
     for kind in [MouseEventKind::Down(button), MouseEventKind::Up(button)] {
-        let event = MouseEvent { kind, column: col, row, modifiers };
+        let event = MouseEvent {
+            kind,
+            column: col,
+            row,
+            modifiers,
+        };
         // Match the event loop: generic dropdowns own mouse input while open.
         if app.context_menu_active {
             crate::mouse_overlay::handle_context_menu_mouse(app, event);
@@ -375,9 +558,14 @@ fn index_text(root: &Path, path: &str) -> Option<String> {
 
 fn file_action(app: &mut App, path: &str, staged: bool, label: &str) -> Rect {
     draw(app, false);
-    app.source_control_file_actions.iter()
-        .find(|row| row.change.path == path && row.change.staged == staged).unwrap()
-        .buttons().find(|(action, _)| action.label() == label).unwrap().1
+    app.source_control_file_actions
+        .iter()
+        .find(|row| row.change.path == path && row.change.staged == staged)
+        .unwrap()
+        .buttons()
+        .find(|(action, _)| action.label() == label)
+        .unwrap()
+        .1
 }
 
 #[test]
@@ -388,7 +576,10 @@ fn source_control_double_click_keeps_loading_diffs_and_preserves_each_view() {
     assert!(app.tabs[app.active_tab].preview);
     assert!(app.editor().unwrap().bg_loading);
     click_file(&mut app, "a.txt", MouseButton::Left, KeyModifiers::NONE);
-    assert!(!app.tabs[app.active_tab].preview, "double-click keeps a loading diff open");
+    assert!(
+        !app.tabs[app.active_tab].preview,
+        "double-click keeps a loading diff open"
+    );
     assert_eq!(app.tabs.len(), 1);
     assert_eq!(app.tabs[app.active_tab].editor.navigation_id, first);
     assert!(!app.tabs[app.active_tab].pinned);
@@ -410,14 +601,19 @@ fn source_control_double_click_keeps_loading_diffs_and_preserves_each_view() {
     click_file(&mut app, "a.txt", MouseButton::Left, KeyModifiers::NONE);
     assert_eq!(app.tabs[app.active_tab].editor.navigation_id, first);
     assert!(!app.tabs[app.active_tab].preview);
-    app.wait_for_background(Duration::from_secs(10), |app| app.should_render_diff_for_active_editor());
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.should_render_diff_for_active_editor()
+    });
     let first_cache = app.diff_render_cache.clone();
     assert!(!std::sync::Arc::ptr_eq(&first_cache, &second_cache));
 
     click_file(&mut app, "c.txt", MouseButton::Left, KeyModifiers::NONE);
     assert_eq!(app.tabs.len(), 3);
     assert!(app.tabs[app.active_tab].preview);
-    for (path, id, cache) in [("b.txt", second, second_cache), ("a.txt", first, first_cache)] {
+    for (path, id, cache) in [
+        ("b.txt", second, second_cache),
+        ("a.txt", first, first_cache),
+    ] {
         click_file(&mut app, path, MouseButton::Left, KeyModifiers::NONE);
         assert_eq!(app.tabs.len(), 3);
         assert_eq!(app.tabs[app.active_tab].editor.navigation_id, id);
@@ -425,7 +621,9 @@ fn source_control_double_click_keeps_loading_diffs_and_preserves_each_view() {
         assert!(std::sync::Arc::ptr_eq(&cache, &app.diff_render_cache));
         assert_eq!(app.compare_base_content.as_deref(), Some("base\n"));
         assert_eq!(app.editor().unwrap().rope.to_string(), "modified\n");
-        if path == "b.txt" { assert_eq!(app.editor().unwrap().cursor_col, 3); }
+        if path == "b.txt" {
+            assert_eq!(app.editor().unwrap().cursor_col, 3);
+        }
     }
 }
 
@@ -442,7 +640,8 @@ fn source_control_single_clicks_follow_preview_setting_and_keep_only_one_preview
         assert_eq!(app.tabs.len(), if enabled { 1 } else { 3 });
         let current = app.tabs[app.active_tab].editor.navigation_id;
         // A later single click on the same diff must not keep its preview.
-        app.source_control_file_click.as_mut().unwrap().time = std::time::Instant::now() - Duration::from_secs(1);
+        app.source_control_file_click.as_mut().unwrap().time =
+            std::time::Instant::now() - Duration::from_secs(1);
         click_file(&mut app, "c.txt", MouseButton::Left, KeyModifiers::NONE);
         assert_eq!(app.tabs[app.active_tab].editor.navigation_id, current);
         assert_eq!(app.tabs[app.active_tab].preview, enabled);
@@ -451,7 +650,14 @@ fn source_control_single_clicks_follow_preview_setting_and_keep_only_one_preview
 
 #[test]
 fn source_control_double_click_requires_the_same_file_and_consecutive_plain_clicks() {
-    for boundary in ["row refresh", "ctrl", "shift", "middle", "workspace", "timeout"] {
+    for boundary in [
+        "row refresh",
+        "ctrl",
+        "shift",
+        "middle",
+        "workspace",
+        "timeout",
+    ] {
         let (_directory, mut app) = fixture();
         click_file(&mut app, "a.txt", MouseButton::Left, KeyModifiers::NONE);
         let mut path = "a.txt";
@@ -466,13 +672,21 @@ fn source_control_double_click_requires_the_same_file_and_consecutive_plain_clic
             "shift" => click_file(&mut app, path, MouseButton::Left, KeyModifiers::SHIFT),
             "middle" => click_file(&mut app, path, MouseButton::Middle, KeyModifiers::NONE),
             "workspace" => app.workspace_generation += 1,
-            "timeout" => app.source_control_file_click.as_mut().unwrap().time -= Duration::from_secs(1),
+            "timeout" => {
+                app.source_control_file_click.as_mut().unwrap().time -= Duration::from_secs(1)
+            }
             _ => unreachable!(),
         }
         click_file(&mut app, path, MouseButton::Left, KeyModifiers::NONE);
-        assert!(app.tabs[app.active_tab].preview, "{boundary} must interrupt the double-click");
+        assert!(
+            app.tabs[app.active_tab].preview,
+            "{boundary} must interrupt the double-click"
+        );
         click_file(&mut app, path, MouseButton::Left, KeyModifiers::NONE);
-        assert!(!app.tabs[app.active_tab].preview, "a subsequent real double-click keeps the diff");
+        assert!(
+            !app.tabs[app.active_tab].preview,
+            "a subsequent real double-click keeps the diff"
+        );
     }
 }
 
@@ -485,13 +699,22 @@ fn source_control_double_click_keeps_staged_and_unstaged_diffs_of_the_same_file(
     index.write().unwrap();
     std::fs::write(directory.path().join("a.txt"), "worktree\n").unwrap();
     refresh(&mut app);
-    for (staged, label, base, target) in [(true, "Unstage Changes", "base\n", "modified\n"),
-        (false, "Stage Changes", "modified\n", "worktree\n")] {
+    for (staged, label, base, target) in [
+        (true, "Unstage Changes", "base\n", "modified\n"),
+        (false, "Stage Changes", "modified\n", "worktree\n"),
+    ] {
         let row = file_action(&mut app, "a.txt", staged, label).y;
-        for _ in 0..2 { mouse(&mut app, MouseButton::Left, 10, row, KeyModifiers::NONE); }
+        for _ in 0..2 {
+            mouse(&mut app, MouseButton::Left, 10, row, KeyModifiers::NONE);
+        }
         assert!(!app.tabs[app.active_tab].preview);
-        assert_eq!(app.diff_tabs.staged_for_tab(&app.tabs[app.active_tab]), Some(staged));
-        app.wait_for_background(Duration::from_secs(10), |app| app.should_render_diff_for_active_editor());
+        assert_eq!(
+            app.diff_tabs.staged_for_tab(&app.tabs[app.active_tab]),
+            Some(staged)
+        );
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.should_render_diff_for_active_editor()
+        });
         assert_eq!(app.compare_base_content.as_deref(), Some(base));
         assert_eq!(app.editor().unwrap().rope.to_string(), target);
     }
@@ -502,15 +725,33 @@ fn source_control_double_click_keeps_staged_and_unstaged_diffs_of_the_same_file(
 #[test]
 fn file_row_buttons_stage_and_unstage_the_clicked_file() {
     let (directory, mut app) = fixture();
-    for (staged, label, expected) in [(false, "Stage Changes", "modified\n"), (true, "Unstage Changes", "base\n")] {
+    for (staged, label, expected) in [
+        (false, "Stage Changes", "modified\n"),
+        (true, "Unstage Changes", "base\n"),
+    ] {
         let button = file_action(&mut app, "a.txt", staged, label);
-        mouse(&mut app, MouseButton::Left, button.x + 1, button.y, KeyModifiers::NONE);
+        mouse(
+            &mut app,
+            MouseButton::Left,
+            button.x + 1,
+            button.y,
+            KeyModifiers::NONE,
+        );
         wait(&mut app);
-        assert_eq!(index_text(directory.path(), "a.txt").as_deref(), Some(expected));
+        assert_eq!(
+            index_text(directory.path(), "a.txt").as_deref(),
+            Some(expected)
+        );
         for path in ["b.txt", "c.txt"] {
-            assert_eq!(index_text(directory.path(), path).as_deref(), Some("base\n"));
+            assert_eq!(
+                index_text(directory.path(), path).as_deref(),
+                Some("base\n")
+            );
         }
-        assert_eq!(std::fs::read_to_string(directory.path().join("a.txt")).unwrap(), "modified\n");
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("a.txt")).unwrap(),
+            "modified\n"
+        );
     }
 }
 
@@ -518,19 +759,38 @@ fn file_row_buttons_stage_and_unstage_the_clicked_file() {
 fn file_row_open_uses_normal_editor_and_discard_keeps_confirmation() {
     let (directory, mut app) = fixture();
     let button = file_action(&mut app, "b.txt", false, "Open File");
-    mouse(&mut app, MouseButton::Left, button.x + 1, button.y, KeyModifiers::NONE);
-    app.wait_for_background(Duration::from_secs(10), |app| app.editor().is_some_and(|editor| !editor.bg_loading));
+    mouse(
+        &mut app,
+        MouseButton::Left,
+        button.x + 1,
+        button.y,
+        KeyModifiers::NONE,
+    );
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.editor().is_some_and(|editor| !editor.bg_loading)
+    });
     assert_eq!(app.tabs[app.active_tab].kind, crate::app::TabKind::File);
-    assert_eq!(std::fs::canonicalize(app.editor().unwrap().file_path.as_ref().unwrap()).unwrap(),
-        std::fs::canonicalize(directory.path().join("b.txt")).unwrap());
+    assert_eq!(
+        std::fs::canonicalize(app.editor().unwrap().file_path.as_ref().unwrap()).unwrap(),
+        std::fs::canonicalize(directory.path().join("b.txt")).unwrap()
+    );
     assert_eq!(app.editor().unwrap().rope.to_string(), "modified\n");
     let button = file_action(&mut app, "c.txt", false, "Discard Changes");
-    mouse(&mut app, MouseButton::Left, button.x + 1, button.y, KeyModifiers::NONE);
+    mouse(
+        &mut app,
+        MouseButton::Left,
+        button.x + 1,
+        button.y,
+        KeyModifiers::NONE,
+    );
     assert!(app.sc_discard_confirm_active);
     let request = app.sc_discard_request.as_ref().unwrap();
     assert_eq!(request.changes.len(), 1);
     assert_eq!(request.changes[0].path, "c.txt");
-    assert_eq!(std::fs::read_to_string(directory.path().join("c.txt")).unwrap(), "modified\n");
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("c.txt")).unwrap(),
+        "modified\n"
+    );
     app.execute_source_control_discard_confirm(false);
     assert!(!app.sc_discard_confirm_active && !app.bg_git_action_running);
 }
@@ -540,15 +800,32 @@ fn file_row_buttons_reject_busy_operations_and_stale_status_rows() {
     let (directory, mut app) = fixture();
     let button = file_action(&mut app, "a.txt", false, "Discard Changes");
     app.bg_git_action_running = true;
-    mouse(&mut app, MouseButton::Left, button.x + 1, button.y, KeyModifiers::NONE);
+    mouse(
+        &mut app,
+        MouseButton::Left,
+        button.x + 1,
+        button.y,
+        KeyModifiers::NONE,
+    );
     assert!(!app.sc_discard_confirm_active);
     app.bg_git_action_running = false;
     app.source_control_files.remove(0);
-    assert!(!crate::ui_source_control::handle_file_action_click(&mut app, button.x, button.y, KeyModifiers::NONE));
+    assert!(!crate::ui_source_control::handle_file_action_click(
+        &mut app,
+        button.x,
+        button.y,
+        KeyModifiers::NONE
+    ));
     assert!(!app.sc_discard_confirm_active);
     for path in ["a.txt", "b.txt", "c.txt"] {
-        assert_eq!(index_text(directory.path(), path).as_deref(), Some("base\n"));
-        assert_eq!(std::fs::read_to_string(directory.path().join(path)).unwrap(), "modified\n");
+        assert_eq!(
+            index_text(directory.path(), path).as_deref(),
+            Some("base\n")
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join(path)).unwrap(),
+            "modified\n"
+        );
     }
 }
 
@@ -629,7 +906,8 @@ fn keyboard_selection_and_refresh_use_file_identity_and_staging_section() {
     let mut files = app.source_control_files.clone();
     files.insert(
         0,
-        GitFileChange { directory: false,
+        GitFileChange {
+            directory: false,
             path: "a.txt".into(),
             staged: true,
             status: 'M',
@@ -792,7 +1070,8 @@ fn discard_request_cannot_follow_a_workspace_switch_or_delete_a_directory() {
     let nested = directory.path().join("nested");
     std::fs::create_dir(&nested).unwrap();
     std::fs::write(nested.join("keep.txt"), "keep\n").unwrap();
-    app.git_discard_changes(vec![GitFileChange { directory: false,
+    app.git_discard_changes(vec![GitFileChange {
+        directory: false,
         path: "nested".into(),
         original_path: None,
         status: '?',
@@ -844,7 +1123,8 @@ fn mixed_selection_offers_both_stage_actions_and_deselecting_everything_is_safe(
 fn collapsed_sections_do_not_interfere_with_clicking_unstaged_files() {
     let (_directory, mut app) = fixture();
     let mut files: Vec<_> = (0..50)
-        .map(|i| GitFileChange { directory: false,
+        .map(|i| GitFileChange {
+            directory: false,
             path: format!("staged-{i}.txt"),
             original_path: None,
             staged: true,

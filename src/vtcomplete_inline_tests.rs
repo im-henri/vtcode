@@ -7,7 +7,13 @@ fn patterns_only() -> Engine<'static> {
     engine
 }
 
-fn predict_in(engine: &mut Engine, language: &str, before: &str, rest: &str, below: &str) -> Option<String> {
+fn predict_in(
+    engine: &mut Engine,
+    language: &str,
+    before: &str,
+    rest: &str,
+    below: &str,
+) -> Option<String> {
     engine
         .predict(
             Caret {
@@ -30,7 +36,9 @@ fn predict(before: &str) -> Option<String> {
 
 #[test]
 fn model_window_can_start_inside_a_long_line() {
-    let Some(network) = model::embedded() else { return };
+    let Some(network) = model::embedded() else {
+        return;
+    };
     let before = format!("let values = [\n    {}", "1234567890".repeat(410));
     let mut engine = Engine::new();
     engine.set_stream(network, 1, &before);
@@ -125,7 +133,10 @@ let right_padding = style.";
 fn sub_word_renames_keep_the_letter_case_of_each_use() {
     let mut subwords = Subwords::default();
     subwords.learn("left_margin", "right_margin");
-    assert_eq!(subwords.apply("set_left_edge").as_deref(), Some("set_right_edge"));
+    assert_eq!(
+        subwords.apply("set_left_edge").as_deref(),
+        Some("set_right_edge")
+    );
     assert_eq!(subwords.apply("LeftEdge").as_deref(), Some("RightEdge"));
     assert_eq!(subwords.apply("LEFT_EDGE").as_deref(), Some("RIGHT_EDGE"));
     assert_eq!(subwords.apply("top_edge"), None);
@@ -157,7 +168,10 @@ fn comments_and_strings_stay_quiet() {
     let python = "print(value)\nprint(value)\nprint(value)\n";
     let mut engine = patterns_only();
     assert!(predict_in(&mut engine, "Python", &format!("{python}print("), "", "").is_some());
-    assert_eq!(predict_in(&mut engine, "Python", &format!("{python}# print("), "", ""), None);
+    assert_eq!(
+        predict_in(&mut engine, "Python", &format!("{python}# print("), "", ""),
+        None
+    );
 }
 
 #[test]
@@ -166,16 +180,35 @@ fn text_right_of_the_caret_is_not_repeated() {
     let mut engine = patterns_only();
     // An automatically inserted closing bracket stays where it is.
     assert_eq!(
-        predict_in(&mut engine, "Rust", &format!("{lines}store.insert("), ")", "").as_deref(),
+        predict_in(
+            &mut engine,
+            "Rust",
+            &format!("{lines}store.insert("),
+            ")",
+            ""
+        )
+        .as_deref(),
         Some("key, value")
     );
     // Other code right of the caret is being edited in place.
     assert_eq!(
-        predict_in(&mut engine, "Rust", &format!("{lines}store."), "remove(key);", ""),
+        predict_in(
+            &mut engine,
+            "Rust",
+            &format!("{lines}store."),
+            "remove(key);",
+            ""
+        ),
         None
     );
     assert_eq!(
-        predict_in(&mut engine, "Rust", &format!("{lines}sto"), "re.insert(key, value);", ""),
+        predict_in(
+            &mut engine,
+            "Rust",
+            &format!("{lines}sto"),
+            "re.insert(key, value);",
+            ""
+        ),
         None
     );
 }
@@ -236,9 +269,12 @@ fn an_open_block_is_continued_across_lines_with_the_caret_indentation() {
         release_blocks(&["left", "top", "bottom"])
     );
     let block = predict(&before).unwrap();
-    assert_eq!(block, "
+    assert_eq!(
+        block,
+        "
         self.release(right);
-    }");
+    }"
+    );
     // Single-line mode stops at the end of the caret line.
     let options = Options {
         multiline: false,
@@ -269,7 +305,11 @@ fn typing_only_lexes_the_changed_line_again() {
     assert!(first >= before.len() - 16);
     before.push('p');
     predict_in(&mut engine, "Rust", &before, "", "");
-    assert!(engine.lexed_bytes - first < 64, "{}", engine.lexed_bytes - first);
+    assert!(
+        engine.lexed_bytes - first < 64,
+        "{}",
+        engine.lexed_bytes - first
+    );
 }
 
 #[test]
@@ -318,11 +358,20 @@ fn lexer_groups_operators_strings_and_drops_comments() {
         text: "a::b -> c // note\n\n\nlet s = \"x y\"; /* gone */ 'a".into(),
         ..Document::default()
     };
-    lex(&mut document, 0, Syntax::for_language("Rust"), &mut interner);
-    let tokens: Vec<&str> = (0..document.ids.len()).map(|at| document.token(at)).collect();
+    lex(
+        &mut document,
+        0,
+        Syntax::for_language("Rust"),
+        &mut interner,
+    );
+    let tokens: Vec<&str> = (0..document.ids.len())
+        .map(|at| document.token(at))
+        .collect();
     assert_eq!(
         tokens,
-        ["a", "::", "b", "->", "c", "\n", "let", "s", "=", "\"x y\"", ";", "'", "a"]
+        [
+            "a", "::", "b", "->", "c", "\n", "let", "s", "=", "\"x y\"", ";", "'", "a"
+        ]
     );
     assert_eq!(kind(document.ids[6]), KEYWORD);
     assert_eq!(kind(document.ids[9]), STRING);
@@ -362,7 +411,10 @@ fn calibration_model_orders_evidence_sensibly() {
         let weak = calibrated(&viewed(step(1, 0.4, 5.)), alone);
         let lone = calibrated(&viewed(step(1, 0.97, 30.)), alone);
         let strong = calibrated(&viewed(step(4, 0.97, 30.)), alone);
-        assert!(weak < lone && lone < strong, "{alone} {weak} {lone} {strong}");
+        assert!(
+            weak < lone && lone < strong,
+            "{alone} {weak} {lone} {strong}"
+        );
         assert!(strong > 0.8, "{alone} {strong}");
     }
     for feature in step(4, 0.97, 30.).features() {
@@ -377,14 +429,20 @@ fn comments_and_strings_spanning_lines_stay_quiet_after_incremental_lexing() {
     let open = format!("{calls}/* notes\n   log(");
     assert_eq!(predict_in(&mut engine, "Rust", &open, "", ""), None);
     // The next keystroke restarts lexing on the caret line, inside the comment.
-    assert_eq!(predict_in(&mut engine, "Rust", &format!("{open}v"), "", ""), None);
+    assert_eq!(
+        predict_in(&mut engine, "Rust", &format!("{open}v"), "", ""),
+        None
+    );
     let closed = format!("{calls}/* notes\n   more */\nlog(");
     assert!(predict_in(&mut engine, "Rust", &closed, "", "").is_some());
 
     let python = "print(value)\nprint(value)\nprint(value)\n";
     let docstring = format!("{python}def run():\n    \"\"\"Explain.\n\n    print(");
     assert_eq!(predict_in(&mut engine, "Python", &docstring, "", ""), None);
-    assert_eq!(predict_in(&mut engine, "Python", &format!("{docstring}v"), "", ""), None);
+    assert_eq!(
+        predict_in(&mut engine, "Python", &format!("{docstring}v"), "", ""),
+        None
+    );
     let after = format!("{python}def run():\n    \"\"\"Explain.\n    \"\"\"\n    print(");
     assert!(predict_in(&mut engine, "Python", &after, "", "").is_some());
 }
@@ -425,16 +483,33 @@ impl Rectangle {
         budget: std::time::Duration::from_secs(120),
         ..Options::preset(2)
     };
-    let prediction = engine.predict(caret, options, &|| false).expect("a continuation of the comment");
-    assert!(prediction.text.starts_with("rectangle"), "{:?}", prediction.text);
+    let prediction = engine
+        .predict(caret, options, &|| false)
+        .expect("a continuation of the comment");
+    assert!(
+        prediction.text.starts_with("rectangle"),
+        "{:?}",
+        prediction.text
+    );
     assert!(!prediction.text.contains('\n'));
     assert!(prediction.trace.iter().all(|step| step.prose && step.model));
     // A word begun in the comment is completed from the words in view.
     let begun = format!("{before}rect");
     let prediction = engine
-        .predict(Caret { before: &begun, ..caret }, options, &|| false)
+        .predict(
+            Caret {
+                before: &begun,
+                ..caret
+            },
+            options,
+            &|| false,
+        )
         .expect("the rest of the word");
-    assert!(prediction.text.starts_with("angle"), "{:?}", prediction.text);
+    assert!(
+        prediction.text.starts_with("angle"),
+        "{:?}",
+        prediction.text
+    );
 }
 
 #[test]
@@ -470,7 +545,11 @@ fn third() -> layoutr";
             &|| false,
         )
         .expect("a prediction");
-    assert!(prediction.text.starts_with("enderers"), "{:?}", prediction.text);
+    assert!(
+        prediction.text.starts_with("enderers"),
+        "{:?}",
+        prediction.text
+    );
     assert_eq!(prediction.retype.as_deref(), Some("LayoutR"));
 }
 
@@ -481,8 +560,17 @@ fn what_the_model_wrote_ahead_is_followed_token_by_token() {
     // Typed " layoutt"; the model spelled it " LayoutT" and wrote on.
     let written = model::Written {
         bytes: b" LayoutTree::new(width);
-".to_vec(),
-        steps: vec![(7, 0.5), (11, 0.8), (13, 0.9), (17, 0.7), (22, 0.6), (25, 0.9), (26, 0.95)],
+"
+        .to_vec(),
+        steps: vec![
+            (7, 0.5),
+            (11, 0.8),
+            (13, 0.9),
+            (17, 0.7),
+            (22, 0.6),
+            (25, 0.9),
+            (26, 0.95),
+        ],
         ..model::Written::default()
     };
     let plan = Plan::new(0, b" layoutt".to_vec(), written, 0);
@@ -490,7 +578,11 @@ fn what_the_model_wrote_ahead_is_followed_token_by_token() {
     // with the chance of every token that writes it.
     let first = plan.next("", "layoutt", rust, &mut interner).unwrap();
     assert_eq!((first.text.as_str(), first.spaced), ("LayoutTree", false));
-    assert!((first.probability - 0.5 * 0.8).abs() < 1e-6, "{}", first.probability);
+    assert!(
+        (first.probability - 0.5 * 0.8).abs() < 1e-6,
+        "{}",
+        first.probability
+    );
     // Once the prediction holds that, the next tokens follow.
     let second = plan.next("ree", "", rust, &mut interner).unwrap();
     assert_eq!(second.text, "::");
@@ -502,23 +594,36 @@ fn what_the_model_wrote_ahead_is_followed_token_by_token() {
     assert!(plan.chance_of("ree::", "default").is_none());
     // The line end is proposed as such; a prediction that left the written
     // text gets nothing from it.
-    let end = plan.next("ree::new(width);", "", rust, &mut interner).unwrap();
+    let end = plan
+        .next("ree::new(width);", "", rust, &mut interner)
+        .unwrap();
     assert_eq!(end.id, NEWLINE_ID);
     assert!(plan.next("ree::with", "", rust, &mut interner).is_none());
-    assert!(plan.rest("ree::new(width);
-").is_none());
+    assert!(
+        plan.rest(
+            "ree::new(width);
+"
+        )
+        .is_none()
+    );
 }
 
 #[test]
 fn a_series_counts_on_by_number_or_letter() {
     let next = |a: &str, b: &str| series_next(a, b);
     assert_eq!(next("item1", "item2").as_deref(), Some("item3"));
-    assert_eq!(next("myCustomOBSCURE_VAR0", "myCustomOBSCURE_VAR1").as_deref(), Some("myCustomOBSCURE_VAR2"));
+    assert_eq!(
+        next("myCustomOBSCURE_VAR0", "myCustomOBSCURE_VAR1").as_deref(),
+        Some("myCustomOBSCURE_VAR2")
+    );
     assert_eq!(next("10", "20").as_deref(), Some("30"));
     assert_eq!(next("file_08", "file_09").as_deref(), Some("file_10"));
     assert_eq!(next("row_a", "row_b").as_deref(), Some("row_c"));
     assert_eq!(next("a", "b").as_deref(), Some("c"));
-    assert_eq!(next("\"step 1\"", "\"step 2\"").as_deref(), Some("\"step 3\""));
+    assert_eq!(
+        next("\"step 1\"", "\"step 2\"").as_deref(),
+        Some("\"step 3\"")
+    );
     assert_eq!(next("x3", "x2").as_deref(), Some("x1"));
     // Not a series: different stems, no step, a letter inside a word, the end.
     assert_eq!(next("item1", "entry2"), None);
@@ -526,8 +631,14 @@ fn a_series_counts_on_by_number_or_letter() {
     assert_eq!(next("data", "datb"), None);
     assert_eq!(next("row_y", "row_z"), None);
     assert_eq!(next("1", "0"), None);
-    assert_eq!(series_around("item2"), Some(("item1".into(), "item3".into())));
-    assert_eq!(series_around("row_b"), Some(("row_a".into(), "row_c".into())));
+    assert_eq!(
+        series_around("item2"),
+        Some(("item1".into(), "item3".into()))
+    );
+    assert_eq!(
+        series_around("row_b"),
+        Some(("row_a".into(), "row_c".into()))
+    );
     assert_eq!(series_around("b"), None);
     assert_eq!(series_around("item0"), None);
     assert_eq!(series_around("value"), None);
@@ -575,7 +686,11 @@ function setup() {
     row_a.x = 10;
     row_b.x = 20;
     row_";
-    assert!(best_guess(rows).starts_with("c.x = 30"), "{}", best_guess(rows));
+    assert!(
+        best_guess(rows).starts_with("c.x = 30"),
+        "{}",
+        best_guess(rows)
+    );
     // Using a numbered name again is not counting on.
     let uses = "\
     const item1 = load(1);
@@ -583,7 +698,10 @@ function setup() {
     show(item1);
     show(it";
     let guess = best_guess(uses);
-    assert!(guess.starts_with("em1") || guess.starts_with("em2"), "{guess}");
+    assert!(
+        guess.starts_with("em1") || guess.starts_with("em2"),
+        "{guess}"
+    );
 }
 
 #[test]
@@ -591,8 +709,15 @@ fn a_line_that_opens_a_block_is_kept_whole_when_the_block_is_uncertain() {
     // Every earlier loop stores a different field, so the line after the
     // caret line becomes uncertain partway through.
     let mut before = String::new();
-    for body in ["store(entry.name)", "store(entry.size)", "store(entry.kind)", "store(entry.date)"] {
-        before.push_str(&format!("    for entry in entries.iter() {{\n        {body};\n    }}\n"));
+    for body in [
+        "store(entry.name)",
+        "store(entry.size)",
+        "store(entry.kind)",
+        "store(entry.date)",
+    ] {
+        before.push_str(&format!(
+            "    for entry in entries.iter() {{\n        {body};\n    }}\n"
+        ));
     }
     before.push_str("    for entry in entries.");
     let Some(network) = model::embedded() else {
@@ -613,22 +738,31 @@ fn a_line_that_opens_a_block_is_kept_whole_when_the_block_is_uncertain() {
         budget: std::time::Duration::from_secs(120),
         ..Options::default()
     };
-    let prediction = engine.predict(caret, options, &|| false).map(|prediction| prediction.text);
+    let prediction = engine
+        .predict(caret, options, &|| false)
+        .map(|prediction| prediction.text);
     assert_eq!(prediction.as_deref(), Some("iter() {"));
 }
 
 #[test]
 fn the_analogous_place_is_the_best_witness_outside_the_window() {
     let syntax = Syntax::for_language("Rust");
-    let earlier = "fn left(&mut self, value: u32) {\n    self.left = value;\n    self.changed();\n}\n\n";
-    let filler: String = (0..40).map(|n| format!("let unrelated_{n} = {n};\n")).collect();
-    let before = format!("{earlier}{filler}fn right(&mut self, value: u32) {{\n    self.right = value;\n    self.");
+    let earlier =
+        "fn left(&mut self, value: u32) {\n    self.left = value;\n    self.changed();\n}\n\n";
+    let filler: String = (0..40)
+        .map(|n| format!("let unrelated_{n} = {n};\n"))
+        .collect();
+    let before = format!(
+        "{earlier}{filler}fn right(&mut self, value: u32) {{\n    self.right = value;\n    self."
+    );
     let mut engine = patterns_only();
     engine.set_active(1, &before, "", syntax);
     // The window starts after the earlier method: that is where the
     // passage comes from, holding what followed the matched context there.
     let window_byte = earlier.len() + filler.len() / 2;
-    let (index, start, end) = engine.analog_place(window_byte).expect("an analogous place");
+    let (index, start, end) = engine
+        .analog_place(window_byte)
+        .expect("an analogous place");
     assert_eq!(index, 0);
     let passage = &engine.documents[0].text[start..end];
     assert!(passage.contains("self.changed();"), "{passage:?}");

@@ -40,12 +40,17 @@ impl CellMask {
 
     #[cfg(test)]
     pub(super) fn cells(&self, flags: u8) -> impl Iterator<Item = (u16, u16)> + '_ {
-        self.flags.iter().enumerate().filter_map(move |(index, value)| {
-            (value & flags != 0).then(|| (
-                self.area.x + (index % usize::from(self.area.width)) as u16,
-                self.area.y + (index / usize::from(self.area.width)) as u16,
-            ))
-        })
+        self.flags
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, value)| {
+                (value & flags != 0).then(|| {
+                    (
+                        self.area.x + (index % usize::from(self.area.width)) as u16,
+                        self.area.y + (index / usize::from(self.area.width)) as u16,
+                    )
+                })
+            })
     }
 
     pub(super) fn get(&self, position: (u16, u16)) -> Option<u8> {
@@ -74,10 +79,15 @@ impl SourceCells {
             dense: CellMask::new(area),
             outside: FxHashSet::default(),
         };
-        for anchor in anchors.iter().filter(|a| !matches!(a.ch, ' ' | '\t' | '\0')) {
+        for anchor in anchors
+            .iter()
+            .filter(|a| !matches!(a.ch, ' ' | '\t' | '\0'))
+        {
             for x in anchor.x..anchor.x.saturating_add(anchor.width) {
                 let position = (x, anchor.y);
-                if let Some(dense) = cells.dense.as_mut()
+                if let Some(dense) = cells
+                    .dense
+                    .as_mut()
                     .filter(|mask| mask.area.contains(position.into()))
                 {
                     dense.insert(position, 1);
@@ -90,7 +100,9 @@ impl SourceCells {
     }
 
     pub(super) fn contains(&self, position: (u16, u16)) -> bool {
-        self.dense.as_ref().and_then(|mask| mask.get(position))
+        self.dense
+            .as_ref()
+            .and_then(|mask| mask.get(position))
             .map_or_else(|| self.outside.contains(&position), |flags| flags != 0)
     }
 }

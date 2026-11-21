@@ -22,10 +22,19 @@ fn soft_tabs_match_scalar_edits_with_overwrite_virtual_columns_wrapping_and_undo
                     actual.insert_tab();
                     // Tab stops follow painted columns, including wide glyphs
                     // and hard tabs. A virtual caret inserts at the real EOL.
-                    let visual = expected.rope.line(0).chars()
+                    let visual = expected
+                        .rope
+                        .line(0)
+                        .chars()
                         .take(col.min(expected.line_len(0)))
-                        .fold(0, |cells, ch| cells + if ch == '\t' { size - cells % size }
-                            else { unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) });
+                        .fold(0, |cells, ch| {
+                            cells
+                                + if ch == '\t' {
+                                    size - cells % size
+                                } else {
+                                    unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
+                                }
+                        });
                     for _ in 0..size - visual % size {
                         expected.insert_char(' ');
                     }

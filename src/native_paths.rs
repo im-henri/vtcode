@@ -109,15 +109,21 @@ pub(crate) fn strip_possible_alias_prefix<'a>(path: &'a Path, base: &Path) -> Op
 fn possible_alias_name(left: &OsStr, right: &OsStr) -> bool {
     left.eq_ignore_ascii_case(right)
         || (!(left.is_ascii() && right.is_ascii())
-            && left.to_str().zip(right.to_str()).is_some_and(|(left, right)| {
-                left.chars().flat_map(char::to_lowercase)
-                    .eq(right.chars().flat_map(char::to_lowercase))
-            }))
+            && left
+                .to_str()
+                .zip(right.to_str())
+                .is_some_and(|(left, right)| {
+                    left.chars()
+                        .flat_map(char::to_lowercase)
+                        .eq(right.chars().flat_map(char::to_lowercase))
+                }))
 }
 
 #[cfg(windows)]
 pub(crate) fn possible_case_alias(left: &Path, right: &Path) -> bool {
-    left.file_name().zip(right.file_name()).is_some_and(|(left, right)| possible_alias_name(left, right))
+    left.file_name()
+        .zip(right.file_name())
+        .is_some_and(|(left, right)| possible_alias_name(left, right))
         && strip_possible_alias_prefix(left, right).is_some_and(|rest| rest.as_os_str().is_empty())
         && !same_spelling(left, right)
 }
@@ -150,10 +156,14 @@ pub(crate) fn same(left: &Path, right: &Path) -> bool {
 
 #[cfg(windows)]
 pub(crate) mod windows {
-    use std::{fs::File, io, path::{Path, PathBuf}};
     use std::os::windows::fs::OpenOptionsExt;
-    use windows_sys::Win32::Storage::FileSystem::*;
+    use std::{
+        fs::File,
+        io,
+        path::{Path, PathBuf},
+    };
     pub(crate) use vtcode::file_source::windows_final_path as final_path;
+    use windows_sys::Win32::Storage::FileSystem::*;
 
     pub(crate) fn open_entry(path: &Path, access: u32) -> io::Result<File> {
         File::options()

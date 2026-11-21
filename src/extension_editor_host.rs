@@ -35,77 +35,136 @@ fn write_payload(caller: &mut Caller<'_, HostState>, ptr: i32, max: i32, bytes: 
 }
 
 pub(crate) fn define(linker: &mut Linker<HostState>) -> Result<(), String> {
-    linker.func_wrap("vtcode", "host_view_event_text", |mut caller: Caller<'_, HostState>, ptr: i32, max: i32| -> i32 {
-        if caller.data().current_view_event_text.is_none() {
-            let Some(bytes) = caller.data().current_view_event.as_deref() else {
-                return fail(caller.data_mut(), "No current input event");
-            };
-            let mut event = match serde_json::from_slice::<serde_json::Value>(bytes) {
-                Ok(event) => event,
-                Err(error) => return fail(caller.data_mut(), error),
-            };
-            let text = match event.get_mut("text").map(serde_json::Value::take) {
-                Some(serde_json::Value::String(text)) => text,
-                _ => String::new(),
-            };
-            caller.data_mut().current_view_event_text = Some(text);
-        }
-        let text = caller.data_mut().current_view_event_text.take().unwrap();
-        let result = if max == 0 { text.len() as i32 } else { write_payload(&mut caller, ptr, max, text.as_bytes()) };
-        caller.data_mut().current_view_event_text = Some(text);
-        result
-    }).map_err(|error| error.to_string())?;
-    linker.func_wrap("vtcode", "host_set_view_input_pending",
-        |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, pending: i32| {
-            if let Some(id) = read_guest_string(&mut caller, ptr, len) {
-                host_view_entry_mut(caller.data_mut(), &id).input_pending = pending != 0;
-            }
-        }).map_err(|error| error.to_string())?;
-    linker.func_wrap("vtcode", "host_open_text_document",
-        |mut caller: Caller<'_, HostState>, name_ptr: i32, name_len: i32, ptr: i32, len: i32| -> i32 {
-            let Some(name) = read_guest_string(&mut caller, name_ptr, name_len) else {
-                return fail(caller.data_mut(), "Invalid document name");
-            };
-            if name.is_empty() || name.len() > 255 || name.contains(['/', '\\', ':'])
-                || name.chars().any(char::is_control) || matches!(name.as_str(), "." | "..") {
-                return fail(caller.data_mut(), "Use a filename without a directory for the export");
-            }
-            if ptr < 0 || !(0..=32 * 1024 * 1024).contains(&len) {
-                return fail(caller.data_mut(), "Generated text is limited to 32 MiB");
-            }
-            // Borrow guest memory and allocate only the final host String.
-            let text = {
-                let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
-                    return fail(caller.data_mut(), "Missing guest memory");
-                };
-                let bytes = match memory.data(&caller).get(ptr as usize..ptr as usize + len as usize) {
-                    Some(bytes) => bytes,
-                    None => return fail(caller.data_mut(), "Invalid guest memory range"),
-                };
-                match std::str::from_utf8(bytes) {
-                    Ok(text) => text.to_owned(),
-                    Err(_) => return fail(caller.data_mut(), "Generated text must be valid UTF-8"),
+    linker
+        .func_wrap(
+            "vtcode",
+            "host_view_event_text",
+            |mut caller: Caller<'_, HostState>, ptr: i32, max: i32| -> i32 {
+                if caller.data().current_view_event_text.is_none() {
+                    let Some(bytes) = caller.data().current_view_event.as_deref() else {
+                        return fail(caller.data_mut(), "No current input event");
+                    };
+                    let mut event = match serde_json::from_slice::<serde_json::Value>(bytes) {
+                        Ok(event) => event,
+                        Err(error) => return fail(caller.data_mut(), error),
+                    };
+                    let text = match event.get_mut("text").map(serde_json::Value::take) {
+                        Some(serde_json::Value::String(text)) => text,
+                        _ => String::new(),
+                    };
+                    caller.data_mut().current_view_event_text = Some(text);
                 }
-            };
-            let pending = caller.data().text_edit_requests.iter().filter_map(|request| {
-                if let crate::extension_manifest::TextEditRequest::OpenDocument { text, .. } = request {
-                    Some(text.len())
-                } else { None }
-            }).sum::<usize>();
-            if pending + text.len() > 32 * 1024 * 1024 {
-                return fail(caller.data_mut(), "Pending generated text exceeds 32 MiB");
-            }
-            caller.data_mut().text_edit_requests.push(crate::extension_manifest::TextEditRequest::OpenDocument { name, text });
-            0
-        }).map_err(|error| error.to_string())?;
-    linker.func_wrap("vtcode", "host_task_should_yield", |caller: Caller<'_, HostState>| -> i32 {
-        let time_up = caller.data().task_deadline
-            .is_none_or(|deadline| std::time::Instant::now() >= deadline);
-        let fuel_low = caller.get_fuel().is_ok_and(|fuel| {
-            fuel < 2 * crate::extension_wasm::EXTENSION_CALL_FUEL
-        });
-        i32::from(time_up || fuel_low)
-    }).map_err(|error| error.to_string())?;
+                let text = caller.data_mut().current_view_event_text.take().unwrap();
+                let result = if max == 0 {
+                    text.len() as i32
+                } else {
+                    write_payload(&mut caller, ptr, max, text.as_bytes())
+                };
+                caller.data_mut().current_view_event_text = Some(text);
+                result
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    linker
+        .func_wrap(
+            "vtcode",
+            "host_set_view_input_pending",
+            |mut caller: Caller<'_, HostState>, ptr: i32, len: i32, pending: i32| {
+                if let Some(id) = read_guest_string(&mut caller, ptr, len) {
+                    host_view_entry_mut(caller.data_mut(), &id).input_pending = pending != 0;
+                }
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    linker
+        .func_wrap(
+            "vtcode",
+            "host_open_text_document",
+            |mut caller: Caller<'_, HostState>,
+             name_ptr: i32,
+             name_len: i32,
+             ptr: i32,
+             len: i32|
+             -> i32 {
+                let Some(name) = read_guest_string(&mut caller, name_ptr, name_len) else {
+                    return fail(caller.data_mut(), "Invalid document name");
+                };
+                if name.is_empty()
+                    || name.len() > 255
+                    || name.contains(['/', '\\', ':'])
+                    || name.chars().any(char::is_control)
+                    || matches!(name.as_str(), "." | "..")
+                {
+                    return fail(
+                        caller.data_mut(),
+                        "Use a filename without a directory for the export",
+                    );
+                }
+                if ptr < 0 || !(0..=32 * 1024 * 1024).contains(&len) {
+                    return fail(caller.data_mut(), "Generated text is limited to 32 MiB");
+                }
+                // Borrow guest memory and allocate only the final host String.
+                let text = {
+                    let Some(wasmtime::Extern::Memory(memory)) = caller.get_export("memory") else {
+                        return fail(caller.data_mut(), "Missing guest memory");
+                    };
+                    let bytes = match memory
+                        .data(&caller)
+                        .get(ptr as usize..ptr as usize + len as usize)
+                    {
+                        Some(bytes) => bytes,
+                        None => return fail(caller.data_mut(), "Invalid guest memory range"),
+                    };
+                    match std::str::from_utf8(bytes) {
+                        Ok(text) => text.to_owned(),
+                        Err(_) => {
+                            return fail(caller.data_mut(), "Generated text must be valid UTF-8");
+                        }
+                    }
+                };
+                let pending = caller
+                    .data()
+                    .text_edit_requests
+                    .iter()
+                    .filter_map(|request| {
+                        if let crate::extension_manifest::TextEditRequest::OpenDocument {
+                            text,
+                            ..
+                        } = request
+                        {
+                            Some(text.len())
+                        } else {
+                            None
+                        }
+                    })
+                    .sum::<usize>();
+                if pending + text.len() > 32 * 1024 * 1024 {
+                    return fail(caller.data_mut(), "Pending generated text exceeds 32 MiB");
+                }
+                caller
+                    .data_mut()
+                    .text_edit_requests
+                    .push(crate::extension_manifest::TextEditRequest::OpenDocument { name, text });
+                0
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    linker
+        .func_wrap(
+            "vtcode",
+            "host_task_should_yield",
+            |caller: Caller<'_, HostState>| -> i32 {
+                let time_up = caller
+                    .data()
+                    .task_deadline
+                    .is_none_or(|deadline| std::time::Instant::now() >= deadline);
+                let fuel_low = caller
+                    .get_fuel()
+                    .is_ok_and(|fuel| fuel < 2 * crate::extension_wasm::EXTENSION_CALL_FUEL);
+                i32::from(time_up || fuel_low)
+            },
+        )
+        .map_err(|error| error.to_string())?;
     linker.func_wrap("vtcode", "host_document_open", |mut caller: Caller<'_, HostState>| -> i32 {
         let path = caller.data().command_context_path.as_ref()
             .or(caller.data().active_file_path.as_ref()).cloned();
@@ -177,8 +236,7 @@ pub(crate) fn define(linker: &mut Linker<HostState>) -> Result<(), String> {
                 let Some(out) = memory.get_mut(start..start + max as usize) else {
                     return fail(host, "Invalid guest memory range");
                 };
-                let Some(document) = host.documents.get(id.wrapping_sub(1) as usize)
-                else {
+                let Some(document) = host.documents.get(id.wrapping_sub(1) as usize) else {
                     return fail(host, "Unknown document");
                 };
                 // Validate the complete guest buffer before I/O, then fill it
@@ -547,7 +605,11 @@ mod tests {
         let mut bytes = [0; 16];
         memory.read(&store, 1024, &mut bytes).unwrap();
         assert_eq!(&bytes[..3], &[1, 2, 3]);
-        assert_eq!(&bytes[3..], &[99; 13], "only the returned prefix is written");
+        assert_eq!(
+            &bytes[3..],
+            &[99; 13],
+            "only the returned prefix is written"
+        );
         assert_eq!(read.call(&mut store, (1, 3, 1024, 16)).unwrap(), 0);
         assert_eq!(read.call(&mut store, (1, 1, 1024, 16)).unwrap(), 2);
         memory.read(&store, 1024, &mut bytes[..2]).unwrap();
@@ -602,7 +664,7 @@ mod tests {
 
     #[test]
     fn custom_editor_cooperative_yield_checks_time_fuel_and_invocation_scope() {
-        use crate::extension_wasm::{call_i32_arg_export, call_noarg_export, EXTENSION_CALL_FUEL};
+        use crate::extension_wasm::{EXTENSION_CALL_FUEL, call_i32_arg_export, call_noarg_export};
         use std::time::{Duration, Instant};
 
         let mut config = wasmtime::Config::new();
@@ -610,10 +672,18 @@ mod tests {
         let engine = wasmtime::Engine::new(&config).unwrap();
         let mut linker = Linker::new(&engine);
         define(&mut linker).unwrap();
-        linker.func_wrap("test", "deadline_present", |caller: Caller<'_, HostState>| -> i32 {
-            i32::from(caller.data().task_deadline.is_some())
-        }).unwrap();
-        let module = wasmtime::Module::new(&engine, r#"(module
+        linker
+            .func_wrap(
+                "test",
+                "deadline_present",
+                |caller: Caller<'_, HostState>| -> i32 {
+                    i32::from(caller.data().task_deadline.is_some())
+                },
+            )
+            .unwrap();
+        let module = wasmtime::Module::new(
+            &engine,
+            r#"(module
           (import "vtcode" "host_task_should_yield" (func $yield (result i32)))
           (import "test" "deadline_present" (func $deadline (result i32)))
           (func (export "query") (result i32) call $yield)
@@ -621,17 +691,24 @@ mod tests {
           (func (export "void") call $deadline drop)
           (func (export "trap") unreachable)
           (func (export "bad") (param f64))
-          (func (export "input") (param i32) (result i32) call $yield))"#).unwrap();
+          (func (export "input") (param i32) (result i32) call $yield))"#,
+        )
+        .unwrap();
         let mut host = HostState::default();
         for name in ["work", "void", "trap", "bad"] {
-            host.tick_handlers.push(crate::extension_manifest::ExtensionTickHandler {
-                export_name: name.into(), interval_ms: 16, background: true,
-            });
+            host.tick_handlers
+                .push(crate::extension_manifest::ExtensionTickHandler {
+                    export_name: name.into(),
+                    interval_ms: 16,
+                    background: true,
+                });
         }
         let mut store = wasmtime::Store::new(&engine, host);
         store.set_fuel(100_000_000).unwrap();
         let instance = linker.instantiate(&mut store, &module).unwrap();
-        let query = instance.get_typed_func::<(), i32>(&mut store, "query").unwrap();
+        let query = instance
+            .get_typed_func::<(), i32>(&mut store, "query")
+            .unwrap();
         assert_eq!(query.call(&mut store, ()).unwrap(), 1, "outside a task");
         store.data_mut().task_deadline = Some(Instant::now() + Duration::from_secs(3600));
         assert_eq!(query.call(&mut store, ()).unwrap(), 0);
@@ -639,22 +716,41 @@ mod tests {
         assert_eq!(query.call(&mut store, ()).unwrap(), 1, "expired slice");
         store.data_mut().task_deadline = Some(Instant::now() + Duration::from_secs(3600));
         store.set_fuel(EXTENSION_CALL_FUEL).unwrap();
-        assert_eq!(query.call(&mut store, ()).unwrap(), 1, "reserve fuel to return safely");
+        assert_eq!(
+            query.call(&mut store, ()).unwrap(),
+            1,
+            "reserve fuel to return safely"
+        );
 
-        assert_eq!(call_noarg_export(&mut store, &instance, "work", true).unwrap(), Some(1));
+        assert_eq!(
+            call_noarg_export(&mut store, &instance, "work", true).unwrap(),
+            Some(1)
+        );
         assert!(store.get_fuel().unwrap() > 200_000_000);
         assert!(store.data().task_deadline.is_none());
-        assert_eq!(call_noarg_export(&mut store, &instance, "void", true).unwrap(), Some(0));
+        assert_eq!(
+            call_noarg_export(&mut store, &instance, "void", true).unwrap(),
+            Some(0)
+        );
         assert!(store.data().task_deadline.is_none());
         for name in ["trap", "bad"] {
             assert!(call_noarg_export(&mut store, &instance, name, true).is_err());
-            assert!(store.data().task_deadline.is_none(), "clear the slice after {name}");
+            assert!(
+                store.data().task_deadline.is_none(),
+                "clear the slice after {name}"
+            );
         }
-        assert_eq!(call_i32_arg_export(&mut store, &instance, "input", 0).unwrap(), 1);
+        assert_eq!(
+            call_i32_arg_export(&mut store, &instance, "input", 0).unwrap(),
+            1
+        );
         assert!(store.get_fuel().unwrap() < EXTENSION_CALL_FUEL);
         assert!(store.data().task_deadline.is_none());
         store.data_mut().current_view_event = Some(vec![b'x'; 128 * 1024]);
-        assert_eq!(call_noarg_export(&mut store, &instance, "query", true).unwrap(), Some(1));
+        assert_eq!(
+            call_noarg_export(&mut store, &instance, "query", true).unwrap(),
+            Some(1)
+        );
         assert!(store.get_fuel().unwrap() > EXTENSION_CALL_FUEL);
         store.data_mut().current_view_event = None;
     }
@@ -674,26 +770,48 @@ mod tests {
         let mut store = wasmtime::Store::new(&engine, HostState::default());
         let instance = linker.instantiate(&mut store, &module).unwrap();
         let memory = instance.get_memory(&mut store, "memory").unwrap();
-        let open = instance.get_typed_func::<(i32, i32, i32, i32), i32>(&mut store, "open").unwrap();
+        let open = instance
+            .get_typed_func::<(i32, i32, i32, i32), i32>(&mut store, "open")
+            .unwrap();
         memory.write(&mut store, 0, b"report.csv").unwrap();
         memory.write(&mut store, 256, b"a,b\n1,2\n").unwrap();
         assert_eq!(open.call(&mut store, (0, 10, 256, 8)).unwrap(), 0);
         assert!(matches!(&store.data().text_edit_requests[0],
             crate::extension_manifest::TextEditRequest::OpenDocument { name, text } if name == "report.csv" && text == "a,b\n1,2\n"));
-        for name in ["../outside.csv", "C:\\outside.csv", "", ".", "..", "bad\nname"] {
+        for name in [
+            "../outside.csv",
+            "C:\\outside.csv",
+            "",
+            ".",
+            "..",
+            "bad\nname",
+        ] {
             memory.write(&mut store, 0, name.as_bytes()).unwrap();
-            assert_eq!(open.call(&mut store, (0, name.len() as i32, 256, 8)).unwrap(), -1);
+            assert_eq!(
+                open.call(&mut store, (0, name.len() as i32, 256, 8))
+                    .unwrap(),
+                -1
+            );
         }
         memory.write(&mut store, 0, b"good.csv").unwrap();
-        for arguments in [(0, 8, -1, 8), (0, 8, 65_535, 8), (0, 8, 256, -1), (0, 8, 256, 32 * 1024 * 1024 + 1)] {
+        for arguments in [
+            (0, 8, -1, 8),
+            (0, 8, 65_535, 8),
+            (0, 8, 256, -1),
+            (0, 8, 256, 32 * 1024 * 1024 + 1),
+        ] {
             assert_eq!(open.call(&mut store, arguments).unwrap(), -1);
         }
         memory.write(&mut store, 256, &[0xff]).unwrap();
         assert_eq!(open.call(&mut store, (0, 8, 256, 1)).unwrap(), -1);
         assert_eq!(store.data().text_edit_requests.len(), 1);
         memory.write(&mut store, 0, b"grid").unwrap();
-        let pending = instance.get_typed_func::<i32, ()>(&mut store, "pending").unwrap();
-        pending.call(&mut store, 1).unwrap(); assert!(store.data().views["grid"].input_pending);
-        pending.call(&mut store, 0).unwrap(); assert!(!store.data().views["grid"].input_pending);
+        let pending = instance
+            .get_typed_func::<i32, ()>(&mut store, "pending")
+            .unwrap();
+        pending.call(&mut store, 1).unwrap();
+        assert!(store.data().views["grid"].input_pending);
+        pending.call(&mut store, 0).unwrap();
+        assert!(!store.data().views["grid"].input_pending);
     }
 }

@@ -85,7 +85,9 @@ fn commit_inspector_rename_diff_uses_original_path_even_from_nested_workspace() 
     app.explorer.root = dir.path().join("nested");
     app.commit_details.data = data;
     app.open_source_control_commit_details_file_diff(0);
-    app.wait_for_background(std::time::Duration::from_secs(5), |app| app.should_render_diff_for_active_editor());
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+        app.should_render_diff_for_active_editor()
+    });
     assert_eq!(
         app.compare_base_content.as_deref(),
         Some("first\nsecond\nthird\nfourth\n")
@@ -96,7 +98,11 @@ fn commit_inspector_rename_diff_uses_original_path_even_from_nested_workspace() 
     );
     // Git expands Windows short-name aliases in the repository workdir.
     assert_eq!(
-        app.diff_target_path.as_ref().unwrap().canonicalize().unwrap(),
+        app.diff_target_path
+            .as_ref()
+            .unwrap()
+            .canonicalize()
+            .unwrap(),
         dir.path().join("after.txt").canonicalize().unwrap()
     );
     assert!(app.editor().unwrap().read_only);
@@ -177,7 +183,9 @@ fn commit_inspector_open_diff_creates_a_persistent_snapshot_diff_tab() {
                 modifiers: KeyModifiers::NONE,
             },
         );
-        app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.is_commit_details_tab());
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+            !app.is_commit_details_tab()
+        });
         assert_explorer_unchanged(&mut app);
         let diff_tab = app.active_tab;
         terminal
@@ -264,7 +272,11 @@ fn commit_inspector_open_diff_creates_a_persistent_snapshot_diff_tab() {
             std::fs::read_to_string(&path).unwrap(),
             "// unrelated working tree changes\n"
         );
-        app.active_tab = app.tabs.iter().position(|tab| tab.kind == TabKind::File).unwrap();
+        app.active_tab = app
+            .tabs
+            .iter()
+            .position(|tab| tab.kind == TabKind::File)
+            .unwrap();
         app.reveal_active_file_in_explorer();
         assert!(app.explorer.expanded_snapshot().contains(&folder));
         assert!(app.explorer.is_reveal_pending(&path));
@@ -440,7 +452,9 @@ fn commit_inspector_card_action_opens_the_pinned_historical_diff() {
     app.commit_details.query = "hello".into();
     app.commit_details.query_cursor = 5;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 34)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let open = app.commit_details.review.visible[0].open;
     assert_eq!(app.tabs.len(), 1);
     let click = MouseEvent {
@@ -453,7 +467,9 @@ fn commit_inspector_card_action_opens_the_pinned_historical_diff() {
     assert!(app.commit_details.opening_diff.is_some());
     // A completed read must not open a tab after focus has moved elsewhere.
     app.active_pane = ActivePane::Explorer;
-    app.wait_for_background(Duration::from_secs(5), |app| app.commit_details.opening_diff.is_none());
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.commit_details.opening_diff.is_none()
+    });
     assert_eq!(app.tabs.len(), 1);
     crate::mouse::handle_mouse(&mut app, click);
     app.wait_for_background(Duration::from_secs(5), |app| !app.is_commit_details_tab());
@@ -505,9 +521,7 @@ fn commit_inspector_reuses_its_tab_preserves_sizes_and_accepts_results_while_hid
     assert_eq!(app.tabs.len(), 2);
     assert!(app.is_commit_details_tab());
     let generation = app.commit_details.generation;
-    let panes = PaneSizes {
-        overview: 470,
-    };
+    let panes = PaneSizes { overview: 470 };
     app.commit_details.panes = panes;
     app.commit_details.query = "hello".into();
     for shown in [false, true] {
@@ -592,8 +606,12 @@ fn commit_inspector_native_diff_results_preserve_other_editors_and_diff_tabs() {
     app.background
         .sender
         .send(BackgroundResult::FileReloaded {
-            targets: app.tabs.iter().chain(app.groups.iter().flat_map(|group| &group.tabs))
-                .map(|tab| (tab.editor.navigation_id, tab.editor.content_version)).collect(),
+            targets: app
+                .tabs
+                .iter()
+                .chain(app.groups.iter().flat_map(|group| &group.tabs))
+                .map(|tab| (tab.editor.navigation_id, tab.editor.content_version))
+                .collect(),
             workspace_generation: 0,
             path: path.clone(),
             result: crate::editor::load_text_file(&path).map_err(|error| error.to_string()),

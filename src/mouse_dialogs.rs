@@ -1,6 +1,6 @@
-use crossterm::event::{MouseButton, MouseEventKind};
 use crate::app::App;
 use crate::helpers::len_as_u16;
+use crossterm::event::{MouseButton, MouseEventKind};
 use unicode_width::UnicodeWidthStr;
 
 /// Scroll a selection index up or down within bounds.
@@ -48,11 +48,17 @@ pub(crate) fn handle_mouse_dialogs(
     // or be clipped after resizing. Borders never select a command.
     if app.tab_context_active {
         let point = (col, row).into();
-        let hit = app.tab_context_inner
+        let hit = app
+            .tab_context_inner
             .filter(|inner| inner.contains(point))
-            .filter(|&inner| crate::ui_widgets::DropdownScrollbar::new(
-                inner, app.tab_context_item_count(), app.tab_context_scroll,
-            ).is_none_or(|bar| !bar.area.contains(point)))
+            .filter(|&inner| {
+                crate::ui_widgets::DropdownScrollbar::new(
+                    inner,
+                    app.tab_context_item_count(),
+                    app.tab_context_scroll,
+                )
+                .is_none_or(|bar| !bar.area.contains(point))
+            })
             .map(|inner| app.tab_context_scroll + usize::from(row - inner.y))
             .filter(|&index| app.tab_context_item_enabled(index));
         match mouse.kind {
@@ -65,16 +71,22 @@ pub(crate) fn handle_mouse_dialogs(
             MouseEventKind::Down(MouseButton::Left) => {
                 if let Some(index) = hit {
                     app.tab_context_selected = index;
-                    crate::input_dialogs::handle_tab_context_key(app, crossterm::event::KeyEvent::new(
-                        crossterm::event::KeyCode::Enter,
-                        crossterm::event::KeyModifiers::NONE,
-                    ));
+                    crate::input_dialogs::handle_tab_context_key(
+                        app,
+                        crossterm::event::KeyEvent::new(
+                            crossterm::event::KeyCode::Enter,
+                            crossterm::event::KeyModifiers::NONE,
+                        ),
+                    );
                 } else {
                     let in_menu = app.tab_context_inner.is_some_and(|inner| {
                         ratatui::layout::Rect::new(
-                            inner.x.saturating_sub(1), inner.y.saturating_sub(1),
-                            inner.width.saturating_add(2), inner.height.saturating_add(2),
-                        ).contains((col, row).into())
+                            inner.x.saturating_sub(1),
+                            inner.y.saturating_sub(1),
+                            inner.width.saturating_add(2),
+                            inner.height.saturating_add(2),
+                        )
+                        .contains((col, row).into())
                     });
                     if !in_menu {
                         app.close_tab_context_menu();
@@ -83,7 +95,9 @@ pub(crate) fn handle_mouse_dialogs(
             }
             MouseEventKind::Down(_) => app.close_tab_context_menu(),
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-                if app.tab_context_inner.is_some_and(|inner| inner.contains(point)) =>
+                if app
+                    .tab_context_inner
+                    .is_some_and(|inner| inner.contains(point)) =>
             {
                 app.step_tab_context_selection(mouse.kind == MouseEventKind::ScrollUp);
             }
@@ -131,7 +145,9 @@ pub(crate) fn handle_mouse_dialogs(
         // Only an obscuring popup clears the workbench underneath it. Clearing
         // these fields during ordinary movement loses the old hover used for
         // repaint detection and restarts tab tooltips on every mouse sample.
-        if app.explorer_context_active || app.sc_context_active || app.hunk_popup_active
+        if app.explorer_context_active
+            || app.sc_context_active
+            || app.hunk_popup_active
             || (app.menu_active && app.menu_open)
             || (app.settings_editor_active && app.settings_dropdown_open)
         {
@@ -171,8 +187,11 @@ pub(crate) fn handle_mouse_dialogs(
                 if row == menu_area.y {
                     let labels = App::menu_labels();
                     let mut x = menu_area.x + 3;
-                    for (i, label) in labels.iter()
-                        .take(crate::ui_chrome::visible_menu_label_count(menu_area.width)).enumerate() {
+                    for (i, label) in labels
+                        .iter()
+                        .take(crate::ui_chrome::visible_menu_label_count(menu_area.width))
+                        .enumerate()
+                    {
                         let w = UnicodeWidthStr::width(*label) as u16 + 2;
                         if col >= x && col < x + w {
                             app.menu_selected = i;
@@ -221,8 +240,8 @@ pub(crate) fn handle_mouse_dialogs(
         // Hover uses the same rectangles as the rendered controls and clicks.
         if app.file_search_bar_at(col, row).is_some() {
             use crate::ui_search_controls::{SearchControl, SearchScope, control_at};
-            app.hovered_search_toggle = control_at(app, SearchScope::File, col, row).map(|button| {
-                match button.control {
+            app.hovered_search_toggle =
+                control_at(app, SearchScope::File, col, row).map(|button| match button.control {
                     SearchControl::MatchCase => 0,
                     SearchControl::WholeWord => 1,
                     SearchControl::Regex => 2,
@@ -230,8 +249,7 @@ pub(crate) fn handle_mouse_dialogs(
                     SearchControl::PreserveCase => 4,
                     SearchControl::Close => 99,
                     _ => 5,
-                }
-            });
+                });
             return true;
         }
 
@@ -249,7 +267,13 @@ pub(crate) fn handle_mouse_dialogs(
         }
 
         // Block hover events when any modal popup is open
-        if app.goto_line_active || app.binary_open_prompt_active || app.confirm_close_active || app.confirm_delete_active || app.confirm_move_active || app.sc_discard_confirm_active || app.exit_confirm_active
+        if app.goto_line_active
+            || app.binary_open_prompt_active
+            || app.confirm_close_active
+            || app.confirm_delete_active
+            || app.confirm_move_active
+            || app.sc_discard_confirm_active
+            || app.exit_confirm_active
             || app.symbol_list_active
             || (app.global_search_active
                 && !(app.show_explorer && app.sidebar_view == crate::app::SidebarView::Search))
@@ -267,7 +291,7 @@ pub(crate) fn handle_mouse_dialogs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::{MouseEvent, MouseEventKind, MouseButton, KeyModifiers};
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use std::path::PathBuf;
 
     fn make_mouse(kind: MouseEventKind, col: u16, row: u16) -> MouseEvent {

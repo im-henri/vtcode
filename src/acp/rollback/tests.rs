@@ -1,13 +1,13 @@
 use super::*;
 
+#[path = "link_tests.rs"]
+mod link_tests;
 #[path = "live_tests.rs"]
 mod live_tests;
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
 #[path = "safety_tests.rs"]
 mod safety_tests;
-#[path = "link_tests.rs"]
-mod link_tests;
 
 struct Fixture {
     root: tempfile::TempDir,
@@ -71,8 +71,10 @@ fn closing_journal_releases_lock_while_an_inherited_descriptor_stays_open() {
         .expect("An inherited descriptor must not prolong the closed journal's lease");
     assert!(Journal::open(f.root.path(), f.data.path()).is_err());
     drop(inherited);
-    assert!(Journal::open(f.root.path(), f.data.path()).is_err(),
-        "Dropping the old descriptor must not release the new owner's lock");
+    assert!(
+        Journal::open(f.root.path(), f.data.path()).is_err(),
+        "Dropping the old descriptor must not release the new owner's lock"
+    );
     drop(reopened);
     assert!(Journal::open(f.root.path(), f.data.path()).is_ok());
 }
@@ -278,7 +280,10 @@ fn case_sensitive_fixture() -> Option<Fixture> {
         .output()
         .unwrap();
     if !output.status.success() {
-        eprintln!("Case-sensitive test directory unavailable: {}", String::from_utf8_lossy(&output.stdout));
+        eprintln!(
+            "Case-sensitive test directory unavailable: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
         return None;
     }
     f.write("case-sensitive/Mixed.txt", "before upper\n");
@@ -299,7 +304,9 @@ fn case_distinct_reviews() -> Option<Fixture> {
 #[cfg(windows)]
 #[test]
 fn review_markers_use_the_exact_case_sensitive_file() {
-    let Some(f) = case_distinct_reviews() else { return; };
+    let Some(f) = case_distinct_reviews() else {
+        return;
+    };
     let summary = f.journal.summary("agent", "chat");
     let lower = Path::new("case-sensitive/mixed.txt");
     let path = f.journal.workspace_root().join(lower);
@@ -309,19 +316,41 @@ fn review_markers_use_the_exact_case_sensitive_file() {
 #[cfg(windows)]
 #[test]
 fn accepting_a_review_leaves_the_case_distinct_sibling_pending() {
-    let Some(mut f) = case_distinct_reviews() else { return; };
+    let Some(mut f) = case_distinct_reviews() else {
+        return;
+    };
     let upper = Path::new("case-sensitive/Mixed.txt");
     let lower = Path::new("case-sensitive/mixed.txt");
-    f.journal.accept_editor(&Selection::File(upper.to_path_buf())).unwrap();
+    f.journal
+        .accept_editor(&Selection::File(upper.to_path_buf()))
+        .unwrap();
     let summary = f.journal.summary("agent", "chat");
-    assert_eq!(summary.edits.iter().find(|edit| edit.path == upper).unwrap().pending(), 0);
-    assert_eq!(summary.edits.iter().find(|edit| edit.path == lower).unwrap().pending(), 1);
+    assert_eq!(
+        summary
+            .edits
+            .iter()
+            .find(|edit| edit.path == upper)
+            .unwrap()
+            .pending(),
+        0
+    );
+    assert_eq!(
+        summary
+            .edits
+            .iter()
+            .find(|edit| edit.path == lower)
+            .unwrap()
+            .pending(),
+        1
+    );
 }
 
 #[cfg(windows)]
 #[test]
 fn rolling_back_both_case_distinct_files_restores_their_own_contents() {
-    let Some(mut f) = case_distinct_reviews() else { return; };
+    let Some(mut f) = case_distinct_reviews() else {
+        return;
+    };
     f.decline(Selection::All).unwrap();
     assert_eq!(f.read("case-sensitive/Mixed.txt"), "before upper\n");
     assert_eq!(f.read("case-sensitive/mixed.txt"), "before lower\n");
@@ -343,7 +372,9 @@ fn deleted_case_distinct_files() -> Option<Fixture> {
 #[cfg(windows)]
 #[test]
 fn rollback_recreates_both_deleted_case_distinct_files() {
-    let Some(mut f) = deleted_case_distinct_files() else { return; };
+    let Some(mut f) = deleted_case_distinct_files() else {
+        return;
+    };
     f.decline(Selection::All).unwrap();
     assert_eq!(f.read("case-sensitive/Mixed.txt"), "before upper\n");
     assert_eq!(f.read("case-sensitive/mixed.txt"), "before lower\n");
@@ -352,7 +383,9 @@ fn rollback_recreates_both_deleted_case_distinct_files() {
 #[cfg(windows)]
 #[test]
 fn rollback_refuses_missing_targets_that_have_become_case_aliases() {
-    let Some(mut f) = deleted_case_distinct_files() else { return; };
+    let Some(mut f) = deleted_case_distinct_files() else {
+        return;
+    };
     let plan = f.journal.plan("agent", "chat", &Selection::All).unwrap();
     let directory = f.root.path().join("case-sensitive");
     let output = std::process::Command::new("fsutil.exe")
@@ -361,7 +394,11 @@ fn rollback_refuses_missing_targets_that_have_become_case_aliases() {
         .arg("disable")
         .output()
         .unwrap();
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     assert!(f.journal.apply(plan).unwrap_err().contains("same file"));
     assert_eq!(fs::read_dir(directory).unwrap().count(), 0);
     assert!(!f.journal.summary("agent", "chat").interrupted);
@@ -386,7 +423,11 @@ fn review_markers_match_windows_prefixes_after_file_is_deleted() {
         let sibling = path.parent().unwrap().join("nested/a");
         assert!(summary.pending_file(&sibling).is_none());
     }
-    assert!(summary.pending_file(&canonical.with_file_name("A")).is_none());
+    assert!(
+        summary
+            .pending_file(&canonical.with_file_name("A"))
+            .is_none()
+    );
 }
 
 #[test]

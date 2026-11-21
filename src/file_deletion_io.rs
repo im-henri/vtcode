@@ -1,12 +1,12 @@
 //! Remove entries through anchored OS handles. A directory-to-link swap during
 //! traversal must never redirect an unlink into a different directory tree.
+#[cfg(windows)]
+use crate::native_paths::windows::{entry_path, final_path, open_entry};
 use std::{
     fs::File,
     io,
     path::{Path, PathBuf},
 };
-#[cfg(windows)]
-use crate::native_paths::windows::{entry_path, final_path, open_entry};
 
 pub(super) fn selected_path(target: &Path) -> io::Result<PathBuf> {
     let name = target

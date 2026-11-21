@@ -77,7 +77,9 @@ fn remote_markdown_directory_link_reveals_explorer_and_keeps_preview_tabs() {
     let before = app.tabs.len();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 25)).unwrap();
     settle_preview_for_test(&mut app, |app| {
-        terminal.draw(|frame| draw_markdown_preview(frame, app, Rect::new(0, 0, 90, 25))).unwrap();
+        terminal
+            .draw(|frame| draw_markdown_preview(frame, app, Rect::new(0, 0, 90, 25)))
+            .unwrap();
     });
     let view = app
         .editor()
@@ -277,7 +279,9 @@ fn ctrl_click_anchor_navigates_without_changing_the_markdown_source() {
     app.toggle_markdown_preview_tab();
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 25)).unwrap();
     settle_preview_for_test(&mut app, |app| {
-        terminal.draw(|frame| draw_markdown_preview(frame, app, Rect::new(0, 0, 90, 25))).unwrap();
+        terminal
+            .draw(|frame| draw_markdown_preview(frame, app, Rect::new(0, 0, 90, 25)))
+            .unwrap();
     });
     let view = app
         .editor()
@@ -375,7 +379,9 @@ fn preview_defers_offscreen_highlighting_and_keeps_scroll_and_selection_maps() {
     app.active_tab = 0;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(90, 20)).unwrap();
     settle_preview_for_test(&mut app, |app| {
-        terminal.draw(|f| draw_markdown_preview(f, app, Rect::new(0, 0, 90, 20))).unwrap();
+        terminal
+            .draw(|f| draw_markdown_preview(f, app, Rect::new(0, 0, 90, 20)))
+            .unwrap();
     });
     let (first, second, source_rows, text_rows) = with_preview_for_test(&app, |entry| {
         assert!(
@@ -396,7 +402,9 @@ fn preview_defers_offscreen_highlighting_and_keeps_scroll_and_selection_maps() {
     let selected = view.selected_text();
     editor.scroll_offset = view.source_scroll;
     settle_preview_for_test(&mut app, |app| {
-        terminal.draw(|f| draw_markdown_preview(f, app, Rect::new(0, 0, 90, 20))).unwrap();
+        terminal
+            .draw(|f| draw_markdown_preview(f, app, Rect::new(0, 0, 90, 20)))
+            .unwrap();
     });
     let code = with_preview_for_test(&app, |entry| {
         assert!(entry.document.highlighted().contains(&first.block));
@@ -426,13 +434,12 @@ fn preview_defers_offscreen_highlighting_and_keeps_scroll_and_selection_maps() {
         selected
     );
     settle_preview_for_test(&mut app, |app| {
-        terminal.draw(|f| draw_markdown_preview(f, app, Rect::new(0, 0, 90, 20))).unwrap();
+        terminal
+            .draw(|f| draw_markdown_preview(f, app, Rect::new(0, 0, 90, 20)))
+            .unwrap();
     });
     with_preview_for_test(&app, |entry| {
-        assert!(Arc::ptr_eq(
-            &code,
-            &entry.document.code()[&first.block]
-        ))
+        assert!(Arc::ptr_eq(&code, &entry.document.code()[&first.block]))
     });
 }
 

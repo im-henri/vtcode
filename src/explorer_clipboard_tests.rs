@@ -587,7 +587,10 @@ fn partial_cut_keeps_failed_sources_retryable_with_the_original_terminal_paste()
     wait(&mut app);
     assert!(directory.path().join("destination/alpha.rs").is_file());
     assert!(!alpha.exists());
-    assert_eq!(app.explorer_clipboard.as_ref().unwrap().paths, [second.clone()]);
+    assert_eq!(
+        app.explorer_clipboard.as_ref().unwrap().paths,
+        [second.clone()]
+    );
 
     std::fs::rename(parked, &second).unwrap();
     select(&mut app, "destination");

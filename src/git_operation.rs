@@ -97,14 +97,25 @@ pub(crate) fn read(repo: &Repository) -> Result<Option<State>, String> {
 
 /// Status refresh already read the worktree. Reuse that snapshot for the
 /// operation banner instead of walking a large repository a second time.
-pub(crate) fn read_with_changes<P>(repo: &Repository, files: &[crate::app::GitFileChange<P>]) -> Result<Option<State>, String> {
+pub(crate) fn read_with_changes<P>(
+    repo: &Repository,
+    files: &[crate::app::GitFileChange<P>],
+) -> Result<Option<State>, String> {
     let conflicts = files.iter().filter(|file| file.status == '!').count();
-    let unstaged = files.iter().filter(|file| !file.staged && matches!(file.status, 'M' | 'D' | 'R' | 'A')).count();
+    let unstaged = files
+        .iter()
+        .filter(|file| !file.staged && matches!(file.status, 'M' | 'D' | 'R' | 'A'))
+        .count();
     read_with_summary(repo, Some((conflicts, unstaged)))
 }
 
-fn read_with_summary(repo: &Repository, summary: Option<(usize, usize)>) -> Result<Option<State>, String> {
-    let Some((kind, rebase, cherry_head)) = operation_metadata(repo) else { return Ok(None); };
+fn read_with_summary(
+    repo: &Repository,
+    summary: Option<(usize, usize)>,
+) -> Result<Option<State>, String> {
+    let Some((kind, rebase, cherry_head)) = operation_metadata(repo) else {
+        return Ok(None);
+    };
     let git = repo.path();
     let head = repo
         .head()
@@ -185,14 +196,30 @@ fn read_with_summary(repo: &Repository, summary: Option<(usize, usize)>) -> Resu
         kind.command(),
         head.id()
     );
-    let (conflicts, unstaged) = if let Some(summary) = summary { summary } else {
+    let (conflicts, unstaged) = if let Some(summary) = summary {
+        summary
+    } else {
         let mut options = git2::StatusOptions::new();
         options.include_untracked(false).include_ignored(false);
-        let statuses = repo.statuses(Some(&mut options)).map_err(|error| error.to_string())?;
-        let conflicts = statuses.iter().filter(|entry| entry.status().contains(Status::CONFLICTED)).count();
-        let unstaged = statuses.iter().filter(|entry| entry.status().intersects(
-            Status::WT_MODIFIED | Status::WT_DELETED | Status::WT_RENAMED | Status::WT_TYPECHANGE | Status::WT_UNREADABLE,
-        )).count();
+        let statuses = repo
+            .statuses(Some(&mut options))
+            .map_err(|error| error.to_string())?;
+        let conflicts = statuses
+            .iter()
+            .filter(|entry| entry.status().contains(Status::CONFLICTED))
+            .count();
+        let unstaged = statuses
+            .iter()
+            .filter(|entry| {
+                entry.status().intersects(
+                    Status::WT_MODIFIED
+                        | Status::WT_DELETED
+                        | Status::WT_RENAMED
+                        | Status::WT_TYPECHANGE
+                        | Status::WT_UNREADABLE,
+                )
+            })
+            .count();
         (conflicts, unstaged)
     };
     let mut blocker = if conflicts > 0 {

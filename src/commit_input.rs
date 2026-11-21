@@ -31,7 +31,11 @@ impl CommitInputState {
         // Use the right border so showing the scrollbar never changes wrapping
         // or moves the text/caret underneath the pointer.
         Some(crate::ui_widgets::VerticalScrollbar::new(
-            content.right(), content.y, content.height, self.rows.len(), self.scroll,
+            content.right(),
+            content.y,
+            content.height,
+            self.rows.len(),
+            self.scroll,
         ))
     }
 
@@ -131,26 +135,36 @@ impl App {
         column: u16,
         row: u16,
     ) -> bool {
-        if !matches!(kind, MouseEventKind::Down(MouseButton::Left)
-            | MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
-            | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
-        {
+        if !matches!(
+            kind,
+            MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::Drag(MouseButton::Left)
+                | MouseEventKind::Up(MouseButton::Left)
+                | MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollDown
+        ) {
             return false;
         }
-        let bar = self.text_input_area(TextInputId::SourceControlCommit)
+        let bar = self
+            .text_input_area(TextInputId::SourceControlCommit)
             .and_then(|area| self.commit_input.scrollbar(area));
         if let Some((start_row, start_offset)) = self.commit_input.scrollbar_drag {
-            if matches!(kind, MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)) {
+            if matches!(
+                kind,
+                MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+            ) {
                 if let Some(bar) = bar {
                     let (_, thumb_height) = bar.thumb();
                     let travel = bar.height.saturating_sub(thumb_height).max(1) as usize;
                     let max_scroll = bar.total_rows.saturating_sub(bar.height as usize);
-                    let amount = usize::from(row.abs_diff(start_row)).saturating_mul(max_scroll) / travel;
+                    let amount =
+                        usize::from(row.abs_diff(start_row)).saturating_mul(max_scroll) / travel;
                     self.commit_input.scroll = if row < start_row {
                         start_offset.saturating_sub(amount)
                     } else {
                         start_offset.saturating_add(amount)
-                    }.min(max_scroll);
+                    }
+                    .min(max_scroll);
                 } else {
                     self.commit_input.scrollbar_drag = None;
                 }
@@ -160,7 +174,9 @@ impl App {
                 return true;
             }
         }
-        let Some(bar) = bar else { return false; };
+        let Some(bar) = bar else {
+            return false;
+        };
         if !Rect::new(bar.x, bar.top_y, 1, bar.height).contains((column, row).into()) {
             return false;
         }
@@ -178,7 +194,8 @@ impl App {
                 let relative = row - bar.top_y;
                 if !(thumb_top..thumb_top + thumb_height).contains(&relative) {
                     let travel = bar.height.saturating_sub(thumb_height).max(1) as usize;
-                    let position = usize::from(relative.saturating_sub(thumb_height / 2)).min(travel);
+                    let position =
+                        usize::from(relative.saturating_sub(thumb_height / 2)).min(travel);
                     self.commit_input.scroll = position.saturating_mul(max_scroll) / travel;
                 }
                 self.commit_input.scrollbar_drag = Some((row, self.commit_input.scroll));

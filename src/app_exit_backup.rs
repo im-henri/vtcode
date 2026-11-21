@@ -69,7 +69,9 @@ impl App {
             return;
         }
         let session = self.build_session();
-        let recovery_lease = self.tabs.iter()
+        let recovery_lease = self
+            .tabs
+            .iter()
             .chain(self.groups.iter().flat_map(|group| &group.tabs))
             .filter_map(|tab| tab.editor.pending_session_restore.as_ref())
             .find(|restore| restore.recovery_lease.is_held())

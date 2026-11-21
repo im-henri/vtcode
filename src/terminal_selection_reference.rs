@@ -2,7 +2,9 @@
 use super::*;
 impl TermGrid {
     pub(crate) fn reference_selected_text(&self) -> Option<String> {
-        let selection = self.selection.filter(|selection| selection.active && selection.has_text)?;
+        let selection = self
+            .selection
+            .filter(|selection| selection.active && selection.has_text)?;
         let (start, end) = selection.bounds();
         let mut result = String::new();
         for index in start.row..=end.row {

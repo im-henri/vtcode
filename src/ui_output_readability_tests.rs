@@ -100,8 +100,12 @@ fn changing_theme_recolors_retained_output_without_rebuilding_its_wrap_layout() 
 fn imported_theme_timestamp_color_matches_its_comment_scope() {
     for key in ["dark", "light", "monokai", "high-contrast"] {
         let theme = crate::app_theme_loader::builtin_theme(key).unwrap();
-        let color=theme.textmate_theme.as_ref().unwrap().scope_foreground(&["comment"]);
-        let colors=theme.to_theme_colors();
+        let color = theme
+            .textmate_theme
+            .as_ref()
+            .unwrap()
+            .scope_foreground(&["comment"]);
+        let colors = theme.to_theme_colors();
         assert_eq!(
             colors.ui.output_timestamp.over(colors.ui.bg_panel),
             ColorLayer::rgba(color.r, color.g, color.b, color.a).over(colors.ui.bg_panel)

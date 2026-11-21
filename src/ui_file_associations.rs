@@ -241,7 +241,8 @@ impl App {
         // its editor and diff views. Other files keep their explicit modes.
         let rule = [(pattern.to_owned(), String::new())].into_iter().collect();
         if self.editor().is_some_and(|editor| {
-            editor.syntax_file_path()
+            editor
+                .syntax_file_path()
                 .is_some_and(|path| crate::file_associations::resolve(&rule, path).is_some())
         }) {
             self.set_editor_language(None);

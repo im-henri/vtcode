@@ -92,8 +92,15 @@ fn generation_checks_the_visible_suffix_and_keeps_snippet_and_manual_completion_
     active.cursor_col = 1;
     for explicit in [false, true] {
         let early = compute_contextual_invoked(
-            &active, "s", "Unknown", &options, &mut CompletionCache::default(), explicit, || false,
-        ).unwrap();
+            &active,
+            "s",
+            "Unknown",
+            &options,
+            &mut CompletionCache::default(),
+            explicit,
+            || false,
+        )
+        .unwrap();
         assert_eq!(early.suggestions.first().map(String::as_str), Some("slot3"));
         assert_eq!(early.details[0].annotation, "sequence");
     }
@@ -103,13 +110,32 @@ fn generation_checks_the_visible_suffix_and_keeps_snippet_and_manual_completion_
 fn two_nonunit_identifier_items_predict_the_third_and_respect_prefix_settings() {
     let mut active = active_text_for_early_sequence("slot10 = a\nslot20 = b\ns");
     let options = PopupOptions::default();
-    let result = compute_contextual_invoked(&active, "s", "Unknown", &options,
-        &mut CompletionCache::default(), false, || false).unwrap();
-    assert_eq!(result.suggestions.first().map(String::as_str), Some("slot30"));
+    let result = compute_contextual_invoked(
+        &active,
+        "s",
+        "Unknown",
+        &options,
+        &mut CompletionCache::default(),
+        false,
+        || false,
+    )
+    .unwrap();
+    assert_eq!(
+        result.suggestions.first().map(String::as_str),
+        Some("slot30")
+    );
     active.rope = ropey::Rope::from_str("slot10 = a\nslot20 = b\nslot35 = c\ns");
     active.cursor_line = 3;
-    let result = compute_contextual_invoked(&active, "s", "Unknown", &options,
-        &mut CompletionCache::default(), false, || false).unwrap();
+    let result = compute_contextual_invoked(
+        &active,
+        "s",
+        "Unknown",
+        &options,
+        &mut CompletionCache::default(),
+        false,
+        || false,
+    )
+    .unwrap();
     assert!(!result.suggestions.iter().any(|word| word == "slot50"));
     let mut editor = crate::editor::Editor::test_with_text("s");
     editor.cursor_col = 1;
@@ -123,8 +149,11 @@ fn active_text_for_early_sequence(text: &str) -> VtCompleteSnapshot {
     let rope = ropey::Rope::from_str(text);
     let cursor_line = rope.len_lines() - 1;
     VtCompleteSnapshot {
-        source: Default::default(), cursor_line, cursor_col: rope.line(cursor_line).len_chars(),
-        rope, document_id: 1,
+        source: Default::default(),
+        cursor_line,
+        cursor_col: rope.line(cursor_line).len_chars(),
+        rope,
+        document_id: 1,
     }
 }
 

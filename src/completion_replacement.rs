@@ -1,6 +1,6 @@
 //! Treat retained text at the caret as an explicit constraint on insertion.
 //! Replacement remains available when no insertion fits, and via Ctrl+Space.
-use super::{VtCompleteSnapshot, CompletionResult, identifier_char};
+use super::{CompletionResult, VtCompleteSnapshot, identifier_char};
 
 pub(super) fn refine(
     result: &mut CompletionResult,

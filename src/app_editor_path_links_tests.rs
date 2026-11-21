@@ -18,33 +18,51 @@ fn fixture(root: &Path, file: &str, text: &str) -> App {
 
 fn render(app: &mut App, width: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, 15)).unwrap();
-    terminal.draw(|frame| crate::ui_editor::draw_editor(frame, app, frame.area())).unwrap();
+    terminal
+        .draw(|frame| crate::ui_editor::draw_editor(frame, app, frame.area()))
+        .unwrap();
     terminal.backend().buffer().clone()
 }
 
 fn cell(buffer: &Buffer, text: &str) -> (u16, u16) {
     for y in 0..buffer.area.height {
         for x in 0..=buffer.area.width.saturating_sub(text.len() as u16) {
-            let actual: String = (x..x + text.len() as u16).map(|col| buffer[(col, y)].symbol()).collect();
-            if actual == text { return (x, y); }
+            let actual: String = (x..x + text.len() as u16)
+                .map(|col| buffer[(col, y)].symbol())
+                .collect();
+            if actual == text {
+                return (x, y);
+            }
         }
     }
     panic!("Expected visible text {text:?}");
 }
 
 fn mouse(app: &mut App, at: (u16, u16), kind: MouseEventKind, modifiers: KeyModifiers) {
-    crate::mouse::handle_mouse(app, MouseEvent { kind, column: at.0, row: at.1, modifiers });
+    crate::mouse::handle_mouse(
+        app,
+        MouseEvent {
+            kind,
+            column: at.0,
+            row: at.1,
+            modifiers,
+        },
+    );
 }
 
 fn click(app: &mut App, at: (u16, u16), modifiers: KeyModifiers) {
-    for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
         mouse(app, at, kind, modifiers);
     }
 }
 
 fn wait_for_file(app: &mut App, path: &Path) {
     app.wait_for_background(Duration::from_secs(10), |app| {
-        app.editor().is_some_and(|editor| editor.file_path.as_deref() == Some(path) && !editor.bg_loading)
+        app.editor()
+            .is_some_and(|editor| editor.file_path.as_deref() == Some(path) && !editor.bg_loading)
     });
 }
 
@@ -72,7 +90,11 @@ fn editor_path_links_open_log_diagnostics_with_a_workspace_fallback() {
         mouse(&mut app, at, MouseEventKind::Moved, KeyModifiers::CONTROL);
         assert!(app.refresh_lsp_link_hover());
         assert_eq!(app.lsp_link_hover_range(), Some((0, 11, 28)));
-        assert!(render(&mut app, 100)[at].modifier.contains(Modifier::UNDERLINED));
+        assert!(
+            render(&mut app, 100)[at]
+                .modifier
+                .contains(Modifier::UNDERLINED)
+        );
         assert_eq!(app.tabs.len(), 1);
 
         click(&mut app, at, KeyModifiers::CONTROL);
@@ -176,7 +198,11 @@ fn editor_path_links_open_c_family_headers_without_a_language_server() {
         let at = cell(&render(&mut app, 180), marker);
         mouse(&mut app, at, MouseEventKind::Moved, KeyModifiers::CONTROL);
         assert!(app.refresh_lsp_link_hover(), "{source}");
-        assert!(render(&mut app, 180)[at].modifier.contains(Modifier::UNDERLINED));
+        assert!(
+            render(&mut app, 180)[at]
+                .modifier
+                .contains(Modifier::UNDERLINED)
+        );
 
         click(&mut app, at, KeyModifiers::NONE);
         assert_eq!(app.tabs.len(), 1);
@@ -190,13 +216,48 @@ fn editor_path_links_open_c_family_headers_without_a_language_server() {
 fn editor_path_links_open_literal_file_references_in_other_languages() {
     let root = tempfile::tempdir().unwrap();
     for (file, source, marker, target) in [
-        ("src/main.rs", r##"const DATA: &str = include_str!(r#"assets/file.txt"#);"##, "file.txt", "src/assets/file.txt"),
-        ("src/main.rs", r#"#[path = "other.rs"]"#, "other.rs", "src/other.rs"),
-        ("src/main.ts", "import { from } from './widgets';", "widgets", "src/widgets/index.ts"),
-        ("src/main.js", "const helper = require('./helper.js');", "helper.js", "src/helper.js"),
-        ("src/main.js", "const helper = import('./helper.mjs');", "helper.mjs", "src/helper.mjs"),
-        ("src/build.sh", r#"source "./two words.sh""#, "two words.sh", "src/two words.sh"),
-        ("src/CMakeLists.txt", r#"include("${CMAKE_CURRENT_LIST_DIR}/helper.cmake")"#, "helper.cmake", "src/helper.cmake"),
+        (
+            "src/main.rs",
+            r##"const DATA: &str = include_str!(r#"assets/file.txt"#);"##,
+            "file.txt",
+            "src/assets/file.txt",
+        ),
+        (
+            "src/main.rs",
+            r#"#[path = "other.rs"]"#,
+            "other.rs",
+            "src/other.rs",
+        ),
+        (
+            "src/main.ts",
+            "import { from } from './widgets';",
+            "widgets",
+            "src/widgets/index.ts",
+        ),
+        (
+            "src/main.js",
+            "const helper = require('./helper.js');",
+            "helper.js",
+            "src/helper.js",
+        ),
+        (
+            "src/main.js",
+            "const helper = import('./helper.mjs');",
+            "helper.mjs",
+            "src/helper.mjs",
+        ),
+        (
+            "src/build.sh",
+            r#"source "./two words.sh""#,
+            "two words.sh",
+            "src/two words.sh",
+        ),
+        (
+            "src/CMakeLists.txt",
+            r#"include("${CMAKE_CURRENT_LIST_DIR}/helper.cmake")"#,
+            "helper.cmake",
+            "src/helper.cmake",
+        ),
     ] {
         let path = root.path().join(target);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -214,14 +275,23 @@ fn editor_path_links_skip_comments_and_computed_references() {
     for (syntax, source) in [
         (Syntax::CFamily, r#"// #include "file.h""#),
         (Syntax::CFamily, r#"#include HEADER"#),
-        (Syntax::JavaScript, r#"const data = "require('./file.js')";"#),
+        (
+            Syntax::JavaScript,
+            r#"const data = "require('./file.js')";"#,
+        ),
         (Syntax::JavaScript, r#"import("./" + fileName)"#),
-        (Syntax::TypeScript, r#"import { item } from "@scope/package";"#),
+        (
+            Syntax::TypeScript,
+            r#"import { item } from "@scope/package";"#,
+        ),
         (Syntax::Rust, r#"// include_str!("file.txt");"#),
         (Syntax::Shell, r#"source "$LOCATION/file.sh""#),
         (Syntax::CMake, r#"include("${MODULE}")"#),
     ] {
-        assert!(code_path_links::parse(source, syntax).is_empty(), "{source}");
+        assert!(
+            code_path_links::parse(source, syntax).is_empty(),
+            "{source}"
+        );
     }
 }
 

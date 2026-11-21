@@ -172,9 +172,12 @@ impl App {
         desks.extend(self.groups.iter().enumerate().filter_map(|(index, group)| {
             (index != self.active_group && !group.tabs.is_empty()).then_some(group.desk)
         }));
-        windows.extend(self.desks.items.iter().filter_map(|desk| {
-            desk.window.filter(|_| desks.contains(&desk.id))
-        }));
+        windows.extend(
+            self.desks
+                .items
+                .iter()
+                .filter_map(|desk| desk.window.filter(|_| desks.contains(&desk.id))),
+        );
     }
 
     pub(crate) fn window_name(&self, window: WindowId) -> String {

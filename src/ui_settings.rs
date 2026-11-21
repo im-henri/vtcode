@@ -25,7 +25,12 @@ fn truncate_or_pad(s: &str, max_width: usize) -> String {
 }
 
 fn vscode_setting_label(label: &str, setting_id: &str) -> String {
-    if matches!(setting_id, "files_exclude" | "search_exclude" | "search_debounce_ms") { return label.to_owned(); }
+    if matches!(
+        setting_id,
+        "files_exclude" | "search_exclude" | "search_debounce_ms"
+    ) {
+        return label.to_owned();
+    }
     if App::setting_field_kind(setting_id) == "heading" {
         return label.trim_matches(['─', ' ']).to_string();
     }
@@ -60,7 +65,9 @@ fn draw_settings_category_dropdown(f: &mut Frame, app: &mut App) {
         app.close_settings_dropdown();
         return;
     };
-    let visible = anchor.bottom().saturating_sub(f.area().y)
+    let visible = anchor
+        .bottom()
+        .saturating_sub(f.area().y)
         .max(f.area().bottom().saturating_sub(anchor.bottom()))
         .saturating_sub(2)
         .min(app.settings_dropdown_options.len() as u16)
@@ -69,26 +76,36 @@ fn draw_settings_category_dropdown(f: &mut Frame, app: &mut App) {
     // Keep wheel scrolling independent of the highlighted choice otherwise.
     if app.settings_dropdown_area.map(|old| old.height) != Some(visible) {
         let visible = visible.max(1) as usize;
-        app.settings_dropdown_scroll = app.settings_dropdown_scroll
+        app.settings_dropdown_scroll = app
+            .settings_dropdown_scroll
             .min(app.settings_dropdown_selected)
             .max(app.settings_dropdown_selected.saturating_sub(visible - 1))
             .min(app.settings_dropdown_options.len().saturating_sub(visible));
     }
-    let items: Vec<_> = app.settings_dropdown_options.iter()
+    let items: Vec<_> = app
+        .settings_dropdown_options
+        .iter()
         .map(|name| crate::ui_widgets::DropdownItem::new(name))
         .collect();
-    let area = DropdownMenu::new(&items, crate::ui_widgets::settings_dropdown_colors(&app.colors))
-        .anchor(anchor.x, anchor.bottom())
-        .min_width(anchor.width.saturating_sub(2))
-        .max_visible(visible)
-        .scroll_offset(app.settings_dropdown_scroll)
-        .selected(app.settings_dropdown_selected)
-        .mouse(app.mouse_row, app.mouse_col)
-        .render(f);
+    let area = DropdownMenu::new(
+        &items,
+        crate::ui_widgets::settings_dropdown_colors(&app.colors),
+    )
+    .anchor(anchor.x, anchor.bottom())
+    .min_width(anchor.width.saturating_sub(2))
+    .max_visible(visible)
+    .scroll_offset(app.settings_dropdown_scroll)
+    .selected(app.settings_dropdown_selected)
+    .mouse(app.mouse_row, app.mouse_col)
+    .render(f);
     app.settings_dropdown_area = Some(area);
 }
 
-pub(crate) fn settings_input_background(color: Color, background: Color, foreground: Color) -> Color {
+pub(crate) fn settings_input_background(
+    color: Color,
+    background: Color,
+    foreground: Color,
+) -> Color {
     // Some light themes rely on a one-pixel input border over a white surface.
     // A terminal field has no such border, so give matching surfaces a light
     // tint to keep empty inputs and unchecked checkboxes visible.
@@ -107,11 +124,17 @@ pub(crate) fn settings_control_style(
 ) -> Style {
     let control = colors.ui.settings_control(kind);
     let background = control.background.over(row).unwrap_or(row);
-    let foreground = control.foreground.over(background).unwrap_or(colors.fg_input);
+    let foreground = control
+        .foreground
+        .over(background)
+        .unwrap_or(colors.fg_input);
     let border = control.border.border(background);
     // If a theme supplies a border, represent it with an underline and preserve
     // its exact fill. Only borderless, otherwise invisible fields need a tint.
-    let background = if colors.ui.preserve_theme_colors || border.is_some() || control.background.is_transparent() {
+    let background = if colors.ui.preserve_theme_colors
+        || border.is_some()
+        || control.background.is_transparent()
+    {
         background
     } else {
         settings_input_background(background, row, foreground)
@@ -119,7 +142,9 @@ pub(crate) fn settings_control_style(
     let mut style = Style::default()
         .bg(background)
         .fg(colors.ui.readable_foreground(
-            control.foreground.over(background).unwrap_or(foreground), background, 4.5,
+            control.foreground.over(background).unwrap_or(foreground),
+            background,
+            4.5,
         ));
     // Resolve again after a borderless field's visibility tint changes the fill.
     let border = control.border.border(background);
@@ -326,8 +351,15 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         search_w - clear_width,
         1,
     );
-    let search_style = settings_control_style(&app.colors, "text", bg,
-        !app.settings_focus_categories && !app.settings_focus_control && !app.settings_value_editing && !app.settings_dropdown_open);
+    let search_style = settings_control_style(
+        &app.colors,
+        "text",
+        bg,
+        !app.settings_focus_categories
+            && !app.settings_focus_control
+            && !app.settings_value_editing
+            && !app.settings_dropdown_open,
+    );
     let search_bg = search_style.bg.unwrap_or(bg);
     let search_field = InputField::new(&app.settings_editor_search)
         .viewport(app.text_input_viewport(TextInputId::SettingsSearch))
@@ -345,12 +377,10 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         search_field
             .cursor_marker("█")
             .cursor_pos(app.settings_editor_search_cursor)
-            .selection_range(
-                App::inline_selection_range(
-                    app.settings_editor_search_cursor,
-                    app.settings_editor_search_selection_anchor,
-                ),
-            )
+            .selection_range(App::inline_selection_range(
+                app.settings_editor_search_cursor,
+                app.settings_editor_search_selection_anchor,
+            ))
     };
     let hit_map = search_field.render(f, search_area);
     underline_field(f, search_area, search_style);
@@ -361,7 +391,11 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         let hovered = clear_area.contains((app.mouse_col, app.mouse_row).into());
         f.render_widget(
             Paragraph::new(" × ").style(app.colors.ui.toolbar_style(
-                search_style.fg.unwrap_or(fg_text), search_bg, hovered, false, false,
+                search_style.fg.unwrap_or(fg_text),
+                search_bg,
+                hovered,
+                false,
+                false,
             )),
             clear_area,
         );
@@ -370,7 +404,11 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
 
     let scope_y = area.y.saturating_add(3);
     let global_label = " User ";
-    let workspace_label = if app.has_open_folder() { " Folder " } else { "" };
+    let workspace_label = if app.has_open_folder() {
+        " Folder "
+    } else {
+        ""
+    };
     let global_width = UnicodeWidthStr::width(global_label) as u16;
     let workspace_width = UnicodeWidthStr::width(workspace_label) as u16;
     let global_area = Rect::new(search_x, scope_y, global_width.min(search_w), 1);
@@ -385,11 +423,21 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         ),
         1,
     );
-    app.settings_scope_areas = [Some(global_area), app.has_open_folder().then_some(workspace_area)];
+    app.settings_scope_areas = [
+        Some(global_area),
+        app.has_open_folder().then_some(workspace_area),
+    ];
     let scope_style = |selected: bool, rect: Rect| {
         let hovered = rect.contains((app.mouse_col, app.mouse_row).into());
-        let style = app.colors.ui.toolbar_style(fg_text, bg, hovered, false, selected);
-        if selected { style.add_modifier(Modifier::BOLD) } else { style }
+        let style = app
+            .colors
+            .ui
+            .toolbar_style(fg_text, bg, hovered, false, selected);
+        if selected {
+            style.add_modifier(Modifier::BOLD)
+        } else {
+            style
+        }
     };
     f.render_widget(
         Paragraph::new(Line::from(vec![
@@ -424,9 +472,13 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         let json_area = Rect::new(search_x + search_w - json_width, scope_y, json_width, 1);
         let hovered = json_area.contains((app.mouse_col, app.mouse_row).into());
         f.render_widget(
-            Paragraph::new(json_label).style(
-                app.colors.ui.toolbar_style(app.colors.fg_workbench, bg, hovered, false, false),
-            ),
+            Paragraph::new(json_label).style(app.colors.ui.toolbar_style(
+                app.colors.fg_workbench,
+                bg,
+                hovered,
+                false,
+                false,
+            )),
             json_area,
         );
         app.settings_json_area = Some(json_area);
@@ -455,7 +507,10 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let category_width = settings_category_pane_width(body_area.width);
-    if category_width > 0 && app.settings_dropdown_open && app.settings_dropdown_setting_id.is_none() {
+    if category_width > 0
+        && app.settings_dropdown_open
+        && app.settings_dropdown_setting_id.is_none()
+    {
         app.close_settings_dropdown();
     }
     let separator_width = u16::from(category_width > 0);
@@ -512,8 +567,11 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let category_rows = app.settings_category_visual_rows();
-    app.settings_category_scroll = app.settings_category_scroll
-        .min(category_rows.len().saturating_sub(cat_inner.height as usize));
+    app.settings_category_scroll = app.settings_category_scroll.min(
+        category_rows
+            .len()
+            .saturating_sub(cat_inner.height as usize),
+    );
     let has_category_scrollbar = app.settings_category_scrollbar().is_some();
     for (visual_idx, (idx, is_child, name)) in category_rows
         .iter()
@@ -526,12 +584,12 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             break;
         }
         let row_y = cat_inner.y + visual_idx as u16;
-        let branch_expanded = !app.settings_category_collapsed[idx]
-            && !App::settings_sections(idx).is_empty();
+        let branch_expanded =
+            !app.settings_category_collapsed[idx] && !App::settings_sections(idx).is_empty();
         let is_selected = app.settings_editor_search.trim().is_empty()
             && app.settings_tree_row_selected(idx, is_child, name);
-        let is_focused = app.settings_focus_categories
-            && app.settings_tree_row_selected(idx, is_child, name);
+        let is_focused =
+            app.settings_focus_categories && app.settings_tree_row_selected(idx, is_child, name);
         let is_hovered = app.mouse_row == row_y
             && app.mouse_col >= cat_inner.x
             && app.mouse_col < cat_inner.x + cat_inner.width;
@@ -542,7 +600,15 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             bg
         };
-        let row_fg = app.colors.ui.readable_foreground(if is_selected || is_focused { fg_text } else { fg_dim }, row_bg, 4.5);
+        let row_fg = app.colors.ui.readable_foreground(
+            if is_selected || is_focused {
+                fg_text
+            } else {
+                fg_dim
+            },
+            row_bg,
+            4.5,
+        );
         let arrow = if App::settings_sections(idx).is_empty() {
             " "
         } else if branch_expanded {
@@ -550,13 +616,19 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             "›"
         };
-        let marker = if is_selected || is_focused { "▏" } else { " " };
+        let marker = if is_selected || is_focused {
+            "▏"
+        } else {
+            " "
+        };
         let mut text = if is_child {
             format!("     {name}")
         } else {
             format!(" {arrow} {name}")
         };
-        let max_w = cat_inner.width.saturating_sub(1 + u16::from(has_category_scrollbar)) as usize;
+        let max_w = cat_inner
+            .width
+            .saturating_sub(1 + u16::from(has_category_scrollbar)) as usize;
         if UnicodeWidthStr::width(&*text) > max_w {
             text = {
                 let mut w = 0;
@@ -578,14 +650,19 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             Style::default().fg(row_fg).bg(row_bg)
         };
         if is_focused {
-            style = style.add_modifier(Modifier::UNDERLINED)
+            style = style
+                .add_modifier(Modifier::UNDERLINED)
                 .underline_color(app.colors.ui.focus_border.border(row_bg).unwrap_or(accent));
         }
         let row = Line::from(vec![
             Span::styled(
                 marker,
                 Style::default()
-                    .fg(if is_selected || is_focused { accent } else { row_bg })
+                    .fg(if is_selected || is_focused {
+                        accent
+                    } else {
+                        row_bg
+                    })
                     .bg(row_bg),
             ),
             Span::styled(text, style),
@@ -599,8 +676,12 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
     if let Some((height, thumb_height, max_scroll)) = app.settings_category_scrollbar() {
         let top = (height - thumb_height) * app.settings_category_scroll / max_scroll;
         let track_x = cat_inner.right().saturating_sub(1);
-        let hovered = app.mouse_col == track_x && cat_inner.contains((app.mouse_col, app.mouse_row).into());
-        let (track, thumb) = app.colors.ui.scrollbar_colors(bg, hovered, app.dragging_settings_categories);
+        let hovered =
+            app.mouse_col == track_x && cat_inner.contains((app.mouse_col, app.mouse_row).into());
+        let (track, thumb) =
+            app.colors
+                .ui
+                .scrollbar_colors(bg, hovered, app.dragging_settings_categories);
         for i in 0..thumb_height {
             f.render_widget(
                 Paragraph::new("▐").style(Style::default().fg(thumb).bg(track)),
@@ -632,7 +713,9 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .filter(|&&idx| App::setting_field_kind(&items[idx].2) != "heading")
         .count();
-    let section = (!searching_all_settings).then(|| app.settings_selected_section(selected_category)).flatten();
+    let section = (!searching_all_settings)
+        .then(|| app.settings_selected_section(selected_category))
+        .flatten();
     let shortcut_table = crate::ui_settings_shortcuts::page_active(app);
     let spacious_header = settings_area.height >= 12;
     let heading = Line::from(vec![
@@ -663,17 +746,35 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         1,
     );
     if category_width == 0 {
-        let picker_width = categories.iter()
+        let picker_width = categories
+            .iter()
             .map(|name| UnicodeWidthStr::width(*name) as u16 + 4)
-            .max().unwrap_or(4).min(heading_area.width);
+            .max()
+            .unwrap_or(4)
+            .min(heading_area.width);
         let picker_area = Rect::new(heading_x, settings_area.y, picker_width, 1);
-        let style = settings_control_style(&app.colors, "dropdown", bg, app.settings_focus_categories);
-        let picker_label = if spacious_header { page_heading } else { section.unwrap_or(page_heading) };
+        let style =
+            settings_control_style(&app.colors, "dropdown", bg, app.settings_focus_categories);
+        let picker_label = if spacious_header {
+            page_heading
+        } else {
+            section.unwrap_or(page_heading)
+        };
         let label = truncate_or_pad(picker_label, picker_width.saturating_sub(4) as usize);
-        f.render_widget(Paragraph::new(format!(" {label} ⌄ ")).style(style), picker_area);
+        f.render_widget(
+            Paragraph::new(format!(" {label} ⌄ ")).style(style),
+            picker_area,
+        );
         underline_field(f, picker_area, style);
         app.settings_category_picker_area = Some(picker_area);
-        let count = format!("  {setting_count} {}", if setting_count == 1 { "setting" } else { "settings" });
+        let count = format!(
+            "  {setting_count} {}",
+            if setting_count == 1 {
+                "setting"
+            } else {
+                "settings"
+            }
+        );
         let count_width = heading_area.width.saturating_sub(picker_width);
         if UnicodeWidthStr::width(count.as_str()) <= count_width as usize {
             f.render_widget(
@@ -705,23 +806,43 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             }
         });
         let subtitle_style = if section.is_some() {
-            Style::default().fg(fg_text).bg(bg).add_modifier(Modifier::BOLD)
-        } else { Style::default().fg(fg_dim).bg(bg) };
-        f.render_widget(Paragraph::new(subtitle).style(subtitle_style),
-            Rect::new(heading_x, settings_area.y + 1, heading_area.width, 1));
+            Style::default()
+                .fg(fg_text)
+                .bg(bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(fg_dim).bg(bg)
+        };
+        f.render_widget(
+            Paragraph::new(subtitle).style(subtitle_style),
+            Rect::new(heading_x, settings_area.y + 1, heading_area.width, 1),
+        );
         let border = crate::app_theme::lerp_color(bg, app.colors.border_color, 0.35);
-        f.render_widget(Paragraph::new("─".repeat(settings_area.width as usize))
-            .style(Style::default().fg(border).bg(bg)),
-            Rect::new(settings_area.x, settings_area.y + 2, settings_area.width, 1));
+        f.render_widget(
+            Paragraph::new("─".repeat(settings_area.width as usize))
+                .style(Style::default().fg(border).bg(bg)),
+            Rect::new(settings_area.x, settings_area.y + 2, settings_area.width, 1),
+        );
     }
     // The shortcut table's column header takes the spacer line under the rule.
-    let header_height = if spacious_header && !shortcut_table { 4 } else if spacious_header { 3 } else { 2 };
+    let header_height = if spacious_header && !shortcut_table {
+        4
+    } else if spacious_header {
+        3
+    } else {
+        2
+    };
     let introduction = match section {
-        Some(VTCOMPLETE_SECTION) => "Word suggestions use the active file as you type or press Ctrl+Space.",
-        Some(GPTCOMPLETE_SECTION) => "The built-in language model runs locally and predicts text at the caret.",
+        Some(VTCOMPLETE_SECTION) => {
+            "Word suggestions use the active file as you type or press Ctrl+Space."
+        }
+        Some(GPTCOMPLETE_SECTION) => {
+            "The built-in language model runs locally and predicts text at the caret."
+        }
         _ => "",
     };
-    let mut introduction = App::wrap_setting_text_for_width(introduction, heading_area.width as usize);
+    let mut introduction =
+        App::wrap_setting_text_for_width(introduction, heading_area.width as usize);
     // Keep room for controls in very short panes.
     if introduction.len() > settings_area.height.saturating_sub(header_height + 3) as usize {
         introduction.clear();
@@ -731,10 +852,17 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         f.render_widget(
             Paragraph::new(introduction.into_iter().map(Line::raw).collect::<Vec<_>>())
                 .style(Style::default().fg(fg_dim).bg(bg)),
-            Rect::new(heading_x, settings_area.y + header_height - 1, heading_area.width, introduction_height),
+            Rect::new(
+                heading_x,
+                settings_area.y + header_height - 1,
+                heading_area.width,
+                introduction_height,
+            ),
         );
     }
-    let content_y = settings_area.y.saturating_add(header_height + introduction_height);
+    let content_y = settings_area
+        .y
+        .saturating_add(header_height + introduction_height);
     let content_area = Rect::new(
         heading_x.saturating_sub(2),
         content_y,
@@ -749,9 +877,21 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             .saturating_sub(content_y),
     );
     let content_area = if shortcut_table && content_area.height > 1 {
-        crate::ui_settings_shortcuts::draw_header(f, app,
-            Rect::new(content_area.x, content_area.y, content_area.width.saturating_sub(1), 1));
-        Rect { y: content_area.y + 1, height: content_area.height - 1, ..content_area }
+        crate::ui_settings_shortcuts::draw_header(
+            f,
+            app,
+            Rect::new(
+                content_area.x,
+                content_area.y,
+                content_area.width.saturating_sub(1),
+                1,
+            ),
+        );
+        Rect {
+            y: content_area.y + 1,
+            height: content_area.height - 1,
+            ..content_area
+        }
     } else {
         content_area
     };
@@ -778,9 +918,17 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let layout = app.settings_layout_cache.get(&items, &filtered, content_area.width.saturating_sub(3) as usize);
-    if app.settings_reveal_selected { app.ensure_settings_selection_visible(); }
-    let scroll = app.settings_editor_scroll.min(layout.max_scroll(content_area.height as usize));
+    let layout = app.settings_layout_cache.get(
+        &items,
+        &filtered,
+        content_area.width.saturating_sub(3) as usize,
+    );
+    if app.settings_reveal_selected {
+        app.ensure_settings_selection_visible();
+    }
+    let scroll = app
+        .settings_editor_scroll
+        .min(layout.max_scroll(content_area.height as usize));
     app.settings_editor_scroll = scroll;
     let min_y = i64::from(content_area.y);
     let max_y = i64::from(content_area.bottom());
@@ -794,7 +942,9 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         });
     for item in layout.rows.iter().skip(layout.visible_start(scroll)) {
         let item_start_y = min_y + item.start as i64 - scroll as i64;
-        if item_start_y >= max_y { break; }
+        if item_start_y >= max_y {
+            break;
+        }
         let mut draw_y = item_start_y;
         let idx = item.index;
         let (label, value, id) = &items[idx];
@@ -803,22 +953,32 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         if crate::ui_settings_shortcuts::is_table_item(id) {
             let y = item_start_y + item.control as i64;
             if y >= min_y && y < max_y {
-                let row = Rect::new(content_area.x, y as u16, content_area.width.saturating_sub(1), 1);
+                let row = Rect::new(
+                    content_area.x,
+                    y as u16,
+                    content_area.width.saturating_sub(1),
+                    1,
+                );
                 if is_heading {
                     crate::ui_settings_shortcuts::draw_heading(f, app, row, label);
                 } else {
                     let focused = idx == app.settings_selected
                         && !app.settings_focus_categories
                         && (app.settings_focus_control || app.settings_kb_editing);
-                    let hovered = !mouse_over_dropdown && row.contains((app.mouse_col, app.mouse_row).into());
-                    crate::ui_settings_shortcuts::draw_row(f, app, row, label, value, id, focused, hovered);
+                    let hovered =
+                        !mouse_over_dropdown && row.contains((app.mouse_col, app.mouse_row).into());
+                    crate::ui_settings_shortcuts::draw_row(
+                        f, app, row, label, value, id, focused, hovered,
+                    );
                 }
             }
             continue;
         }
         let display_label = if searching_all_settings || selected_category == 0 || is_heading {
             vscode_setting_label(label, id)
-        } else if section.is_none() && let Some(section) = App::settings_section_for_id(id) {
+        } else if section.is_none()
+            && let Some(section) = App::settings_section_for_id(id)
+        {
             format!("{section}: {label}")
         } else {
             label.clone()
@@ -837,9 +997,14 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             ""
         };
         let desc_lines = &item.lines;
-        let gap = if is_heading { 0 } else { App::setting_row_gap(content_area.width.saturating_sub(3) as usize) };
+        let gap = if is_heading {
+            0
+        } else {
+            App::setting_row_gap(content_area.width.saturating_sub(3) as usize)
+        };
         let visible_start_y = item_start_y.max(min_y) as u16;
-        let item_end_y = (item_start_y + item.height.saturating_sub(gap) as i64).clamp(min_y, max_y) as u16;
+        let item_end_y =
+            (item_start_y + item.height.saturating_sub(gap) as i64).clamp(min_y, max_y) as u16;
 
         let is_selected = !is_heading && idx == app.settings_selected;
         let is_focused = is_selected
@@ -871,8 +1036,15 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         let marker = if is_focused || modified { "▏" } else { " " };
         // Paint the whole setting, including the space above its input, so
         // hover/focus never leaves an unpainted stripe between its controls.
-        f.render_widget(Paragraph::new("").style(Style::default().bg(row_bg)),
-            Rect::new(content_area.x, visible_start_y, content_area.width.saturating_sub(1), item_end_y.saturating_sub(visible_start_y)));
+        f.render_widget(
+            Paragraph::new("").style(Style::default().bg(row_bg)),
+            Rect::new(
+                content_area.x,
+                visible_start_y,
+                content_area.width.saturating_sub(1),
+                item_end_y.saturating_sub(visible_start_y),
+            ),
+        );
         if is_focused || modified {
             for y in visible_start_y..item_end_y {
                 if let Some(cell) = f.buffer_mut().cell_mut((content_area.x, y)) {
@@ -925,10 +1097,18 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             app.colors.fg_success
         } else {
             match kind {
-                "checkbox" | "number" | "language-list" | "dropdown" => settings_control_style(
-                    &app.colors, kind, row_bg, is_focused,
-                ).fg.unwrap_or(fg_text),
-                "action" => if is_hovered || is_focused { app.colors.fg_selected } else { app.colors.fg_accent_blue },
+                "checkbox" | "number" | "language-list" | "dropdown" => {
+                    settings_control_style(&app.colors, kind, row_bg, is_focused)
+                        .fg
+                        .unwrap_or(fg_text)
+                }
+                "action" => {
+                    if is_hovered || is_focused {
+                        app.colors.fg_selected
+                    } else {
+                        app.colors.fg_accent_blue
+                    }
+                }
                 _ => fg_dim,
             }
         };
@@ -937,12 +1117,19 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             if draw_y >= max_y {
                 break;
             }
-            if draw_y < min_y { draw_y += 1; continue; }
+            if draw_y < min_y {
+                draw_y += 1;
+                continue;
+            }
             let max_w = content_area.width.saturating_sub(1) as usize;
             let display_text = if is_heading {
                 line_text.trim_matches(['─', ' '])
             } else {
-                if desc_idx == 0 { display_label.as_str() } else { line_text.as_str() }
+                if desc_idx == 0 {
+                    display_label.as_str()
+                } else {
+                    line_text.as_str()
+                }
             };
             let mut spans = vec![
                 Span::styled(marker, Style::default().fg(marker_color).bg(row_bg)),
@@ -954,7 +1141,8 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                 } else {
                     0
                 };
-                let title_width = max_w.saturating_sub(2 + divider_width + if show_reset { 7 } else { 0 });
+                let title_width =
+                    max_w.saturating_sub(2 + divider_width + if show_reset { 7 } else { 0 });
                 let note_width = UnicodeWidthStr::width(source_note) + 2;
                 let has_note = !source_note.is_empty()
                     && UnicodeWidthStr::width(display_text) + note_width <= title_width;
@@ -967,11 +1155,15 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                     })
                     .bg(row_bg)
                     .add_modifier(Modifier::BOLD);
-                if (searching_all_settings || selected_category == 0 || section.is_none()) && !is_heading {
+                if (searching_all_settings || selected_category == 0 || section.is_none())
+                    && !is_heading
+                {
                     if let Some((prefix, name)) = title.split_once(": ") {
                         spans.push(Span::styled(
                             format!("{prefix}: "),
-                            Style::default().fg(app.colors.ui.description_color(row_bg)).bg(row_bg),
+                            Style::default()
+                                .fg(app.colors.ui.description_color(row_bg))
+                                .bg(row_bg),
                         ));
                         spans.push(Span::styled(name.to_owned(), title_style));
                     } else {
@@ -983,7 +1175,9 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                 if has_note {
                     spans.push(Span::styled(
                         format!("  {source_note}"),
-                        Style::default().fg(app.colors.ui.description_color(row_bg)).bg(row_bg),
+                        Style::default()
+                            .fg(app.colors.ui.description_color(row_bg))
+                            .bg(row_bg),
                     ));
                 }
                 if is_heading && id.starts_with("heading_animation_") {
@@ -1008,12 +1202,16 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                 }
                 spans.push(Span::styled(
                     truncate_to_width(display_text, max_w.saturating_sub(6)),
-                    Style::default().fg(app.colors.ui.description_color(row_bg)).bg(row_bg),
+                    Style::default()
+                        .fg(app.colors.ui.description_color(row_bg))
+                        .bg(row_bg),
                 ));
             } else {
                 spans.push(Span::styled(
                     truncate_to_width(display_text, max_w.saturating_sub(2)),
-                    Style::default().fg(app.colors.ui.description_color(row_bg)).bg(row_bg),
+                    Style::default()
+                        .fg(app.colors.ui.description_color(row_bg))
+                        .bg(row_bg),
                 ));
             }
             f.render_widget(
@@ -1021,12 +1219,17 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                 Rect::new(content_area.x, draw_y as u16, max_w as u16, 1),
             );
             if desc_idx == 0 && show_reset {
-                let reset_area = Rect::new(content_area.right().saturating_sub(8), draw_y as u16, 7, 1);
+                let reset_area =
+                    Rect::new(content_area.right().saturating_sub(8), draw_y as u16, 7, 1);
                 let hovered = reset_area.contains((app.mouse_col, app.mouse_row).into());
                 f.render_widget(
-                    Paragraph::new(" Reset ").style(
-                        app.colors.ui.toolbar_style(app.colors.fg_workbench, row_bg, hovered, false, false),
-                    ),
+                    Paragraph::new(" Reset ").style(app.colors.ui.toolbar_style(
+                        app.colors.fg_workbench,
+                        row_bg,
+                        hovered,
+                        false,
+                        false,
+                    )),
                     reset_area,
                 );
             }
@@ -1038,8 +1241,15 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         }
 
         if kind == "exclusions" {
-            crate::ui_exclusion_settings::draw_setting(f, app, value, content_area,
-                item_start_y + item.control as i64, is_focused, row_bg);
+            crate::ui_exclusion_settings::draw_setting(
+                f,
+                app,
+                value,
+                content_area,
+                item_start_y + item.control as i64,
+                is_focused,
+                row_bg,
+            );
             continue;
         }
         let needs_control_row = kind != "checkbox" || desc_lines.len() == 1;
@@ -1078,20 +1288,36 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                 let reset_enabled = app.setting_is_defined_in_layer(id, selected_layer);
                 let unassign_enabled = value != "Unassigned";
                 let shortcut_action_style = |enabled: bool, hovered: bool| {
-                    let style = app.colors.ui.toolbar_style(app.colors.fg_workbench, row_bg,
-                        hovered && enabled, false, false);
-                    if enabled { style.add_modifier(Modifier::BOLD) } else {
+                    let style = app.colors.ui.toolbar_style(
+                        app.colors.fg_workbench,
+                        row_bg,
+                        hovered && enabled,
+                        false,
+                        false,
+                    );
+                    if enabled {
+                        style.add_modifier(Modifier::BOLD)
+                    } else {
                         let bg = style.bg.unwrap_or(row_bg);
                         let fg = style.fg.unwrap_or(fg_text);
                         style.fg(crate::ui_colors::disabled_text_color(
-                            app.colors.ui.disabled_foreground.over(bg).unwrap_or(fg), fg, bg, app.colors.ui.contrast_colors()))
+                            app.colors.ui.disabled_foreground.over(bg).unwrap_or(fg),
+                            fg,
+                            bg,
+                            app.colors.ui.contrast_colors(),
+                        ))
                     }
                 };
                 let reset_style = shortcut_action_style(reset_enabled, hovered_reset);
                 let unassign_style = shortcut_action_style(unassign_enabled, hovered_unassign);
                 f.render_widget(
                     Paragraph::new(Line::from(vec![
-                        Span::styled(left, Style::default().fg(app.colors.ui.readable_foreground(control_fg, row_bg, 4.5)).bg(row_bg)),
+                        Span::styled(
+                            left,
+                            Style::default()
+                                .fg(app.colors.ui.readable_foreground(control_fg, row_bg, 4.5))
+                                .bg(row_bg),
+                        ),
                         Span::styled(reset_label.to_string(), reset_style),
                         Span::styled(" ".to_string(), Style::default().bg(row_bg)),
                         Span::styled(unassign_label.to_string(), unassign_style),
@@ -1099,9 +1325,11 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                     Rect::new(content_area.x, draw_y as u16, content_area.width, 1),
                 );
             } else if id.starts_with("kb_") {
-                f.render_widget(Paragraph::new(format!("[Edit] {control_text}"))
-                    .style(Style::default().fg(control_fg).bg(row_bg)),
-                    Rect::new(content_area.x, draw_y as u16, content_area.width, 1));
+                f.render_widget(
+                    Paragraph::new(format!("[Edit] {control_text}"))
+                        .style(Style::default().fg(control_fg).bg(row_bg)),
+                    Rect::new(content_area.x, draw_y as u16, content_area.width, 1),
+                );
             } else {
                 let prefix = format!("{marker} ");
                 let prefix_w = UnicodeWidthStr::width(prefix.as_str());
@@ -1115,7 +1343,8 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                         truncate_or_pad(displayed_value, field_width)
                     }
                 } else if matches!(kind, "number" | "language-list") {
-                    let field_width = available_control_width.min(if kind == "number" { 20 } else { 60 });
+                    let field_width =
+                        available_control_width.min(if kind == "number" { 20 } else { 60 });
                     truncate_or_pad(&format!(" {displayed_value}"), field_width)
                 } else if kind == "action" {
                     format!(" {} ", control_text.trim())
@@ -1124,26 +1353,33 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                 };
                 let control_w = UnicodeWidthStr::width(rendered_control.as_str());
                 let fill = max_w.saturating_sub(prefix_w.saturating_add(control_w));
-                let control_style = if matches!(kind, "number" | "language-list" | "dropdown" | "checkbox") {
-                    settings_control_style(&app.colors, kind, row_bg, is_focused)
-                } else if kind == "action" {
-                    let style = app.colors.ui.button_style(row_bg, false, is_hovered, true);
-                    if is_focused { style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED) } else { style }
-                } else { Style::default().fg(app.colors.ui.readable_foreground(control_fg, row_bg, 4.5)).bg(row_bg) };
+                let control_style =
+                    if matches!(kind, "number" | "language-list" | "dropdown" | "checkbox") {
+                        settings_control_style(&app.colors, kind, row_bg, is_focused)
+                    } else if kind == "action" {
+                        let style = app.colors.ui.button_style(row_bg, false, is_hovered, true);
+                        if is_focused {
+                            style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                        } else {
+                            style
+                        }
+                    } else {
+                        Style::default()
+                            .fg(app.colors.ui.readable_foreground(control_fg, row_bg, 4.5))
+                            .bg(row_bg)
+                    };
                 let control_bg = control_style.bg.unwrap_or(row_bg);
                 f.render_widget(
                     Paragraph::new(Line::from(vec![
                         Span::styled(prefix, Style::default().fg(marker_color).bg(row_bg)),
-                        Span::styled(
-                            rendered_control,
-                            control_style,
-                        ),
+                        Span::styled(rendered_control, control_style),
                         Span::styled(crate::helpers::spaces(fill), Style::default().bg(row_bg)),
                     ])),
                     Rect::new(content_area.x, draw_y as u16, content_area.width, 1),
                 );
                 if editing_number {
-                    let field_width = available_control_width.min(if kind == "number" { 20 } else { 60 }) as u16;
+                    let field_width =
+                        available_control_width.min(if kind == "number" { 20 } else { 60 }) as u16;
                     let field_area = Rect::new(
                         content_area.x.saturating_add(prefix_w as u16),
                         draw_y as u16,
@@ -1157,12 +1393,10 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                         .bg(control_bg)
                         .cursor_marker("█")
                         .cursor_pos(app.settings_value_cursor)
-                        .selection_range(
-                            App::inline_selection_range(
-                                app.settings_value_cursor,
-                                app.settings_value_selection_anchor,
-                            ),
-                        );
+                        .selection_range(App::inline_selection_range(
+                            app.settings_value_cursor,
+                            app.settings_value_selection_anchor,
+                        ));
                     let hit_map = field.render(f, field_area);
                     underline_field(f, field_area, control_style);
                     app.register_text_input(TextInputId::SettingsValue, hit_map);
@@ -1183,28 +1417,25 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         }
     }
 
-    if let Some((track_x, track_h, thumb_h, max_scroll)) =
-        layout.scrollbar(content_area)
-    {
+    if let Some((track_x, track_h, thumb_h, max_scroll)) = layout.scrollbar(content_area) {
         let thumb_top = ((track_h.saturating_sub(thumb_h)) * scroll.min(max_scroll)) / max_scroll;
         let hovered = app.mouse_col == track_x
             && app.mouse_row >= content_area.y
             && app.mouse_row < content_area.bottom();
-        let (track, thumb) = app.colors.ui.scrollbar_colors(bg, hovered, app.settings_scrollbar_drag.is_some());
+        let (track, thumb) =
+            app.colors
+                .ui
+                .scrollbar_colors(bg, hovered, app.settings_scrollbar_drag.is_some());
         for i in 0..thumb_h {
             f.render_widget(
-                Paragraph::new(Span::styled(
-                    "▐",
-                    Style::default()
-                        .fg(thumb)
-                        .bg(track),
-                )),
+                Paragraph::new(Span::styled("▐", Style::default().fg(thumb).bg(track))),
                 Rect::new(track_x, content_area.y + (thumb_top + i) as u16, 1, 1),
             );
         }
     }
 
-    if app.settings_dropdown_open && app.settings_dropdown_setting_id.is_some()
+    if app.settings_dropdown_open
+        && app.settings_dropdown_setting_id.is_some()
         && !app.settings_dropdown_options.is_empty()
     {
         let dd_items: Vec<crate::ui_widgets::DropdownItem> = app
@@ -1214,8 +1445,14 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             .map(|(row, opt)| {
                 let item = crate::ui_widgets::DropdownItem::new(opt);
                 if app.settings_dropdown_setting_id.as_deref() == Some("theme") {
-                    item.shortcut(if app.theme_picker_deletable(row) { "Delete…" } else { "Bundled" })
-                } else { item }
+                    item.shortcut(if app.theme_picker_deletable(row) {
+                        "Delete…"
+                    } else {
+                        "Bundled"
+                    })
+                } else {
+                    item
+                }
             })
             .collect();
         let anchor_x = content_area.x.saturating_add(2);
@@ -1224,7 +1461,13 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         let colors = crate::ui_widgets::settings_dropdown_colors(&app.colors);
         let dd_area = DropdownMenu::new(&dd_items, colors)
             .anchor(anchor_x, anchor_y)
-            .min_width(if app.settings_dropdown_setting_id.as_deref() == Some("theme") { 32 } else { 16 })
+            .min_width(
+                if app.settings_dropdown_setting_id.as_deref() == Some("theme") {
+                    32
+                } else {
+                    16
+                },
+            )
             .max_visible(max_vis)
             .scroll_offset(app.settings_dropdown_scroll)
             .selected(app.settings_dropdown_selected)
@@ -1307,11 +1550,17 @@ pub(crate) fn draw_settings(f: &mut Frame, app: &App) {
 #[cfg(test)]
 mod tests {
     use super::{
-        draw_settings_editor, settings_category_pane_width, settings_control_style, truncate_or_pad, vscode_setting_label,
+        draw_settings_editor, settings_category_pane_width, settings_control_style,
+        truncate_or_pad, vscode_setting_label,
     };
     use crate::app::App;
     use crate::theme_workbench::{ColorLayer, WorkbenchColors};
-    use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::{Color, Modifier}};
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        layout::Rect,
+        style::{Color, Modifier},
+    };
 
     #[test]
     fn setting_controls_blend_explicit_and_inherited_roles_on_each_row() {
@@ -1339,17 +1588,30 @@ mod tests {
                 ("number", (48, 32, 22), (255, 240, 187), (255, 238, 221)),
                 ("text", (48, 32, 22), (255, 240, 187), (255, 238, 221)),
             ] {
-                for row in [Color::Rgb(12, 20, 28), Color::Rgb(40, 56, 68), Color::Rgb(232, 240, 248)] {
-                    let background = ColorLayer::rgba(fill.0, fill.1, fill.2, 192).over(row).unwrap();
+                for row in [
+                    Color::Rgb(12, 20, 28),
+                    Color::Rgb(40, 56, 68),
+                    Color::Rgb(232, 240, 248),
+                ] {
+                    let background = ColorLayer::rgba(fill.0, fill.1, fill.2, 192)
+                        .over(row)
+                        .unwrap();
                     for focused in [false, true] {
                         let style = settings_control_style(&colors, kind, row, focused);
                         assert_eq!(style.bg, Some(background), "{kind} on {row:?}");
-                        assert_eq!(style.fg, ColorLayer::rgba(text.0, text.1, text.2, 224).over(background));
-                        assert_eq!(style.underline_color, if focused {
-                            ColorLayer::rgba(119, 153, 204, 192).over(background)
-                        } else {
-                            ColorLayer::rgba(outline.0, outline.1, outline.2, 128).over(background)
-                        });
+                        assert_eq!(
+                            style.fg,
+                            ColorLayer::rgba(text.0, text.1, text.2, 224).over(background)
+                        );
+                        assert_eq!(
+                            style.underline_color,
+                            if focused {
+                                ColorLayer::rgba(119, 153, 204, 192).over(background)
+                            } else {
+                                ColorLayer::rgba(outline.0, outline.1, outline.2, 128)
+                                    .over(background)
+                            }
+                        );
                     }
                 }
             }
@@ -1460,26 +1722,42 @@ mod tests {
             app.ensure_settings_selection_visible();
             let items = app.settings_items();
             let filtered = app.settings_filtered_indices_for_category(7);
-            let headings: Vec<_> = filtered.iter().enumerate()
+            let headings: Vec<_> = filtered
+                .iter()
+                .enumerate()
                 .filter(|(_, idx)| items[**idx].2.starts_with("heading_animation_"))
                 .collect();
             assert_eq!(headings.len(), 5);
-            terminal.draw(|frame| draw_settings_editor(frame, &mut app, Rect::new(0, 0, width, height))).unwrap();
+            terminal
+                .draw(|frame| draw_settings_editor(frame, &mut app, Rect::new(0, 0, width, height)))
+                .unwrap();
             let content = app.settings_sidebar_area.unwrap();
             let layout = app.settings_line_layout(content.width.saturating_sub(3) as usize);
             for (_, &index) in headings {
                 let heading_line = layout.row_for_item(index).unwrap().start;
                 app.settings_editor_scroll = heading_line;
-                terminal.draw(|frame| {
-                    draw_settings_editor(frame, &mut app, Rect::new(0, 0, width, height));
-                }).expect("animation settings draw");
+                terminal
+                    .draw(|frame| {
+                        draw_settings_editor(frame, &mut app, Rect::new(0, 0, width, height));
+                    })
+                    .expect("animation settings draw");
                 let content = app.settings_sidebar_area.expect("settings content");
                 let heading_row = (content.left()..content.right())
-                    .filter_map(|x| terminal.backend().buffer().cell((x, content.top() + (heading_line - app.settings_editor_scroll) as u16)))
+                    .filter_map(|x| {
+                        terminal.backend().buffer().cell((
+                            x,
+                            content.top() + (heading_line - app.settings_editor_scroll) as u16,
+                        ))
+                    })
                     .map(|cell| cell.symbol())
                     .collect::<String>();
                 let title = items[index].0.trim_matches(['─', ' ']);
-                assert!(heading_row.trim_start().starts_with(title.split_whitespace().next().unwrap()), "{heading_row}");
+                assert!(
+                    heading_row
+                        .trim_start()
+                        .starts_with(title.split_whitespace().next().unwrap()),
+                    "{heading_row}"
+                );
                 if width != 52 {
                     assert!(heading_row.contains(title), "{heading_row}");
                 }
@@ -1644,7 +1922,11 @@ mod tests {
         assert!(rendered.contains("Color Theme"));
         assert!(!rendered.contains("Workbench:"));
         // No "Default" source badge (descriptions may still say "Defaults to").
-        assert!(!rendered.lines().any(|line| line.trim_end().ends_with("Default")));
+        assert!(
+            !rendered
+                .lines()
+                .any(|line| line.trim_end().ends_with("Default"))
+        );
         assert!(rendered.contains("Dark+"));
         assert!(rendered.contains('✓'));
         assert!(!rendered.contains('☑') && !rendered.contains('☐'));
@@ -1661,8 +1943,10 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
         let mut app = App::test_new();
         app.open_settings_tab();
-        app.colors.ui.settings_controls[2].background = crate::theme_workbench::ColorLayer::rgba(11, 22, 33, 255);
-        app.colors.ui.settings_controls[2].foreground = crate::theme_workbench::ColorLayer::rgba(224, 225, 226, 255);
+        app.colors.ui.settings_controls[2].background =
+            crate::theme_workbench::ColorLayer::rgba(11, 22, 33, 255);
+        app.colors.ui.settings_controls[2].foreground =
+            crate::theme_workbench::ColorLayer::rgba(224, 225, 226, 255);
         app.settings_category_selected = 1;
         app.settings_selected = app
             .settings_items()
@@ -1745,7 +2029,8 @@ mod tests {
             for &id in &ids {
                 let mut app = App::test_new();
                 app.open_settings_tab();
-                let enabled_before = AnimationEffect::ALL.map(|effect| app.animation_settings.enabled(effect));
+                let enabled_before =
+                    AnimationEffect::ALL.map(|effect| app.animation_settings.enabled(effect));
                 app.settings_focus_categories = false;
                 app.settings_category_selected = 7;
                 app.settings_scope = crate::settings::SettingsScope::Workspace;
@@ -1757,7 +2042,11 @@ mod tests {
                     .unwrap();
                 app.ensure_settings_selection_visible();
                 let kind = App::setting_field_kind(id);
-                let control_index = match kind { "checkbox" => 0, "language-list" => 3, _ => 2 };
+                let control_index = match kind {
+                    "checkbox" => 0,
+                    "language-list" => 3,
+                    _ => 2,
+                };
                 let control_background = ratatui::style::Color::Rgb(11, 22, 33);
                 app.colors.ui.settings_controls[control_index].background =
                     crate::theme_workbench::ColorLayer::rgba(11, 22, 33, 255);
@@ -1779,8 +2068,8 @@ mod tests {
                             .map(|x| (x, y))
                     })
                     .unwrap_or_else(|| panic!("missing {id} control at width {width}"));
-                let checkbox_before = kind == "checkbox"
-                    && app.settings_items()[app.settings_selected].1 == "On";
+                let checkbox_before =
+                    kind == "checkbox" && app.settings_items()[app.settings_selected].1 == "On";
                 click(&mut app, column, row);
                 let key = App::setting_json_key(id).unwrap();
                 if matches!(kind, "number" | "language-list") {
@@ -1810,8 +2099,10 @@ mod tests {
                     );
                     assert!(!app.settings_value_editing);
                     if kind == "language-list" {
-                        assert_eq!(serde_json::to_value(&app.settings_workspace).unwrap()[key],
-                            serde_json::json!(["cpp", "python"]));
+                        assert_eq!(
+                            serde_json::to_value(&app.settings_workspace).unwrap()[key],
+                            serde_json::json!(["cpp", "python"])
+                        );
                     } else {
                         assert_eq!(
                             serde_json::to_value(&app.settings_workspace).unwrap()[key].as_u64(),
@@ -1840,7 +2131,8 @@ mod tests {
                     );
                 }
                 assert_eq!(
-                    AnimationEffect::ALL.map(|effect| app.animation_settings.enabled(effect)), enabled_before,
+                    AnimationEffect::ALL.map(|effect| app.animation_settings.enabled(effect)),
+                    enabled_before,
                     "editing options changed enabled effects: {id}"
                 );
             }
@@ -1894,8 +2186,14 @@ mod tests {
 
     #[test]
     fn settings_mouse_targets_follow_wrapping_and_leave_titles_and_spacing_inert() {
-        let scopes = [crate::settings::SettingsScope::Global, crate::settings::SettingsScope::Workspace];
-        for (scope, width) in scopes.into_iter().flat_map(|scope| [46, 80, 140].map(|width| (scope, width))) {
+        let scopes = [
+            crate::settings::SettingsScope::Global,
+            crate::settings::SettingsScope::Workspace,
+        ];
+        for (scope, width) in scopes
+            .into_iter()
+            .flat_map(|scope| [46, 80, 140].map(|width| (scope, width)))
+        {
             let mut app = App::test_new();
             app.settings_scope = scope;
             app.settings_editor_active = true;
@@ -1940,7 +2238,11 @@ mod tests {
                     .unwrap();
                 click(&mut app, area.right() - 5, area.y);
                 assert_eq!(app.show_activity_bar, before, "reset at {width}");
-                let expected = if scope == crate::settings::SettingsScope::Global { "Default" } else { "Inherited · Default" };
+                let expected = if scope == crate::settings::SettingsScope::Global {
+                    "Default"
+                } else {
+                    "Inherited · Default"
+                };
                 assert_eq!(app.setting_source_label("activity_bar"), expected);
             }
         }
@@ -2040,26 +2342,51 @@ mod tests {
             app.rebuild_keybinding_settings_cache();
             app.open_settings_tab();
             let mut terminal = Terminal::new(TestBackend::new(width, 32)).unwrap();
-            for (option, (idx, section, name)) in App::settings_page_options().into_iter().enumerate() {
-                terminal.draw(|f| draw_settings_editor(f, &mut app, f.area())).unwrap();
+            for (option, (idx, section, name)) in
+                App::settings_page_options().into_iter().enumerate()
+            {
+                terminal
+                    .draw(|f| draw_settings_editor(f, &mut app, f.area()))
+                    .unwrap();
                 assert!(app.settings_category_area.is_none());
-                let picker = app.settings_category_picker_area.expect("compact category selector");
-                assert_eq!(terminal.backend().buffer()[(picker.right() - 2, picker.y)].symbol(), "⌄");
+                let picker = app
+                    .settings_category_picker_area
+                    .expect("compact category selector");
+                assert_eq!(
+                    terminal.backend().buffer()[(picker.right() - 2, picker.y)].symbol(),
+                    "⌄"
+                );
                 click(&mut app, picker.x, picker.y);
-                terminal.draw(|f| draw_settings_editor(f, &mut app, f.area())).unwrap();
-                app.settings_dropdown_scroll = option.min(app.settings_dropdown_options.len()
-                    .saturating_sub(app.settings_dropdown_area.unwrap().height as usize));
-                terminal.draw(|f| draw_settings_editor(f, &mut app, f.area())).unwrap();
+                terminal
+                    .draw(|f| draw_settings_editor(f, &mut app, f.area()))
+                    .unwrap();
+                app.settings_dropdown_scroll = option.min(
+                    app.settings_dropdown_options
+                        .len()
+                        .saturating_sub(app.settings_dropdown_area.unwrap().height as usize),
+                );
+                terminal
+                    .draw(|f| draw_settings_editor(f, &mut app, f.area()))
+                    .unwrap();
                 let menu = app.settings_dropdown_area.expect("category options");
                 let row = menu.y + (option - app.settings_dropdown_scroll) as u16;
                 click(&mut app, menu.x, row);
-                assert_eq!(app.settings_category_selected, idx, "{name} at width {width}");
+                assert_eq!(
+                    app.settings_category_selected, idx,
+                    "{name} at width {width}"
+                );
                 assert_eq!(app.settings_selected_section(idx), section);
                 assert!(!app.settings_dropdown_open);
                 assert!(app.settings_focus_categories);
                 let filtered = app.settings_filtered_indices_for_category(idx);
-                assert!(filtered.contains(&app.settings_selected), "selected control in {name} at width {width}");
-                assert_ne!(App::setting_field_kind(&app.settings_items()[app.settings_selected].2), "heading");
+                assert!(
+                    filtered.contains(&app.settings_selected),
+                    "selected control in {name} at width {width}"
+                );
+                assert_ne!(
+                    App::setting_field_kind(&app.settings_items()[app.settings_selected].2),
+                    "heading"
+                );
             }
         }
     }
@@ -2070,7 +2397,9 @@ mod tests {
         let mut app = App::test_new();
         app.open_settings_tab();
         let mut terminal = Terminal::new(TestBackend::new(40, 32)).unwrap();
-        terminal.draw(|f| draw_settings_editor(f, &mut app, f.area())).unwrap();
+        terminal
+            .draw(|f| draw_settings_editor(f, &mut app, f.area()))
+            .unwrap();
         settings_key(&mut app, KeyCode::Tab);
         assert!(app.settings_focus_categories);
         settings_key(&mut app, KeyCode::Enter);
@@ -2086,7 +2415,10 @@ mod tests {
             settings_key(&mut app, KeyCode::Down);
         }
         settings_key(&mut app, KeyCode::Enter);
-        assert_eq!(app.settings_category_selected, App::settings_categories().len() - 1);
+        assert_eq!(
+            app.settings_category_selected,
+            App::settings_categories().len() - 1
+        );
         assert!(!app.settings_dropdown_open);
         settings_key(&mut app, KeyCode::Tab);
         assert!(app.settings_focus_control);
@@ -2101,7 +2433,10 @@ mod tests {
         settings_key(&mut app, KeyCode::Enter);
         settings_key(&mut app, KeyCode::BackTab);
         assert!(!app.settings_dropdown_open);
-        assert_eq!(app.focused_text_input_id(), Some(crate::text_input::TextInputId::SettingsSearch));
+        assert_eq!(
+            app.focused_text_input_id(),
+            Some(crate::text_input::TextInputId::SettingsSearch)
+        );
     }
 
     #[test]
@@ -2113,10 +2448,14 @@ mod tests {
         app.settings_editor_search_cursor = app.settings_editor_search.len();
         app.settings_editor_search_selection_anchor = Some(0);
         let mut terminal = Terminal::new(TestBackend::new(40, 24)).unwrap();
-        terminal.draw(|f| draw_settings_editor(f, &mut app, f.area())).unwrap();
+        terminal
+            .draw(|f| draw_settings_editor(f, &mut app, f.area()))
+            .unwrap();
         let picker = app.settings_category_picker_area.unwrap();
         click(&mut app, picker.x, picker.y);
-        terminal.draw(|f| draw_settings_editor(f, &mut app, f.area())).unwrap();
+        terminal
+            .draw(|f| draw_settings_editor(f, &mut app, f.area()))
+            .unwrap();
         let menu = app.settings_dropdown_area.unwrap();
         click(&mut app, menu.x, menu.y + 4); // Text Editor > Whitespace
         assert_eq!(app.settings_category_selected, 1);
@@ -2124,8 +2463,14 @@ mod tests {
         assert!(app.settings_editor_search.is_empty());
         assert_eq!(app.settings_editor_search_cursor, 0);
         assert_eq!(app.settings_editor_search_selection_anchor, None);
-        assert_eq!(app.settings_scope, crate::settings::SettingsScope::Workspace);
-        assert!(app.settings_filtered_indices_for_category(1).contains(&app.settings_selected));
+        assert_eq!(
+            app.settings_scope,
+            crate::settings::SettingsScope::Workspace
+        );
+        assert!(
+            app.settings_filtered_indices_for_category(1)
+                .contains(&app.settings_selected)
+        );
     }
 
     #[test]
@@ -2137,18 +2482,31 @@ mod tests {
         app.settings_focus_categories = true;
         let mut terminal = Terminal::new(TestBackend::new(60, 24)).unwrap();
         let short = Rect::new(8, 0, 40, 8);
-        terminal.draw(|f| draw_settings_editor(f, &mut app, short)).unwrap();
+        terminal
+            .draw(|f| draw_settings_editor(f, &mut app, short))
+            .unwrap();
         settings_key(&mut app, KeyCode::Enter);
         terminal.backend_mut().resize(60, 8);
         terminal.autoresize().unwrap();
-        terminal.draw(|f| draw_settings_editor(f, &mut app, short)).unwrap();
+        terminal
+            .draw(|f| draw_settings_editor(f, &mut app, short))
+            .unwrap();
         let menu = app.settings_dropdown_area.unwrap();
         assert!(menu.height > 0 && menu.height < 8);
         assert!(app.settings_dropdown_selected >= app.settings_dropdown_scroll);
-        assert!(app.settings_dropdown_selected < app.settings_dropdown_scroll + menu.height as usize);
+        assert!(
+            app.settings_dropdown_selected < app.settings_dropdown_scroll + menu.height as usize
+        );
         // A short popup overlaps the search field. Its options still own clicks.
-        crate::mouse_scroll::handle_scroll_up(&mut app, menu.x, menu.y, crossterm::event::KeyModifiers::NONE);
-        terminal.draw(|f| draw_settings_editor(f, &mut app, short)).unwrap();
+        crate::mouse_scroll::handle_scroll_up(
+            &mut app,
+            menu.x,
+            menu.y,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        terminal
+            .draw(|f| draw_settings_editor(f, &mut app, short))
+            .unwrap();
         let menu = app.settings_dropdown_area.unwrap();
         let expected = app.settings_dropdown_scroll;
         click(&mut app, menu.x, menu.y);
@@ -2161,12 +2519,16 @@ mod tests {
         assert!(app.settings_dropdown_open);
         terminal.backend_mut().resize(120, 32);
         terminal.autoresize().unwrap();
-        terminal.draw(|f| draw_settings_editor(f, &mut app, f.area())).unwrap();
+        terminal
+            .draw(|f| draw_settings_editor(f, &mut app, f.area()))
+            .unwrap();
         assert!(app.settings_category_picker_area.is_none());
         assert!(app.settings_category_area.is_some());
         assert!(!app.settings_dropdown_open);
         assert_eq!(app.settings_category_selected, category);
-        terminal.draw(|f| draw_settings_editor(f, &mut app, Rect::new(8, 2, 40, 24))).unwrap();
+        terminal
+            .draw(|f| draw_settings_editor(f, &mut app, Rect::new(8, 2, 40, 24)))
+            .unwrap();
         assert!(app.settings_category_picker_area.is_some());
         assert!(app.settings_category_area.is_none());
         assert_eq!(app.settings_category_selected, category);

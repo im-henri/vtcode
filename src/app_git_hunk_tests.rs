@@ -4,7 +4,8 @@ use super::*;
 fn hunk_preview_live_git_buffer_survives_an_external_file_deletion() {
     let original = "a\nold\nz\n";
     let live = "a\nunsaved\nz\n";
-    let (root, file, mut app) = make_git_app_with_file("peek-missing-live", original, "a\ndisk\nz\n");
+    let (root, file, mut app) =
+        make_git_app_with_file("peek-missing-live", original, "a\ndisk\nz\n");
     let editor = app.editor_mut().unwrap();
     editor.rope = ropey::Rope::from_str(live);
     editor.modified = true;
@@ -12,10 +13,21 @@ fn hunk_preview_live_git_buffer_survives_an_external_file_deletion() {
     std::fs::remove_file(&file).unwrap();
     app.open_hunk_popup(0, 0, file.clone(), 1, 'U');
     app.wait_for_hunk_preview();
-    let peek = app.hunk_peek.as_ref().expect("Use the editor snapshot rather than reading the deleted file");
+    let peek = app
+        .hunk_peek
+        .as_ref()
+        .expect("Use the editor snapshot rather than reading the deleted file");
     assert!(peek.remote.is_none());
-    assert!(peek.rows.iter().any(|row| row.kind == '-' && row.text == "old"));
-    assert!(peek.rows.iter().any(|row| row.kind == '+' && row.text == "unsaved"));
+    assert!(
+        peek.rows
+            .iter()
+            .any(|row| row.kind == '-' && row.text == "old")
+    );
+    assert!(
+        peek.rows
+            .iter()
+            .any(|row| row.kind == '+' && row.text == "unsaved")
+    );
     assert_eq!(app.editor().unwrap().rope.to_string(), live);
     assert!(!file.exists());
     assert_eq!(git_stdout(&root, &["show", ":file.txt"]), original);

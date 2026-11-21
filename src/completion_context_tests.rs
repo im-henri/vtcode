@@ -2,10 +2,26 @@ use super::*;
 
 #[test]
 fn streaming_initial_prefixes_preserve_unicode_acronyms_and_digit_boundaries() {
-    for word in ["HTTPClient", "get_user_config", "İstanbulValue", "KelvinValue", "Δelta42Next", "foo$bar", "___", "変数名", ""] {
+    for word in [
+        "HTTPClient",
+        "get_user_config",
+        "İstanbulValue",
+        "KelvinValue",
+        "Δelta42Next",
+        "foo$bar",
+        "___",
+        "変数名",
+        "",
+    ] {
         let full = initials(word);
-        for prefix in ["", "g", "gu", "guc", "hc", "http", "i", "i\u{307}", "kv", "δ4n", "f", "fb", "変", "x"] {
-            assert_eq!(initials_start_with(word, prefix), full.starts_with(prefix), "{word:?}, {prefix:?}");
+        for prefix in [
+            "", "g", "gu", "guc", "hc", "http", "i", "i\u{307}", "kv", "δ4n", "f", "fb", "変", "x",
+        ] {
+            assert_eq!(
+                initials_start_with(word, prefix),
+                full.starts_with(prefix),
+                "{word:?}, {prefix:?}"
+            );
         }
     }
 }

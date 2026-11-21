@@ -66,7 +66,12 @@ fn wrapped_output_batches_keep_order_across_yields_and_reuse_storage() {
     let capacity = MAX_PTY_BYTES_PER_TICK + 10_000;
     for head in [1, capacity / 2, capacity - 1] {
         let mut queue = VecDeque::with_capacity(capacity);
-        queue.extend("line café 世界\x1b[32m green\x1b[0m\r\n".bytes().cycle().take(capacity));
+        queue.extend(
+            "line café 世界\x1b[32m green\x1b[0m\r\n"
+                .bytes()
+                .cycle()
+                .take(capacity),
+        );
         for _ in 0..head {
             let byte = queue.pop_front().unwrap();
             queue.push_back(byte);
@@ -94,8 +99,10 @@ fn wrapped_output_batches_keep_order_across_yields_and_reuse_storage() {
         assert_eq!(terminal.grid.cells, expected.cells);
         assert_eq!(terminal.grid.scrollback, expected.scrollback);
         assert_eq!(terminal.grid.wrapped, expected.wrapped);
-        assert_eq!((terminal.grid.cursor_row, terminal.grid.cursor_col),
-            (expected.cursor_row, expected.cursor_col));
+        assert_eq!(
+            (terminal.grid.cursor_row, terminal.grid.cursor_col),
+            (expected.cursor_row, expected.cursor_col)
+        );
     }
 }
 

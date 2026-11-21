@@ -1,6 +1,5 @@
-
 use super::{
-    compute_unsaved_diff_markers, load_text_file, save_temp_path, sort_json_value, Editor,
+    Editor, compute_unsaved_diff_markers, load_text_file, save_temp_path, sort_json_value,
 };
 use crate::editor_snippets::{get_snippet, parse_snippet_body};
 use crate::line_changes::LineChanges;
@@ -9,7 +8,10 @@ use ropey::Rope;
 #[test]
 fn file_decoder_reads_each_byte_once_for_all_supported_encodings() {
     use std::io::{Cursor, Read};
-    struct CountedReader { inner: Cursor<Vec<u8>>, bytes: usize }
+    struct CountedReader {
+        inner: Cursor<Vec<u8>>,
+        bytes: usize,
+    }
     impl Read for CountedReader {
         fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
             let read = self.inner.read(buffer)?;
@@ -22,17 +24,34 @@ fn file_decoder_reads_each_byte_once_for_all_supported_encodings() {
             std::io::Seek::seek(&mut self.inner, position)
         }
     }
-    for text in ["".into(), "small file\nλ🙂".into(), "large file\nλ🙂".repeat(900)] {
+    for text in [
+        "".into(),
+        "small file\nλ🙂".into(),
+        "large file\nλ🙂".repeat(900),
+    ] {
         for encoding in ["UTF-8", "UTF-8 with BOM", "UTF-16 LE", "UTF-16 BE"] {
             let bytes = match encoding {
                 "UTF-8 with BOM" => [vec![0xef, 0xbb, 0xbf], text.as_bytes().to_vec()].concat(),
-                "UTF-16 LE" => [vec![0xff, 0xfe], text.encode_utf16().flat_map(u16::to_le_bytes).collect()].concat(),
-                "UTF-16 BE" => [vec![0xfe, 0xff], text.encode_utf16().flat_map(u16::to_be_bytes).collect()].concat(),
+                "UTF-16 LE" => [
+                    vec![0xff, 0xfe],
+                    text.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+                ]
+                .concat(),
+                "UTF-16 BE" => [
+                    vec![0xfe, 0xff],
+                    text.encode_utf16().flat_map(u16::to_be_bytes).collect(),
+                ]
+                .concat(),
                 _ => text.as_bytes().to_vec(),
             };
             let size = bytes.len();
-            let mut reader = CountedReader { inner: Cursor::new(bytes), bytes: 0 };
-            let (rope, detected) = super::read_text_stream(&mut reader, std::path::Path::new("unused"), size as u64).unwrap();
+            let mut reader = CountedReader {
+                inner: Cursor::new(bytes),
+                bytes: 0,
+            };
+            let (rope, detected) =
+                super::read_text_stream(&mut reader, std::path::Path::new("unused"), size as u64)
+                    .unwrap();
             assert_eq!(rope.to_string(), text);
             assert_eq!(detected, encoding);
             assert_eq!(reader.bytes, size);
@@ -42,7 +61,12 @@ fn file_decoder_reads_each_byte_once_for_all_supported_encodings() {
 
 #[test]
 fn file_decoder_handles_truncation_during_the_header_read() {
-    let (rope, _) = super::read_text_stream(std::io::Cursor::new(b"short"), std::path::Path::new("unused"), 100).unwrap();
+    let (rope, _) = super::read_text_stream(
+        std::io::Cursor::new(b"short"),
+        std::path::Path::new("unused"),
+        100,
+    )
+    .unwrap();
     assert_eq!(rope.to_string(), "short");
 }
 
@@ -56,16 +80,20 @@ fn save_temp_paths_are_unique_and_keep_original_filename() {
 
     assert_ne!(first, second);
     assert_ne!(first, other_extension);
-    assert!(first
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .starts_with("foo.rs.vtcode-tmp-"));
-    assert!(other_extension
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .starts_with("foo.txt.vtcode-tmp-"));
+    assert!(
+        first
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("foo.rs.vtcode-tmp-")
+    );
+    assert!(
+        other_extension
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("foo.txt.vtcode-tmp-")
+    );
 }
 
 #[test]
@@ -627,7 +655,6 @@ fn wrap_ranges_short_line() {
     assert_eq!(ranges, vec![(0, 5)]);
 }
 
-
 #[test]
 fn wrap_ranges_wrapping() {
     let ranges = Editor::wrap_ranges_for_line_text("hello world foo", 6);
@@ -687,9 +714,15 @@ fn markdown_detection_respects_language_overrides_and_associations() {
         editor.file_path = Some(name.into());
         editor.language_override = language.map(str::to_owned);
         if let Some(association) = association {
-            editor.language_associations.insert(name.into(), association.into());
+            editor
+                .language_associations
+                .insert(name.into(), association.into());
         }
-        assert_eq!(editor.is_markdown(), expected, "{name}: {language:?}, {association:?}");
+        assert_eq!(
+            editor.is_markdown(),
+            expected,
+            "{name}: {language:?}, {association:?}"
+        );
     }
 }
 
@@ -816,8 +849,6 @@ fn has_disk_changed_default() {
     assert!(!ed.has_disk_changed());
 }
 
-
-
 #[test]
 fn file_name_with_path() {
     let mut ed = Editor::new();
@@ -845,7 +876,11 @@ fn untitled_display_name_uses_only_a_short_clean_first_line() {
     ] {
         let editor = Editor::test_with_text(text);
         assert_eq!(editor.display_name(), expected, "source={text:?}");
-        assert_eq!(editor.file_name(), "[No File]", "display labels are not filenames");
+        assert_eq!(
+            editor.file_name(),
+            "[No File]",
+            "display labels are not filenames"
+        );
         assert!(editor.file_path.is_none());
         assert!(editor.suggested_file_name.is_none());
     }
@@ -855,12 +890,21 @@ fn untitled_display_name_uses_only_a_short_clean_first_line() {
 fn untitled_display_name_keeps_unicode_graphemes_intact() {
     for ch in ["界", "e\u{301}", "🧑‍💻", "🇪🇪"] {
         let text = ch.repeat(10);
-        assert_eq!(Editor::test_with_text(&text).display_name(), format!("{text} [NoFile]"));
-        assert_eq!(Editor::test_with_text(&format!("{text}! ")).display_name(), format!("{text}… [NoFile]"));
+        assert_eq!(
+            Editor::test_with_text(&text).display_name(),
+            format!("{text} [NoFile]")
+        );
+        assert_eq!(
+            Editor::test_with_text(&format!("{text}! ")).display_name(),
+            format!("{text}… [NoFile]")
+        );
     }
     // Never expose a partial grapheme if it crosses the bounded sample.
     let long_cluster = format!("e{}", "\u{301}".repeat(1_000));
-    assert_eq!(Editor::test_with_text(&long_cluster).display_name(), "[NoFile]");
+    assert_eq!(
+        Editor::test_with_text(&long_cluster).display_name(),
+        "[NoFile]"
+    );
 }
 
 #[test]
@@ -869,7 +913,11 @@ fn untitled_display_name_updates_after_edit_undo_redo_and_naming() {
     let language = editor.language_name().to_string();
     editor.paste_with_text("draft.py\nsecond line");
     assert_eq!(editor.display_name(), "draft.py [NoFile]");
-    assert_eq!(editor.language_name(), language, "a preview must not change the file type");
+    assert_eq!(
+        editor.language_name(),
+        language,
+        "a preview must not change the file type"
+    );
     editor.undo();
     assert_eq!(editor.display_name(), "[NoFile]");
     editor.redo();
@@ -885,7 +933,11 @@ fn untitled_display_name_stays_short_with_a_large_first_line() {
     let editor = Editor::test_with_text(&"x".repeat(2 * 1024 * 1024));
     assert_eq!(editor.display_name(), "xxxxxxxxxx… [NoFile]");
     let editor = Editor::test_with_text(&format!("{}text", " ".repeat(2 * 1024 * 1024)));
-    assert_eq!(editor.display_name(), "[NoFile]", "do not scan unbounded indentation for a label");
+    assert_eq!(
+        editor.display_name(),
+        "[NoFile]",
+        "do not scan unbounded indentation for a label"
+    );
 }
 
 #[test]
@@ -967,22 +1019,25 @@ fn enter_at_line_end_marks_only_the_inserted_line() {
             ed.set_cursor(original_line, ed.line_len(original_line));
             ed.insert_newline();
             let added = original_line + 1;
-            let assert_marks = |ed: &Editor| {
-                let markers: Vec<_> = (0..ed.line_count()).filter_map(|line| {
-                    let changes = ed.line_changes(line);
-                    (!changes.is_empty()).then_some((line, changes))
-                }).collect();
-                assert_eq!(markers, [(added, LineChanges::UNSAVED_ADDED)]);
-                let current = ed.rope.to_string();
-                let saved_marks = crate::app_git_display::compute_line_diff(
-                    &text.lines().collect::<Vec<_>>(),
-                    &current.lines().collect::<Vec<_>>(),
-                );
-                assert_eq!(saved_marks.get(added), Some(&'A'));
-                assert!(saved_marks.iter().enumerate().all(|(line, &marker)| {
-                    marker == if line == added { 'A' } else { ' ' }
-                }));
-            };
+            let assert_marks =
+                |ed: &Editor| {
+                    let markers: Vec<_> = (0..ed.line_count())
+                        .filter_map(|line| {
+                            let changes = ed.line_changes(line);
+                            (!changes.is_empty()).then_some((line, changes))
+                        })
+                        .collect();
+                    assert_eq!(markers, [(added, LineChanges::UNSAVED_ADDED)]);
+                    let current = ed.rope.to_string();
+                    let saved_marks = crate::app_git_display::compute_line_diff(
+                        &text.lines().collect::<Vec<_>>(),
+                        &current.lines().collect::<Vec<_>>(),
+                    );
+                    assert_eq!(saved_marks.get(added), Some(&'A'));
+                    assert!(saved_marks.iter().enumerate().all(|(line, &marker)| {
+                        marker == if line == added { 'A' } else { ' ' }
+                    }));
+                };
             assert_marks(&ed);
             ed.insert_char('x');
             assert_marks(&ed);
@@ -1008,11 +1063,15 @@ fn enter_keeps_markers_on_the_inserted_rows_among_existing_blank_lines() {
         let mut editor = Editor::test_with_text(&text);
         editor.saved_rope = Some(editor.rope.clone());
         let assert_markers = |editor: &Editor, expected: &[usize]| {
-            let markers: Vec<_> = (0..editor.line_count()).filter(|&row| {
-                let change = editor.line_changes(row);
-                if !change.is_empty() { assert_eq!(change, LineChanges::UNSAVED_ADDED); }
-                !change.is_empty()
-            }).collect();
+            let markers: Vec<_> = (0..editor.line_count())
+                .filter(|&row| {
+                    let change = editor.line_changes(row);
+                    if !change.is_empty() {
+                        assert_eq!(change, LineChanges::UNSAVED_ADDED);
+                    }
+                    !change.is_empty()
+                })
+                .collect();
             assert_eq!(markers, expected);
         };
 
@@ -1025,10 +1084,19 @@ fn enter_keeps_markers_on_the_inserted_rows_among_existing_blank_lines() {
         editor.insert_newline();
         assert_markers(&editor, &[1, 4, 6]);
 
-        let anchors = editor.insertion_anchors.as_ref().unwrap().rows(&editor.rope);
+        let anchors = editor
+            .insertion_anchors
+            .as_ref()
+            .unwrap()
+            .rows(&editor.rope);
         let worker = crate::editor::compute_unsaved_diff_markers_cancellable(
-            editor.saved_rope.as_ref().unwrap(), &editor.rope, anchors, None, &|| false,
-        ).unwrap();
+            editor.saved_rope.as_ref().unwrap(),
+            &editor.rope,
+            anchors,
+            None,
+            &|| false,
+        )
+        .unwrap();
         editor.apply_unsaved_diff_cache(editor.content_version, worker);
         assert_markers(&editor, &[1, 4, 6]);
         editor.undo();
@@ -1141,7 +1209,12 @@ fn unsaved_diff_keeps_inserted_lines_aligned() {
 
     let diff = compute_unsaved_diff_markers(&saved, &current);
 
-    assert_eq!((0..4).map(|line| diff.line_status(line)).collect::<Vec<_>>(), [' ', 'N', ' ', ' ']);
+    assert_eq!(
+        (0..4)
+            .map(|line| diff.line_status(line))
+            .collect::<Vec<_>>(),
+        [' ', 'N', ' ', ' ']
+    );
     assert_eq!(diff.changed_ranges, [1..2]);
 }
 
@@ -1202,9 +1275,11 @@ fn parse_snippet_simple_tab_stops() {
     let (text, stops) = parse_snippet_body("fn ${1:name}($2) {\n    $0\n}");
     assert_eq!(text, "fn name() {\n    \n}");
     // $1 at "name" (offset 3, len 4)
-    assert!(stops
-        .iter()
-        .any(|(idx, off, len)| *idx == 1 && *off == 3 && *len == 4));
+    assert!(
+        stops
+            .iter()
+            .any(|(idx, off, len)| *idx == 1 && *off == 3 && *len == 4)
+    );
     // $2 at offset 8 (after "("), no placeholder
     assert!(stops.iter().any(|(idx, _, len)| *idx == 2 && *len == 0));
     // $0 (final cursor)
@@ -1239,7 +1314,7 @@ fn snippet_tab_stop_navigation() {
     assert_eq!(ed.snippet_tab_stops.len(), 2);
     // First stop should select "name"
     assert_eq!(ed.cursor_col, 7); // end of "name"
-                                  // Advance to next tab stop
+    // Advance to next tab stop
     assert!(ed.snippet_next_tab_stop());
     // Go back
     assert!(ed.snippet_prev_tab_stop());
@@ -1855,11 +1930,7 @@ fn paste_distribute_with_non_sel_cursor_positions() {
 
 // ── guess_comment_prefix tests ──
 
-
-
-
 // ── language_name tests ──
-
 
 #[test]
 fn test_detect_language_by_shebang() {
@@ -1871,9 +1942,7 @@ fn test_detect_language_by_shebang() {
 
 // ── toggle_line_comment for Rust ──
 
-
 // ── toggle_line_comment for Python ──
-
 
 // ── word_boundaries_at returns correct start/end ──
 
@@ -1894,7 +1963,6 @@ fn word_boundaries_at_non_word_char() {
 }
 
 // ── compute_file_stats returns correct counts ──
-
 
 // ── wrap_selection surrounds with brackets ──
 

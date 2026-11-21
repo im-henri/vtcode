@@ -164,7 +164,9 @@ pub trait CommandSink: Send + Sync {
     fn send(&self, command: Command, blocking: bool) -> Result<(), String>;
     /// This must only signal teardown; hosts call it on their input thread.
     fn disconnect(&self);
-    fn file_request_live(&self, _id: &p::RequestId, _ticket: u64) -> bool { true }
+    fn file_request_live(&self, _id: &p::RequestId, _ticket: u64) -> bool {
+        true
+    }
 }
 
 /// A hosted event owns its delivery credit until the UI consumes or drops it.
@@ -175,26 +177,47 @@ pub struct HostedEvent {
 }
 impl HostedEvent {
     pub fn new(event: Event, receipt: impl FnOnce() + Send + 'static) -> Self {
-        Self { event: Some(event), receipt: Some(Box::new(receipt)) }
+        Self {
+            event: Some(event),
+            receipt: Some(Box::new(receipt)),
+        }
     }
     fn take(mut self) -> Event {
-        if let Some(receipt) = self.receipt.take() { receipt(); }
+        if let Some(receipt) = self.receipt.take() {
+            receipt();
+        }
         self.event.take().unwrap()
     }
 }
 impl Drop for HostedEvent {
-    fn drop(&mut self) { if let Some(receipt) = self.receipt.take() { receipt(); } }
+    fn drop(&mut self) {
+        if let Some(receipt) = self.receipt.take() {
+            receipt();
+        }
+    }
 }
-enum Inbox { Local(mpsc::Receiver<Event>), Hosted(mpsc::Receiver<HostedEvent>) }
+enum Inbox {
+    Local(mpsc::Receiver<Event>),
+    Hosted(mpsc::Receiver<HostedEvent>),
+}
 impl Inbox {
     fn try_recv(&self) -> Option<Event> {
-        match self { Self::Local(events) => events.try_recv().ok(), Self::Hosted(events) => events.try_recv().ok().map(HostedEvent::take) }
+        match self {
+            Self::Local(events) => events.try_recv().ok(),
+            Self::Hosted(events) => events.try_recv().ok().map(HostedEvent::take),
+        }
     }
     fn recv(&self) -> Result<Event, mpsc::RecvError> {
-        match self { Self::Local(events) => events.recv(), Self::Hosted(events) => events.recv().map(HostedEvent::take) }
+        match self {
+            Self::Local(events) => events.recv(),
+            Self::Hosted(events) => events.recv().map(HostedEvent::take),
+        }
     }
     fn recv_timeout(&self, timeout: Duration) -> Result<Event, mpsc::RecvTimeoutError> {
-        match self { Self::Local(events) => events.recv_timeout(timeout), Self::Hosted(events) => events.recv_timeout(timeout).map(HostedEvent::take) }
+        match self {
+            Self::Local(events) => events.recv_timeout(timeout),
+            Self::Hosted(events) => events.recv_timeout(timeout).map(HostedEvent::take),
+        }
     }
 }
 
@@ -220,11 +243,15 @@ impl Lifetime {
         let mut processes = self.processes.lock().unwrap_or_else(|e| e.into_inner());
         processes.retain(super::process::ProcessKiller::active);
         processes.push(killer.clone());
-        if self.stopped.load(Ordering::Acquire) { killer.kill(); }
+        if self.stopped.load(Ordering::Acquire) {
+            killer.kill();
+        }
     }
     fn terminate(&self) {
         self.stopped.store(true, Ordering::Release);
-        for process in &*self.processes.lock().unwrap_or_else(|e| e.into_inner()) { process.kill(); }
+        for process in &*self.processes.lock().unwrap_or_else(|e| e.into_inner()) {
+            process.kill();
+        }
     }
 }
 
@@ -232,14 +259,20 @@ impl ClientHandle {
     pub fn same_connection(&self, other: &Self) -> bool {
         match (&self.endpoint, &other.endpoint) {
             (Endpoint::Hosted(a), Endpoint::Hosted(b)) => Arc::ptr_eq(a, b),
-            (Endpoint::Local(_), Endpoint::Local(_)) => match (&self.lifetime, &other.lifetime) { (Some(a), Some(b)) => Arc::ptr_eq(a, b), _ => false },
+            (Endpoint::Local(_), Endpoint::Local(_)) => match (&self.lifetime, &other.lifetime) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
+            },
             _ => false,
         }
     }
     pub fn file_request_live(&self, id: &p::RequestId, ticket: u64) -> bool {
         match &self.endpoint {
             Endpoint::Hosted(sink) => sink.file_request_live(id, ticket),
-            Endpoint::Local(_) => self.lifetime.as_ref().is_some_and(|lifetime| !lifetime.stopped.load(Ordering::Acquire) && lifetime.files.lock().unwrap().get(id) == Some(&ticket)),
+            Endpoint::Local(_) => self.lifetime.as_ref().is_some_and(|lifetime| {
+                !lifetime.stopped.load(Ordering::Acquire)
+                    && lifetime.files.lock().unwrap().get(id) == Some(&ticket)
+            }),
         }
     }
     /// Signal shutdown without waiting for a worker or a remote connection.
@@ -247,7 +280,11 @@ impl ClientHandle {
         match &self.endpoint {
             Endpoint::Hosted(sink) => sink.disconnect(),
             Endpoint::Local(sender) => {
-                self.lifetime.as_ref().unwrap().stopped.store(true, Ordering::Release);
+                self.lifetime
+                    .as_ref()
+                    .unwrap()
+                    .stopped
+                    .store(true, Ordering::Release);
                 let _ = sender.try_send(Work::Shutdown);
             }
         }
@@ -255,12 +292,16 @@ impl ClientHandle {
     /// Service teardown fallback, including when a worker is blocked on I/O.
     pub fn terminate(&self) {
         self.stop();
-        if let Some(lifetime) = &self.lifetime { lifetime.terminate(); }
+        if let Some(lifetime) = &self.lifetime {
+            lifetime.terminate();
+        }
     }
     /// For host background workers only. UI callers must use `send`.
     pub fn send_blocking(&self, command: Command) -> Result<(), String> {
         let Endpoint::Local(sender) = &self.endpoint else {
-            let Endpoint::Hosted(sink) = &self.endpoint else { unreachable!() };
+            let Endpoint::Hosted(sink) = &self.endpoint else {
+                unreachable!()
+            };
             return sink.send(command, true);
         };
         sender
@@ -269,7 +310,9 @@ impl ClientHandle {
     }
     pub fn send(&self, command: Command) -> Result<(), String> {
         let Endpoint::Local(sender) = &self.endpoint else {
-            let Endpoint::Hosted(sink) = &self.endpoint else { unreachable!() };
+            let Endpoint::Hosted(sink) = &self.endpoint else {
+                unreachable!()
+            };
             return sink.send(command, false);
         };
         sender
@@ -293,9 +336,20 @@ pub struct Client {
 impl Client {
     /// Adapt a hosted transport without constructing a process, canonicalizing
     /// a client-native path, or doing any blocking work on the host's UI.
-    pub fn hosted(workspace: Workspace, sink: Arc<dyn CommandSink>, events: mpsc::Receiver<HostedEvent>) -> Self {
-        Self { handle: ClientHandle { endpoint: Endpoint::Hosted(sink), lifetime: None }, events: Inbox::Hosted(events),
-            finished: None, workspace }
+    pub fn hosted(
+        workspace: Workspace,
+        sink: Arc<dyn CommandSink>,
+        events: mpsc::Receiver<HostedEvent>,
+    ) -> Self {
+        Self {
+            handle: ClientHandle {
+                endpoint: Endpoint::Hosted(sink),
+                lifetime: None,
+            },
+            events: Inbox::Hosted(events),
+            finished: None,
+            workspace,
+        }
     }
     pub fn connect(
         config: AgentConfig,
@@ -321,20 +375,33 @@ impl Client {
 
     /// A headless host drains into its own bounded transport. Small queues
     /// propagate backpressure to the agent instead of retaining large events.
-    pub fn connect_hosted(config: AgentConfig, root: &Path, terminal_storage: &Path,
-        wake: impl Fn() + Send + Sync + 'static) -> Result<Self, String> {
+    pub fn connect_hosted(
+        config: AgentConfig,
+        root: &Path,
+        terminal_storage: &Path,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Result<Self, String> {
         Self::connect_inner(config, root, terminal_storage, wake, 8)
     }
 
-    fn connect_inner(config: AgentConfig, root: &Path, terminal_storage: &Path,
-        wake: impl Fn() + Send + Sync + 'static, capacity: usize) -> Result<Self, String> {
+    fn connect_inner(
+        config: AgentConfig,
+        root: &Path,
+        terminal_storage: &Path,
+        wake: impl Fn() + Send + Sync + 'static,
+        capacity: usize,
+    ) -> Result<Self, String> {
         config.validate()?;
         let workspace = Workspace::new(root).map_err(|e| e.message)?;
         let (sender, receiver) = mpsc::sync_channel(capacity);
         let (event_tx, events) = mpsc::sync_channel(capacity);
         let (finished_tx, finished) = mpsc::channel();
         let stopped = Arc::new(AtomicBool::new(false));
-        let lifetime = Arc::new(Lifetime { stopped: stopped.clone(), processes: Default::default(), files: Default::default() });
+        let lifetime = Arc::new(Lifetime {
+            stopped: stopped.clone(),
+            processes: Default::default(),
+            files: Default::default(),
+        });
         let sink = Sink {
             sender: event_tx,
             wake: Arc::new(wake),
@@ -375,7 +442,10 @@ impl Client {
             })
             .map_err(|e| e.to_string())?;
         Ok(Self {
-            handle: ClientHandle { endpoint: Endpoint::Local(sender), lifetime: Some(lifetime) },
+            handle: ClientHandle {
+                endpoint: Endpoint::Local(sender),
+                lifetime: Some(lifetime),
+            },
             events: Inbox::Local(events),
             finished: Some(finished),
             workspace,
@@ -393,7 +463,9 @@ impl Client {
     pub fn recv_timeout(&self, timeout: Duration) -> Result<Event, mpsc::RecvTimeoutError> {
         self.events.recv_timeout(timeout)
     }
-    pub fn recv(&self) -> Result<Event, mpsc::RecvError> { self.events.recv() }
+    pub fn recv(&self) -> Result<Event, mpsc::RecvError> {
+        self.events.recv()
+    }
     pub fn workspace(&self) -> &Workspace {
         &self.workspace
     }
@@ -406,7 +478,9 @@ impl Client {
         // Give the worker a bounded chance to remove empty sessions before the
         // process exits. Event backpressure cannot hold up this shutdown path.
         if let Some(finished) = &self.finished {
-            if finished.recv_timeout(Duration::from_millis(1500)).is_err() { self.handle.terminate(); }
+            if finished.recv_timeout(Duration::from_millis(1500)).is_err() {
+                self.handle.terminate();
+            }
         }
     }
 }
@@ -464,8 +538,14 @@ struct Pending {
 }
 
 enum HostRequest {
-    Permission { request: Box<p::RequestPermissionRequest>, ticket: u64 },
-    File { session: p::SessionId, ticket: u64 },
+    Permission {
+        request: Box<p::RequestPermissionRequest>,
+        ticket: u64,
+    },
+    File {
+        session: p::SessionId,
+        ticket: u64,
+    },
 }
 
 struct Worker {
@@ -494,7 +574,13 @@ struct Worker {
     lifetime: Arc<Lifetime>,
 }
 impl Drop for Worker {
-    fn drop(&mut self) { self.lifetime.files.lock().unwrap_or_else(|e| e.into_inner()).clear(); }
+    fn drop(&mut self) {
+        self.lifetime
+            .files
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
 }
 
 impl Worker {
@@ -606,7 +692,8 @@ impl Worker {
             // only when this client extension is advertised. They use ordinary
             // configOptions and set_config_option, which vtcode already supports.
             .meta(serde_json::Map::from_iter([(
-                "parameterizedModelPicker".into(), json!(true),
+                "parameterizedModelPicker".into(),
+                json!(true),
             )]))
             .session(
                 p::ClientSessionCapabilities::new().config_options(
@@ -807,10 +894,16 @@ impl Worker {
     fn command(&mut self, command: Command) -> Result<(), p::Error> {
         match command {
             Command::Permission { id, ticket, option } => {
-                let Some(HostRequest::Permission { request, ticket: live }) = self.host.get(&id) else {
+                let Some(HostRequest::Permission {
+                    request,
+                    ticket: live,
+                }) = self.host.get(&id)
+                else {
                     return Ok(());
                 };
-                if ticket != *live { return Ok(()); }
+                if ticket != *live {
+                    return Ok(());
+                }
                 if option
                     .as_ref()
                     .is_some_and(|id| !request.options.iter().any(|o| &o.option_id == id))
@@ -833,8 +926,14 @@ impl Worker {
                 self.sink.emit(Event::PermissionResolved(id, ticket));
                 return Ok(());
             }
-            Command::FileResponse { id, ticket, result, edit } => {
-                if matches!(self.host.get(&id), Some(HostRequest::File { ticket: live, .. }) if *live == ticket) {
+            Command::FileResponse {
+                id,
+                ticket,
+                result,
+                edit,
+            } => {
+                if matches!(self.host.get(&id), Some(HostRequest::File { ticket: live, .. }) if *live == ticket)
+                {
                     self.host.remove(&id);
                     self.lifetime.files.lock().unwrap().remove(&id);
                     self.response(id, result)?;
@@ -1333,13 +1432,23 @@ impl Worker {
                         )),
                     );
                 }
-                self.next_file_ticket = self.next_file_ticket.checked_add(1).ok_or_else(|| failure("Host request generation overflow"))?;
+                self.next_file_ticket = self
+                    .next_file_ticket
+                    .checked_add(1)
+                    .ok_or_else(|| failure("Host request generation overflow"))?;
                 let ticket = self.next_file_ticket;
                 self.host.insert(
                     id.clone(),
-                    HostRequest::Permission { request: Box::new(request.clone()), ticket },
+                    HostRequest::Permission {
+                        request: Box::new(request.clone()),
+                        ticket,
+                    },
                 );
-                self.sink.emit(Event::Permission { id, ticket, request });
+                self.sink.emit(Event::Permission {
+                    id,
+                    ticket,
+                    request,
+                });
             }
             "fs/read_text_file" | "fs/write_text_file" => {
                 let mut request = if method == "fs/read_text_file" {
@@ -1353,12 +1462,28 @@ impl Worker {
                 }
                 let canonical = self.workspace.resolve(request.path())?;
                 *request.path_mut() = canonical;
-                self.next_file_ticket = self.next_file_ticket.checked_add(1).ok_or_else(|| failure("File request generation overflow"))?;
+                self.next_file_ticket = self
+                    .next_file_ticket
+                    .checked_add(1)
+                    .ok_or_else(|| failure("File request generation overflow"))?;
                 let ticket = self.next_file_ticket;
-                self.lifetime.files.lock().unwrap().insert(id.clone(), ticket);
-                self.host
-                    .insert(id.clone(), HostRequest::File { session: request.session_id().clone(), ticket });
-                self.sink.emit(Event::FileRequest { id, ticket, request });
+                self.lifetime
+                    .files
+                    .lock()
+                    .unwrap()
+                    .insert(id.clone(), ticket);
+                self.host.insert(
+                    id.clone(),
+                    HostRequest::File {
+                        session: request.session_id().clone(),
+                        ticket,
+                    },
+                );
+                self.sink.emit(Event::FileRequest {
+                    id,
+                    ticket,
+                    request,
+                });
             }
             "terminal/create" => {
                 let request: p::CreateTerminalRequest = decode(params)?;

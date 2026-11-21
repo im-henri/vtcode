@@ -2,15 +2,21 @@ use ratatui::style::{Color, Modifier, Style};
 use rustc_hash::FxHashMap as CssColorMap;
 use std::sync::LazyLock;
 
-use crate::ui::hsl_to_rgb;
 use crate::line_changes::ChangeKind;
+use crate::ui::hsl_to_rgb;
 
 pub(crate) fn syntax_font_modifiers(font: crate::textmate::FontStyle) -> Modifier {
     use crate::textmate::FontStyle;
-    let mut modifiers=Modifier::empty();
-    for (flag,modifier) in [(FontStyle::BOLD,Modifier::BOLD),(FontStyle::ITALIC,Modifier::ITALIC),
-        (FontStyle::UNDERLINE,Modifier::UNDERLINED),(FontStyle::STRIKETHROUGH,Modifier::CROSSED_OUT)] {
-        if font.contains(flag) {modifiers|=modifier;}
+    let mut modifiers = Modifier::empty();
+    for (flag, modifier) in [
+        (FontStyle::BOLD, Modifier::BOLD),
+        (FontStyle::ITALIC, Modifier::ITALIC),
+        (FontStyle::UNDERLINE, Modifier::UNDERLINED),
+        (FontStyle::STRIKETHROUGH, Modifier::CROSSED_OUT),
+    ] {
+        if font.contains(flag) {
+            modifiers |= modifier;
+        }
     }
     modifiers
 }
@@ -25,11 +31,21 @@ impl ChangeSurface {
     pub(crate) fn color(self, kind: ChangeKind, colors: &crate::app_theme::ThemeColors) -> Color {
         let ui = &colors.ui;
         let (added, removed, modified) = match self {
-            Self::Gutter { staged: false } => (ui.fg_gutter_added, ui.fg_gutter_deleted, ui.fg_gutter_modified),
-            Self::Gutter { staged: true } => (
-                ui.fg_gutter_added_secondary, ui.fg_gutter_deleted_secondary, ui.fg_gutter_modified_secondary,
+            Self::Gutter { staged: false } => (
+                ui.fg_gutter_added,
+                ui.fg_gutter_deleted,
+                ui.fg_gutter_modified,
             ),
-            Self::Scrollbar => (ui.fg_overview_added, ui.fg_overview_deleted, ui.fg_overview_modified),
+            Self::Gutter { staged: true } => (
+                ui.fg_gutter_added_secondary,
+                ui.fg_gutter_deleted_secondary,
+                ui.fg_gutter_modified_secondary,
+            ),
+            Self::Scrollbar => (
+                ui.fg_overview_added,
+                ui.fg_overview_deleted,
+                ui.fg_overview_modified,
+            ),
         };
         match kind {
             ChangeKind::Added => added,
@@ -92,13 +108,20 @@ impl DiffWordPaint {
         };
         // A VS Code diff word overlays its tinted line. In particular, two
         // identical translucent roles still produce distinguishable surfaces.
-        let default_background = if ui.preserve_theme_colors { line } else { native_background };
+        let default_background = if ui.preserve_theme_colors {
+            line
+        } else {
+            native_background
+        };
         let background = layer.over(line).unwrap_or(default_background);
         let terminal_colors = [Color::Rgb(0, 0, 0), Color::Rgb(255, 255, 255)];
-        let foreground = ui.editor_foreground.over(background).unwrap_or(colors.fg_text);
+        let foreground = ui
+            .editor_foreground
+            .over(background)
+            .unwrap_or(colors.fg_text);
         let foreground = ensure_contrast(foreground, background, 4.5, &terminal_colors);
-        let needs_underline = background == line
-            || contrast_ratio(background, line).is_some_and(|ratio| ratio < 1.3);
+        let needs_underline =
+            background == line || contrast_ratio(background, line).is_some_and(|ratio| ratio < 1.3);
         let theme_border = border
             .border(background)
             .or(native_border.filter(|_| !border.is_transparent()));
@@ -112,19 +135,27 @@ impl DiffWordPaint {
         } else {
             theme_border
         };
-        Self { background, readable_foreground: Some(foreground), underline }
+        Self {
+            background,
+            readable_foreground: Some(foreground),
+            underline,
+        }
     }
 
     pub(crate) fn apply(self, style: Style) -> Style {
         let mut style = style.bg(self.background);
         if let Some(foreground) = self.readable_foreground
-            && style.fg.and_then(|fg| contrast_ratio(fg, self.background))
+            && style
+                .fg
+                .and_then(|fg| contrast_ratio(fg, self.background))
                 .is_some_and(|ratio| ratio < 4.5)
         {
             style = style.fg(foreground);
         }
         if let Some(underline) = self.underline {
-            style = style.add_modifier(Modifier::UNDERLINED).underline_color(underline);
+            style = style
+                .add_modifier(Modifier::UNDERLINED)
+                .underline_color(underline);
         }
         style
     }
@@ -133,7 +164,11 @@ impl DiffWordPaint {
 #[cfg(test)]
 impl From<Color> for DiffWordPaint {
     fn from(background: Color) -> Self {
-        Self { background, readable_foreground: None, underline: None }
+        Self {
+            background,
+            readable_foreground: None,
+            underline: None,
+        }
     }
 }
 
@@ -214,7 +249,9 @@ pub(crate) fn ensure_contrast(
     minimum: f32,
     palette: &[Color],
 ) -> Color {
-    if palette.is_empty() { return color; }
+    if palette.is_empty() {
+        return color;
+    }
     let Some(mut best_ratio) = contrast_ratio(color, background) else {
         return color;
     };
@@ -239,8 +276,15 @@ pub(crate) fn ensure_contrast(
 
 /// Keep disabled text visible but less prominent than enabled text on the
 /// same surface. Description colors can otherwise invert the two states.
-pub(crate) fn disabled_text_color(preferred: Color, enabled: Color, background: Color, palette: &[Color]) -> Color {
-    if palette.is_empty() { return preferred; }
+pub(crate) fn disabled_text_color(
+    preferred: Color,
+    enabled: Color,
+    background: Color,
+    palette: &[Color],
+) -> Color {
+    if palette.is_empty() {
+        return preferred;
+    }
     let Some(enabled_contrast) = contrast_ratio(enabled, background) else {
         return preferred;
     };
@@ -283,7 +327,9 @@ impl TextContrastCache {
     }
 
     pub(crate) fn foreground(&mut self, foreground: Color, background: Color) -> Color {
-        let Some(palette) = &self.palette else { return foreground; };
+        let Some(palette) = &self.palette else {
+            return foreground;
+        };
         *self
             .colors
             .entry((foreground, background))
@@ -311,11 +357,16 @@ pub(crate) fn ensure_control_row_contrast_except(
     colors: &crate::theme_workbench::WorkbenchColors,
     file_icons: &[ratatui::layout::Rect],
 ) {
-    if colors.preserve_theme_colors { return; }
+    if colors.preserve_theme_colors {
+        return;
+    }
     let mut cache = TextContrastCache::new(colors);
     for y in area.y..area.bottom() {
         for x in area.x..area.right() {
-            if file_icons.iter().any(|icon| x >= icon.x && x < icon.right() && y >= icon.y && y < icon.bottom()) {
+            if file_icons
+                .iter()
+                .any(|icon| x >= icon.x && x < icon.right() && y >= icon.y && y < icon.bottom())
+            {
                 continue;
             }
             if let Some(cell) = buffer.cell_mut((x, y))
@@ -379,10 +430,15 @@ pub(crate) fn input_selection_from_layers(
     palette: &[Color],
 ) -> Style {
     let background = fill.over(surface).unwrap_or(surface);
-    let background = if fill.is_transparent() { background }
-        else { ensure_contrast(background, surface, 1.5, palette) };
+    let background = if fill.is_transparent() {
+        background
+    } else {
+        ensure_contrast(background, surface, 1.5, palette)
+    };
     let foreground = foreground.over(background).unwrap_or(fallback);
-    Style::default().bg(background).fg(ensure_contrast(foreground, background, 4.5, palette))
+    Style::default()
+        .bg(background)
+        .fg(ensure_contrast(foreground, background, 4.5, palette))
 }
 
 /// Keep the selection distinct on both ordinary and highlighted lines. Resolve
@@ -419,7 +475,9 @@ impl EditorSelectionStyle {
         // Most rows have no selected cells. A low-contrast native palette can
         // require hundreds of color checks, so defer that work until a selected
         // cell is actually painted (including virtual space and diff selections).
-        let Some(surfaces) = self.pending_surfaces.take() else { return; };
+        let Some(surfaces) = self.pending_surfaces.take() else {
+            return;
+        };
         let preferred = self.background;
         let visible = |candidate| {
             surfaces
@@ -432,7 +490,8 @@ impl EditorSelectionStyle {
             // Try both directions: darkening against a light current line must
             // not make the selection disappear into a darker editor surface.
             contrast_colors(&self.palette)
-                .iter().copied()
+                .iter()
+                .copied()
                 .filter_map(|target| {
                     (1..=32)
                         .map(|step| {
@@ -459,7 +518,9 @@ impl EditorSelectionStyle {
         self
     }
 
-    pub(crate) fn copy_feedback_visible(&self) -> bool { self.copy_visible }
+    pub(crate) fn copy_feedback_visible(&self) -> bool {
+        self.copy_visible
+    }
 
     #[inline]
     pub(crate) fn apply(&mut self, style: Style) -> Style {
@@ -471,22 +532,34 @@ impl EditorSelectionStyle {
             .foreground
             .or(style.fg)
             .unwrap_or(self.default_foreground);
-        if let Some(fade) = self.copy_feedback && self.foreground.is_some() {
-            foreground = crate::app_theme::lerp_color(foreground,
-                style.fg.unwrap_or(self.default_foreground), fade);
+        if let Some(fade) = self.copy_feedback
+            && self.foreground.is_some()
+        {
+            foreground = crate::app_theme::lerp_color(
+                foreground,
+                style.fg.unwrap_or(self.default_foreground),
+                fade,
+            );
         }
         // Imported themes preserve their colors, so no contrast cache is needed.
         // Native syntax commonly repeats a foreground for an entire token.
         let foreground = if let Some(palette) = &self.palette {
-            if let Some((_, output)) = self.last_foreground.filter(|&(input, _)| input == foreground) {
+            if let Some((_, output)) = self
+                .last_foreground
+                .filter(|&(input, _)| input == foreground)
+            {
                 output
             } else {
-                let output = *self.foregrounds.entry(foreground)
+                let output = *self
+                    .foregrounds
+                    .entry(foreground)
                     .or_insert_with(|| ensure_contrast(foreground, self.background, 4.5, palette));
                 self.last_foreground = Some((foreground, output));
                 output
             }
-        } else { foreground };
+        } else {
+            foreground
+        };
         style.bg(self.background).fg(foreground)
     }
 }
@@ -513,72 +586,138 @@ static CSS_COLOR_MAP: LazyLock<CssColorMap<&'static str, (u8, u8, u8)>> = LazyLo
 });
 
 const CSS_NAMED_COLORS: &[(&str, u8, u8, u8)] = &[
-    ("aliceblue", 240, 248, 255), ("antiquewhite", 250, 235, 215),
-    ("aqua", 0, 255, 255), ("aquamarine", 127, 255, 212),
-    ("azure", 240, 255, 255), ("beige", 245, 245, 220),
-    ("bisque", 255, 228, 196), ("blanchedalmond", 255, 235, 205),
-    ("blueviolet", 138, 43, 226), ("brown", 165, 42, 42),
-    ("burlywood", 222, 184, 135), ("cadetblue", 95, 158, 160),
-    ("chartreuse", 127, 255, 0), ("chocolate", 210, 105, 30),
-    ("coral", 255, 127, 80), ("cornflowerblue", 100, 149, 237),
-    ("cornsilk", 255, 248, 220), ("crimson", 220, 20, 60),
-    ("cyan", 0, 255, 255), ("darkblue", 0, 0, 139),
-    ("darkcyan", 0, 139, 139), ("darkgoldenrod", 184, 134, 11),
-    ("darkgray", 169, 169, 169), ("darkgreen", 0, 100, 0),
-    ("darkkhaki", 189, 183, 107), ("darkmagenta", 139, 0, 139),
-    ("darkolivegreen", 85, 107, 47), ("darkorange", 255, 140, 0),
-    ("darkorchid", 153, 50, 204), ("darkred", 139, 0, 0),
-    ("darksalmon", 233, 150, 122), ("darkseagreen", 143, 188, 143),
-    ("darkslateblue", 72, 61, 139), ("darkslategray", 47, 79, 79),
-    ("darkturquoise", 0, 206, 209), ("darkviolet", 148, 0, 211),
-    ("deeppink", 255, 20, 147), ("deepskyblue", 0, 191, 255),
-    ("dimgray", 105, 105, 105), ("dodgerblue", 30, 144, 255),
-    ("firebrick", 178, 34, 34), ("floralwhite", 255, 250, 240),
-    ("forestgreen", 34, 139, 34), ("fuchsia", 255, 0, 255),
-    ("gainsboro", 220, 220, 220), ("ghostwhite", 248, 248, 255),
-    ("gold", 255, 215, 0), ("goldenrod", 218, 165, 32),
-    ("greenyellow", 173, 255, 47), ("honeydew", 240, 255, 240),
-    ("hotpink", 255, 105, 180), ("indianred", 205, 92, 92),
-    ("indigo", 75, 0, 130), ("ivory", 255, 255, 240),
-    ("khaki", 240, 230, 140), ("lavender", 230, 230, 250),
-    ("lavenderblush", 255, 240, 245), ("lawngreen", 124, 252, 0),
-    ("lemonchiffon", 255, 250, 205), ("lightblue", 173, 216, 230),
-    ("lightcoral", 240, 128, 128), ("lightcyan", 224, 255, 255),
-    ("lightgoldenrodyellow", 250, 250, 210), ("lightgray", 211, 211, 211),
-    ("lightgreen", 144, 238, 144), ("lightpink", 255, 182, 193),
-    ("lightsalmon", 255, 160, 122), ("lightseagreen", 32, 178, 170),
-    ("lightskyblue", 135, 206, 250), ("lightslategray", 119, 136, 153),
-    ("lightsteelblue", 176, 196, 222), ("lightyellow", 255, 255, 224),
-    ("limegreen", 50, 205, 50), ("linen", 250, 240, 230),
-    ("magenta", 255, 0, 255), ("maroon", 128, 0, 0),
-    ("mediumaquamarine", 102, 205, 170), ("mediumblue", 0, 0, 205),
-    ("mediumorchid", 186, 85, 211), ("mediumpurple", 147, 112, 219),
-    ("mediumseagreen", 60, 179, 113), ("mediumslateblue", 123, 104, 238),
-    ("mediumspringgreen", 0, 250, 154), ("mediumturquoise", 72, 209, 204),
-    ("mediumvioletred", 199, 21, 133), ("midnightblue", 25, 25, 112),
-    ("mintcream", 245, 255, 250), ("mistyrose", 255, 228, 225),
-    ("moccasin", 255, 228, 181), ("navajowhite", 255, 222, 173),
-    ("navy", 0, 0, 128), ("oldlace", 253, 245, 230),
-    ("olive", 128, 128, 0), ("olivedrab", 107, 142, 35),
-    ("orange", 255, 165, 0), ("orangered", 255, 69, 0),
-    ("orchid", 218, 112, 214), ("palegoldenrod", 238, 232, 170),
-    ("palegreen", 152, 251, 152), ("paleturquoise", 175, 238, 238),
-    ("palevioletred", 219, 112, 147), ("papayawhip", 255, 239, 213),
-    ("peachpuff", 255, 218, 185), ("peru", 205, 133, 63),
-    ("pink", 255, 192, 203), ("plum", 221, 160, 221),
-    ("powderblue", 176, 224, 230), ("purple", 128, 0, 128),
-    ("rebeccapurple", 102, 51, 153), ("rosybrown", 188, 143, 143),
-    ("royalblue", 65, 105, 225), ("saddlebrown", 139, 69, 19),
-    ("salmon", 250, 128, 114), ("sandybrown", 244, 164, 96),
-    ("seagreen", 46, 139, 87), ("seashell", 255, 245, 238),
-    ("sienna", 160, 82, 45), ("silver", 192, 192, 192),
-    ("skyblue", 135, 206, 235), ("slateblue", 106, 90, 205),
-    ("slategray", 112, 128, 144), ("snow", 255, 250, 250),
-    ("springgreen", 0, 255, 127), ("steelblue", 70, 130, 180),
-    ("teal", 0, 128, 128), ("thistle", 216, 191, 216),
-    ("tomato", 255, 99, 71), ("turquoise", 64, 224, 208),
-    ("violet", 238, 130, 238), ("wheat", 245, 222, 179),
-    ("whitesmoke", 245, 245, 245), ("yellowgreen", 154, 205, 50),
+    ("aliceblue", 240, 248, 255),
+    ("antiquewhite", 250, 235, 215),
+    ("aqua", 0, 255, 255),
+    ("aquamarine", 127, 255, 212),
+    ("azure", 240, 255, 255),
+    ("beige", 245, 245, 220),
+    ("bisque", 255, 228, 196),
+    ("blanchedalmond", 255, 235, 205),
+    ("blueviolet", 138, 43, 226),
+    ("brown", 165, 42, 42),
+    ("burlywood", 222, 184, 135),
+    ("cadetblue", 95, 158, 160),
+    ("chartreuse", 127, 255, 0),
+    ("chocolate", 210, 105, 30),
+    ("coral", 255, 127, 80),
+    ("cornflowerblue", 100, 149, 237),
+    ("cornsilk", 255, 248, 220),
+    ("crimson", 220, 20, 60),
+    ("cyan", 0, 255, 255),
+    ("darkblue", 0, 0, 139),
+    ("darkcyan", 0, 139, 139),
+    ("darkgoldenrod", 184, 134, 11),
+    ("darkgray", 169, 169, 169),
+    ("darkgreen", 0, 100, 0),
+    ("darkkhaki", 189, 183, 107),
+    ("darkmagenta", 139, 0, 139),
+    ("darkolivegreen", 85, 107, 47),
+    ("darkorange", 255, 140, 0),
+    ("darkorchid", 153, 50, 204),
+    ("darkred", 139, 0, 0),
+    ("darksalmon", 233, 150, 122),
+    ("darkseagreen", 143, 188, 143),
+    ("darkslateblue", 72, 61, 139),
+    ("darkslategray", 47, 79, 79),
+    ("darkturquoise", 0, 206, 209),
+    ("darkviolet", 148, 0, 211),
+    ("deeppink", 255, 20, 147),
+    ("deepskyblue", 0, 191, 255),
+    ("dimgray", 105, 105, 105),
+    ("dodgerblue", 30, 144, 255),
+    ("firebrick", 178, 34, 34),
+    ("floralwhite", 255, 250, 240),
+    ("forestgreen", 34, 139, 34),
+    ("fuchsia", 255, 0, 255),
+    ("gainsboro", 220, 220, 220),
+    ("ghostwhite", 248, 248, 255),
+    ("gold", 255, 215, 0),
+    ("goldenrod", 218, 165, 32),
+    ("greenyellow", 173, 255, 47),
+    ("honeydew", 240, 255, 240),
+    ("hotpink", 255, 105, 180),
+    ("indianred", 205, 92, 92),
+    ("indigo", 75, 0, 130),
+    ("ivory", 255, 255, 240),
+    ("khaki", 240, 230, 140),
+    ("lavender", 230, 230, 250),
+    ("lavenderblush", 255, 240, 245),
+    ("lawngreen", 124, 252, 0),
+    ("lemonchiffon", 255, 250, 205),
+    ("lightblue", 173, 216, 230),
+    ("lightcoral", 240, 128, 128),
+    ("lightcyan", 224, 255, 255),
+    ("lightgoldenrodyellow", 250, 250, 210),
+    ("lightgray", 211, 211, 211),
+    ("lightgreen", 144, 238, 144),
+    ("lightpink", 255, 182, 193),
+    ("lightsalmon", 255, 160, 122),
+    ("lightseagreen", 32, 178, 170),
+    ("lightskyblue", 135, 206, 250),
+    ("lightslategray", 119, 136, 153),
+    ("lightsteelblue", 176, 196, 222),
+    ("lightyellow", 255, 255, 224),
+    ("limegreen", 50, 205, 50),
+    ("linen", 250, 240, 230),
+    ("magenta", 255, 0, 255),
+    ("maroon", 128, 0, 0),
+    ("mediumaquamarine", 102, 205, 170),
+    ("mediumblue", 0, 0, 205),
+    ("mediumorchid", 186, 85, 211),
+    ("mediumpurple", 147, 112, 219),
+    ("mediumseagreen", 60, 179, 113),
+    ("mediumslateblue", 123, 104, 238),
+    ("mediumspringgreen", 0, 250, 154),
+    ("mediumturquoise", 72, 209, 204),
+    ("mediumvioletred", 199, 21, 133),
+    ("midnightblue", 25, 25, 112),
+    ("mintcream", 245, 255, 250),
+    ("mistyrose", 255, 228, 225),
+    ("moccasin", 255, 228, 181),
+    ("navajowhite", 255, 222, 173),
+    ("navy", 0, 0, 128),
+    ("oldlace", 253, 245, 230),
+    ("olive", 128, 128, 0),
+    ("olivedrab", 107, 142, 35),
+    ("orange", 255, 165, 0),
+    ("orangered", 255, 69, 0),
+    ("orchid", 218, 112, 214),
+    ("palegoldenrod", 238, 232, 170),
+    ("palegreen", 152, 251, 152),
+    ("paleturquoise", 175, 238, 238),
+    ("palevioletred", 219, 112, 147),
+    ("papayawhip", 255, 239, 213),
+    ("peachpuff", 255, 218, 185),
+    ("peru", 205, 133, 63),
+    ("pink", 255, 192, 203),
+    ("plum", 221, 160, 221),
+    ("powderblue", 176, 224, 230),
+    ("purple", 128, 0, 128),
+    ("rebeccapurple", 102, 51, 153),
+    ("rosybrown", 188, 143, 143),
+    ("royalblue", 65, 105, 225),
+    ("saddlebrown", 139, 69, 19),
+    ("salmon", 250, 128, 114),
+    ("sandybrown", 244, 164, 96),
+    ("seagreen", 46, 139, 87),
+    ("seashell", 255, 245, 238),
+    ("sienna", 160, 82, 45),
+    ("silver", 192, 192, 192),
+    ("skyblue", 135, 206, 235),
+    ("slateblue", 106, 90, 205),
+    ("slategray", 112, 128, 144),
+    ("snow", 255, 250, 250),
+    ("springgreen", 0, 255, 127),
+    ("steelblue", 70, 130, 180),
+    ("teal", 0, 128, 128),
+    ("thistle", 216, 191, 216),
+    ("tomato", 255, 99, 71),
+    ("turquoise", 64, 224, 208),
+    ("violet", 238, 130, 238),
+    ("wheat", 245, 222, 179),
+    ("whitesmoke", 245, 245, 245),
+    ("yellowgreen", 154, 205, 50),
 ];
 
 /// Check if byte is a word boundary character (not alphanumeric or underscore)
@@ -599,8 +738,13 @@ pub(crate) fn find_inline_colors(line: &str, check_named: bool) -> Vec<(usize, u
     // byte order, so Unicode columns need at most one scan and no lookup table.
     let (mut byte, mut column) = (0, 0);
     let mut col_at = |i: usize| -> usize {
-        if is_ascii { return i; }
-        if i < byte { byte = 0; column = 0; }
+        if is_ascii {
+            return i;
+        }
+        if i < byte {
+            byte = 0;
+            column = 0;
+        }
         column += line[byte..i].chars().count();
         byte = i;
         column
@@ -618,26 +762,29 @@ pub(crate) fn find_inline_colors(line: &str, check_named: bool) -> Vec<(usize, u
         let b = bytes[i];
         if b == b'#' {
             // Try #RRGGBBAA (8 hex digits) or #RRGGBB (6 hex digits)
-            if (i + 8 < bytes.len() && bytes[i+1..i+9].iter().all(|b| b.is_ascii_hexdigit())
-                && (i + 9 >= bytes.len() || !bytes[i+9].is_ascii_hexdigit()))
-               || (i + 6 < bytes.len() && bytes[i+1..i+7].iter().all(|b| b.is_ascii_hexdigit())
-                && (i + 7 >= bytes.len() || !bytes[i+7].is_ascii_hexdigit()))
+            if (i + 8 < bytes.len()
+                && bytes[i + 1..i + 9].iter().all(|b| b.is_ascii_hexdigit())
+                && (i + 9 >= bytes.len() || !bytes[i + 9].is_ascii_hexdigit()))
+                || (i + 6 < bytes.len()
+                    && bytes[i + 1..i + 7].iter().all(|b| b.is_ascii_hexdigit())
+                    && (i + 7 >= bytes.len() || !bytes[i + 7].is_ascii_hexdigit()))
             {
                 if let (Ok(r), Ok(g), Ok(b_val)) = (
-                    u8::from_str_radix(std::str::from_utf8(&bytes[i+1..i+3]).unwrap_or(""), 16),
-                    u8::from_str_radix(std::str::from_utf8(&bytes[i+3..i+5]).unwrap_or(""), 16),
-                    u8::from_str_radix(std::str::from_utf8(&bytes[i+5..i+7]).unwrap_or(""), 16),
+                    u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16),
+                    u8::from_str_radix(std::str::from_utf8(&bytes[i + 3..i + 5]).unwrap_or(""), 16),
+                    u8::from_str_radix(std::str::from_utf8(&bytes[i + 5..i + 7]).unwrap_or(""), 16),
                 ) {
                     results.push((col_at(i), r, g, b_val));
                 }
             }
             // Try #RGB (3 hex digits)
-            else if i + 3 < bytes.len() && bytes[i+1..i+4].iter().all(|b| b.is_ascii_hexdigit())
-                && (i + 4 >= bytes.len() || !bytes[i+4].is_ascii_hexdigit())
+            else if i + 3 < bytes.len()
+                && bytes[i + 1..i + 4].iter().all(|b| b.is_ascii_hexdigit())
+                && (i + 4 >= bytes.len() || !bytes[i + 4].is_ascii_hexdigit())
             {
-                let r = bytes[i+1];
-                let g = bytes[i+2];
-                let b_ch = bytes[i+3];
+                let r = bytes[i + 1];
+                let g = bytes[i + 2];
+                let b_ch = bytes[i + 3];
                 if let (Ok(rv), Ok(gv), Ok(bv)) = (
                     u8::from_str_radix(std::str::from_utf8(&[r]).unwrap_or(""), 16),
                     u8::from_str_radix(std::str::from_utf8(&[g]).unwrap_or(""), 16),
@@ -649,15 +796,17 @@ pub(crate) fn find_inline_colors(line: &str, check_named: bool) -> Vec<(usize, u
         }
         // Detect rgb(r, g, b) and rgba(r, g, b, a)
         if b == b'r' && i + 4 < bytes.len() {
-            let is_rgba = i + 5 < bytes.len() && &bytes[i..i+5] == b"rgba(";
-            let is_rgb = !is_rgba && &bytes[i..i+4] == b"rgb(";
+            let is_rgba = i + 5 < bytes.len() && &bytes[i..i + 5] == b"rgba(";
+            let is_rgb = !is_rgba && &bytes[i..i + 4] == b"rgb(";
             if is_rgb || is_rgba {
                 let start = if is_rgba { i + 5 } else { i + 4 };
                 if let Some(end) = close_at(start) {
                     let inner = &line[start..end];
                     // Parse CSV without allocating a Vec
                     let mut parts = inner.splitn(4, ',');
-                    if let (Some(p0), Some(p1), Some(p2)) = (parts.next(), parts.next(), parts.next()) {
+                    if let (Some(p0), Some(p1), Some(p2)) =
+                        (parts.next(), parts.next(), parts.next())
+                    {
                         if let (Ok(r), Ok(g), Ok(bv)) = (
                             p0.trim().parse::<u8>(),
                             p1.trim().parse::<u8>(),
@@ -671,15 +820,17 @@ pub(crate) fn find_inline_colors(line: &str, check_named: bool) -> Vec<(usize, u
         }
         // Detect hsl(h, s%, l%) and hsla(h, s%, l%, a)
         if b == b'h' && i + 4 < bytes.len() {
-            let is_hsla = i + 5 < bytes.len() && &bytes[i..i+5] == b"hsla(";
-            let is_hsl = !is_hsla && &bytes[i..i+4] == b"hsl(";
+            let is_hsla = i + 5 < bytes.len() && &bytes[i..i + 5] == b"hsla(";
+            let is_hsl = !is_hsla && &bytes[i..i + 4] == b"hsl(";
             if is_hsl || is_hsla {
                 let start = if is_hsla { i + 5 } else { i + 4 };
                 if let Some(end) = close_at(start) {
                     let inner = &line[start..end];
                     // Parse CSV without allocating a Vec
                     let mut parts = inner.splitn(4, ',');
-                    if let (Some(p0), Some(p1), Some(p2)) = (parts.next(), parts.next(), parts.next()) {
+                    if let (Some(p0), Some(p1), Some(p2)) =
+                        (parts.next(), parts.next(), parts.next())
+                    {
                         let h_str = p0.trim();
                         let s_str = p1.trim().trim_end_matches('%');
                         let l_str = p2.trim().trim_end_matches('%');
@@ -848,8 +999,8 @@ mod tests {
         let colors = find_inline_colors("hsl(0, 100%, 50%)", false);
         assert_eq!(colors.len(), 1);
         assert_eq!(colors[0].1, 255); // red
-        assert_eq!(colors[0].2, 0);   // green
-        assert_eq!(colors[0].3, 0);   // blue
+        assert_eq!(colors[0].2, 0); // green
+        assert_eq!(colors[0].3, 0); // blue
     }
 
     #[test]
@@ -907,4 +1058,3 @@ mod tests {
         assert_eq!(colors.len(), 3);
     }
 }
-

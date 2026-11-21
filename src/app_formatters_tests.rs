@@ -46,7 +46,10 @@ fn closing_a_workspace_retains_an_outstanding_external_format_request() {
     let (_dir, mut app, _path) = fixture();
     let (_sender, cancelled) = mock_external(&mut app, false);
     let other = tempfile::tempdir().unwrap();
-    app.insert_workspace(App::new_startup(other.path().into(), app.background.wake_handle()));
+    app.insert_workspace(App::new_startup(
+        other.path().into(),
+        app.background.wake_handle(),
+    ));
     app.switch_workspace(0);
     app.workspaces.request = Some(crate::app_workspaces::Request::Close);
     app.poll_workspace_requests();
@@ -284,13 +287,15 @@ fn external_formatter_rejects_changed_closed_or_read_only_targets() {
         sender.send(Ok(edits)).unwrap();
         assert!(app.poll_external_format());
         assert!(cancelled.load(Ordering::Acquire));
-        assert!(
-            app.formatting
-                .error
-                .as_deref()
-                .unwrap()
-                .contains(["document changed", "closed", "read-only", "renamed", "reloaded"][change])
-        );
+        assert!(app.formatting.error.as_deref().unwrap().contains(
+            [
+                "document changed",
+                "closed",
+                "read-only",
+                "renamed",
+                "reloaded"
+            ][change]
+        ));
         if let Some(editor) = app.editor() {
             assert!(!editor.rope.to_string().contains("value = 1"));
         }
@@ -395,23 +400,51 @@ fn choose_black_external_command(app: &mut App) {
 #[test]
 fn external_formatter_in_place_changes_are_undoable_and_save_only_when_requested() {
     let (dir, mut app, path) = fixture();
-    let script = dir.path().join(if cfg!(windows) { "format.ps1" } else { "format.sh" });
-    std::fs::write(&script, if cfg!(windows) {
-        r#"$text = [IO.File]::ReadAllText($args[0]).Replace('value=', 'value = ')
-[IO.File]::WriteAllText($args[0], $text, [Text.UTF8Encoding]::new($false))"#
+    let script = dir.path().join(if cfg!(windows) {
+        "format.ps1"
     } else {
-        r#"sed 's/value=/value = /g' "$1" > "$1.new"; mv "$1.new" "$1""#
-    }).unwrap();
+        "format.sh"
+    });
+    std::fs::write(
+        &script,
+        if cfg!(windows) {
+            r#"$text = [IO.File]::ReadAllText($args[0]).Replace('value=', 'value = ')
+[IO.File]::WriteAllText($args[0], $text, [Text.UTF8Encoding]::new($false))"#
+        } else {
+            r#"sed 's/value=/value = /g' "$1" > "$1.new"; mv "$1.new" "$1""#
+        },
+    )
+    .unwrap();
     let mut args: Vec<String> = if cfg!(windows) {
-        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"].map(String::from).into()
-    } else { Vec::new() };
+        [
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ]
+        .map(String::from)
+        .into()
+    } else {
+        Vec::new()
+    };
     args.extend([script.to_string_lossy().into_owned(), "{file}".into()]);
-    app.save_formatter(SettingsScope::Global, "python", Some(Config {
-        provider: Provider::Command,
-        command: if cfg!(windows) { "powershell.exe" } else { "sh" }.into(),
-        args,
-        ..Default::default()
-    })).unwrap();
+    app.save_formatter(
+        SettingsScope::Global,
+        "python",
+        Some(Config {
+            provider: Provider::Command,
+            command: if cfg!(windows) {
+                "powershell.exe"
+            } else {
+                "sh"
+            }
+            .into(),
+            args,
+            ..Default::default()
+        }),
+    )
+    .unwrap();
     let editor = app.editor_mut().unwrap();
     editor.cursor_col = 7;
     editor.insert_char('0');
@@ -441,7 +474,9 @@ fn external_formatter_in_place_changes_are_undoable_and_save_only_when_requested
         assert!(started.elapsed() < Duration::from_secs(20));
         std::thread::sleep(Duration::from_millis(10));
     }
-    app.wait_for_background(Duration::from_secs(5), |app| !app.pending_file_saves.contains_key(&path));
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.pending_file_saves.contains_key(&path)
+    });
     assert!(app.formatting.error.is_none(), "{:?}", app.formatting.error);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "value = 10\n");
     app.editor_mut().unwrap().undo();

@@ -6,25 +6,25 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 #[cfg(test)]
 use std::process::Command;
-use std::sync::{mpsc, Arc, Mutex};
+use std::process::Stdio;
+use std::sync::{Arc, Mutex, mpsc};
 
 use lsp_types::Url;
 use lsp_types::*;
+use ropey::Rope;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use ropey::Rope;
 
-#[path = "lsp_transport.rs"]
-mod transport;
-#[path = "lsp_outbound.rs"]
-mod outbound;
 #[path = "lsp_completion.rs"]
 pub(crate) mod completion;
 #[path = "lsp_diagnostics.rs"]
 pub(crate) mod diagnostics;
+#[path = "lsp_outbound.rs"]
+mod outbound;
+#[path = "lsp_transport.rs"]
+mod transport;
 
 #[cfg(test)]
 #[path = "lsp_performance_tests.rs"]
@@ -61,7 +61,11 @@ impl LspServerConfig {
 fn matches_file_patterns(patterns: &[String], path: &Path) -> bool {
     let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
     patterns.iter().any(|pattern| {
-        if pattern.starts_with("*.") { name.ends_with(&pattern[1..]) } else { name == pattern }
+        if pattern.starts_with("*.") {
+            name.ends_with(&pattern[1..])
+        } else {
+            name == pattern
+        }
     })
 }
 
@@ -115,7 +119,12 @@ pub(crate) fn decode_semantic_tokens_cancellable(
 }
 
 /// Resolve the active theme's complete semantic style, including scope fallbacks.
-pub(crate) fn themed_semantic_token_style(token: &DecodedSemanticToken, legend: &SemanticTokensLegend, language: &str, theme: Option<&crate::semantic_theme::SemanticTheme>) -> Option<ratatui::style::Style> {
+pub(crate) fn themed_semantic_token_style(
+    token: &DecodedSemanticToken,
+    legend: &SemanticTokensLegend,
+    language: &str,
+    theme: Option<&crate::semantic_theme::SemanticTheme>,
+) -> Option<ratatui::style::Style> {
     theme?.style(token, legend, language)
 }
 /// JSON-RPC request
@@ -151,7 +160,9 @@ enum LspOutbound {
         version: i32,
         text: Rope,
     },
-    DidClose { uri: Url },
+    DidClose {
+        uri: Url,
+    },
 }
 
 /// Reader-side work must use the context captured before a request is sent,
@@ -163,7 +174,10 @@ pub(crate) struct PendingRequest {
 
 impl From<&str> for PendingRequest {
     fn from(method: &str) -> Self {
-        Self { method: method.into(), completion_prefix: None }
+        Self {
+            method: method.into(),
+            completion_prefix: None,
+        }
     }
 }
 
@@ -257,9 +271,15 @@ impl TestLspServer {
     pub(crate) fn take_messages(&self) -> Vec<Value> {
         let mut buffer = Vec::new();
         let mut writer = self.writer.borrow_mut();
-        self.outbound_rx.try_iter().filter_map(|message| {
-            writer.encode(message, &mut buffer).unwrap().then(|| serde_json::from_slice(&buffer).unwrap())
-        }).collect()
+        self.outbound_rx
+            .try_iter()
+            .filter_map(|message| {
+                writer
+                    .encode(message, &mut buffer)
+                    .unwrap()
+                    .then(|| serde_json::from_slice(&buffer).unwrap())
+            })
+            .collect()
     }
 
     pub(crate) fn respond(&self, response: Value) {
@@ -332,14 +352,18 @@ impl LspClient {
     ) -> Result<Self, String> {
         let working_directory = if workspace_root.as_os_str().is_empty() {
             std::env::current_dir().map_err(|error| error.to_string())?
-        } else { workspace_root.to_path_buf() };
-        let mut command = vtcode::acp::local_command(&config.command, &working_directory, std::iter::empty());
+        } else {
+            workspace_root.to_path_buf()
+        };
+        let mut command =
+            vtcode::acp::local_command(&config.command, &working_directory, std::iter::empty());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
             command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
         }
-        let mut child = command.args(&config.args)
+        let mut child = command
+            .args(&config.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -349,31 +373,75 @@ impl LspClient {
         // Coalesce header fragments and small JSON messages into one pipe write.
         let stdin = std::io::BufWriter::new(child.stdin.take().ok_or("Failed to get stdin")?);
         let stdout = child.stdout.take().ok_or("Failed to get stdout")?;
-        Self::start_transport(config, workspace_root, wake, crate::remote::lsp::LspProcess::Local(child), Box::new(stdin), Box::new(stdout), None)
+        Self::start_transport(
+            config,
+            workspace_root,
+            wake,
+            crate::remote::lsp::LspProcess::Local(child),
+            Box::new(stdin),
+            Box::new(stdout),
+            None,
+        )
     }
 
-    pub(crate) fn start_remote(config: &LspServerConfig, workspace: &crate::remote::workspace::Workspace, wake: crate::background::UiWake) -> Result<Self, String> {
-        let process = workspace.client.spawn_async(config.command.clone(), config.args.clone(), crate::remote::RemotePath::default(), None, wake.clone()).map_err(|error| error.to_string())?;
+    pub(crate) fn start_remote(
+        config: &LspServerConfig,
+        workspace: &crate::remote::workspace::Workspace,
+        wake: crate::background::UiWake,
+    ) -> Result<Self, String> {
+        let process = workspace
+            .client
+            .spawn_async(
+                config.command.clone(),
+                config.args.clone(),
+                crate::remote::RemotePath::default(),
+                None,
+                wake.clone(),
+            )
+            .map_err(|error| error.to_string())?;
         let (stdout, stdin, child) = process.split();
-        Self::start_transport(config, &workspace.view_root, wake, crate::remote::lsp::LspProcess::Remote(child), Box::new(std::io::BufWriter::new(stdin)), Box::new(stdout), Some(workspace.clone()))
+        Self::start_transport(
+            config,
+            &workspace.view_root,
+            wake,
+            crate::remote::lsp::LspProcess::Remote(child),
+            Box::new(std::io::BufWriter::new(stdin)),
+            Box::new(stdout),
+            Some(workspace.clone()),
+        )
     }
 
-    pub(crate) fn start_transport(config: &LspServerConfig, workspace_root: &Path, wake: crate::background::UiWake,
-        child: crate::remote::lsp::LspProcess, mut stdin: Box<dyn Write + Send>, stdout: Box<dyn std::io::Read + Send>,
-        remote: Option<crate::remote::workspace::Workspace>) -> Result<Self, String> {
-
+    pub(crate) fn start_transport(
+        config: &LspServerConfig,
+        workspace_root: &Path,
+        wake: crate::background::UiWake,
+        child: crate::remote::lsp::LspProcess,
+        mut stdin: Box<dyn Write + Send>,
+        stdout: Box<dyn std::io::Read + Send>,
+        remote: Option<crate::remote::workspace::Workspace>,
+    ) -> Result<Self, String> {
         let (event_tx, event_rx) = mpsc::channel();
         let pending_requests: Arc<Mutex<HashMap<i64, PendingRequest>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let pending_for_reader = Arc::clone(&pending_requests);
-        enum Receiver { Local(mpsc::Receiver<LspOutbound>), Remote(outbound::Receiver) }
-        impl Receiver { fn recv(&self) -> Result<LspOutbound, mpsc::RecvError> {
-            match self { Self::Local(receiver) => receiver.recv(), Self::Remote(receiver) => receiver.recv() }
-        } }
+        enum Receiver {
+            Local(mpsc::Receiver<LspOutbound>),
+            Remote(outbound::Receiver),
+        }
+        impl Receiver {
+            fn recv(&self) -> Result<LspOutbound, mpsc::RecvError> {
+                match self {
+                    Self::Local(receiver) => receiver.recv(),
+                    Self::Remote(receiver) => receiver.recv(),
+                }
+            }
+        }
         let (outbound_tx, outbound_rx) = if remote.is_some() {
-            let (sender, receiver) = outbound::channel(); (sender, Receiver::Remote(receiver))
+            let (sender, receiver) = outbound::channel();
+            (sender, Receiver::Remote(receiver))
         } else {
-            let (sender, receiver) = mpsc::channel(); (outbound::Sender::Local(sender), Receiver::Local(receiver))
+            let (sender, receiver) = mpsc::channel();
+            (outbound::Sender::Local(sender), Receiver::Local(receiver))
         };
         let writer_event_tx = event_tx.clone();
         let writer_wake = wake.clone();
@@ -387,11 +455,19 @@ impl LspClient {
                 while let Ok(mut message) = outbound_rx.recv() {
                     if let Some(remote) = &writer_remote {
                         match &mut message {
-                            LspOutbound::DidOpen { uri, .. } | LspOutbound::DidChange { uri, .. } => {
-                                if let Some(mapped) = remote.lsp_uri(uri, true) { *uri = mapped; }
+                            LspOutbound::DidOpen { uri, .. }
+                            | LspOutbound::DidChange { uri, .. } => {
+                                if let Some(mapped) = remote.lsp_uri(uri, true) {
+                                    *uri = mapped;
+                                }
                             }
                             LspOutbound::DidClose { uri } => {
-                                if let Some(mapped) = remote.lsp_uri(uri.as_str(), true).and_then(|uri| Url::parse(&uri).ok()) { *uri = mapped; }
+                                if let Some(mapped) = remote
+                                    .lsp_uri(uri.as_str(), true)
+                                    .and_then(|uri| Url::parse(&uri).ok())
+                                {
+                                    *uri = mapped;
+                                }
                             }
                             LspOutbound::Json(json) => {
                                 if let Ok(mut value) = serde_json::from_str::<Value>(json) {
@@ -406,12 +482,15 @@ impl LspClient {
                         Ok(false) => continue,
                         Ok(true) => (|| -> std::io::Result<()> {
                             write!(stdin, "Content-Length: {}\r\n\r\n", buffer.len())?;
-                            stdin.write_all(&buffer)?; stdin.flush()
+                            stdin.write_all(&buffer)?;
+                            stdin.flush()
                         })(),
                         Err(error) => Err(std::io::Error::other(error)),
                     };
                     if written.is_err() {
-                        if writer_event_tx.send(LspEvent::ServerError(())).is_ok() { writer_wake.notify(); }
+                        if writer_event_tx.send(LspEvent::ServerError(())).is_ok() {
+                            writer_wake.notify();
+                        }
                         break;
                     }
                 }
@@ -457,7 +536,11 @@ impl LspClient {
     }
 
     /// Send a JSON-RPC response to a server request
-    pub(crate) fn send_response(&mut self, id: impl Into<Value>, result: Value) -> Result<(), String> {
+    pub(crate) fn send_response(
+        &mut self,
+        id: impl Into<Value>,
+        result: Value,
+    ) -> Result<(), String> {
         let response = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id.into(),
@@ -500,14 +583,29 @@ impl LspClient {
         // cannot satisfy a newer C++ request with the same per-server counter.
         static NEXT_ID: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1);
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if matches!(method, "textDocument/completion" | "completionItem/resolve"
-            | "textDocument/hover" | "textDocument/signatureHelp" | "textDocument/documentHighlight"
-            | "textDocument/semanticTokens/full")
-        {
-            let obsolete: Vec<_> = self.pending_requests.lock().ok().map(|requests|
-                requests.iter().filter_map(|(&id, pending)| (pending.method == method).then_some(id)).collect()
-            ).unwrap_or_default();
-            for obsolete in obsolete { self.cancel_request(obsolete); }
+        if matches!(
+            method,
+            "textDocument/completion"
+                | "completionItem/resolve"
+                | "textDocument/hover"
+                | "textDocument/signatureHelp"
+                | "textDocument/documentHighlight"
+                | "textDocument/semanticTokens/full"
+        ) {
+            let obsolete: Vec<_> = self
+                .pending_requests
+                .lock()
+                .ok()
+                .map(|requests| {
+                    requests
+                        .iter()
+                        .filter_map(|(&id, pending)| (pending.method == method).then_some(id))
+                        .collect()
+                })
+                .unwrap_or_default();
+            for obsolete in obsolete {
+                self.cancel_request(obsolete);
+            }
         }
         let req = JsonRpcRequest {
             jsonrpc: "2.0",
@@ -520,7 +618,9 @@ impl LspClient {
             map.insert(id, context);
         }
         if let Err(error) = self.send_raw(&json) {
-            if let Ok(mut requests) = self.pending_requests.lock() { requests.remove(&id); }
+            if let Ok(mut requests) = self.pending_requests.lock() {
+                requests.remove(&id);
+            }
             return Err(error);
         }
         Ok(id)
@@ -554,15 +654,30 @@ impl LspClient {
     // ── LSP Lifecycle ─────────────────────────────────────────────
 
     fn send_initialize(&mut self, root: &Path, init_options: Option<Value>) -> Result<i64, String> {
-        let root_uri = if root.as_os_str().is_empty() { None }
-            else { Some(Url::from_file_path(root).map_err(|_| "Invalid root path")?) };
+        let root_uri = if root.as_os_str().is_empty() {
+            None
+        } else {
+            Some(Url::from_file_path(root).map_err(|_| "Invalid root path")?)
+        };
         // root_path is deprecated in the LSP spec (root_uri is preferred) but
         // InitializeParams still carries the field; suppress the warning.
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Some(std::process::id()),
-            client_info: Some(ClientInfo { name: "VTCode".into(), version: Some(env!("CARGO_PKG_VERSION").into()) }),
-            workspace_folders: root_uri.as_ref().map(|uri| vec![WorkspaceFolder { uri: uri.clone(), name: root.file_name().unwrap_or_default().to_string_lossy().into_owned() }]),
+            client_info: Some(ClientInfo {
+                name: "VTCode".into(),
+                version: Some(env!("CARGO_PKG_VERSION").into()),
+            }),
+            workspace_folders: root_uri.as_ref().map(|uri| {
+                vec![WorkspaceFolder {
+                    uri: uri.clone(),
+                    name: root
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                }]
+            }),
             root_uri,
             capabilities: ClientCapabilities {
                 general: Some(GeneralClientCapabilities {
@@ -575,7 +690,11 @@ impl LspClient {
                             snippet_support: Some(true),
                             insert_replace_support: Some(true),
                             resolve_support: Some(CompletionItemCapabilityResolveSupport {
-                                properties: vec!["documentation".into(), "detail".into(), "additionalTextEdits".into()],
+                                properties: vec![
+                                    "documentation".into(),
+                                    "detail".into(),
+                                    "additionalTextEdits".into(),
+                                ],
                             }),
                             ..Default::default()
                         }),
@@ -597,10 +716,20 @@ impl LspClient {
                         // unless the client advertises literal support.
                         code_action_literal_support: Some(CodeActionLiteralSupport {
                             code_action_kind: CodeActionKindLiteralSupport {
-                                value_set: ["", "quickfix", "refactor", "refactor.extract",
-                                    "refactor.inline", "refactor.rewrite", "source",
-                                    "source.organizeImports", "source.fixAll"]
-                                    .into_iter().map(str::to_owned).collect(),
+                                value_set: [
+                                    "",
+                                    "quickfix",
+                                    "refactor",
+                                    "refactor.extract",
+                                    "refactor.inline",
+                                    "refactor.rewrite",
+                                    "source",
+                                    "source.organizeImports",
+                                    "source.fixAll",
+                                ]
+                                .into_iter()
+                                .map(str::to_owned)
+                                .collect(),
                             },
                         }),
                         ..Default::default()
@@ -719,10 +848,15 @@ impl LspClient {
         )?;
         self.initialized = true;
         if !self.settings.is_null() {
-            self.send_notification("workspace/didChangeConfiguration", Some(serde_json::json!({"settings": self.settings})))?;
+            self.send_notification(
+                "workspace/didChangeConfiguration",
+                Some(serde_json::json!({"settings": self.settings})),
+            )?;
         }
         for (_, message) in std::mem::take(&mut self.pending_opens) {
-            self.outbound_tx.send(message).map_err(|e| format!("LSP writer stopped: {e}"))?;
+            self.outbound_tx
+                .send(message)
+                .map_err(|e| format!("LSP writer stopped: {e}"))?;
         }
         Ok(())
     }
@@ -734,13 +868,19 @@ impl LspClient {
             let _ = self.child.kill();
             return Ok(());
         }
-        if self.child.try_wait().ok().flatten().is_some() { return Ok(()); }
+        if self.child.try_wait().ok().flatten().is_some() {
+            return Ok(());
+        }
         if self.initialized {
             if let Ok(id) = self.send_request("shutdown", None) {
                 let until = std::time::Instant::now() + std::time::Duration::from_secs(1);
-                while self.pending_requests.lock().is_ok_and(|pending| pending.contains_key(&id))
+                while self
+                    .pending_requests
+                    .lock()
+                    .is_ok_and(|pending| pending.contains_key(&id))
                     && std::time::Instant::now() < until
-                    && self.child.try_wait().ok().flatten().is_none() {
+                    && self.child.try_wait().ok().flatten().is_none()
+                {
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }
@@ -786,13 +926,15 @@ impl LspClient {
         text: Rope,
     ) -> Result<(), String> {
         let message = LspOutbound::DidOpen {
-                uri: uri.to_string(),
-                language_id,
-                version: 0,
-                text,
-            };
+            uri: uri.to_string(),
+            language_id,
+            version: 0,
+            text,
+        };
         if self.initialized {
-            self.outbound_tx.send(message).map_err(|error| format!("LSP writer stopped: {error}"))?;
+            self.outbound_tx
+                .send(message)
+                .map_err(|error| format!("LSP writer stopped: {error}"))?;
         } else {
             self.pending_opens.insert(path.to_path_buf(), message);
         }
@@ -807,7 +949,12 @@ impl LspClient {
     }
 
     fn did_change_owned(&mut self, path: &Path, version: i32, text: Rope) -> Result<(), String> {
-        if let Some(LspOutbound::DidOpen { version: pending_version, text: pending_text, .. }) = self.pending_opens.get_mut(path) {
+        if let Some(LspOutbound::DidOpen {
+            version: pending_version,
+            text: pending_text,
+            ..
+        }) = self.pending_opens.get_mut(path)
+        {
             *pending_version = version;
             *pending_text = text;
             return Ok(());
@@ -826,14 +973,19 @@ impl LspClient {
     pub(crate) fn did_close(&mut self, path: &Path) -> Result<(), String> {
         let uri = Url::from_file_path(path).map_err(|_| "Invalid file path")?;
         self.open_files.remove(path);
-        if self.pending_opens.remove(path).is_some() { return Ok(()); }
-        self.outbound_tx.send(LspOutbound::DidClose { uri })
+        if self.pending_opens.remove(path).is_some() {
+            return Ok(());
+        }
+        self.outbound_tx
+            .send(LspOutbound::DidClose { uri })
             .map_err(|error| format!("LSP writer stopped: {error}"))
     }
 
     /// Notify server that a file was saved
     fn did_save(&mut self, path: &Path) -> Result<(), String> {
-        if !self.initialized { return Ok(()); }
+        if !self.initialized {
+            return Ok(());
+        }
         let uri = Url::from_file_path(path).map_err(|_| "Invalid file path")?;
         let params = DidSaveTextDocumentParams {
             text_document: TextDocumentIdentifier { uri },
@@ -891,7 +1043,9 @@ impl LspClient {
 
     /// Check if this client handles files with the given extension
     pub(crate) fn handles_file(&self, path: &Path) -> bool {
-        if let Some((_, language)) = crate::file_associations::resolve(&self.file_associations, path) {
+        if let Some((_, language)) =
+            crate::file_associations::resolve(&self.file_associations, path)
+        {
             return crate::file_associations::server_supports(&self.language, language);
         }
         matches_file_patterns(&self.file_patterns, path)
@@ -1150,10 +1304,7 @@ impl LspManager {
         Self::new_with_wake(workspace_root, crate::background::UiWake::default())
     }
 
-    pub(crate) fn new_with_wake(
-        workspace_root: PathBuf,
-        wake: crate::background::UiWake,
-    ) -> Self {
+    pub(crate) fn new_with_wake(workspace_root: PathBuf, wake: crate::background::UiWake) -> Self {
         Self {
             clients: Vec::new(),
             remote_workspace: None,
@@ -1285,12 +1436,16 @@ impl LspManager {
         if self.clients.iter().any(|client| client.handles_file(path)) {
             return true;
         }
-        self.configs.iter().find(|config| self.config_handles_file(config, path))
+        self.configs
+            .iter()
+            .find(|config| self.config_handles_file(config, path))
             .is_some_and(|config| !self.startup_errors.contains_key(&config.language))
     }
 
     fn config_handles_file(&self, config: &LspServerConfig, path: &Path) -> bool {
-        if let Some((_, language)) = crate::file_associations::resolve(&self.file_associations, path) {
+        if let Some((_, language)) =
+            crate::file_associations::resolve(&self.file_associations, path)
+        {
             return crate::file_associations::server_supports(&config.language, language);
         }
         config.handles_file(path)
@@ -1309,7 +1464,10 @@ impl LspManager {
         }
 
         // Find a config that matches
-        let config_idx = self.configs.iter().position(|config| self.config_handles_file(config, path));
+        let config_idx = self
+            .configs
+            .iter()
+            .position(|config| self.config_handles_file(config, path));
 
         if let Some(ci) = config_idx {
             let config = self.configs[ci].clone();
@@ -1318,7 +1476,9 @@ impl LspManager {
             }
             let started = match &self.remote_workspace {
                 Some(remote) => LspClient::start_remote(&config, remote, self.wake.clone()),
-                None => LspClient::start_with_wake(&config, &self.workspace_root, self.wake.clone()),
+                None => {
+                    LspClient::start_with_wake(&config, &self.workspace_root, self.wake.clone())
+                }
             };
             match started {
                 Ok(mut client) => {
@@ -1423,7 +1583,8 @@ impl LspManager {
     /// overview markers and problem counts off and back on.
     pub(crate) fn invalidate_document_feedback(&mut self, path: &Path) {
         self.diagnostic_dirty_documents.insert(path.to_path_buf());
-        self.diagnostic_publication.edited(path, std::time::Instant::now());
+        self.diagnostic_publication
+            .edited(path, std::time::Instant::now());
 
         self.cancel_document_feedback_for(path);
         let id = self.active_semantic_tokens_id.take();
@@ -1436,13 +1597,20 @@ impl LspManager {
     }
 
     /// Send size-limited notifications for a coalesced filesystem burst.
-    pub(crate) fn notify_did_change_watched_files<'a>(&mut self, paths: impl IntoIterator<Item = &'a Path>) {
-        if !self.clients.iter().any(|client| client.initialized) { return; }
+    pub(crate) fn notify_did_change_watched_files<'a>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'a Path>,
+    ) {
+        if !self.clients.iter().any(|client| client.initialized) {
+            return;
+        }
         const MAX_BYTES: usize = 256 * 1024;
         let mut changes = Vec::new();
         let mut bytes = 0;
         for path in paths {
-            let Ok(uri) = Url::from_file_path(path) else { continue; };
+            let Ok(uri) = Url::from_file_path(path) else {
+                continue;
+            };
             let size = uri.as_str().len() + 64;
             if !changes.is_empty() && bytes + size > MAX_BYTES {
                 self.send_watched_file_changes(&changes);
@@ -1450,13 +1618,18 @@ impl LspManager {
                 bytes = 0;
             }
             bytes += size;
-            changes.push(lsp_types::FileEvent { uri, typ: lsp_types::FileChangeType::CHANGED });
+            changes.push(lsp_types::FileEvent {
+                uri,
+                typ: lsp_types::FileChangeType::CHANGED,
+            });
         }
         self.send_watched_file_changes(&changes);
     }
 
     fn send_watched_file_changes(&mut self, changes: &[lsp_types::FileEvent]) {
-        if changes.is_empty() { return; }
+        if changes.is_empty() {
+            return;
+        }
         for client in &mut self.clients {
             if client.initialized {
                 let _ = client.did_change_watched_files(changes);
@@ -1477,7 +1650,9 @@ impl LspManager {
     /// Cancel a globally unique request ID on its owning server.
     pub(crate) fn cancel_request_id(&mut self, id: Option<i64>) {
         if let Some(id) = id {
-            for client in &mut self.clients { client.cancel_request(id); }
+            for client in &mut self.clients {
+                client.cancel_request(id);
+            }
         }
     }
 
@@ -1563,12 +1738,13 @@ impl LspManager {
 
     /// Request hover
     pub(crate) fn request_hover(&mut self, path: &Path, line: u32, col: u32) -> bool {
-        if let Some(idx) = self
-            .clients
-            .iter_mut()
-            .position(|c| c.initialized && !c.server_dead && c.handles_file(path)
-                && c.is_file_open(path) && c.supports_request("textDocument/hover"))
-        {
+        if let Some(idx) = self.clients.iter_mut().position(|c| {
+            c.initialized
+                && !c.server_dead
+                && c.handles_file(path)
+                && c.is_file_open(path)
+                && c.supports_request("textDocument/hover")
+        }) {
             if let Ok(id) = self.clients[idx].request_hover(path, line, col) {
                 self.active_hover_id = Some(id);
                 self.hover_content = None;
@@ -1689,7 +1865,13 @@ impl LspManager {
         {
             match self.clients[idx].request_format_document(path, tab_size, insert_spaces) {
                 Ok(id) => {
-                    self.format_request_target = self.last_notified_version.get(path).map(|&content_version| crate::background::LspDocumentTarget { path:path.to_path_buf(), content_version });
+                    self.format_request_target =
+                        self.last_notified_version
+                            .get(path)
+                            .map(|&content_version| crate::background::LspDocumentTarget {
+                                path: path.to_path_buf(),
+                                content_version,
+                            });
                     self.active_format_id = Some(id);
                     self.format_edits.clear();
                     self.format_dirty = false;
@@ -1711,7 +1893,13 @@ impl LspManager {
         {
             match self.clients[idx].request_format_range(p) {
                 Ok(id) => {
-                    self.format_request_target = self.last_notified_version.get(p.path).map(|&content_version| crate::background::LspDocumentTarget { path:p.path.to_path_buf(), content_version });
+                    self.format_request_target =
+                        self.last_notified_version
+                            .get(p.path)
+                            .map(|&content_version| crate::background::LspDocumentTarget {
+                                path: p.path.to_path_buf(),
+                                content_version,
+                            });
                     self.active_format_id = Some(id);
                     self.format_edits.clear();
                     self.format_dirty = false;
@@ -1779,9 +1967,21 @@ impl LspManager {
     }
 
     pub(crate) fn has_pending_workspace_changes(&self) -> bool {
-        !self.workspace_edit_requests.is_empty() || self.will_rename_edit.is_some()
-            || self.clients.iter().any(|client| client.pending_requests.lock().unwrap().values()
-                .any(|request| matches!(request.method.as_str(), "workspace/executeCommand" | "workspace/willRenameFiles")))
+        !self.workspace_edit_requests.is_empty()
+            || self.will_rename_edit.is_some()
+            || self.clients.iter().any(|client| {
+                client
+                    .pending_requests
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .any(|request| {
+                        matches!(
+                            request.method.as_str(),
+                            "workspace/executeCommand" | "workspace/willRenameFiles"
+                        )
+                    })
+            })
     }
 
     /// Request inlay hints for a visible range
@@ -1840,22 +2040,36 @@ impl LspManager {
 
     /// Request document highlights for symbol under cursor
     pub(crate) fn request_document_highlight(&mut self, path: &Path, line: u32, col: u32) -> bool {
-        let Some(version) = self.last_notified_version.get(path).copied() else { return false; };
-        if self.highlight_request.as_ref().is_some_and(|(request, position)| {
-            request.matches(path, version, None) && *position == (line, col)
-        }) { return true; }
-        self.cancel_document_highlight();
-        if let Some(idx) = self
-            .clients
-            .iter_mut()
-            .position(|c| c.initialized && !c.server_dead && c.handles_file(path) && c.is_file_open(path))
+        let Some(version) = self.last_notified_version.get(path).copied() else {
+            return false;
+        };
+        if self
+            .highlight_request
+            .as_ref()
+            .is_some_and(|(request, position)| {
+                request.matches(path, version, None) && *position == (line, col)
+            })
         {
-            self.highlight_request = Some((DocumentFeedbackRequest {
-                target: crate::background::LspDocumentTarget { path: path.to_path_buf(), content_version: version },
-                range: None,
-                client_idx: idx,
-            }, (line, col)));
-            if !self.clients[idx].supports_request("textDocument/documentHighlight") { return true; }
+            return true;
+        }
+        self.cancel_document_highlight();
+        if let Some(idx) = self.clients.iter_mut().position(|c| {
+            c.initialized && !c.server_dead && c.handles_file(path) && c.is_file_open(path)
+        }) {
+            self.highlight_request = Some((
+                DocumentFeedbackRequest {
+                    target: crate::background::LspDocumentTarget {
+                        path: path.to_path_buf(),
+                        content_version: version,
+                    },
+                    range: None,
+                    client_idx: idx,
+                },
+                (line, col),
+            ));
+            if !self.clients[idx].supports_request("textDocument/documentHighlight") {
+                return true;
+            }
             if let Ok(id) = self.clients[idx].request_document_highlight(path, line, col) {
                 self.active_highlight_id = Some(id);
                 return true;
@@ -1875,11 +2089,17 @@ impl LspManager {
     /// Called before draining replies, including when typing delays the next
     /// request. A buffered result belongs to its original caret and document.
     pub(crate) fn retain_document_highlight(&mut self, current: Option<(&Path, u64, u32, u32)>) {
-        if self.highlight_request.as_ref().is_some_and(|(request, position)| {
-            !current.is_some_and(|(path, version, line, col)| {
-                request.matches(path, version, None) && *position == (line, col)
+        if self
+            .highlight_request
+            .as_ref()
+            .is_some_and(|(request, position)| {
+                !current.is_some_and(|(path, version, line, col)| {
+                    request.matches(path, version, None) && *position == (line, col)
+                })
             })
-        }) { self.cancel_document_highlight(); }
+        {
+            self.cancel_document_highlight();
+        }
     }
 
     pub(crate) fn document_feedback_client(&self, path: &Path) -> Option<usize> {
@@ -1948,7 +2168,11 @@ impl LspManager {
     }
 
     fn cancel_document_feedback_for(&mut self, path: &Path) {
-        if self.highlight_request.as_ref().is_some_and(|(request, _)| request.target.path == path) {
+        if self
+            .highlight_request
+            .as_ref()
+            .is_some_and(|(request, _)| request.target.path == path)
+        {
             self.cancel_document_highlight();
         }
         if self
@@ -2045,7 +2269,9 @@ impl LspManager {
             "callHierarchy/incomingCalls" => &mut self.active_incoming_calls_id,
             "callHierarchy/outgoingCalls" => &mut self.active_outgoing_calls_id,
             "textDocument/selectionRange" => {
-                if self.active_selection_range_client != Some(client_idx) { return false; }
+                if self.active_selection_range_client != Some(client_idx) {
+                    return false;
+                }
                 &mut self.active_selection_range_id
             }
             "textDocument/codeLens" => &mut self.active_code_lens_id,
@@ -2107,8 +2333,14 @@ impl LspManager {
     /// Request incoming calls for a call hierarchy item
     pub(crate) fn request_incoming_calls(&mut self, item: &CallHierarchyItem) -> bool {
         // Route the follow-up to the server that handles the hierarchy item.
-        let Ok(path) = item.uri.to_file_path() else { return false; };
-        for client in self.clients.iter_mut().filter(|client| client.handles_file(&path)) {
+        let Ok(path) = item.uri.to_file_path() else {
+            return false;
+        };
+        for client in self
+            .clients
+            .iter_mut()
+            .filter(|client| client.handles_file(&path))
+        {
             if let Ok(id) = client.request_incoming_calls(item) {
                 self.active_incoming_calls_id = Some(id);
                 return true;
@@ -2119,8 +2351,14 @@ impl LspManager {
 
     /// Request outgoing calls for a call hierarchy item
     pub(crate) fn request_outgoing_calls(&mut self, item: &CallHierarchyItem) -> bool {
-        let Ok(path) = item.uri.to_file_path() else { return false; };
-        for client in self.clients.iter_mut().filter(|client| client.handles_file(&path)) {
+        let Ok(path) = item.uri.to_file_path() else {
+            return false;
+        };
+        for client in self
+            .clients
+            .iter_mut()
+            .filter(|client| client.handles_file(&path))
+        {
             if let Ok(id) = client.request_outgoing_calls(item) {
                 self.active_outgoing_calls_id = Some(id);
                 return true;
@@ -2152,9 +2390,12 @@ impl LspManager {
 
     pub(crate) fn cancel_selection_range_request(&mut self) {
         if let (Some(client), Some(id)) = (
-            self.active_selection_range_client.take(), self.active_selection_range_id.take(),
+            self.active_selection_range_client.take(),
+            self.active_selection_range_id.take(),
         ) {
-            if let Some(client) = self.clients.get_mut(client) { client.cancel_request(id); }
+            if let Some(client) = self.clients.get_mut(client) {
+                client.cancel_request(id);
+            }
         }
         self.selection_ranges.clear();
         self.selection_ranges_dirty = false;
@@ -2207,8 +2448,14 @@ impl LspManager {
 
     /// Request supertypes for a type hierarchy item
     pub(crate) fn request_supertypes(&mut self, item: &lsp_types::TypeHierarchyItem) -> bool {
-        let Ok(path) = item.uri.to_file_path() else { return false; };
-        for client in self.clients.iter_mut().filter(|client| client.handles_file(&path)) {
+        let Ok(path) = item.uri.to_file_path() else {
+            return false;
+        };
+        for client in self
+            .clients
+            .iter_mut()
+            .filter(|client| client.handles_file(&path))
+        {
             if let Ok(id) = client.request_supertypes(item) {
                 self.active_supertypes_id = Some(id);
                 return true;
@@ -2219,8 +2466,14 @@ impl LspManager {
 
     /// Request subtypes for a type hierarchy item
     pub(crate) fn request_subtypes(&mut self, item: &lsp_types::TypeHierarchyItem) -> bool {
-        let Ok(path) = item.uri.to_file_path() else { return false; };
-        for client in self.clients.iter_mut().filter(|client| client.handles_file(&path)) {
+        let Ok(path) = item.uri.to_file_path() else {
+            return false;
+        };
+        for client in self
+            .clients
+            .iter_mut()
+            .filter(|client| client.handles_file(&path))
+        {
             if let Ok(id) = client.request_subtypes(item) {
                 self.active_subtypes_id = Some(id);
                 return true;

@@ -54,11 +54,19 @@ fn edge_case_reversing_selected_lines_never_joins_the_unselected_suffix() {
         for reverse_selection in [false, true] {
             let before = format!("keep{ending}one{ending}two{ending}tail");
             let mut editor = editor(&before);
-            let (anchor, cursor) = if reverse_selection { ((3, 0), (1, 0)) } else { ((1, 0), (3, 0)) };
+            let (anchor, cursor) = if reverse_selection {
+                ((3, 0), (1, 0))
+            } else {
+                ((1, 0), (3, 0))
+            };
             editor.selection_anchor = Some(anchor);
             (editor.cursor_line, editor.cursor_col) = cursor;
             editor.reverse_lines();
-            assert_undo_redo(&mut editor, &before, &format!("keep{ending}two{ending}one{ending}tail"));
+            assert_undo_redo(
+                &mut editor,
+                &before,
+                &format!("keep{ending}two{ending}one{ending}tail"),
+            );
         }
     }
 }
@@ -72,13 +80,18 @@ fn edge_case_shuffling_selected_lines_preserves_their_boundaries() {
         editor.cursor_line = 4;
         editor.shuffle_lines();
         let after = editor.rope.to_string();
-        let middle = after.strip_prefix(&format!("keep{ending}")).unwrap()
-            .strip_suffix(&format!("{ending}tail")).expect("unselected suffix stays separated");
+        let middle = after
+            .strip_prefix(&format!("keep{ending}"))
+            .unwrap()
+            .strip_suffix(&format!("{ending}tail"))
+            .expect("unselected suffix stays separated");
         let mut lines: Vec<_> = middle.split(ending).collect();
         lines.sort_unstable();
         assert_eq!(lines, ["one", "three", "two"]);
         assert_valid_positions(&editor);
-        if after != before { assert_undo_redo(&mut editor, &before, &after); }
+        if after != before {
+            assert_undo_redo(&mut editor, &before, &after);
+        }
     }
 }
 
@@ -117,8 +130,13 @@ fn edge_case_removing_blank_lines_preserves_mixed_separators_and_carets() {
 #[test]
 fn edge_case_noop_line_commands_preserve_redo_and_clean_state() {
     for operation in [
-        Editor::reverse_lines, Editor::shuffle_lines, Editor::remove_duplicate_lines,
-        Editor::remove_blank_lines, |editor: &mut Editor| { editor.trim_trailing_whitespace(); },
+        Editor::reverse_lines,
+        Editor::shuffle_lines,
+        Editor::remove_duplicate_lines,
+        Editor::remove_blank_lines,
+        |editor: &mut Editor| {
+            editor.trim_trailing_whitespace();
+        },
     ] {
         let mut editor = editor("word");
         editor.insert_char('x');
@@ -174,7 +192,11 @@ fn edge_case_line_transformations_keep_carets_attached_to_surviving_text() {
     assert_eq!(editor.extra_cursors, [(0, 3)]);
     assert_eq!(editor.extra_cursor_anchors, [Some((1, 1))]);
     assert_eq!(editor.bookmarks.iter().copied().collect::<Vec<_>>(), [0, 3]);
-    assert_undo_redo(&mut editor, "one\ntwo\nthree\nfour", "four\nthree\ntwo\none");
+    assert_undo_redo(
+        &mut editor,
+        "one\ntwo\nthree\nfour",
+        "four\nthree\ntwo\none",
+    );
 
     let mut editor = super::Editor::test_with_text("keep\none\none\ntwo\ntail");
     editor.selection_anchor = Some((1, 0));
@@ -195,8 +217,13 @@ fn edge_case_line_transformations_keep_carets_attached_to_surviving_text() {
 #[test]
 fn edge_case_line_commands_handle_empty_files_and_preserve_lone_cr_endings() {
     for operation in [
-        Editor::reverse_lines, Editor::shuffle_lines, Editor::remove_duplicate_lines,
-        Editor::remove_blank_lines, |editor: &mut Editor| { editor.trim_trailing_whitespace(); },
+        Editor::reverse_lines,
+        Editor::shuffle_lines,
+        Editor::remove_duplicate_lines,
+        Editor::remove_blank_lines,
+        |editor: &mut Editor| {
+            editor.trim_trailing_whitespace();
+        },
     ] {
         for before in ["", "\r", "\r\n", "\n"] {
             let mut editor = editor(before);
@@ -209,7 +236,11 @@ fn edge_case_line_commands_handle_empty_files_and_preserve_lone_cr_endings() {
     }
     let mut editor = editor("first  \rsecond\t\rlast ");
     editor.trim_trailing_whitespace();
-    assert_undo_redo(&mut editor, "first  \rsecond\t\rlast ", "first\rsecond\rlast");
+    assert_undo_redo(
+        &mut editor,
+        "first  \rsecond\t\rlast ",
+        "first\rsecond\rlast",
+    );
 }
 
 fn check_encoded_save_preserves_carriage_returns(encoding: &'static str) {
@@ -225,8 +256,16 @@ fn check_encoded_save_preserves_carriage_returns(encoding: &'static str) {
             source.clone()
         };
         let expected_bytes = match encoding {
-            "UTF-16 LE" => [vec![0xff, 0xfe], expected.encode_utf16().flat_map(u16::to_le_bytes).collect()].concat(),
-            "UTF-16 BE" => [vec![0xfe, 0xff], expected.encode_utf16().flat_map(u16::to_be_bytes).collect()].concat(),
+            "UTF-16 LE" => [
+                vec![0xff, 0xfe],
+                expected.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+            ]
+            .concat(),
+            "UTF-16 BE" => [
+                vec![0xfe, 0xff],
+                expected.encode_utf16().flat_map(u16::to_be_bytes).collect(),
+            ]
+            .concat(),
             _ => expected.into_bytes(),
         };
         for background in [false, true] {
@@ -249,12 +288,16 @@ fn check_encoded_save_preserves_carriage_returns(encoding: &'static str) {
                     source_content_version: editor.content_version,
                     fail_if_exists: false,
                     expected_disk: None,
-                }).unwrap();
+                })
+                .unwrap();
             } else {
                 editor.save_file_with_options(false, false).unwrap();
             }
-            assert_eq!(std::fs::read(&path).unwrap(), expected_bytes,
-                "{encoding}, {line_ending}, background={background}");
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                expected_bytes,
+                "{encoding}, {line_ending}, background={background}"
+            );
         }
     }
 }
@@ -288,8 +331,10 @@ fn utf8_save_preserves_repeated_carriage_returns() {
 fn sort_imports_preserves_line_separators_and_final_newline() {
     for ending in ["\n", "\r\n", "\r"] {
         for final_ending in ["", ending] {
-            let before = format!("use z;{ending}use a;{ending}{ending}use y;{ending}use b;{final_ending}");
-            let after = format!("use a;{ending}use z;{ending}{ending}use b;{ending}use y;{final_ending}");
+            let before =
+                format!("use z;{ending}use a;{ending}{ending}use y;{ending}use b;{final_ending}");
+            let after =
+                format!("use a;{ending}use z;{ending}{ending}use b;{ending}use y;{final_ending}");
             let mut editor = editor(&before);
             editor.sort_imports();
             assert_undo_redo(&mut editor, &before, &after);
@@ -315,8 +360,11 @@ fn sort_imports_keeps_all_caret_positions_in_bounds() {
     editor.extra_cursor_anchors = vec![Some((3, editor.line_len(3) - 1))];
     editor.sort_imports();
     assert_valid_positions(&editor);
-    assert_undo_redo(&mut editor, before,
-        "use a;\nuse z_界界界界;\n\nuse b;\nuse z_長長長長;");
+    assert_undo_redo(
+        &mut editor,
+        before,
+        "use a;\nuse z_界界界界;\n\nuse b;\nuse z_長長長長;",
+    );
     editor.insert_char('x');
     assert_valid_positions(&editor);
 }
@@ -745,11 +793,19 @@ fn delete_lines_excludes_the_zero_column_selection_end() {
         for reverse in [false, true] {
             let before = format!("head{ending}one{ending}two{ending}tail");
             let mut editor = editor(&before);
-            let (cursor, anchor) = if reverse { ((1, 0), (2, 0)) } else { ((2, 0), (1, 0)) };
+            let (cursor, anchor) = if reverse {
+                ((1, 0), (2, 0))
+            } else {
+                ((2, 0), (1, 0))
+            };
             (editor.cursor_line, editor.cursor_col) = cursor;
             editor.selection_anchor = Some(anchor);
             editor.delete_line();
-            assert_undo_redo(&mut editor, &before, &format!("head{ending}two{ending}tail"));
+            assert_undo_redo(
+                &mut editor,
+                &before,
+                &format!("head{ending}two{ending}tail"),
+            );
         }
     }
 }
@@ -780,7 +836,10 @@ fn saving_rebases_undo_dirty_states_and_breaks_typing_groups() {
     assert!(!editor.modified, "undo to the latest save must be clean");
     editor.undo();
     assert_eq!(editor.rope.to_string(), "original");
-    assert!(editor.modified, "the old saved content now differs from disk");
+    assert!(
+        editor.modified,
+        "the old saved content now differs from disk"
+    );
     editor.redo();
     assert_eq!(editor.rope.to_string(), "originala");
     assert!(!editor.modified);
@@ -798,9 +857,21 @@ fn background_save_after_undo_marks_the_old_baseline_dirty() {
     let written = editor.rope.clone();
     editor.undo();
     assert!(!editor.modified);
-    editor.apply_background_save(source_version, &written, written.clone(), "UTF-8", None, None, None, u64::MAX);
+    editor.apply_background_save(
+        source_version,
+        &written,
+        written.clone(),
+        "UTF-8",
+        None,
+        None,
+        None,
+        u64::MAX,
+    );
     assert_eq!(editor.rope.to_string(), "original");
-    assert!(editor.modified, "an in-flight save changed the disk baseline after undo");
+    assert!(
+        editor.modified,
+        "an in-flight save changed the disk baseline after undo"
+    );
     editor.redo();
     assert!(!editor.modified, "redo returns to the newly saved content");
 }
@@ -815,7 +886,16 @@ fn background_save_marks_its_snapshot_clean_in_typing_history() {
     let written = editor.rope.clone();
     editor.break_undo_group();
     editor.insert_char('b');
-    editor.apply_background_save(source_version, &written, written.clone(), "UTF-8", None, None, None, u64::MAX);
+    editor.apply_background_save(
+        source_version,
+        &written,
+        written.clone(),
+        "UTF-8",
+        None,
+        None,
+        None,
+        u64::MAX,
+    );
     assert!(editor.modified);
     editor.undo();
     assert_eq!(editor.rope.to_string(), "originala");
@@ -854,7 +934,7 @@ fn undoing_a_disk_reload_marks_the_previous_content_unsaved() {
     let mut editor = editor("original");
     editor.saved_rope = Some(editor.rope.clone());
     editor.apply_reloaded_file(super::LoadedTextFile {
-            remote_checkpoint: None,
+        remote_checkpoint: None,
         rope: ropey::Rope::from_str("external edit"),
         encoding: "UTF-8",
         file_size: 13,
@@ -878,8 +958,11 @@ fn unchanged_disk_reload_preserves_redo_and_does_not_add_an_undo_step() {
     let version = editor.content_version;
     let undo_len = editor.undo_stack.len();
     editor.apply_reloaded_file(super::LoadedTextFile {
-            remote_checkpoint: None,
-        rope: ropey::Rope::from_str("saved\n"), encoding: "UTF-8", file_size: 6, last_disk_modified: None,
+        remote_checkpoint: None,
+        rope: ropey::Rope::from_str("saved\n"),
+        encoding: "UTF-8",
+        file_size: 6,
+        last_disk_modified: None,
     });
     assert_eq!(editor.content_version, version);
     assert_eq!(editor.undo_stack.len(), undo_len);
@@ -895,8 +978,11 @@ fn disk_reload_undo_invalidates_changes_far_from_the_cursor() {
     let mut editor = editor("first\nmiddle\nlast\n");
     editor.cursor_line = 2;
     editor.apply_reloaded_file(super::LoadedTextFile {
-            remote_checkpoint: None,
-        rope: ropey::Rope::from_str("FIRST\nmiddle\nlast\n"), encoding: "UTF-8", file_size: 18, last_disk_modified: None,
+        remote_checkpoint: None,
+        rope: ropey::Rope::from_str("FIRST\nmiddle\nlast\n"),
+        encoding: "UTF-8",
+        file_size: 18,
+        last_disk_modified: None,
     });
     editor.syntax_dirty_from = None;
     editor.syntax_dirty_through = None;
@@ -910,10 +996,22 @@ fn synchronous_opens_decode_utf16_before_checking_for_binary_bytes() {
     let dir = tempfile::tempdir().unwrap();
     let text = "hello 界🙂\r\nnext line";
     for little_endian in [false, true] {
-        let path = dir.path().join(if little_endian { "little.txt" } else { "big.txt" });
-        let mut bytes = if little_endian { vec![0xff, 0xfe] } else { vec![0xfe, 0xff] };
+        let path = dir.path().join(if little_endian {
+            "little.txt"
+        } else {
+            "big.txt"
+        });
+        let mut bytes = if little_endian {
+            vec![0xff, 0xfe]
+        } else {
+            vec![0xfe, 0xff]
+        };
         for unit in text.encode_utf16() {
-            bytes.extend(if little_endian { unit.to_le_bytes() } else { unit.to_be_bytes() });
+            bytes.extend(if little_endian {
+                unit.to_le_bytes()
+            } else {
+                unit.to_be_bytes()
+            });
         }
         std::fs::write(&path, &bytes).unwrap();
         let mut editor = editor("old\ncontents");
@@ -921,7 +1019,14 @@ fn synchronous_opens_decode_utf16_before_checking_for_binary_bytes() {
         editor.extra_cursor_anchors = vec![Some((1, 2))];
         editor.open_file(&path).unwrap();
         assert_eq!(editor.rope.to_string(), text);
-        assert_eq!(editor.encoding, if little_endian { "UTF-16 LE" } else { "UTF-16 BE" });
+        assert_eq!(
+            editor.encoding,
+            if little_endian {
+                "UTF-16 LE"
+            } else {
+                "UTF-16 BE"
+            }
+        );
         assert_eq!(editor.cached_line_ending, "CRLF");
         assert_eq!(editor.file_size, bytes.len() as u64);
         assert!(editor.extra_cursors.is_empty());
@@ -943,5 +1048,11 @@ fn synchronous_binary_open_cannot_undo_back_to_the_previous_file() {
     assert!(!editor.can_undo());
     assert!(!editor.can_redo());
     assert!(!editor.modified);
-    assert!(editor.saved_rope.as_ref().unwrap().is_instance(&editor.rope));
+    assert!(
+        editor
+            .saved_rope
+            .as_ref()
+            .unwrap()
+            .is_instance(&editor.rope)
+    );
 }

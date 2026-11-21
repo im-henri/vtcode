@@ -3,15 +3,32 @@ use super::*;
 #[test]
 fn tool_links_use_schema_locations_and_hide_remote_view_key_roots() {
     let app = App::test_new();
-    let key = std::path::PathBuf::from(if cfg!(windows) { "C:/" } else { "/" }).join(format!("{}vtcode-remote-fixture", char::from(0u8))).join("project/dir/colon%3afile.rs");
+    let key = std::path::PathBuf::from(if cfg!(windows) { "C:/" } else { "/" })
+        .join(format!("{}vtcode-remote-fixture", char::from(0u8)))
+        .join("project/dir/colon%3afile.rs");
     let tool: p::ToolCall = serde_json::from_value(serde_json::json!({"toolCallId":"view", "title":"Read file", "kind":"read", "status":"completed", "locations":[{"path":key,"line":7}], "rawInput":{"path":"/node/original.rs", "view_range":[3,4]}})).unwrap();
     assert_eq!(tools::location(&tool), Some((key.clone(), Some(7))));
     let mut rows = Vec::new();
-    tools::body(&mut rows, &tool, 100, &app.colors, true, None, app.diff_algorithm);
+    tools::body(
+        &mut rows,
+        &tool,
+        100,
+        &app.colors,
+        true,
+        None,
+        app.diff_algorithm,
+    );
     let text: String = rows.iter().map(|row| row.line.to_string()).collect();
     assert!(text.contains("dir/colon:file.rs:8"), "{text}");
-    assert!(!text.contains(char::from(0u8)) && !text.contains("vtcode-remote") && !text.contains("/node/original.rs"));
-    assert!(rows.iter().any(|row| row.action == Some(ChatAction::OpenFile(key.clone(), Some(7)))));
+    assert!(
+        !text.contains(char::from(0u8))
+            && !text.contains("vtcode-remote")
+            && !text.contains("/node/original.rs")
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.action == Some(ChatAction::OpenFile(key.clone(), Some(7))))
+    );
 }
 use crate::app::{Tab, TabDropZone, TabKind};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -287,7 +304,9 @@ fn chat_tabs_drag_to_editor_splits_and_back_with_draft_and_session_intact() {
         assert!(app.chat.layout.surfaces.iter().any(|s| s.key.is_some()));
         presentation_tests::capture(&terminal, "controls-chat-editor-split");
         let tabs = app.tab_bar_area.unwrap();
-        let tab_x=crate::ui_chrome_tabs::TabBarHits::new(&app,tabs).tabs[0].1.x;
+        let tab_x = crate::ui_chrome_tabs::TabBarHits::new(&app, tabs).tabs[0]
+            .1
+            .x;
         mouse(
             &mut app,
             MouseEventKind::Down(MouseButton::Left),
@@ -360,7 +379,13 @@ fn chat_separate_editor_panes_keep_inputs_isolated_and_middle_close_only_one_vie
     );
     paint(&mut app, &mut terminal, true);
     assert!(app.chat.sessions[&first].busy);
-    assert!(!app.chat.layout.editors.values().any(|view| view.session == first));
+    assert!(
+        !app.chat
+            .layout
+            .editors
+            .values()
+            .any(|view| view.session == first)
+    );
     assert!(app.activate_editor_chat(&second));
     assert_eq!(app.chat.input, "SECOND_DRAFT");
     assert!(app.chat.sessions.contains_key(&first));
@@ -580,7 +605,10 @@ fn chat_display_preferences_preserve_editor_syntax_highlights() {
             assert!(Rc::ptr_eq(&before, &after));
             assert_eq!(app.highlighter.registry_generation(), generation);
             assert_eq!(app.visible_highlight_key, request);
-            assert!(!pending.is_cancelled(), "chat toggles must not cancel editor work");
+            assert!(
+                !pending.is_cancelled(),
+                "chat toggles must not cancel editor work"
+            );
             let saved = crate::settings::load_from_file(match scope {
                 SettingsScope::Global => &app.settings_global_path,
                 SettingsScope::Workspace => &app.settings_workspace_path,
@@ -711,7 +739,9 @@ fn chat_yolo_toggle_is_compact_stable_and_available_during_a_turn() {
         let cell = &terminal.backend().buffer()[(off.x, off.y)];
         assert_eq!(
             cell.fg,
-            app.colors.ui.readable_foreground(app.colors.fg_warning, cell.bg, 4.5)
+            app.colors
+                .ui
+                .readable_foreground(app.colors.fg_warning, cell.bg, 4.5)
         );
         let area = app.chat.area.unwrap();
         let controls = header_layout(

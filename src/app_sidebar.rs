@@ -14,7 +14,9 @@ const ACTIVITY_MENU_ITEMS: [(&str, &str); 6] = [
 ];
 
 pub(crate) fn activity_menu_index(id: &str) -> Option<usize> {
-    ACTIVITY_MENU_ITEMS.iter().position(|&(_, item_id)| item_id == id)
+    ACTIVITY_MENU_ITEMS
+        .iter()
+        .position(|&(_, item_id)| item_id == id)
 }
 
 /// Hover visibility is transient; `show_explorer` remains the saved preference.
@@ -27,7 +29,8 @@ pub(crate) struct AutoHide {
 
 impl App {
     pub(crate) fn sidebar_is_visible(&self) -> bool {
-        self.detached_window_id().is_none() && self.show_explorer
+        self.detached_window_id().is_none()
+            && self.show_explorer
             && (!self.sidebar_auto_hide.enabled
                 || (!self.zen_mode
                     && (self.sidebar_auto_hide.revealed
@@ -79,8 +82,10 @@ impl App {
             self.global_search_active = false;
         }
         let search_focused = self.global_search_active
-            && self.active_pane == ActivePane::Explorer && self.search_focus_field == 0;
-        if self.sidebar_is_visible() && self.sidebar_view == view
+            && self.active_pane == ActivePane::Explorer
+            && self.search_focus_field == 0;
+        if self.sidebar_is_visible()
+            && self.sidebar_view == view
             && (view != SidebarView::Search || search_focused)
         {
             self.show_explorer = false;
@@ -104,8 +109,13 @@ impl App {
     }
 
     pub(crate) fn open_activity_overflow(&mut self) {
-        let Some((button, visible)) = activity_overflow_button(self) else { return; };
-        self.context_menu_items = ACTIVITY_MENU_ITEMS.iter().enumerate().skip(visible)
+        let Some((button, visible)) = activity_overflow_button(self) else {
+            return;
+        };
+        self.context_menu_items = ACTIVITY_MENU_ITEMS
+            .iter()
+            .enumerate()
+            .skip(visible)
             .map(|(index, &(label, id))| ContextMenuItem {
                 label: format!("{}  {label}", TOP_ACTIVITY_ICONS[index]),
                 shortcut: String::new(),
@@ -122,15 +132,20 @@ impl App {
     }
 
     pub(crate) fn activity_overflow_menu_open(&self) -> bool {
-        self.context_menu_active && self.context_menu_items.first()
-            .is_some_and(|item| activity_menu_index(item.id).is_some())
+        self.context_menu_active
+            && self
+                .context_menu_items
+                .first()
+                .is_some_and(|item| activity_menu_index(item.id).is_some())
     }
 
     pub(crate) fn dismiss_moved_activity_overflow(&mut self) {
-        if self.activity_overflow_menu_open() && activity_overflow_button(self).is_none_or(|(button, visible)| {
-            self.context_menu_pos != (button.x, button.bottom())
-                || self.context_menu_items[0].id != ACTIVITY_MENU_ITEMS[visible].1
-        }) {
+        if self.activity_overflow_menu_open()
+            && activity_overflow_button(self).is_none_or(|(button, visible)| {
+                self.context_menu_pos != (button.x, button.bottom())
+                    || self.context_menu_items[0].id != ACTIVITY_MENU_ITEMS[visible].1
+            })
+        {
             self.context_menu_active = false;
             self.context_menu_inner = None;
             self.context_menu_button_drag = None;
@@ -161,9 +176,16 @@ impl App {
         {
             visible
         } else {
-            self.sidebar_auto_hide.edge.is_some_and(|area| area.contains(position))
-                || self.activity_bar_area.is_some_and(|area| area.contains(position))
-                || (visible && self.explorer_area.is_some_and(|area| area.contains(position)))
+            self.sidebar_auto_hide
+                .edge
+                .is_some_and(|area| area.contains(position))
+                || self
+                    .activity_bar_area
+                    .is_some_and(|area| area.contains(position))
+                || (visible
+                    && self
+                        .explorer_area
+                        .is_some_and(|area| area.contains(position)))
         };
         let changed = visible != self.sidebar_is_visible();
         if changed {

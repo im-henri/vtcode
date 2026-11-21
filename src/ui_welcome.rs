@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 use crate::{app::App, app_theme::lerp_color};
@@ -72,9 +72,16 @@ fn draw_logo(f: &mut Frame, area: Rect, mark_color: Color) {
 
 /// Use the resolved startup palette so the logo and workbench share a background.
 #[cfg(test)]
-pub(crate) fn draw_startup_screen(f: &mut Frame, area: Rect, colors: &crate::app_theme::ThemeColors) {
+pub(crate) fn draw_startup_screen(
+    f: &mut Frame,
+    area: Rect,
+    colors: &crate::app_theme::ThemeColors,
+) {
     let background = colors.bg_editor;
-    f.render_widget(Block::default().style(Style::default().bg(background)), area);
+    f.render_widget(
+        Block::default().style(Style::default().bg(background)),
+        area,
+    );
     draw_logo(f, area, lerp_color(background, colors.fg_accent_blue, 0.38));
 }
 
@@ -82,7 +89,10 @@ pub(crate) fn draw_startup_screen(f: &mut Frame, area: Rect, colors: &crate::app
 /// terminal's own background until the configured workbench palette is ready.
 pub(crate) fn draw_bootstrap_screen(f: &mut Frame) {
     let area = f.area();
-    f.render_widget(Block::default().style(Style::default().bg(Color::Reset)), area);
+    f.render_widget(
+        Block::default().style(Style::default().bg(Color::Reset)),
+        area,
+    );
     draw_logo(f, area, Color::Reset);
 }
 
@@ -111,7 +121,7 @@ pub(crate) fn draw_welcome_screen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn welcome_is_a_centered_logo_without_copy_or_recent_files() {

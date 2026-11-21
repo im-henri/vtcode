@@ -91,9 +91,13 @@ pub(crate) fn draw_badge(f: &mut Frame, app: &mut App, area: Rect, badge: Status
     let bg = app.colors.bg_statusbar;
     let hovered = !app.rendering_background_window
         && (app.background.activity.details_open
-            || app.status_bar_items.iter().enumerate().any(|(index, &(_, _, action))| {
-                action == "performance" && app.hovered_status_item == Some(index)
-            }));
+            || app
+                .status_bar_items
+                .iter()
+                .enumerate()
+                .any(|(index, &(_, _, action))| {
+                    action == "performance" && app.hovered_status_item == Some(index)
+                }));
     let bg = if hovered {
         if app.colors.bg_statusbar_item == bg && !app.colors.ui.preserve_theme_colors {
             crate::app_theme::lerp_color(bg, app.colors.fg_statusbar, 0.12)
@@ -247,7 +251,11 @@ mod tests {
         app.active_tab = 0;
         app.show_panel = false;
         let path = app.explorer.root.join("src").join("parser.rs");
-        let _ticket = app.background.activity.start("Highlighting", Some(&path)).running();
+        let _ticket = app
+            .background
+            .activity
+            .start("Highlighting", Some(&path))
+            .running();
         app.background.activity.active[0].started -= Duration::from_secs(7);
         app.background.refresh_activity(Instant::now());
         app.background

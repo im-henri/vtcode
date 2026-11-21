@@ -4,13 +4,22 @@
 //! text wrapping, and settings list filtering/scrolling.
 //! Extracted from `app_session.rs`.
 
-use crate::app::{App, AutoSaveMode};
 use crate::animation_config::{AnimationEffect, AnimationSettings};
+use crate::app::{App, AutoSaveMode};
 
 pub(crate) const SETTINGS_CATEGORIES: &[&str] = &[
-    "Commonly Used", "Text Editor", "Workbench", "Features", "Files",
-    "Keyboard Shortcuts", "Agent Chat", "Animations", "Language Servers", "Source Control",
-    "Autocomplete", "All",
+    "Commonly Used",
+    "Text Editor",
+    "Workbench",
+    "Features",
+    "Files",
+    "Keyboard Shortcuts",
+    "Agent Chat",
+    "Animations",
+    "Language Servers",
+    "Source Control",
+    "Autocomplete",
+    "All",
 ];
 
 pub(crate) const SETTINGS_AUTOCOMPLETE_CATEGORY: usize = 10;
@@ -64,20 +73,65 @@ impl App {
             "lsp_servers" | "lsp_enabled" | "lsp_diagnostic_delay_ms" => 8,
             "acp_agents" => 6,
             "heading_autocomplete" | "quick_suggestions" => SETTINGS_AUTOCOMPLETE_CATEGORY,
-            "heading_editor" | "tab_size" | "use_tabs" | "word_wrap" | "word_wrap_column" | "whitespace" | "comment_whitespace" | "read_only"
-            | "vim_mode" | "vim_ctrl_keys" | "vim_system_clipboard"
-            | "hover_enabled" | "format_on_type" | "format_on_save" | "formatters"
-            | "cursor_style" | "cursor_blinking" | "cursor_surrounding_lines" | "minimap" | "minimap_width" => 1,
-            "heading_features" | "indent_rainbow" | "color_preview" | "bracket_pair_colorization" | "error_lens"
-            | "inlay_hints" | "code_lens" | "semantic_highlighting" | "highlight_words_across_tabs" | "sticky_scroll" | "sticky_scroll_max"
-            | "scroll_past_end" | "focus_mode" | "word_count" | "screencast_mode" | "rulers"
-            | "heading_search" | "search_case_sensitive" | "search_whole_word" | "search_regex"
-            | "global_search_case_sensitive" | "global_search_whole_word" | "global_search_regex" | "global_search_preserve_case"
-            | "search_preserve_case" | "search_exclude" | "search_debounce_ms" | "max_global_search_results" | "scroll_speed" => 3,
-            "files_exclude" | "heading_save" | "trim_trailing" | "final_newline" | "language_associations"
-            | "large_file_threshold_mb" | "large_file_analysis_timeout_ms"
+            "heading_editor"
+            | "tab_size"
+            | "use_tabs"
+            | "word_wrap"
+            | "word_wrap_column"
+            | "whitespace"
+            | "comment_whitespace"
+            | "read_only"
+            | "vim_mode"
+            | "vim_ctrl_keys"
+            | "vim_system_clipboard"
+            | "hover_enabled"
+            | "format_on_type"
+            | "format_on_save"
+            | "formatters"
+            | "cursor_style"
+            | "cursor_blinking"
+            | "cursor_surrounding_lines"
+            | "minimap"
+            | "minimap_width" => 1,
+            "heading_features"
+            | "indent_rainbow"
+            | "color_preview"
+            | "bracket_pair_colorization"
+            | "error_lens"
+            | "inlay_hints"
+            | "code_lens"
+            | "semantic_highlighting"
+            | "highlight_words_across_tabs"
+            | "sticky_scroll"
+            | "sticky_scroll_max"
+            | "scroll_past_end"
+            | "focus_mode"
+            | "word_count"
+            | "screencast_mode"
+            | "rulers"
+            | "heading_search"
+            | "search_case_sensitive"
+            | "search_whole_word"
+            | "search_regex"
+            | "global_search_case_sensitive"
+            | "global_search_whole_word"
+            | "global_search_regex"
+            | "global_search_preserve_case"
+            | "search_preserve_case"
+            | "search_exclude"
+            | "search_debounce_ms"
+            | "max_global_search_results"
+            | "scroll_speed" => 3,
+            "files_exclude"
+            | "heading_save"
+            | "trim_trailing"
+            | "final_newline"
+            | "language_associations"
+            | "large_file_threshold_mb"
+            | "large_file_analysis_timeout_ms"
             | "heading_cursor"
-            | "auto_save_mode" | "auto_save_delay" => 4,
+            | "auto_save_mode"
+            | "auto_save_delay" => 4,
             _ => 2,
         }
     }
@@ -86,13 +140,18 @@ impl App {
         if let Some(field) = crate::app_vtcomplete_settings::field(setting_id) {
             return field.2;
         }
-        if setting_id == "animation_scope_bubble_languages" { return "action"; }
+        if setting_id == "animation_scope_bubble_languages" {
+            return "action";
+        }
         if AnimationSettings::effect_for_duration_id(setting_id).is_some()
             || AnimationSettings::effect_for_intensity_id(setting_id).is_some()
         {
             return "number";
         }
-        if matches!(setting_id, "animation_scope_bubble_tight" | "animation_scope_bubble_fill") {
+        if matches!(
+            setting_id,
+            "animation_scope_bubble_tight" | "animation_scope_bubble_fill"
+        ) {
             return "checkbox";
         }
         if setting_id == "animation_scope_bubble_disabled_languages" {
@@ -112,23 +171,81 @@ impl App {
             "acp_agents" | "lsp_servers" | "formatters" | "language_associations" => "action",
             "animation_copy" | "animation_cursor_smear_when_typing" => "checkbox",
             "animation_copy_duration_ms" => "number",
-            "lsp_enabled" | "source_control_enabled" | "source_control_show_untracked" => "checkbox",
+            "lsp_enabled" | "source_control_enabled" | "source_control_show_untracked" => {
+                "checkbox"
+            }
             "animation_duration_ms" | "animation_fps" | "animation_intensity" => "number",
-            "tab_size" | "minimap_width" | "panel_height"
-            | "auto_save_delay" | "lsp_diagnostic_delay_ms" | "scroll_speed" | "word_wrap_column"
-            | "sticky_scroll_max" | "max_global_search_results" | "search_debounce_ms"
-            | "cursor_surrounding_lines" | "large_file_threshold_mb"
+            "tab_size"
+            | "minimap_width"
+            | "panel_height"
+            | "auto_save_delay"
+            | "lsp_diagnostic_delay_ms"
+            | "scroll_speed"
+            | "word_wrap_column"
+            | "sticky_scroll_max"
+            | "max_global_search_results"
+            | "search_debounce_ms"
+            | "cursor_surrounding_lines"
+            | "large_file_threshold_mb"
             | "large_file_analysis_timeout_ms" => "number",
-            "theme" | "sidebar_pos" | "activity_bar_position" | "rulers" | "cursor_style" | "auto_save_mode" | "whitespace" | "comment_whitespace" | "diff_algorithm" => "dropdown",
-            "use_tabs" | "word_wrap" | "read_only" | "quick_suggestions" | "hover_enabled" | "format_on_type" | "explorer"
-            | "vim_mode" | "vim_ctrl_keys" | "vim_system_clipboard"
-            | "show_open_editors" | "sidebar_auto_hide" | "minimap" | "line_numbers" | "relative_lines" | "panel"
-            | "zen" | "indent_rainbow" | "color_preview" | "bracket_pair_colorization" | "error_lens" | "sticky_scroll" | "focus_mode"
-            | "word_count" | "trim_trailing" | "format_on_save" | "final_newline" | "scroll_past_end"
-            | "indent_guides" | "activity_bar" | "breadcrumbs" | "status_bar" | "tab_bar" | "preview_tabs" | "mouse_back_forward" | "menu_bar"
-            | "inlay_hints" | "code_lens" | "semantic_highlighting" | "highlight_words_across_tabs" | "screencast_mode"
-            | "search_case_sensitive" | "search_whole_word" | "search_regex" | "search_preserve_case"
-            | "global_search_case_sensitive" | "global_search_whole_word" | "global_search_regex" | "global_search_preserve_case"
+            "theme"
+            | "sidebar_pos"
+            | "activity_bar_position"
+            | "rulers"
+            | "cursor_style"
+            | "auto_save_mode"
+            | "whitespace"
+            | "comment_whitespace"
+            | "diff_algorithm" => "dropdown",
+            "use_tabs"
+            | "word_wrap"
+            | "read_only"
+            | "quick_suggestions"
+            | "hover_enabled"
+            | "format_on_type"
+            | "explorer"
+            | "vim_mode"
+            | "vim_ctrl_keys"
+            | "vim_system_clipboard"
+            | "show_open_editors"
+            | "sidebar_auto_hide"
+            | "minimap"
+            | "line_numbers"
+            | "relative_lines"
+            | "panel"
+            | "zen"
+            | "indent_rainbow"
+            | "color_preview"
+            | "bracket_pair_colorization"
+            | "error_lens"
+            | "sticky_scroll"
+            | "focus_mode"
+            | "word_count"
+            | "trim_trailing"
+            | "format_on_save"
+            | "final_newline"
+            | "scroll_past_end"
+            | "indent_guides"
+            | "activity_bar"
+            | "breadcrumbs"
+            | "status_bar"
+            | "tab_bar"
+            | "preview_tabs"
+            | "mouse_back_forward"
+            | "menu_bar"
+            | "inlay_hints"
+            | "code_lens"
+            | "semantic_highlighting"
+            | "highlight_words_across_tabs"
+            | "screencast_mode"
+            | "search_case_sensitive"
+            | "search_whole_word"
+            | "search_regex"
+            | "search_preserve_case"
+            | "global_search_case_sensitive"
+            | "global_search_whole_word"
+            | "global_search_regex"
+            | "global_search_preserve_case"
             | "cursor_blinking" => "checkbox",
             _ => "text",
         }
@@ -262,7 +379,9 @@ impl App {
             .and_then(|value| value.parse::<usize>().ok())
         {
             return settings.keybindings.as_ref().is_some_and(|entries| {
-                entries.iter().any(|entry| Self::shortcut_entry_index(&self.keybindings, entry) == Some(index))
+                entries.iter().any(|entry| {
+                    Self::shortcut_entry_index(&self.keybindings, entry) == Some(index)
+                })
             });
         }
         let Some(key) = Self::setting_json_key(setting_id) else {
@@ -311,24 +430,42 @@ impl App {
         value: &serde_json::Value,
         fallback: &str,
     ) -> String {
-        if matches!(setting_id, "files_exclude" | "search_exclude") { return value.to_string(); }
+        if matches!(setting_id, "files_exclude" | "search_exclude") {
+            return value.to_string();
+        }
         if setting_id == "animation_scope_bubble_languages" {
-            return format!(" Configure… ({}) ", value.as_object().map_or(0, serde_json::Map::len));
+            return format!(
+                " Configure… ({}) ",
+                value.as_object().map_or(0, serde_json::Map::len)
+            );
         }
         if setting_id == "acp_agents" {
             let count = value.as_array().map_or(0, Vec::len);
             return format!(" Manage Agents… ({count}) ");
         }
         if setting_id == "lsp_servers" {
-            return format!(" Manage Servers… ({}) ", value.as_array().map_or(0, Vec::len));
+            return format!(
+                " Manage Servers… ({}) ",
+                value.as_array().map_or(0, Vec::len)
+            );
         }
         if setting_id == "language_associations" {
-            return format!(" Manage Associations… ({}) ", value.as_object().map_or(0, serde_json::Map::len));
+            return format!(
+                " Manage Associations… ({}) ",
+                value.as_object().map_or(0, serde_json::Map::len)
+            );
         }
         if setting_id == "animation_scope_bubble_disabled_languages" {
-            return value.as_array().map(|languages| {
-                languages.iter().filter_map(serde_json::Value::as_str).collect::<Vec<_>>().join(", ")
-            }).unwrap_or_else(|| fallback.to_owned());
+            return value
+                .as_array()
+                .map(|languages| {
+                    languages
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| fallback.to_owned());
         }
         if let Some(boolean) = value.as_bool() {
             return if boolean { "On" } else { "Off" }.to_string();
@@ -360,7 +497,11 @@ impl App {
                 .find(|theme| theme.config_key == text)
                 .map(|theme| theme.name.clone())
                 .unwrap_or_else(|| text.to_string()),
-            "whitespace" | "comment_whitespace" | "cursor_style" | "activity_bar_position" | "diff_algorithm" => {
+            "whitespace"
+            | "comment_whitespace"
+            | "cursor_style"
+            | "activity_bar_position"
+            | "diff_algorithm" => {
                 let mut chars = text.chars();
                 chars
                     .next()
@@ -411,29 +552,55 @@ impl App {
             return "";
         }
         match setting_id {
-            "files_exclude" => "Configure glob patterns for files and folders to hide in Explorer. Search inherits these patterns. Settings patterns are relative to the open folder's root.",
-            "search_exclude" => "Configure glob patterns to exclude from folder text search and Quick Open. Inherits all patterns from Files: Exclude. Disable a pattern here to override an inherited exclusion.",
-            "acp_agents" => "Add, edit, or remove local ACP agents. Configure names, executables, arguments, environment variables, and request timeouts with a form.",
-            "lsp_servers" => "Set up language servers (LSP) for completion, diagnostics, navigation, and formatting. Add an executable, language ID, file patterns, arguments, and initialization options. Install the server separately. Saved servers override extension defaults for the same language.",
-            "lsp_enabled" => "Enable language servers (LSP) from settings and extensions. Changes apply to open files immediately.",
-            "source_control_enabled" => "Enable Git changes, history, blame and file decorations. Turn off to stop background Git work on slow or shared disks. Editing, saving and undo still work.",
-            "diff_algorithm" => "Smart detects moved lines and aligns related edits with word-level highlights. Classic uses the original Myers diff and character highlights.",
-            "source_control_show_untracked" => "Show untracked files in Source Control, include them in its change count, and show their Git badges in Explorer and change markers in the editor. Turn off to skip untracked-file scanning and automatic diffs on local and SSH folders. Tracked changes stay visible. Remembered across restarts.",
-            "lsp_diagnostic_delay_ms" => "Wait this many milliseconds after the last edit before displaying updated LSP problems, underlines, and error messages. Completion stays responsive. Default: 1000. Set to 0 for immediate updates (maximum 10000).",
+            "files_exclude" => {
+                "Configure glob patterns for files and folders to hide in Explorer. Search inherits these patterns. Settings patterns are relative to the open folder's root."
+            }
+            "search_exclude" => {
+                "Configure glob patterns to exclude from folder text search and Quick Open. Inherits all patterns from Files: Exclude. Disable a pattern here to override an inherited exclusion."
+            }
+            "acp_agents" => {
+                "Add, edit, or remove local ACP agents. Configure names, executables, arguments, environment variables, and request timeouts with a form."
+            }
+            "lsp_servers" => {
+                "Set up language servers (LSP) for completion, diagnostics, navigation, and formatting. Add an executable, language ID, file patterns, arguments, and initialization options. Install the server separately. Saved servers override extension defaults for the same language."
+            }
+            "lsp_enabled" => {
+                "Enable language servers (LSP) from settings and extensions. Changes apply to open files immediately."
+            }
+            "source_control_enabled" => {
+                "Enable Git changes, history, blame and file decorations. Turn off to stop background Git work on slow or shared disks. Editing, saving and undo still work."
+            }
+            "diff_algorithm" => {
+                "Smart detects moved lines and aligns related edits with word-level highlights. Classic uses the original Myers diff and character highlights."
+            }
+            "source_control_show_untracked" => {
+                "Show untracked files in Source Control, include them in its change count, and show their Git badges in Explorer and change markers in the editor. Turn off to skip untracked-file scanning and automatic diffs on local and SSH folders. Tracked changes stay visible. Remembered across restarts."
+            }
+            "lsp_diagnostic_delay_ms" => {
+                "Wait this many milliseconds after the last edit before displaying updated LSP problems, underlines, and error messages. Completion stays responsive. Default: 1000. Set to 0 for immediate updates (maximum 10000)."
+            }
             "tab_size" => "Number of spaces a tab character visually uses in the editor.",
             "animation_duration_ms" => {
                 "Fallback duration for decorative effects in milliseconds (1–5000). Copy Animation has its own duration."
             }
-            "animation_copy" => "Briefly fade the selected code highlight out and back after Copy (Ctrl+C, Edit menu, or Command Palette). Enabled by default. Only visible selected cells animate; editing and clipboard contents stay unchanged. Runs locally in SSH mode.",
-            "animation_copy_duration_ms" => "Total time in milliseconds for the copy highlight to fade out and return (1–5000). Default: 220. A new copy restarts the animation. Has no effect when Copy Animation is off.",
-            "animation_cursor_smear_when_typing" => "Apply a compact smear to the caret while typing and editing text. Requires Cursor Smear. Off by default.",
+            "animation_copy" => {
+                "Briefly fade the selected code highlight out and back after Copy (Ctrl+C, Edit menu, or Command Palette). Enabled by default. Only visible selected cells animate; editing and clipboard contents stay unchanged. Runs locally in SSH mode."
+            }
+            "animation_copy_duration_ms" => {
+                "Total time in milliseconds for the copy highlight to fade out and return (1–5000). Default: 220. A new copy restarts the animation. Has no effect when Copy Animation is off."
+            }
+            "animation_cursor_smear_when_typing" => {
+                "Apply a compact smear to the caret while typing and editing text. Requires Cursor Smear. Off by default."
+            }
             "animation_fps" => {
                 "Maximum animation frame rate (15–120). Only active effects request extra frames."
             }
             "animation_intensity" => {
                 "Strength of animation highlights, from subtle (5) to vivid (100)."
             }
-            "animation_scope_bubble_languages" => "Choose parsing styles and delimiter pairs for custom or built-in languages. Folder rules override the same User language.",
+            "animation_scope_bubble_languages" => {
+                "Choose parsing styles and delimiter pairs for custom or built-in languages. Folder rules override the same User language."
+            }
             "animation_scope_bubble_tight" => {
                 "Follow indentation and line endings closely. Turn off to keep each side outside the code without entering its internal whitespace."
             }
@@ -446,18 +613,34 @@ impl App {
             "use_tabs" => "Insert tab characters instead of spaces when indenting.",
             "word_wrap" => "Wrap long lines so they stay visible without horizontal scrolling.",
             "word_wrap_column" => "Column at which to wrap lines (0 = viewport width).",
-            "whitespace" => "Controls rendering of whitespace: None, Boundary (tabs, indentation, repeated and trailing spaces), Selection (only selected), Trailing, All.",
-            "comment_whitespace" => "Render spaces as dots and tabs as arrows inside syntax-recognized comments. Defaults to All. Inherit uses Render Whitespace; other modes override it only inside comments.",
+            "whitespace" => {
+                "Controls rendering of whitespace: None, Boundary (tabs, indentation, repeated and trailing spaces), Selection (only selected), Trailing, All."
+            }
+            "comment_whitespace" => {
+                "Render spaces as dots and tabs as arrows inside syntax-recognized comments. Defaults to All. Inherit uses Render Whitespace; other modes override it only inside comments."
+            }
             "read_only" => "Prevent text edits in the active editor tab.",
-            "quick_suggestions" => "Show suggestions from VTComplete, GPTComplete, and language servers while typing. Ctrl+Space opens the suggestion list and Alt+I requests an inline prediction.",
+            "quick_suggestions" => {
+                "Show suggestions from VTComplete, GPTComplete, and language servers while typing. Ctrl+Space opens the suggestion list and Alt+I requests an inline prediction."
+            }
             "hover_enabled" => "Show language information when the pointer rests over editor text.",
-            "vim_mode" => "Edit with Vim keybindings: Normal, Insert, Visual and Replace modes, operators, text objects, registers, macros, marks, :commands and a vimrc. Everything stays reachable from the keyboard. Off by default.",
-            "vim_ctrl_keys" => "Let Vim mode handle Ctrl keys such as Ctrl+D, Ctrl+U, Ctrl+V, Ctrl+W and Ctrl+R. Turn off to keep VTCode's Ctrl shortcuts in Normal mode.",
-            "vim_system_clipboard" => "Yank, delete and put through the system clipboard, like :set clipboard=unnamedplus.",
-            "format_on_type" => "When Language Server is the chosen formatter, adjust text after supported trigger characters. New lines are never formatted by this setting. External tools run on Format Document or Format on Save.",
+            "vim_mode" => {
+                "Edit with Vim keybindings: Normal, Insert, Visual and Replace modes, operators, text objects, registers, macros, marks, :commands and a vimrc. Everything stays reachable from the keyboard. Off by default."
+            }
+            "vim_ctrl_keys" => {
+                "Let Vim mode handle Ctrl keys such as Ctrl+D, Ctrl+U, Ctrl+V, Ctrl+W and Ctrl+R. Turn off to keep VTCode's Ctrl shortcuts in Normal mode."
+            }
+            "vim_system_clipboard" => {
+                "Yank, delete and put through the system clipboard, like :set clipboard=unnamedplus."
+            }
+            "format_on_type" => {
+                "When Language Server is the chosen formatter, adjust text after supported trigger characters. New lines are never formatted by this setting. External tools run on Format Document or Format on Save."
+            }
             "theme" => "Select the active color theme for the whole editor.",
             "explorer" => "Show or hide the left sidebar explorer.",
-            "sidebar_auto_hide" => "Automatically hide the sidebar when it is not in use. Move the pointer to its edge or the Activity Bar to reveal it. Keyboard focus and menus keep it open. Off by default.",
+            "sidebar_auto_hide" => {
+                "Automatically hide the sidebar when it is not in use. Move the pointer to its edge or the Activity Bar to reveal it. Keyboard focus and menus keep it open. Off by default."
+            }
             "show_open_editors" => "Show the Open Editors section above the file tree.",
             "minimap" => "Show or hide the minimap preview in editor panes.",
             "minimap_width" => "Set the minimap width in characters.",
@@ -467,53 +650,99 @@ impl App {
             "panel_height" => "Set the bottom panel height.",
             "sidebar_pos" => "Choose whether the sidebar is on the left or right side.",
             "zen" => "Toggle zen mode to reduce UI chrome.",
-            "activity_bar" => "Show the Activity Bar for Explorer, Search, Source Control, Remote, Extensions, and Settings.",
-            "activity_bar_position" => "Place the Activity Bar above the sidebar contents or along the left edge. Defaults to Top.",
+            "activity_bar" => {
+                "Show the Activity Bar for Explorer, Search, Source Control, Remote, Extensions, and Settings."
+            }
+            "activity_bar_position" => {
+                "Place the Activity Bar above the sidebar contents or along the left edge. Defaults to Top."
+            }
             "indent_rainbow" => "Color indentation levels for easier nesting visibility.",
-            "color_preview" => "Show inline color swatches for hex, rgb(), and rgba() color values.",
+            "color_preview" => {
+                "Show inline color swatches for hex, rgb(), and rgba() color values."
+            }
             "bracket_pair_colorization" => "Color matching bracket pairs by nesting depth.",
-            "highlight_words_across_tabs" => "Highlight the active editor's selected text or cursor word in visible tabs, split panes, and detached windows in this workspace. Uses Match Case and Whole Word from Find. Off by default.",
-            "error_lens" => "Show extra messages at the end of lines containing TODO, FIXME, HACK, BUG, or NOTE markers, plus inline language-server diagnostics. Off by default.",
-            "inlay_hints" => "Show type, parameter, and other inline hints supplied by the language server.",
-            "code_lens" => "Show actionable reference and implementation information supplied by the language server.",
-            "semantic_highlighting" => "Use semantic tokens from the language server to refine syntax colors.",
+            "highlight_words_across_tabs" => {
+                "Highlight the active editor's selected text or cursor word in visible tabs, split panes, and detached windows in this workspace. Uses Match Case and Whole Word from Find. Off by default."
+            }
+            "error_lens" => {
+                "Show extra messages at the end of lines containing TODO, FIXME, HACK, BUG, or NOTE markers, plus inline language-server diagnostics. Off by default."
+            }
+            "inlay_hints" => {
+                "Show type, parameter, and other inline hints supplied by the language server."
+            }
+            "code_lens" => {
+                "Show actionable reference and implementation information supplied by the language server."
+            }
+            "semantic_highlighting" => {
+                "Use semantic tokens from the language server to refine syntax colors."
+            }
             "sticky_scroll" => "Keep scope headers visible while scrolling large files.",
             "sticky_scroll_max" => "Maximum number of sticky scroll lines (1-5).",
             "scroll_past_end" => "Allow scrolling past the last line of the file.",
             "focus_mode" => "Dim unfocused UI regions to emphasize active content.",
             "word_count" => "Show live word count in the status bar.",
-            "screencast_mode" => "Show recent key presses in an overlay for demonstrations and recordings.",
-            "max_global_search_results" => "Maximum number of Search view results before truncating the list.",
-            "large_file_threshold_mb" => "File size in MiB above which syntax, language services, Git diff, wrapping, and whole-file analysis are paused. Editing, scrolling, saving, search, line numbers, and the bounded minimap remain available.",
-            "large_file_analysis_timeout_ms" => "Maximum time automatic rich analysis may run before those features are paused for the current file.",
+            "screencast_mode" => {
+                "Show recent key presses in an overlay for demonstrations and recordings."
+            }
+            "max_global_search_results" => {
+                "Maximum number of Search view results before truncating the list."
+            }
+            "large_file_threshold_mb" => {
+                "File size in MiB above which syntax, language services, Git diff, wrapping, and whole-file analysis are paused. Editing, scrolling, saving, search, line numbers, and the bounded minimap remain available."
+            }
+            "large_file_analysis_timeout_ms" => {
+                "Maximum time automatic rich analysis may run before those features are paused for the current file."
+            }
             "search_case_sensitive" => "Use case-sensitive matching in in-file Find.",
             "search_whole_word" => "Match complete words in in-file Find.",
             "search_regex" => "Interpret in-file Find text as a regular expression.",
-            "search_preserve_case" => "Preserve the capitalization pattern of each match when replacing within a file.",
+            "search_preserve_case" => {
+                "Preserve the capitalization pattern of each match when replacing within a file."
+            }
             "global_search_case_sensitive" => "Use case-sensitive matching in folder search.",
             "global_search_whole_word" => "Match complete words in folder search.",
             "global_search_regex" => "Interpret folder search text as a regular expression.",
-            "global_search_preserve_case" => "Preserve the capitalization pattern of each match when replacing across files.",
-            "search_debounce_ms" => "Delay in milliseconds after typing in folder search or its include/exclude fields before searching. Set to 0 to search immediately. Find within a file stays instant.",
+            "global_search_preserve_case" => {
+                "Preserve the capitalization pattern of each match when replacing across files."
+            }
+            "search_debounce_ms" => {
+                "Delay in milliseconds after typing in folder search or its include/exclude fields before searching. Set to 0 to search immediately. Find within a file stays instant."
+            }
             "rulers" => "Choose visible column rulers (for example 80 and 120).",
             "trim_trailing" => "Remove trailing whitespace when saving files.",
-            "format_on_save" => "Run the selected formatter before saving. Choose a formatter the first time you format each language.",
-            "formatters" => "Choose and remember a formatter for each language: Language Server, External Command, or Disabled. Independent of completion and diagnostics. Configure the executable and arguments here.",
-            "language_associations" => "Associate a filename or extension with a file type for file icons, syntax highlighting, language servers, and formatting. Supports *.py, *.d.ts, *.{c,h}, Dockerfile.*, and exact filenames. Exact filenames take priority over patterns; explicit associations override built-in file types. Save globally or for this folder; remove a rule to restore the inherited or automatic type.",
+            "format_on_save" => {
+                "Run the selected formatter before saving. Choose a formatter the first time you format each language."
+            }
+            "formatters" => {
+                "Choose and remember a formatter for each language: Language Server, External Command, or Disabled. Independent of completion and diagnostics. Configure the executable and arguments here."
+            }
+            "language_associations" => {
+                "Associate a filename or extension with a file type for file icons, syntax highlighting, language servers, and formatting. Supports *.py, *.d.ts, *.{c,h}, Dockerfile.*, and exact filenames. Exact filenames take priority over patterns; explicit associations override built-in file types. Save globally or for this folder; remove a rule to restore the inherited or automatic type."
+            }
             "final_newline" => "Ensure a newline exists at the end of saved files.",
             "indent_guides" => "Show vertical guides at indentation levels.",
             "breadcrumbs" => "Show breadcrumbs navigation above the editor.",
             "status_bar" => "Show or hide the status bar at the bottom.",
             "tab_bar" => "Show or hide the tab bar at the top of the editor.",
-            "preview_tabs" => "Browse files in Explorer and workspace search using a reusable italic preview tab. Click an Explorer file again, double-click its tab, or edit it to keep it open.",
-            "mouse_back_forward" => "Use the mouse side buttons to go back and forward through editor locations.",
+            "preview_tabs" => {
+                "Browse files in Explorer and workspace search using a reusable italic preview tab. Click an Explorer file again, double-click its tab, or edit it to keep it open."
+            }
+            "mouse_back_forward" => {
+                "Use the mouse side buttons to go back and forward through editor locations."
+            }
             "menu_bar" => "Show or hide the menu bar.",
             "cursor_style" => "Set the cursor shape: Line, Block, or Underline.",
             "cursor_blinking" => "Enable cursor blinking animation.",
-            "cursor_surrounding_lines" => "Keep at least this many visible lines above and below the cursor while scrolling.",
-            "scroll_speed" => "Rows per mouse wheel step (1–10). Document scrolling animates steps above one row.",
+            "cursor_surrounding_lines" => {
+                "Keep at least this many visible lines above and below the cursor while scrolling."
+            }
+            "scroll_speed" => {
+                "Rows per mouse wheel step (1–10). Document scrolling animates steps above one row."
+            }
             "auto_save_mode" => "Controls when files are automatically saved.",
-            "auto_save_delay" => "Delay in milliseconds before auto-saving after the last edit (minimum 100).",
+            "auto_save_delay" => {
+                "Delay in milliseconds before auto-saving after the last edit (minimum 100)."
+            }
             _ => "",
         }
     }
@@ -577,7 +806,11 @@ impl App {
         lines
     }
 
-    pub(crate) fn setting_description_lines(label: &str, setting_id: &str, width: usize) -> Vec<String> {
+    pub(crate) fn setting_description_lines(
+        label: &str,
+        setting_id: &str,
+        width: usize,
+    ) -> Vec<String> {
         let desc = Self::setting_description(setting_id);
         let mut lines = vec![label.to_string()];
         if !desc.is_empty() {
@@ -618,21 +851,29 @@ impl App {
                     .then_some(AnimationEffect::ScopeConnector)
             });
         let control_heading = match setting_id {
-            "animation_duration_ms" | "animation_fps" | "animation_intensity" => Some("heading_animation_timing"),
+            "animation_duration_ms" | "animation_fps" | "animation_intensity" => {
+                Some("heading_animation_timing")
+            }
             _ => None,
         };
-        ANIMATION_SECTIONS.iter().find_map(|(label, heading_id, effects)| {
-            (control_heading == Some(*heading_id)
-                || effect.is_some_and(|effect| effects.contains(&effect)))
+        ANIMATION_SECTIONS
+            .iter()
+            .find_map(|(label, heading_id, effects)| {
+                (control_heading == Some(*heading_id)
+                    || effect.is_some_and(|effect| effects.contains(&effect)))
                 .then_some(*label)
-        })
+            })
     }
 
     pub(crate) fn settings_filtered_indices_for_category(&self, category_idx: usize) -> Vec<usize> {
         self.settings_filtered_indices_with_items(category_idx, &self.settings_items())
     }
 
-    pub(crate) fn settings_filtered_indices_with_items(&self, category_idx: usize, items: &[(String, String, String)]) -> Vec<usize> {
+    pub(crate) fn settings_filtered_indices_with_items(
+        &self,
+        category_idx: usize,
+        items: &[(String, String, String)],
+    ) -> Vec<usize> {
         let query = self.settings_editor_search.trim();
 
         // VS Code's Settings search is global: the category tree scopes normal
@@ -654,12 +895,21 @@ impl App {
                     let child = Self::settings_section_for_id(id).unwrap_or("");
                     let searchable_id = id.replace('_', " ");
                     crate::app::contains_ignore_case(label, query)
-                        || (id.starts_with("kb_") && (crate::app::contains_ignore_case(value, query)
-                            || id.strip_prefix("kb_").and_then(|index| index.parse::<usize>().ok())
-                                .and_then(|index| self.keybindings.get(index))
-                                .is_some_and(|binding| crate::app::contains_ignore_case(binding.id, query)
-                                    || crate::app::contains_ignore_case(binding.when().text(), query))))
-                        || Self::setting_json_key(id).is_some_and(|key| crate::app::contains_ignore_case(key, query))
+                        || (id.starts_with("kb_")
+                            && (crate::app::contains_ignore_case(value, query)
+                                || id
+                                    .strip_prefix("kb_")
+                                    .and_then(|index| index.parse::<usize>().ok())
+                                    .and_then(|index| self.keybindings.get(index))
+                                    .is_some_and(|binding| {
+                                        crate::app::contains_ignore_case(binding.id, query)
+                                            || crate::app::contains_ignore_case(
+                                                binding.when().text(),
+                                                query,
+                                            )
+                                    })))
+                        || Self::setting_json_key(id)
+                            .is_some_and(|key| crate::app::contains_ignore_case(key, query))
                         || crate::app::contains_ignore_case(Self::setting_description(id), query)
                         || crate::app::contains_ignore_case(&searchable_id, query)
                         || crate::app::contains_ignore_case(category, query)
@@ -703,7 +953,8 @@ impl App {
                     return false;
                 }
                 if let Some(section) = self.settings_selected_section(category_idx) {
-                    return !id.starts_with("heading_") && Self::settings_section_for_id(id) == Some(section);
+                    return !id.starts_with("heading_")
+                        && Self::settings_section_for_id(id) == Some(section);
                 }
                 !id.starts_with("heading_")
                     || id.starts_with("heading_kb_")
@@ -715,16 +966,22 @@ impl App {
 
     pub(crate) fn ensure_settings_selection_visible(&mut self) {
         let items = self.settings_items();
-        let filtered = self.settings_filtered_indices_with_items(self.settings_category_selected, &items);
+        let filtered =
+            self.settings_filtered_indices_with_items(self.settings_category_selected, &items);
         if filtered.is_empty() {
             self.settings_editor_scroll = 0;
             self.settings_reveal_selected = false;
             return;
         }
         if !filtered.contains(&self.settings_selected)
-            || items.get(self.settings_selected).is_none_or(|(_, _, id)| id.starts_with("heading_"))
+            || items
+                .get(self.settings_selected)
+                .is_none_or(|(_, _, id)| id.starts_with("heading_"))
         {
-            if let Some(&first) = filtered.iter().find(|&&idx| !items[idx].2.starts_with("heading_")) {
+            if let Some(&first) = filtered
+                .iter()
+                .find(|&&idx| !items[idx].2.starts_with("heading_"))
+            {
                 self.settings_selected = first;
             }
             self.settings_editor_scroll = 0;
@@ -737,13 +994,22 @@ impl App {
             return;
         };
         self.settings_reveal_selected = false;
-        let layout = self.settings_layout_cache.get(&items, &filtered, area.width.saturating_sub(3) as usize);
+        let layout = self.settings_layout_cache.get(
+            &items,
+            &filtered,
+            area.width.saturating_sub(3) as usize,
+        );
         let height = area.height as usize;
         let mut scroll = self.settings_editor_scroll.min(layout.max_scroll(height));
         if let Some(row) = layout.row_for_item(self.settings_selected) {
             let control = row.start + row.control;
-            if control < scroll { scroll = row.start.max(control.saturating_add(1).saturating_sub(height)); }
-            else if control >= scroll + height { scroll = control + 1 - height; }
+            if control < scroll {
+                scroll = row
+                    .start
+                    .max(control.saturating_add(1).saturating_sub(height));
+            } else if control >= scroll + height {
+                scroll = control + 1 - height;
+            }
         }
         self.settings_editor_scroll = scroll.min(layout.max_scroll(height));
     }
@@ -767,123 +1033,464 @@ impl App {
         let rulers_str = if self.rulers.is_empty() {
             "None".to_string()
         } else {
-            self.rulers.iter().enumerate().fold(String::new(), |mut acc, (i, r)| {
-                if i > 0 { acc.push_str(", "); }
-                acc.push_str(&r.to_string());
-                acc
-            })
+            self.rulers
+                .iter()
+                .enumerate()
+                .fold(String::new(), |mut acc, (i, r)| {
+                    if i > 0 {
+                        acc.push_str(", ");
+                    }
+                    acc.push_str(&r.to_string());
+                    acc
+                })
         };
         let mut items: Vec<(String, String, String)> = vec![
             // === Editor ===
-            ("── Editor ──".into(), String::new(), "heading_editor".into()),
+            (
+                "── Editor ──".into(),
+                String::new(),
+                "heading_editor".into(),
+            ),
             ("Tab Size".into(), tab_size.to_string(), "tab_size".into()),
-            ("Indent Using Tabs".into(), on_off(use_tabs), "use_tabs".into()),
+            (
+                "Indent Using Tabs".into(),
+                on_off(use_tabs),
+                "use_tabs".into(),
+            ),
             ("Word Wrap".into(), on_off(word_wrap), "word_wrap".into()),
-            ("Word Wrap Column".into(), if self.word_wrap_column == 0 { "viewport".to_string() } else { self.word_wrap_column.to_string() }, "word_wrap_column".into()),
-            ("Render Whitespace".into(), whitespace.name().to_string(), "whitespace".into()),
-            ("Whitespace in Comments".into(), self.comment_whitespace_mode.map_or("Inherit", |mode| mode.name()).to_string(), "comment_whitespace".into()),
+            (
+                "Word Wrap Column".into(),
+                if self.word_wrap_column == 0 {
+                    "viewport".to_string()
+                } else {
+                    self.word_wrap_column.to_string()
+                },
+                "word_wrap_column".into(),
+            ),
+            (
+                "Render Whitespace".into(),
+                whitespace.name().to_string(),
+                "whitespace".into(),
+            ),
+            (
+                "Whitespace in Comments".into(),
+                self.comment_whitespace_mode
+                    .map_or("Inherit", |mode| mode.name())
+                    .to_string(),
+                "comment_whitespace".into(),
+            ),
             ("Read Only".into(), on_off(read_only), "read_only".into()),
-            ("Vim Mode".into(), on_off(self.vim.enabled), "vim_mode".into()),
-            ("Vim: Use Ctrl Keys".into(), on_off(self.vim_ctrl_keys_setting), "vim_ctrl_keys".into()),
-            ("Vim: Use System Clipboard".into(), on_off(self.vim_clipboard_setting), "vim_system_clipboard".into()),
-            ("Hover".into(), on_off(self.hover_enabled), "hover_enabled".into()),
-            ("Format On Type".into(), on_off(self.on_type_formatting_enabled), "format_on_type".into()),
+            (
+                "Vim Mode".into(),
+                on_off(self.vim.enabled),
+                "vim_mode".into(),
+            ),
+            (
+                "Vim: Use Ctrl Keys".into(),
+                on_off(self.vim_ctrl_keys_setting),
+                "vim_ctrl_keys".into(),
+            ),
+            (
+                "Vim: Use System Clipboard".into(),
+                on_off(self.vim_clipboard_setting),
+                "vim_system_clipboard".into(),
+            ),
+            (
+                "Hover".into(),
+                on_off(self.hover_enabled),
+                "hover_enabled".into(),
+            ),
+            (
+                "Format On Type".into(),
+                on_off(self.on_type_formatting_enabled),
+                "format_on_type".into(),
+            ),
             // === Appearance ===
-            ("── Appearance ──".into(), String::new(), "heading_appearance".into()),
+            (
+                "── Appearance ──".into(),
+                String::new(),
+                "heading_appearance".into(),
+            ),
             ("Color Theme".into(), theme_name.to_string(), "theme".into()),
-            ("Show Explorer".into(), on_off(self.show_explorer), "explorer".into()),
-            ("Auto-hide Sidebar".into(), on_off(self.sidebar_auto_hide.enabled), "sidebar_auto_hide".into()),
-            ("Show Open Editors".into(), on_off(self.show_open_editors), "show_open_editors".into()),
-            ("Show Minimap".into(), on_off(self.show_minimap), "minimap".into()),
-            ("Minimap Width".into(), self.minimap_width.to_string(), "minimap_width".into()),
-            ("Show Line Numbers".into(), on_off(self.show_line_numbers), "line_numbers".into()),
-            ("Relative Line Numbers".into(), on_off(self.relative_line_numbers), "relative_lines".into()),
-            ("Show Indent Guides".into(), on_off(self.show_indent_guides), "indent_guides".into()),
-            ("Show Activity Bar".into(), on_off(show_activity_bar), "activity_bar".into()),
-            ("Activity Bar Position".into(), self.activity_bar_position.label().into(), "activity_bar_position".into()),
-            ("Show Breadcrumbs".into(), on_off(self.show_breadcrumbs), "breadcrumbs".into()),
-            ("Show Status Bar".into(), on_off(self.show_status_bar), "status_bar".into()),
-            ("Show Tab Bar".into(), on_off(self.show_tab_bar), "tab_bar".into()),
-            ("Preview Tabs".into(), on_off(self.enable_preview_tabs), "preview_tabs".into()),
-            ("Mouse Back/Forward Navigation".into(), on_off(self.mouse_back_forward_to_navigate), "mouse_back_forward".into()),
-            ("Show Menu Bar".into(), on_off(self.show_menu_bar), "menu_bar".into()),
-            ("Show Bottom Panel".into(), on_off(self.show_panel), "panel".into()),
-            ("Panel Height".into(), self.panel_height.to_string(), "panel_height".into()),
-            ("Sidebar Position".into(), if self.sidebar_right { "Right" } else { "Left" }.into(), "sidebar_pos".into()),
+            (
+                "Show Explorer".into(),
+                on_off(self.show_explorer),
+                "explorer".into(),
+            ),
+            (
+                "Auto-hide Sidebar".into(),
+                on_off(self.sidebar_auto_hide.enabled),
+                "sidebar_auto_hide".into(),
+            ),
+            (
+                "Show Open Editors".into(),
+                on_off(self.show_open_editors),
+                "show_open_editors".into(),
+            ),
+            (
+                "Show Minimap".into(),
+                on_off(self.show_minimap),
+                "minimap".into(),
+            ),
+            (
+                "Minimap Width".into(),
+                self.minimap_width.to_string(),
+                "minimap_width".into(),
+            ),
+            (
+                "Show Line Numbers".into(),
+                on_off(self.show_line_numbers),
+                "line_numbers".into(),
+            ),
+            (
+                "Relative Line Numbers".into(),
+                on_off(self.relative_line_numbers),
+                "relative_lines".into(),
+            ),
+            (
+                "Show Indent Guides".into(),
+                on_off(self.show_indent_guides),
+                "indent_guides".into(),
+            ),
+            (
+                "Show Activity Bar".into(),
+                on_off(show_activity_bar),
+                "activity_bar".into(),
+            ),
+            (
+                "Activity Bar Position".into(),
+                self.activity_bar_position.label().into(),
+                "activity_bar_position".into(),
+            ),
+            (
+                "Show Breadcrumbs".into(),
+                on_off(self.show_breadcrumbs),
+                "breadcrumbs".into(),
+            ),
+            (
+                "Show Status Bar".into(),
+                on_off(self.show_status_bar),
+                "status_bar".into(),
+            ),
+            (
+                "Show Tab Bar".into(),
+                on_off(self.show_tab_bar),
+                "tab_bar".into(),
+            ),
+            (
+                "Preview Tabs".into(),
+                on_off(self.enable_preview_tabs),
+                "preview_tabs".into(),
+            ),
+            (
+                "Mouse Back/Forward Navigation".into(),
+                on_off(self.mouse_back_forward_to_navigate),
+                "mouse_back_forward".into(),
+            ),
+            (
+                "Show Menu Bar".into(),
+                on_off(self.show_menu_bar),
+                "menu_bar".into(),
+            ),
+            (
+                "Show Bottom Panel".into(),
+                on_off(self.show_panel),
+                "panel".into(),
+            ),
+            (
+                "Panel Height".into(),
+                self.panel_height.to_string(),
+                "panel_height".into(),
+            ),
+            (
+                "Sidebar Position".into(),
+                if self.sidebar_right { "Right" } else { "Left" }.into(),
+                "sidebar_pos".into(),
+            ),
             ("Zen Mode".into(), on_off(self.zen_mode), "zen".into()),
             // === Features ===
-            ("── Features ──".into(), String::new(), "heading_features".into()),
-            ("Indent Rainbow".into(), on_off(self.indent_rainbow), "indent_rainbow".into()),
-            ("Color Preview".into(), on_off(self.show_color_preview), "color_preview".into()),
-            ("Bracket Pair Colorization".into(), on_off(self.bracket_pair_colorization), "bracket_pair_colorization".into()),
-            ("Highlight Words Across Tabs".into(), on_off(self.highlight_words_across_tabs), "highlight_words_across_tabs".into()),
-            ("Error Lens".into(), on_off(self.error_lens), "error_lens".into()),
-            ("Inlay Hints".into(), on_off(self.show_inlay_hints), "inlay_hints".into()),
-            ("Code Lens".into(), on_off(self.show_code_lenses), "code_lens".into()),
-            ("Semantic Highlighting".into(), on_off(self.show_semantic_tokens), "semantic_highlighting".into()),
-            ("Sticky Scroll".into(), on_off(self.sticky_scroll), "sticky_scroll".into()),
-            ("Sticky Scroll Max Lines".into(), self.sticky_scroll_max.to_string(), "sticky_scroll_max".into()),
-            ("Scroll Past End".into(), on_off(self.scroll_past_end), "scroll_past_end".into()),
-            ("Focus Mode".into(), on_off(self.focus_mode), "focus_mode".into()),
-            ("Word Count in Status Bar".into(), on_off(self.show_word_count), "word_count".into()),
-            ("Screencast Mode".into(), on_off(self.screencast_mode), "screencast_mode".into()),
+            (
+                "── Features ──".into(),
+                String::new(),
+                "heading_features".into(),
+            ),
+            (
+                "Indent Rainbow".into(),
+                on_off(self.indent_rainbow),
+                "indent_rainbow".into(),
+            ),
+            (
+                "Color Preview".into(),
+                on_off(self.show_color_preview),
+                "color_preview".into(),
+            ),
+            (
+                "Bracket Pair Colorization".into(),
+                on_off(self.bracket_pair_colorization),
+                "bracket_pair_colorization".into(),
+            ),
+            (
+                "Highlight Words Across Tabs".into(),
+                on_off(self.highlight_words_across_tabs),
+                "highlight_words_across_tabs".into(),
+            ),
+            (
+                "Error Lens".into(),
+                on_off(self.error_lens),
+                "error_lens".into(),
+            ),
+            (
+                "Inlay Hints".into(),
+                on_off(self.show_inlay_hints),
+                "inlay_hints".into(),
+            ),
+            (
+                "Code Lens".into(),
+                on_off(self.show_code_lenses),
+                "code_lens".into(),
+            ),
+            (
+                "Semantic Highlighting".into(),
+                on_off(self.show_semantic_tokens),
+                "semantic_highlighting".into(),
+            ),
+            (
+                "Sticky Scroll".into(),
+                on_off(self.sticky_scroll),
+                "sticky_scroll".into(),
+            ),
+            (
+                "Sticky Scroll Max Lines".into(),
+                self.sticky_scroll_max.to_string(),
+                "sticky_scroll_max".into(),
+            ),
+            (
+                "Scroll Past End".into(),
+                on_off(self.scroll_past_end),
+                "scroll_past_end".into(),
+            ),
+            (
+                "Focus Mode".into(),
+                on_off(self.focus_mode),
+                "focus_mode".into(),
+            ),
+            (
+                "Word Count in Status Bar".into(),
+                on_off(self.show_word_count),
+                "word_count".into(),
+            ),
+            (
+                "Screencast Mode".into(),
+                on_off(self.screencast_mode),
+                "screencast_mode".into(),
+            ),
             ("Column Rulers".into(), rulers_str, "rulers".into()),
             // === Search ===
-            ("── Search ──".into(), String::new(), "heading_search".into()),
-            ("Find: Match Case".into(), on_off(self.search_case_sensitive), "search_case_sensitive".into()),
-            ("Find: Match Whole Word".into(), on_off(self.search_whole_word), "search_whole_word".into()),
-            ("Find: Use Regular Expression".into(), on_off(self.search_regex), "search_regex".into()),
-            ("Find: Preserve Case on Replace".into(), on_off(self.search_preserve_case), "search_preserve_case".into()),
-            ("Folder Search: Match Case".into(), on_off(self.global_search_case_sensitive), "global_search_case_sensitive".into()),
-            ("Folder Search: Match Whole Word".into(), on_off(self.global_search_whole_word), "global_search_whole_word".into()),
-            ("Folder Search: Use Regular Expression".into(), on_off(self.global_search_regex), "global_search_regex".into()),
-            ("Folder Search: Preserve Case on Replace".into(), on_off(self.global_search_preserve_case), "global_search_preserve_case".into()),
-            ("Search: Debounce (ms)".into(), self.search_debounce_ms.to_string(), "search_debounce_ms".into()),
-            ("Search: Exclude".into(), String::new(), "search_exclude".into()),
-            ("Files: Exclude".into(), String::new(), "files_exclude".into()),
-            ("Search View Max Results".into(), self.max_global_search_results.to_string(), "max_global_search_results".into()),
+            (
+                "── Search ──".into(),
+                String::new(),
+                "heading_search".into(),
+            ),
+            (
+                "Find: Match Case".into(),
+                on_off(self.search_case_sensitive),
+                "search_case_sensitive".into(),
+            ),
+            (
+                "Find: Match Whole Word".into(),
+                on_off(self.search_whole_word),
+                "search_whole_word".into(),
+            ),
+            (
+                "Find: Use Regular Expression".into(),
+                on_off(self.search_regex),
+                "search_regex".into(),
+            ),
+            (
+                "Find: Preserve Case on Replace".into(),
+                on_off(self.search_preserve_case),
+                "search_preserve_case".into(),
+            ),
+            (
+                "Folder Search: Match Case".into(),
+                on_off(self.global_search_case_sensitive),
+                "global_search_case_sensitive".into(),
+            ),
+            (
+                "Folder Search: Match Whole Word".into(),
+                on_off(self.global_search_whole_word),
+                "global_search_whole_word".into(),
+            ),
+            (
+                "Folder Search: Use Regular Expression".into(),
+                on_off(self.global_search_regex),
+                "global_search_regex".into(),
+            ),
+            (
+                "Folder Search: Preserve Case on Replace".into(),
+                on_off(self.global_search_preserve_case),
+                "global_search_preserve_case".into(),
+            ),
+            (
+                "Search: Debounce (ms)".into(),
+                self.search_debounce_ms.to_string(),
+                "search_debounce_ms".into(),
+            ),
+            (
+                "Search: Exclude".into(),
+                String::new(),
+                "search_exclude".into(),
+            ),
+            (
+                "Files: Exclude".into(),
+                String::new(),
+                "files_exclude".into(),
+            ),
+            (
+                "Search View Max Results".into(),
+                self.max_global_search_results.to_string(),
+                "max_global_search_results".into(),
+            ),
             // === Save ===
             ("── Save ──".into(), String::new(), "heading_save".into()),
-            ("Large File Threshold (MB)".into(), self.large_file_threshold_mb.to_string(), "large_file_threshold_mb".into()),
-            ("Rich Analysis Timeout (ms)".into(), self.large_file_analysis_timeout_ms.to_string(), "large_file_analysis_timeout_ms".into()),
-            ("Trim Trailing Whitespace".into(), on_off(self.trim_trailing_on_save), "trim_trailing".into()),
-            ("Format On Save".into(), on_off(self.format_on_save), "format_on_save".into()),
-            ("Formatters".into(), "Configure…".into(), "formatters".into()),
-            ("File Associations".into(), "Manage Associations…".into(), "language_associations".into()),
-            ("Insert Final Newline".into(), on_off(self.insert_final_newline), "final_newline".into()),
+            (
+                "Large File Threshold (MB)".into(),
+                self.large_file_threshold_mb.to_string(),
+                "large_file_threshold_mb".into(),
+            ),
+            (
+                "Rich Analysis Timeout (ms)".into(),
+                self.large_file_analysis_timeout_ms.to_string(),
+                "large_file_analysis_timeout_ms".into(),
+            ),
+            (
+                "Trim Trailing Whitespace".into(),
+                on_off(self.trim_trailing_on_save),
+                "trim_trailing".into(),
+            ),
+            (
+                "Format On Save".into(),
+                on_off(self.format_on_save),
+                "format_on_save".into(),
+            ),
+            (
+                "Formatters".into(),
+                "Configure…".into(),
+                "formatters".into(),
+            ),
+            (
+                "File Associations".into(),
+                "Manage Associations…".into(),
+                "language_associations".into(),
+            ),
+            (
+                "Insert Final Newline".into(),
+                on_off(self.insert_final_newline),
+                "final_newline".into(),
+            ),
             // === Cursor & Auto Save ===
-            ("── Cursor & Auto Save ──".into(), String::new(), "heading_cursor".into()),
-            ("Cursor Style".into(), match self.cursor_style {
-                crate::app::CursorStyle::Line => "Line",
-                crate::app::CursorStyle::Block => "Block",
-                crate::app::CursorStyle::Underline => "Underline",
-            }.into(), "cursor_style".into()),
-            ("Cursor Blinking".into(), on_off(self.cursor_blinking), "cursor_blinking".into()),
-            ("Cursor Surrounding Lines".into(), self.default_cursor_surrounding_lines.to_string(), "cursor_surrounding_lines".into()),
-            ("Scroll Speed".into(), self.scroll_speed.to_string(), "scroll_speed".into()),
-            ("Auto Save".into(), match self.auto_save {
-                AutoSaveMode::Off => "Off",
-                AutoSaveMode::AfterDelay => "After Delay",
-                AutoSaveMode::OnFocusChange => "On Focus Change",
-                AutoSaveMode::OnWindowChange => "On Window Change",
-            }.into(), "auto_save_mode".into()),
-            ("Auto Save Delay (ms)".into(), self.auto_save_delay.to_string(), "auto_save_delay".into()),
+            (
+                "── Cursor & Auto Save ──".into(),
+                String::new(),
+                "heading_cursor".into(),
+            ),
+            (
+                "Cursor Style".into(),
+                match self.cursor_style {
+                    crate::app::CursorStyle::Line => "Line",
+                    crate::app::CursorStyle::Block => "Block",
+                    crate::app::CursorStyle::Underline => "Underline",
+                }
+                .into(),
+                "cursor_style".into(),
+            ),
+            (
+                "Cursor Blinking".into(),
+                on_off(self.cursor_blinking),
+                "cursor_blinking".into(),
+            ),
+            (
+                "Cursor Surrounding Lines".into(),
+                self.default_cursor_surrounding_lines.to_string(),
+                "cursor_surrounding_lines".into(),
+            ),
+            (
+                "Scroll Speed".into(),
+                self.scroll_speed.to_string(),
+                "scroll_speed".into(),
+            ),
+            (
+                "Auto Save".into(),
+                match self.auto_save {
+                    AutoSaveMode::Off => "Off",
+                    AutoSaveMode::AfterDelay => "After Delay",
+                    AutoSaveMode::OnFocusChange => "On Focus Change",
+                    AutoSaveMode::OnWindowChange => "On Window Change",
+                }
+                .into(),
+                "auto_save_mode".into(),
+            ),
+            (
+                "Auto Save Delay (ms)".into(),
+                self.auto_save_delay.to_string(),
+                "auto_save_delay".into(),
+            ),
         ];
-        items.push(("Configured Agents".into(), " Manage Agents… (0) ".into(), "acp_agents".into()));
-        items.push(("Enable Language Servers".into(), on_off(self.lsp_enabled), "lsp_enabled".into()));
-        items.push(("Enable Source Control".into(), on_off(self.source_control_enabled), "source_control_enabled".into()));
-        items.push(("Show Untracked Files".into(), on_off(self.sc_visibility.untracked), "source_control_show_untracked".into()));
-        items.push(("Diff Algorithm".into(), self.diff_algorithm.label().into(), "diff_algorithm".into()));
-        items.push(("Diagnostic Delay (ms)".into(), self.lsp_manager.diagnostic_publication.delay_ms().to_string(), "lsp_diagnostic_delay_ms".into()));
-        items.push(("Language Server Setup".into(), " Manage Servers… (0) ".into(), "lsp_servers".into()));
+        items.push((
+            "Configured Agents".into(),
+            " Manage Agents… (0) ".into(),
+            "acp_agents".into(),
+        ));
+        items.push((
+            "Enable Language Servers".into(),
+            on_off(self.lsp_enabled),
+            "lsp_enabled".into(),
+        ));
+        items.push((
+            "Enable Source Control".into(),
+            on_off(self.source_control_enabled),
+            "source_control_enabled".into(),
+        ));
+        items.push((
+            "Show Untracked Files".into(),
+            on_off(self.sc_visibility.untracked),
+            "source_control_show_untracked".into(),
+        ));
+        items.push((
+            "Diff Algorithm".into(),
+            self.diff_algorithm.label().into(),
+            "diff_algorithm".into(),
+        ));
+        items.push((
+            "Diagnostic Delay (ms)".into(),
+            self.lsp_manager
+                .diagnostic_publication
+                .delay_ms()
+                .to_string(),
+            "lsp_diagnostic_delay_ms".into(),
+        ));
+        items.push((
+            "Language Server Setup".into(),
+            " Manage Servers… (0) ".into(),
+            "lsp_servers".into(),
+        ));
         for &(label, heading_id, effects) in ANIMATION_SECTIONS {
             items.push((format!("── {label} ──"), String::new(), heading_id.into()));
             if heading_id == "heading_animation_editing" {
                 let scoped = self.selected_scope_settings();
-                items.push(("Copy Animation".into(), on_off(scoped.animation_copy.unwrap_or(true)), "animation_copy".into()));
-                items.push(("Copy Animation Duration (ms)".into(),
-                    scoped.animation_copy_duration_ms.unwrap_or(crate::copy_animation::DEFAULT_DURATION_MS).to_string(),
-                    "animation_copy_duration_ms".into()));
+                items.push((
+                    "Copy Animation".into(),
+                    on_off(scoped.animation_copy.unwrap_or(true)),
+                    "animation_copy".into(),
+                ));
+                items.push((
+                    "Copy Animation Duration (ms)".into(),
+                    scoped
+                        .animation_copy_duration_ms
+                        .unwrap_or(crate::copy_animation::DEFAULT_DURATION_MS)
+                        .to_string(),
+                    "animation_copy_duration_ms".into(),
+                ));
             }
             for &effect in effects {
                 items.push((
@@ -940,12 +1547,24 @@ impl App {
             }
         }
         items.extend([
-            ("── Autocomplete ──".into(), String::new(), "heading_autocomplete".into()),
-            ("Show Suggestions While Typing".into(), on_off(self.quick_suggestions), "quick_suggestions".into()),
+            (
+                "── Autocomplete ──".into(),
+                String::new(),
+                "heading_autocomplete".into(),
+            ),
+            (
+                "Show Suggestions While Typing".into(),
+                on_off(self.quick_suggestions),
+                "quick_suggestions".into(),
+            ),
         ]);
         items.extend(self.completion_setting_items());
         // === Keyboard Shortcuts ===
-        items.push(("── Keyboard Shortcuts ──".into(), String::new(), "heading_shortcuts".into()));
+        items.push((
+            "── Keyboard Shortcuts ──".into(),
+            String::new(),
+            "heading_shortcuts".into(),
+        ));
         for (label, value, setting_id) in &self.keybinding_settings_cache {
             items.push((label.clone(), value.clone(), setting_id.clone()));
         }
@@ -954,7 +1573,11 @@ impl App {
         let scoped = serde_json::to_value(selected_scope).ok();
         for (_, value, id) in &mut items {
             if id.starts_with("kb_") {
-                if let Some(binding) = id.strip_prefix("kb_").and_then(|index| index.parse::<usize>().ok()).and_then(|index| scoped_bindings.get(index)) {
+                if let Some(binding) = id
+                    .strip_prefix("kb_")
+                    .and_then(|index| index.parse::<usize>().ok())
+                    .and_then(|index| scoped_bindings.get(index))
+                {
                     *value = binding.display();
                 }
                 continue;
@@ -994,7 +1617,10 @@ mod tests {
 
         let items = app.settings_items();
         let all: Vec<_> = (0..items.len()).collect();
-        assert_eq!(app.settings_filtered_indices_with_items(SETTINGS_ALL_CATEGORY, &items), all);
+        assert_eq!(
+            app.settings_filtered_indices_with_items(SETTINGS_ALL_CATEGORY, &items),
+            all
+        );
         assert!(items.iter().any(|(_, _, id)| id.starts_with("kb_")));
         assert!(all.contains(&app.settings_selected));
         assert!(!items[app.settings_selected].2.starts_with("heading_"));
@@ -1004,7 +1630,10 @@ mod tests {
         assert!(!matches.is_empty());
         assert!(matches.iter().all(|&index| items[index].2 == "tab_size"));
         app.settings_editor_search.clear();
-        assert_eq!(app.settings_filtered_indices_with_items(SETTINGS_ALL_CATEGORY, &items), all);
+        assert_eq!(
+            app.settings_filtered_indices_with_items(SETTINGS_ALL_CATEGORY, &items),
+            all
+        );
     }
 
     #[test]
@@ -1014,8 +1643,22 @@ mod tests {
         assert_eq!(App::settings_categories()[7], "Animations");
         let items = app.settings_items();
         let filtered = app.settings_filtered_indices_for_category(7);
-        assert_eq!(items.iter().find(|(_, _, id)| id == "animation_copy").unwrap().1, "On");
-        assert_eq!(items.iter().find(|(_, _, id)| id == "animation_copy_duration_ms").unwrap().1, "220");
+        assert_eq!(
+            items
+                .iter()
+                .find(|(_, _, id)| id == "animation_copy")
+                .unwrap()
+                .1,
+            "On"
+        );
+        assert_eq!(
+            items
+                .iter()
+                .find(|(_, _, id)| id == "animation_copy_duration_ms")
+                .unwrap()
+                .1,
+            "220"
+        );
         assert_eq!(
             filtered
                 .iter()
@@ -1028,9 +1671,19 @@ mod tests {
             assert_eq!(App::setting_field_kind(effect.id()), "checkbox");
             assert_eq!(App::setting_json_key(effect.id()), Some(effect.json_key()));
             assert_eq!(App::setting_description(effect.id()), effect.description());
-            let index = items.iter().position(|(_, _, id)| id == effect.id()).unwrap();
+            let index = items
+                .iter()
+                .position(|(_, _, id)| id == effect.id())
+                .unwrap();
             assert!(filtered.contains(&index));
-            assert_eq!(items[index].1, if effect == AnimationEffect::TabSlide { "On" } else { "Off" });
+            assert_eq!(
+                items[index].1,
+                if effect == AnimationEffect::TabSlide {
+                    "On"
+                } else {
+                    "Off"
+                }
+            );
             for id in [effect.duration_id(), effect.intensity_id()] {
                 assert_eq!(App::setting_field_kind(id), "number");
                 assert_eq!(App::settings_category_for_id(id), 7);
@@ -1056,7 +1709,10 @@ mod tests {
                 | "animation_scope_bubble_glow"
                 | "animation_scope_bubble_glow_duration_ms"
         )));
-        for (id, expected) in [("animation_scope_bubble_tight", "On"), ("animation_scope_bubble_fill", "Off")] {
+        for (id, expected) in [
+            ("animation_scope_bubble_tight", "On"),
+            ("animation_scope_bubble_fill", "Off"),
+        ] {
             assert_eq!(App::setting_field_kind(id), "checkbox");
             assert_eq!(
                 items
@@ -1068,7 +1724,10 @@ mod tests {
             );
         }
         app.settings_category_collapsed[7] = false;
-        assert!(app.settings_category_visual_rows().contains(&(7, true, "Code Structure")));
+        assert!(
+            app.settings_category_visual_rows()
+                .contains(&(7, true, "Code Structure"))
+        );
     }
 
     #[test]
@@ -1077,7 +1736,11 @@ mod tests {
         app.settings_editor_search = "endif".into();
         let items = app.settings_items();
         let filtered = app.settings_filtered_indices_for_category(0);
-        assert!(filtered.iter().any(|&index| items[index].2 == "animation_scope_connector"));
+        assert!(
+            filtered
+                .iter()
+                .any(|&index| items[index].2 == "animation_scope_connector")
+        );
         app.settings_editor_search = "code structure".into();
         let filtered = app.settings_filtered_indices_for_category(0);
         let ids: Vec<_> = filtered
@@ -1239,10 +1902,19 @@ mod tests {
         assert_eq!(App::setting_field_kind("auto_save_delay"), "number");
         assert_eq!(App::setting_field_kind("scroll_speed"), "number");
         assert_eq!(App::setting_field_kind("sticky_scroll_max"), "number");
-        assert_eq!(App::setting_field_kind("max_global_search_results"), "number");
-        assert_eq!(App::setting_field_kind("cursor_surrounding_lines"), "number");
+        assert_eq!(
+            App::setting_field_kind("max_global_search_results"),
+            "number"
+        );
+        assert_eq!(
+            App::setting_field_kind("cursor_surrounding_lines"),
+            "number"
+        );
         assert_eq!(App::setting_field_kind("large_file_threshold_mb"), "number");
-        assert_eq!(App::setting_field_kind("large_file_analysis_timeout_ms"), "number");
+        assert_eq!(
+            App::setting_field_kind("large_file_analysis_timeout_ms"),
+            "number"
+        );
     }
 
     #[test]
@@ -1338,9 +2010,20 @@ mod tests {
 
     #[test]
     fn description_all_known_settings_consistent() {
-        let known = ["tab_size", "use_tabs", "word_wrap", "theme", "explorer",
-            "minimap", "line_numbers", "panel", "zen", "trim_trailing",
-            "cursor_style", "auto_save_mode"];
+        let known = [
+            "tab_size",
+            "use_tabs",
+            "word_wrap",
+            "theme",
+            "explorer",
+            "minimap",
+            "line_numbers",
+            "panel",
+            "zen",
+            "trim_trailing",
+            "cursor_style",
+            "auto_save_mode",
+        ];
         for id in &known {
             let desc = App::setting_description(id);
             assert!(!desc.is_empty(), "setting {id} should have a description");
@@ -1353,16 +2036,30 @@ mod tests {
         let items = app.settings_items();
         let ids: Vec<&str> = items.iter().map(|(_, _, id)| id.as_str()).collect();
         let expected = [
-            "quick_suggestions", "hover_enabled", "format_on_type", "activity_bar",
-            "inlay_hints", "code_lens", "semantic_highlighting", "screencast_mode",
-            "search_case_sensitive", "search_whole_word", "search_regex",
-            "search_preserve_case", "cursor_surrounding_lines",
-            "global_search_case_sensitive", "global_search_whole_word", "global_search_regex",
+            "quick_suggestions",
+            "hover_enabled",
+            "format_on_type",
+            "activity_bar",
+            "inlay_hints",
+            "code_lens",
+            "semantic_highlighting",
+            "screencast_mode",
+            "search_case_sensitive",
+            "search_whole_word",
+            "search_regex",
+            "search_preserve_case",
+            "cursor_surrounding_lines",
+            "global_search_case_sensitive",
+            "global_search_whole_word",
+            "global_search_regex",
             "global_search_preserve_case",
         ];
         for id in expected {
             assert!(ids.contains(&id), "missing settings item {id}");
-            assert!(!App::setting_description(id).is_empty(), "missing description for {id}");
+            assert!(
+                !App::setting_description(id).is_empty(),
+                "missing description for {id}"
+            );
         }
     }
 
@@ -1502,6 +2199,10 @@ mod tests {
     fn visual_height_narrow_keeps_wrapped_description_and_input() {
         let narrow = App::setting_visual_height("Tab Size", "tab_size", 20);
         let lines = App::setting_description_lines("Tab Size", "tab_size", 20);
-        assert_eq!(narrow, lines.len() + 2, "input and compact spacing follow the description");
+        assert_eq!(
+            narrow,
+            lines.len() + 2,
+            "input and compact spacing follow the description"
+        );
     }
 }

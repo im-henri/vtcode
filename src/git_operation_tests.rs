@@ -188,9 +188,14 @@ fn operation_banners_reuse_the_status_snapshot_and_match_fresh_action_checks() {
         let fixture = Fixture::new(false);
         fixture.external_start(kind);
         for resolved in [false, true] {
-            if resolved { fixture.resolve("one.txt", "resolved\n"); }
+            if resolved {
+                fixture.resolve("one.txt", "resolved\n");
+            }
             let snapshot = crate::app_git::collect_source_control_status_cancellable(
-                fixture.root().to_owned(), || {}, &crate::background::CancellationToken::new());
+                fixture.root().to_owned(),
+                || {},
+                &crate::background::CancellationToken::new(),
+            );
             assert!(snapshot.error.is_none(), "{:?}", snapshot.error);
             let repo = Repository::open(fixture.root()).unwrap();
             assert_eq!(snapshot.operation, read(&repo).unwrap());
@@ -583,7 +588,9 @@ fn remote_status_and_actions_can_continue_terminal_started_conflicts() {
         let client =
             crate::remote::tests::connection(fixture.root(), Arc::default(), Arc::default());
         let Reply::GitStatus { scans, .. } = client
-            .call(Command::GitStatus { progress: None, revalidate: false,
+            .call(Command::GitStatus {
+                progress: None,
+                revalidate: false,
                 changed: None,
                 include_untracked: false,
                 known: None,

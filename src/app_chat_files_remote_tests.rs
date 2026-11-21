@@ -124,7 +124,10 @@ fn remote_pasted_paths_use_whole_path_priority_and_complete_quoted_file_lists() 
     let cancel = CancellationToken::new();
     for (text, expected) in [
         ("one two", Some(vec![first.clone(), second.clone()])),
-        ("\"space name λ.txt\" one", Some(vec![space.clone(), first.clone()])),
+        (
+            "\"space name λ.txt\" one",
+            Some(vec![space.clone(), first.clone()]),
+        ),
         ("space\\ name\\ λ.txt", Some(vec![space.clone()])),
         ("one missing", None),
         ("directory", None),
@@ -132,12 +135,28 @@ fn remote_pasted_paths_use_whole_path_priority_and_complete_quoted_file_lists() 
         ("\"unterminated", None),
         ("  ", None),
     ] {
-        assert_eq!(pasted_remote_paths(workspace, text, &mut cache, &cancel).unwrap(), expected, "{text:?}");
+        assert_eq!(
+            pasted_remote_paths(workspace, text, &mut cache, &cancel).unwrap(),
+            expected,
+            "{text:?}"
+        );
     }
     let combined = file(&fixture, "one two", "whole wins");
-    assert_eq!(pasted_remote_paths(workspace, "one two", &mut PreparationCache::default(), &cancel).unwrap(), Some(vec![combined]));
+    assert_eq!(
+        pasted_remote_paths(
+            workspace,
+            "one two",
+            &mut PreparationCache::default(),
+            &cancel
+        )
+        .unwrap(),
+        Some(vec![combined])
+    );
     let uri = url::Url::from_file_path(fixture.root.path().join("space name λ.txt")).unwrap();
-    assert_eq!(pasted_remote_paths(workspace, uri.as_str(), &mut cache, &cancel).unwrap(), Some(vec![space]));
+    assert_eq!(
+        pasted_remote_paths(workspace, uri.as_str(), &mut cache, &cancel).unwrap(),
+        Some(vec![space])
+    );
 }
 
 #[test]
@@ -146,22 +165,56 @@ fn paste_qualification_and_validation_reuse_inspection_without_cross_action_stal
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("file.rs"), "disk").unwrap();
     let traffic = Arc::new(AtomicUsize::new(0));
-    let workspace = remote::workspace::Workspace::new(remote::tests::connection(root.path(), Arc::default(), traffic.clone()));
+    let workspace = remote::workspace::Workspace::new(remote::tests::connection(
+        root.path(),
+        Arc::default(),
+        traffic.clone(),
+    ));
     let path = workspace.target_key("file.rs").unwrap();
     let cancel = CancellationToken::new();
     let mut cache = PreparationCache::default();
-    let paths = pasted_remote_paths(&workspace, "file.rs", &mut cache, &cancel).unwrap().unwrap();
+    let paths = pasted_remote_paths(&workspace, "file.rs", &mut cache, &cancel)
+        .unwrap()
+        .unwrap();
     let inspected = traffic.load(Ordering::Relaxed);
     let buffers = vec![buffer(path.clone(), None, "unsaved current text")];
-    let prepared = prepare_files_cached(&workspace, paths.clone(), &buffers, false, &cancel, &mut cache).unwrap();
+    let prepared = prepare_files_cached(
+        &workspace,
+        paths.clone(),
+        &buffers,
+        false,
+        &cancel,
+        &mut cache,
+    )
+    .unwrap();
     assert_eq!(prepared.files.len(), 1);
-    assert_eq!(traffic.load(Ordering::Relaxed), inspected, "qualification already inspected the direct buffer");
+    assert_eq!(
+        traffic.load(Ordering::Relaxed),
+        inspected,
+        "qualification already inspected the direct buffer"
+    );
     prepare_files_cached(&workspace, paths, &buffers, false, &cancel, &mut cache).unwrap();
-    assert_eq!(traffic.load(Ordering::Relaxed), inspected, "a batch must not inspect or validate an unchanged frozen buffer twice");
+    assert_eq!(
+        traffic.load(Ordering::Relaxed),
+        inspected,
+        "a batch must not inspect or validate an unchanged frozen buffer twice"
+    );
     std::fs::remove_file(root.path().join("file.rs")).unwrap();
     std::fs::create_dir(root.path().join("file.rs")).unwrap();
-    assert!(pasted_remote_paths(&workspace, "file.rs", &mut PreparationCache::default(), &cancel).unwrap().is_none());
-    assert!(traffic.load(Ordering::Relaxed) > inspected, "a new action must inspect current node state");
+    assert!(
+        pasted_remote_paths(
+            &workspace,
+            "file.rs",
+            &mut PreparationCache::default(),
+            &cancel
+        )
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        traffic.load(Ordering::Relaxed) > inspected,
+        "a new action must inspect current node state"
+    );
     workspace.client.call(remote::Command::Shutdown).unwrap();
 }
 
@@ -181,18 +234,31 @@ fn remote_file_paste_replays_selection_and_continued_typing_without_waiting() {
     fixture.app.chat.cursor = 13;
     fixture.app.chat.anchor = Some(5);
     fixture.hold.store(true, Ordering::Release);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
-    fixture.app.edit_chat_input(KeyCode::Char('λ'), KeyModifiers::NONE, None);
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Char('λ'), KeyModifiers::NONE, None);
     assert_eq!(fixture.app.chat.input, "keep source.rsλ tail");
     assert_eq!(fixture.app.chat.files.pasting.len(), 1);
     fixture.hold.store(false, Ordering::Release);
-    wait(&mut fixture, |fixture| fixture.app.chat.files.pasting.is_empty());
+    wait(&mut fixture, |fixture| {
+        fixture.app.chat.files.pasting.is_empty()
+    });
     assert_eq!(fixture.app.chat.input, "keep λ tail");
     assert_eq!(fixture.app.chat.files.attached, [path]);
-    fixture.app.edit_chat_input(KeyCode::Char('z'), KeyModifiers::CONTROL, None);
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Char('z'), KeyModifiers::CONTROL, None);
     assert_eq!(fixture.app.chat.input, "keep selected tail");
-    assert_eq!((fixture.app.chat.cursor, fixture.app.chat.anchor), (13, Some(5)));
-    fixture.app.edit_chat_input(KeyCode::Char('y'), KeyModifiers::CONTROL, None);
+    assert_eq!(
+        (fixture.app.chat.cursor, fixture.app.chat.anchor),
+        (13, Some(5))
+    );
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Char('y'), KeyModifiers::CONTROL, None);
     assert_eq!(fixture.app.chat.input, "keep λ tail");
 }
 
@@ -203,15 +269,27 @@ fn remote_plain_text_and_bad_file_pastes_keep_native_draft_and_error_behavior() 
     fixture.app.chat.input = "original".into();
     fixture.app.chat.cursor = 8;
     fixture.app.chat.error = Some("prior error".into());
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some(" plain missing path "));
-    wait(&mut fixture, |fixture| fixture.app.chat.files.pasting.is_empty());
+    fixture.app.edit_chat_input(
+        KeyCode::Null,
+        KeyModifiers::NONE,
+        Some(" plain missing path "),
+    );
+    wait(&mut fixture, |fixture| {
+        fixture.app.chat.files.pasting.is_empty()
+    });
     assert_eq!(fixture.app.chat.input, "original plain missing path ");
     assert_eq!(fixture.app.chat.error.as_deref(), Some("prior error"));
-    fixture.app.edit_chat_input(KeyCode::Char('z'), KeyModifiers::CONTROL, None);
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Char('z'), KeyModifiers::CONTROL, None);
     assert_eq!(fixture.app.chat.input, "original");
     fixture.app.chat.anchor = Some(0);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("binary.bin"));
-    wait(&mut fixture, |fixture| fixture.app.chat.files.pasting.is_empty());
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("binary.bin"));
+    wait(&mut fixture, |fixture| {
+        fixture.app.chat.files.pasting.is_empty()
+    });
     assert_eq!(fixture.app.chat.input, "original");
     assert_eq!(fixture.app.chat.anchor, Some(0));
     assert!(fixture.app.chat.files.attached.is_empty());
@@ -225,12 +303,18 @@ fn rapid_remote_file_pastes_use_one_worker_and_preserve_all_accepted_files() {
     let second = file(&fixture, "second.rs", "second");
     fixture.hold.store(true, Ordering::Release);
     for text in ["first.rs", "second.rs", " ordinary text "] {
-        fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some(text));
+        fixture
+            .app
+            .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some(text));
         assert_eq!(fixture.app.chat.files.pasting.len(), 1);
     }
-    fixture.app.edit_chat_input(KeyCode::Char('x'), KeyModifiers::NONE, None);
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Char('x'), KeyModifiers::NONE, None);
     fixture.hold.store(false, Ordering::Release);
-    wait(&mut fixture, |fixture| fixture.app.chat.files.pasting.is_empty());
+    wait(&mut fixture, |fixture| {
+        fixture.app.chat.files.pasting.is_empty()
+    });
     assert_eq!(fixture.app.chat.input, " ordinary text x");
     assert_eq!(fixture.app.chat.files.attached, [first, second]);
 }
@@ -240,7 +324,9 @@ fn typing_during_a_stalled_paste_never_submits_more_metadata_or_workers() {
     let mut fixture = setup();
     let path = file(&fixture, "source.rs", "context");
     fixture.hold.store(true, Ordering::Release);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
     let end = Instant::now() + Duration::from_secs(5);
     while !fixture.blocked.load(Ordering::Acquire) {
         assert!(Instant::now() < end);
@@ -249,14 +335,25 @@ fn typing_during_a_stalled_paste_never_submits_more_metadata_or_workers() {
     let traffic = fixture.traffic.load(Ordering::Relaxed);
     let serial = fixture.app.chat.files.work_serial;
     for _ in 0..256 {
-        fixture.app.edit_chat_input(KeyCode::Char('λ'), KeyModifiers::NONE, None);
+        fixture
+            .app
+            .edit_chat_input(KeyCode::Char('λ'), KeyModifiers::NONE, None);
         fixture.app.poll_background_results();
         assert_eq!(fixture.app.chat.files.pasting.len(), 1);
     }
-    assert_eq!(fixture.traffic.load(Ordering::Relaxed), traffic, "no per-keystroke remote requests");
-    assert_eq!(fixture.app.chat.files.work_serial, serial, "one pending worker, no per-key task spawning");
+    assert_eq!(
+        fixture.traffic.load(Ordering::Relaxed),
+        traffic,
+        "no per-keystroke remote requests"
+    );
+    assert_eq!(
+        fixture.app.chat.files.work_serial, serial,
+        "one pending worker, no per-key task spawning"
+    );
     fixture.hold.store(false, Ordering::Release);
-    wait(&mut fixture, |fixture| fixture.app.chat.files.pasting.is_empty());
+    wait(&mut fixture, |fixture| {
+        fixture.app.chat.files.pasting.is_empty()
+    });
     assert_eq!(fixture.app.chat.input, "λ".repeat(256));
     assert_eq!(fixture.app.chat.files.attached, [path]);
 }
@@ -266,18 +363,42 @@ fn remote_file_paste_then_immediate_send_uses_file_context_and_preserves_new_dra
     let mut fixture = setup();
     file(&fixture, "source.rs", "disk content");
     fixture.hold.store(true, Ordering::Release);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
     fixture.app.chat_action(crate::app_acp::ChatAction::Send);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("next draft"));
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("next draft"));
     fixture.hold.store(false, Ordering::Release);
-    wait(&mut fixture, |fixture| fixture.commands.lock().unwrap().iter().any(|command| matches!(command, Command::Prompt { .. })));
+    wait(&mut fixture, |fixture| {
+        fixture
+            .commands
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|command| matches!(command, Command::Prompt { .. }))
+    });
     assert_eq!(fixture.app.chat.input, "next draft");
     let commands = fixture.commands.lock().unwrap();
-    let Command::Prompt { content, .. } = commands.iter().find(|command| matches!(command, Command::Prompt { .. })).unwrap() else { unreachable!() };
-    assert_eq!(content.len(), 2, "the pasted file must not be sent as plain path text");
+    let Command::Prompt { content, .. } = commands
+        .iter()
+        .find(|command| matches!(command, Command::Prompt { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    assert_eq!(
+        content.len(),
+        2,
+        "the pasted file must not be sent as plain path text"
+    );
     let context = serde_json::to_string(&content[1]).unwrap();
     assert!(context.contains("source.rs"));
-    assert!(!context.contains("disk content"), "closed-file text stays on the node until the agent consumes its reference");
+    assert!(
+        !context.contains("disk content"),
+        "closed-file text stays on the node until the agent consumes its reference"
+    );
 }
 
 #[test]
@@ -290,14 +411,35 @@ fn immediate_file_paste_send_uses_the_local_buffer_captured_at_submission() {
     editor.paste_with_text("unsaved at submit");
     fixture.app.focus_chat();
     fixture.hold.store(true, Ordering::Release);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
     fixture.app.chat_action(crate::app_acp::ChatAction::Send);
-    fixture.app.editor_mut().unwrap().paste_with_text(" later editing");
+    fixture
+        .app
+        .editor_mut()
+        .unwrap()
+        .paste_with_text(" later editing");
     fixture.hold.store(false, Ordering::Release);
-    wait(&mut fixture, |fixture| fixture.commands.lock().unwrap().iter().any(|command| matches!(command, Command::Prompt { .. })));
+    wait(&mut fixture, |fixture| {
+        fixture
+            .commands
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|command| matches!(command, Command::Prompt { .. }))
+    });
     let commands = fixture.commands.lock().unwrap();
-    let Command::Prompt { content, .. } = commands.iter().find(|command| matches!(command, Command::Prompt { .. })).unwrap() else { unreachable!() };
-    let p::ContentBlock::Text(context) = &content[1] else { panic!("local text fallback"); };
+    let Command::Prompt { content, .. } = commands
+        .iter()
+        .find(|command| matches!(command, Command::Prompt { .. }))
+        .unwrap()
+    else {
+        unreachable!()
+    };
+    let p::ContentBlock::Text(context) = &content[1] else {
+        panic!("local text fallback");
+    };
     assert!(context.text.contains("unsaved at submit"));
     assert!(!context.text.contains("later editing"));
     assert!(!context.text.contains("disk content"));
@@ -308,11 +450,22 @@ fn rejected_file_only_paste_does_not_send_an_empty_prompt_or_lose_undo() {
     let mut fixture = setup();
     file(&fixture, "binary.bin", "\0binary");
     fixture.hold.store(true, Ordering::Release);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("binary.bin"));
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("binary.bin"));
     fixture.app.chat_action(crate::app_acp::ChatAction::Send);
     fixture.hold.store(false, Ordering::Release);
-    wait(&mut fixture, |fixture| fixture.app.chat.files.preparing.is_empty());
-    assert!(fixture.commands.lock().unwrap().iter().all(|command| !matches!(command, Command::Prompt { .. })));
+    wait(&mut fixture, |fixture| {
+        fixture.app.chat.files.preparing.is_empty()
+    });
+    assert!(
+        fixture
+            .commands
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|command| !matches!(command, Command::Prompt { .. }))
+    );
     assert!(fixture.app.chat.input.is_empty());
     assert!(fixture.app.chat.files.attached.is_empty());
     assert!(fixture.app.chat.error.as_ref().unwrap().contains("inary"));
@@ -326,13 +479,23 @@ fn paste_resolution_updates_saved_composer_without_touching_auxiliary_input() {
     fixture.app.chat.input = "draft ".into();
     fixture.app.chat.cursor = 6;
     fixture.hold.store(true, Ordering::Release);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
-    fixture.app.chat_action(crate::app_acp::ChatAction::LoadById);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("session-id"));
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
+    fixture
+        .app
+        .chat_action(crate::app_acp::ChatAction::LoadById);
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("session-id"));
     fixture.hold.store(false, Ordering::Release);
-    wait(&mut fixture, |fixture| fixture.app.chat.files.pasting.is_empty());
+    wait(&mut fixture, |fixture| {
+        fixture.app.chat.files.pasting.is_empty()
+    });
     assert_eq!(fixture.app.chat.input, "session-id");
-    fixture.app.chat_action(crate::app_acp::ChatAction::BackToChat);
+    fixture
+        .app
+        .chat_action(crate::app_acp::ChatAction::BackToChat);
     assert_eq!(fixture.app.chat.input, "draft ");
     assert_eq!(fixture.app.chat.files.attached, [path]);
 }
@@ -343,25 +506,37 @@ fn delayed_paste_resolves_only_its_conversation_and_ignores_a_replaced_draft() {
     let path = file(&fixture, "source.rs", "context");
     let first = fixture.app.chat.selected.clone().unwrap();
     let other = p::SessionId::new("another");
-    fixture.app.chat.sessions.insert(other.clone(), acp::Session::new(other.clone()));
+    fixture
+        .app
+        .chat
+        .sessions
+        .insert(other.clone(), acp::Session::new(other.clone()));
     fixture.hold.store(true, Ordering::Release);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
     fixture.app.chat.select_view(Some(other.clone()));
     fixture.app.chat.input = "other draft".into();
     fixture.app.chat.cursor = 11;
     fixture.hold.store(false, Ordering::Release);
-    wait(&mut fixture, |fixture| fixture.app.chat.files.pasting.is_empty());
+    wait(&mut fixture, |fixture| {
+        fixture.app.chat.files.pasting.is_empty()
+    });
     assert_eq!(fixture.app.chat.input, "other draft");
     assert!(fixture.app.chat.files.attached.is_empty());
     fixture.app.chat.select_view(Some(first));
     assert!(fixture.app.chat.input.is_empty());
     assert_eq!(fixture.app.chat.files.attached, [path]);
     fixture.hold.store(true, Ordering::Release);
-    fixture.app.edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
+    fixture
+        .app
+        .edit_chat_input(KeyCode::Null, KeyModifiers::NONE, Some("source.rs"));
     fixture.app.chat.input = "replacement".into();
     fixture.app.chat.cursor = 11;
     fixture.hold.store(false, Ordering::Release);
-    wait(&mut fixture, |fixture| fixture.app.chat.files.pasting.is_empty());
+    wait(&mut fixture, |fixture| {
+        fixture.app.chat.files.pasting.is_empty()
+    });
     assert_eq!(fixture.app.chat.input, "replacement");
 }
 
@@ -372,13 +547,25 @@ fn explicit_attachment_result_keeps_an_attachment_added_by_a_paste_while_pending
     let explicit = file(&fixture, "explicit.rs", "second");
     fixture.hold.store(true, Ordering::Release);
     fixture.app.attach_chat_files(vec![explicit.clone()]);
-    let serial = fixture.app.chat.files.attaching.values().next().unwrap().serial;
+    let serial = fixture
+        .app
+        .chat
+        .files
+        .attaching
+        .values()
+        .next()
+        .unwrap()
+        .serial;
     // Model the paste's atomic commit before the earlier explicit choice is
     // delivered. Its base changed, but the requested new file is still wanted.
     fixture.app.chat.files.attached = vec![pasted.clone()];
-    fixture.app.apply_remote_chat_attachments(serial, Ok(vec![explicit.clone()]));
+    fixture
+        .app
+        .apply_remote_chat_attachments(serial, Ok(vec![explicit.clone()]));
     fixture.hold.store(false, Ordering::Release);
-    wait(&mut fixture, |fixture| fixture.app.chat.files.attaching.is_empty());
+    wait(&mut fixture, |fixture| {
+        fixture.app.chat.files.attaching.is_empty()
+    });
     assert_eq!(fixture.app.chat.files.attached, [pasted, explicit]);
 }
 
@@ -470,8 +657,10 @@ fn remote_context_completion_includes_hidden_files_and_skips_build_trees() {
         .call(remote::Command::Files {
             generation: 0,
             known_version: None,
-            excludes: ["**/.config", "**/target"].into_iter()
-                .map(|pattern| (pattern.into(), serde_json::json!(true))).collect(),
+            excludes: ["**/.config", "**/target"]
+                .into_iter()
+                .map(|pattern| (pattern.into(), serde_json::json!(true)))
+                .collect(),
         })
         .unwrap()
     else {

@@ -42,10 +42,14 @@ impl ChatState {
 impl App {
     pub(super) fn queue_remote_chat_prompt(&mut self) {
         let Some(id) = self.chat.selected.clone().filter(|_| self.chat.connected()) else {
-            self.chat.error = Some("Connect an agent and create a conversation first.".into()); return;
+            self.chat.error = Some("Connect an agent and create a conversation first.".into());
+            return;
         };
-        if !self.commit_remote_chat_attachments_for_send() { return; }
-        let direct = !self.chat.busy() && !self.chat.has_queued_prompt() && !self.chat.checkpoint_pending();
+        if !self.commit_remote_chat_attachments_for_send() {
+            return;
+        }
+        let direct =
+            !self.chat.busy() && !self.chat.has_queued_prompt() && !self.chat.checkpoint_pending();
         self.enqueue_chat_prompt();
         if direct && let Some(queue) = self.chat.queues.get_mut(&id) {
             queue.context_direct = queue.items.front().map(|prompt| prompt.id);
@@ -63,11 +67,22 @@ impl App {
         if self.chat.input.trim().is_empty() && self.chat.files.attached.is_empty() {
             return;
         }
-        if self.chat.queues.get(&id).is_some_and(|queue| queue.items.len() >= 32) {
-            self.chat.error = Some("The queue is full (32 messages). Your draft is still in the composer.".into());
+        if self
+            .chat
+            .queues
+            .get(&id)
+            .is_some_and(|queue| queue.items.len() >= 32)
+        {
+            self.chat.error = Some(
+                "The queue is full (32 messages). Your draft is still in the composer.".into(),
+            );
             return;
         }
-        let paste = if self.remote_workspace.is_some() { self.freeze_remote_chat_paste() } else { None };
+        let paste = if self.remote_workspace.is_some() {
+            self.freeze_remote_chat_paste()
+        } else {
+            None
+        };
         let state = &mut self.chat.connection;
         let queue = state.queues.entry(id).or_default();
         if queue.is_empty() {
@@ -105,7 +120,8 @@ impl App {
             return;
         }
         let Some(queue) = self
-            .chat.connection
+            .chat
+            .connection
             .selected
             .as_ref()
             .and_then(|id| self.chat.connection.queues.get_mut(id))
@@ -116,14 +132,21 @@ impl App {
             return;
         };
         let prompt = queue.items.remove(index).unwrap();
-        if queue.context_direct == Some(item) { queue.context_direct = None; }
+        if queue.context_direct == Some(item) {
+            queue.context_direct = None;
+        }
         if queue.priority == Some(item) {
             queue.priority = None;
             queue.paused = true;
             queue.pause_after_priority = false;
         }
         if let Some(id) = self.chat.selected.clone()
-            && self.chat.files.preparing.get(&id).is_some_and(|job| job.item == item)
+            && self
+                .chat
+                .files
+                .preparing
+                .get(&id)
+                .is_some_and(|job| job.item == item)
         {
             self.chat.files.preparing.remove(&id);
         }
@@ -136,18 +159,23 @@ impl App {
         self.chat.input_goal = None;
         self.chat.error = None;
         self.chat.focus = None;
-        if let Some(paste) = prompt.paste { self.restore_remote_chat_paste(paste); }
+        if let Some(paste) = prompt.paste {
+            self.restore_remote_chat_paste(paste);
+        }
     }
 
     pub(super) fn remove_queued_prompt(&mut self, item: u64) {
         if let Some(queue) = self
-            .chat.connection
+            .chat
+            .connection
             .selected
             .as_ref()
             .and_then(|id| self.chat.connection.queues.get_mut(id))
         {
             queue.items.retain(|p| p.id != item);
-            if queue.context_direct == Some(item) { queue.context_direct = None; }
+            if queue.context_direct == Some(item) {
+                queue.context_direct = None;
+            }
             if queue.priority == Some(item) {
                 queue.priority = None;
                 queue.paused = true;
@@ -155,7 +183,12 @@ impl App {
             }
         }
         if let Some(id) = self.chat.selected.clone()
-            && self.chat.files.preparing.get(&id).is_some_and(|job| job.item == item)
+            && self
+                .chat
+                .files
+                .preparing
+                .get(&id)
+                .is_some_and(|job| job.item == item)
         {
             self.chat.files.preparing.remove(&id);
         }
@@ -172,7 +205,10 @@ impl App {
         if !session.busy || session.cancelling {
             return true;
         }
-        if self.chat.rollback.cancel_preparing(self.chat.active_agent, Some(id))
+        if self
+            .chat
+            .rollback
+            .cancel_preparing(self.chat.active_agent, Some(id))
             || self.send_acp(Command::Cancel(id.clone()))
         {
             self.chat.sessions.get_mut(id).unwrap().cancelling = true;
@@ -230,7 +266,9 @@ impl App {
             return;
         };
         if sent {
-            if queue.context_direct == Some(prompt.id) { queue.context_direct = None; }
+            if queue.context_direct == Some(prompt.id) {
+                queue.context_direct = None;
+            }
             if queue.priority == Some(prompt.id) {
                 queue.priority = None;
                 if std::mem::take(&mut queue.pause_after_priority) {
@@ -256,10 +294,7 @@ impl App {
     }
 
     pub(super) fn dispatch_chat_queue(&mut self) -> bool {
-        if !self.chat.connected()
-            || self.chat.control_busy
-            || self.chat.rollback.reviewing()
-        {
+        if !self.chat.connected() || self.chat.control_busy || self.chat.rollback.reviewing() {
             return false;
         }
         let id = self
@@ -272,7 +307,10 @@ impl App {
                     .get(*id)
                     .is_some_and(|q| !q.paused && !q.items.is_empty() && q.inflight.is_none())
                     && !self.chat.files.preparing.contains_key(*id)
-                    && !self.chat.rollback.conversation_busy(self.chat.active_agent, Some(*id))
+                    && !self
+                        .chat
+                        .rollback
+                        .conversation_busy(self.chat.active_agent, Some(*id))
                     && !self.chat.deleting_sessions.contains(*id)
                     && !self
                         .chat
@@ -294,8 +332,18 @@ impl App {
             return changed;
         }
         let prompt = self.chat.queues[&id].items.front().unwrap().clone();
-        if self.remote_workspace.is_some() && (!prompt.files.is_empty() || prompt.paste.is_some() || crate::app_chat_files::has_mentions(&prompt.text)) {
-            if let Err(error) = self.start_remote_prompt_context(id.clone(), prompt.id, prompt.text, prompt.files, prompt.paste) {
+        if self.remote_workspace.is_some()
+            && (!prompt.files.is_empty()
+                || prompt.paste.is_some()
+                || crate::app_chat_files::has_mentions(&prompt.text))
+        {
+            if let Err(error) = self.start_remote_prompt_context(
+                id.clone(),
+                prompt.id,
+                prompt.text,
+                prompt.files,
+                prompt.paste,
+            ) {
                 self.chat_context_failed(&id, prompt.id, error);
             }
             return true;
@@ -318,7 +366,13 @@ impl App {
         self.send_prepared_queued_prompt(id, content, display, None)
     }
 
-    fn send_prepared_queued_prompt(&mut self, id: p::SessionId, content: Vec<p::ContentBlock>, display: String, source: Option<std::sync::Arc<crate::remote::context::Source>>) -> bool {
+    fn send_prepared_queued_prompt(
+        &mut self,
+        id: p::SessionId,
+        content: Vec<p::ContentBlock>,
+        display: String,
+        source: Option<std::sync::Arc<crate::remote::context::Source>>,
+    ) -> bool {
         if !self.send_chat_with_checkpoint_context(id.clone(), content, &display, source) {
             self.chat.queues.get_mut(&id).unwrap().paused = true;
             return true;
@@ -330,7 +384,11 @@ impl App {
             .get_mut(&id)
             .unwrap()
             .begin_prompt(display);
-        if !self.chat.rollback.cancel_preparing(self.chat.active_agent, Some(&id)) {
+        if !self
+            .chat
+            .rollback
+            .cancel_preparing(self.chat.active_agent, Some(&id))
+        {
             self.queued_checkpoint_finished(&id, true, false);
         }
         self.set_chat_history_hidden(&id, false);
@@ -349,77 +407,160 @@ impl App {
         });
         let previous = self.chat.selected.clone();
         self.chat.select_view(Some(id.clone()));
-        if direct { self.edit_queued_prompt(item); }
+        if direct {
+            self.edit_queued_prompt(item);
+        }
         self.chat.error = Some(format!("Message was not sent: {error}"));
         self.chat.select_view(previous);
         self.chat.mark_tab_unread(id, self.terminal_has_focus);
     }
 
-    pub(crate) fn apply_chat_prompt_context(&mut self, id: p::SessionId, serial: u64, result: Result<crate::app_chat_files::hosted::PreparedPrompt, String>, mut draft: Option<crate::app_chat_files::hosted::paste::ResolvedDraft>) -> bool {
-        if self.chat.files.preparing.get(&id).is_none_or(|job| job.serial != serial) { return false; }
+    pub(crate) fn apply_chat_prompt_context(
+        &mut self,
+        id: p::SessionId,
+        serial: u64,
+        result: Result<crate::app_chat_files::hosted::PreparedPrompt, String>,
+        mut draft: Option<crate::app_chat_files::hosted::paste::ResolvedDraft>,
+    ) -> bool {
+        if self
+            .chat
+            .files
+            .preparing
+            .get(&id)
+            .is_none_or(|job| job.serial != serial)
+        {
+            return false;
+        }
         let job = self.chat.files.preparing.remove(&id).unwrap();
-        if self.chat.client.as_ref().is_none_or(|client| !client.handle().same_connection(&job.handle))
+        if self
+            .chat
+            .client
+            .as_ref()
+            .is_none_or(|client| !client.handle().same_connection(&job.handle))
             || self.chat_file_root() != job.root
-            || self.remote_workspace.as_ref().is_none_or(|workspace| workspace.view_root != job.root || !workspace.client.same_connection(&job.client))
-            || self.chat.sessions.get(&id).is_none_or(|session| session.history_epoch != job.epoch)
+            || self.remote_workspace.as_ref().is_none_or(|workspace| {
+                workspace.view_root != job.root || !workspace.client.same_connection(&job.client)
+            })
+            || self
+                .chat
+                .sessions
+                .get(&id)
+                .is_none_or(|session| session.history_epoch != job.epoch)
             || self.chat.deleting_sessions.contains(&id)
-            || self.chat.queues.get(&id).is_none_or(|queue| queue.paused || queue.items.front().is_none_or(|prompt| prompt.id != job.item)) {
+            || self.chat.queues.get(&id).is_none_or(|queue| {
+                queue.paused
+                    || queue
+                        .items
+                        .front()
+                        .is_none_or(|prompt| prompt.id != job.item)
+            })
+        {
             if let Some(queue) = self.chat.queues.get_mut(&id)
-                && queue.items.front().is_some_and(|prompt| prompt.id == job.item)
+                && queue
+                    .items
+                    .front()
+                    .is_some_and(|prompt| prompt.id == job.item)
             {
                 queue.paused = true;
             }
             return true;
         }
-        if self.chat.control_busy || self.chat.rollback.reviewing()
-            || self.chat.rollback.conversation_busy(self.chat.active_agent, Some(&id))
-            || self.chat.sessions.get(&id).is_some_and(|session| session.busy || session.terminals.values().any(|terminal| !terminal.released && terminal.exit_status.is_none()))
-            || self.chat.permissions.iter().any(|permission| permission.request.session_id == id) {
+        if self.chat.control_busy
+            || self.chat.rollback.reviewing()
+            || self
+                .chat
+                .rollback
+                .conversation_busy(self.chat.active_agent, Some(&id))
+            || self.chat.sessions.get(&id).is_some_and(|session| {
+                session.busy
+                    || session
+                        .terminals
+                        .values()
+                        .any(|terminal| !terminal.released && terminal.exit_status.is_none())
+            })
+            || self
+                .chat
+                .permissions
+                .iter()
+                .any(|permission| permission.request.session_id == id)
+        {
             return true;
         }
         if let Some(draft) = &mut draft {
-            let prompt = self.chat.queues.get_mut(&id).unwrap().items.front_mut().unwrap();
+            let prompt = self
+                .chat
+                .queues
+                .get_mut(&id)
+                .unwrap()
+                .items
+                .front_mut()
+                .unwrap();
             prompt.text = std::mem::take(&mut draft.input.text);
             prompt.files = std::mem::take(&mut draft.files);
             prompt.paste = None;
         }
-        if result.as_ref().is_ok_and(|prepared| prepared.content.is_empty()) {
+        if result
+            .as_ref()
+            .is_ok_and(|prepared| prepared.content.is_empty())
+        {
             let queue = self.chat.queues.get_mut(&id).unwrap();
             let prompt = queue.items.pop_front().unwrap();
-            if queue.context_direct == Some(job.item) { queue.context_direct = None; }
+            if queue.context_direct == Some(job.item) {
+                queue.context_direct = None;
+            }
             if queue.priority == Some(job.item) {
                 queue.priority = None;
-                if queue.pause_after_priority { queue.paused = true; queue.pause_after_priority = false; }
+                if queue.pause_after_priority {
+                    queue.paused = true;
+                    queue.pause_after_priority = false;
+                }
             }
             if let Some(draft) = draft {
                 let previous = self.chat.selected.clone();
                 self.chat.select_view(Some(id));
                 let mut restored = false;
                 if self.chat.files.attached.is_empty() {
-                    self.chat.with_composer_input(|text, cursor, anchor, history| {
-                        if text.is_empty() {
-                            *text = prompt.text; *cursor = draft.input.cursor; *anchor = draft.input.anchor; *history = draft.input.history;
-                            restored = true;
-                        }
-                    });
+                    self.chat
+                        .with_composer_input(|text, cursor, anchor, history| {
+                            if text.is_empty() {
+                                *text = prompt.text;
+                                *cursor = draft.input.cursor;
+                                *anchor = draft.input.anchor;
+                                *history = draft.input.history;
+                                restored = true;
+                            }
+                        });
                 }
-                if restored { self.chat.error = draft.error; }
+                if restored {
+                    self.chat.error = draft.error;
+                }
                 self.chat.select_view(previous);
             }
             self.chat.status = "Ready".into();
             return true;
         }
         match result {
-            Ok(prepared) => { self.send_prepared_queued_prompt(id, prepared.content, prepared.display, prepared.source); }
+            Ok(prepared) => {
+                self.send_prepared_queued_prompt(
+                    id,
+                    prepared.content,
+                    prepared.display,
+                    prepared.source,
+                );
+            }
             Err(error) => {
                 self.chat_context_failed(&id, job.item, error);
                 if let Some(draft) = draft
-                    && self.chat.queues.get(&id).is_some_and(|queue| !queue.items.iter().any(|prompt| prompt.id == job.item))
+                    && self.chat.queues.get(&id).is_some_and(|queue| {
+                        !queue.items.iter().any(|prompt| prompt.id == job.item)
+                    })
                 {
                     let previous = self.chat.selected.clone();
                     self.chat.select_view(Some(id));
                     self.chat.with_composer_input(|_, cursor, anchor, history| {
-                        *cursor = draft.input.cursor; *anchor = draft.input.anchor; *history = draft.input.history;
+                        *cursor = draft.input.cursor;
+                        *anchor = draft.input.anchor;
+                        *history = draft.input.history;
                     });
                     self.chat.select_view(previous);
                 }

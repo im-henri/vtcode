@@ -13,7 +13,9 @@ pub(crate) fn map_offset(changes: &[EditOffset], cursor: usize) -> usize {
     // Insertions move a caret after new text; the start of a replacement stays
     // before it. Binary search avoids walking every edit for every caret.
     let index = changes.partition_point(|change| change.start < cursor || change.end == cursor);
-    if index == 0 { cursor } else {
+    if index == 0 {
+        cursor
+    } else {
         let change = &changes[index - 1];
         change.new_end + cursor.saturating_sub(change.end)
     }
@@ -81,55 +83,73 @@ pub(crate) fn equal(old: &ropey::Rope, new: &ropey::Rope) -> bool {
         || (old.len_bytes() == new.len_bytes()
             && old.len_chars() == new.len_chars()
             && old.len_lines() == new.len_lines()
-            && matching_bytes(old.chunks(), new.chunks(), old.len_bytes(), false, &|| false)
-                == Some(old.len_bytes()))
+            && matching_bytes(old.chunks(), new.chunks(), old.len_bytes(), false, &|| {
+                false
+            }) == Some(old.len_bytes()))
 }
 
 pub(crate) fn equal_slices(old: ropey::RopeSlice<'_>, new: ropey::RopeSlice<'_>) -> bool {
     old.len_bytes() == new.len_bytes()
-        && matching_bytes(old.chunks(), new.chunks(), old.len_bytes(), false, &|| false)
-            == Some(old.len_bytes())
+        && matching_bytes(old.chunks(), new.chunks(), old.len_bytes(), false, &|| {
+            false
+        }) == Some(old.len_bytes())
 }
 
 /// Minimal changed character ranges, rounded outwards at UTF-8 boundaries.
 /// Shared Rope leaves are skipped; no full-document strings are allocated.
-pub(crate) fn changed_chars(old: &ropey::Rope, new: &ropey::Rope)
-    -> (std::ops::Range<usize>, std::ops::Range<usize>)
-{
-    if old.is_instance(new) { return (0..0, 0..0); }
+pub(crate) fn changed_chars(
+    old: &ropey::Rope,
+    new: &ropey::Rope,
+) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+    if old.is_instance(new) {
+        return (0..0, 0..0);
+    }
     changed_slices(old.slice(..), new.slice(..))
 }
 
 /// Completion compares immutable snapshots speculatively. A new foreground
 /// action must be able to stop even a large equal/independently reloaded Rope.
-pub(crate) fn changed_chars_cancellable(old: &ropey::Rope, new: &ropey::Rope,
-    cancelled: &impl Fn() -> bool)
-    -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)>
-{
-    if cancelled() { return None; }
-    if old.is_instance(new) { return Some((0..0, 0..0)); }
+pub(crate) fn changed_chars_cancellable(
+    old: &ropey::Rope,
+    new: &ropey::Rope,
+    cancelled: &impl Fn() -> bool,
+) -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)> {
+    if cancelled() {
+        return None;
+    }
+    if old.is_instance(new) {
+        return Some((0..0, 0..0));
+    }
     changed_slices_cancellable(old.slice(..), new.slice(..), cancelled)
 }
 
 /// The same exact comparison for a bounded region. Recovery can trim gaps
 /// between shared anchors without flattening or copying unchanged text.
-pub(crate) fn changed_slices(old: ropey::RopeSlice<'_>, new: ropey::RopeSlice<'_>)
-    -> (std::ops::Range<usize>, std::ops::Range<usize>)
-{
+pub(crate) fn changed_slices(
+    old: ropey::RopeSlice<'_>,
+    new: ropey::RopeSlice<'_>,
+) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
     changed_slices_cancellable(old, new, &|| false).unwrap()
 }
 
-fn changed_slices_cancellable(old: ropey::RopeSlice<'_>, new: ropey::RopeSlice<'_>,
-    cancelled: &impl Fn() -> bool)
-    -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)>
-{
+fn changed_slices_cancellable(
+    old: ropey::RopeSlice<'_>,
+    new: ropey::RopeSlice<'_>,
+    cancelled: &impl Fn() -> bool,
+) -> Option<(std::ops::Range<usize>, std::ops::Range<usize>)> {
     let common = old.len_bytes().min(new.len_bytes());
     let prefix = matching_bytes(old.chunks(), new.chunks(), common, false, cancelled)?;
-    if prefix == old.len_bytes() && prefix == new.len_bytes() { return Some((0..0, 0..0)); }
+    if prefix == old.len_bytes() && prefix == new.len_bytes() {
+        return Some((0..0, 0..0));
+    }
     let start = old.byte_to_char(prefix);
-    let suffix = matching_bytes(old.chunks_at_byte(old.len_bytes()).0.reversed(),
+    let suffix = matching_bytes(
+        old.chunks_at_byte(old.len_bytes()).0.reversed(),
         new.chunks_at_byte(new.len_bytes()).0.reversed(),
-        common - old.char_to_byte(start), true, cancelled)?;
+        common - old.char_to_byte(start),
+        true,
+        cancelled,
+    )?;
     let end = |rope: ropey::RopeSlice<'_>| {
         let byte = rope.len_bytes() - suffix;
         let ch = rope.byte_to_char(byte);

@@ -24,7 +24,12 @@ pub(crate) struct Feedback {
 
 impl Feedback {
     fn new(state: FeedbackState) -> Self {
-        Self { state, area: None, focused_button: None, hovered_button: None }
+        Self {
+            state,
+            area: None,
+            focused_button: None,
+            hovered_button: None,
+        }
     }
 
     pub(crate) fn loading(&self) -> bool {
@@ -67,7 +72,11 @@ struct Request {
 impl Request {
     fn load(self, cancel: &CancellationToken) -> Result<Option<HunkPeek>, String> {
         let check_cancelled = || {
-            if cancel.is_cancelled() { Err("Preview closed".to_string()) } else { Ok(()) }
+            if cancel.is_cancelled() {
+                Err("Preview closed".to_string())
+            } else {
+                Ok(())
+            }
         };
         check_cancelled()?;
         if self.status == 'N' {
@@ -77,37 +86,75 @@ impl Request {
             let saved_text = saved.to_string();
             let current_text = current.to_string();
             let prepared = match self.target {
-                PeekTarget::Line(line) => HunkPeek::from_texts(&saved_text, &current_text, line, self.tab_size).map(Some),
-                target => HunkPeek::from_texts_at(&saved_text, &current_text, target, self.tab_size),
+                PeekTarget::Line(line) => {
+                    HunkPeek::from_texts(&saved_text, &current_text, line, self.tab_size).map(Some)
+                }
+                target => {
+                    HunkPeek::from_texts_at(&saved_text, &current_text, target, self.tab_size)
+                }
             }?;
-            let Some(mut peek) = prepared else { return Ok(None); };
+            let Some(mut peek) = prepared else {
+                return Ok(None);
+            };
             check_cancelled()?;
-            peek.unsaved = Some(UnsavedHunkSnapshot { document, version, saved, current });
+            peek.unsaved = Some(UnsavedHunkSnapshot {
+                document,
+                version,
+                saved,
+                current,
+            });
             return Ok(Some(peek));
         }
         let mut prepared = self.load_git(self.status == 'S', cancel)?;
-        if prepared.is_none() && matches!(self.target, PeekTarget::Line(_) | PeekTarget::InsertedLine(_)) {
+        if prepared.is_none()
+            && matches!(
+                self.target,
+                PeekTarget::Line(_) | PeekTarget::InsertedLine(_)
+            )
+        {
             // A marker can outlive staging/unstaging until the background
             // refresh arrives. Check the other source once, at this exact
             // line. Continuations must end when their source has no hunks.
             check_cancelled()?;
             prepared = self.load_git(self.status != 'S', cancel)?;
         }
-        let Some(mut peek) = prepared else { return Ok(None); };
+        let Some(mut peek) = prepared else {
+            return Ok(None);
+        };
         check_cancelled()?;
-        if self.remote.is_none() { peek.remote = None; }
+        if self.remote.is_none() {
+            peek.remote = None;
+        }
         Ok(Some(peek))
     }
 
-    fn load_git(&self, staged: bool, cancel: &CancellationToken) -> Result<Option<HunkPeek>, String> {
+    fn load_git(
+        &self,
+        staged: bool,
+        cancel: &CancellationToken,
+    ) -> Result<Option<HunkPeek>, String> {
         let file = self.file.as_ref().ok_or("No file selected")?;
         let sources = if let Some(remote) = &self.remote {
-            let file = remote.remote_path(file).map_err(|error| error.to_string())?;
-            let repository = self.repository.as_ref()
-                .map(|path| remote.remote_path(path)).transpose().map_err(|error| error.to_string())?;
-            let reply = remote.client.call_cancellable(
-                Command::HunkSources { file, repository, staged }, cancel,
-            ).map_err(|error| error.to_string())?;
+            let file = remote
+                .remote_path(file)
+                .map_err(|error| error.to_string())?;
+            let repository = self
+                .repository
+                .as_ref()
+                .map(|path| remote.remote_path(path))
+                .transpose()
+                .map_err(|error| error.to_string())?;
+            let reply = remote
+                .client
+                .call_cancellable(
+                    Command::HunkSources {
+                        file,
+                        repository,
+                        staged,
+                    },
+                    cancel,
+                )
+                .map_err(|error| error.to_string())?;
             let Reply::HunkSources(sources) = reply else {
                 return Err("Invalid hunk preview reply".into());
             };
@@ -118,15 +165,31 @@ impl Request {
             let native = (|| -> std::io::Result<_> {
                 let root = std::path::absolute(&self.root)?;
                 let file = crate::remote::git::from_native(&std::path::absolute(file)?, &root)?;
-                let repository = self.repository.as_ref().map(|path| {
-                    crate::remote::git::from_native(&std::path::absolute(path)?, &root)
-                }).transpose()?;
-                crate::remote::hunk::native_sources(&root, file, repository, staged, self.live.as_ref())
+                let repository = self
+                    .repository
+                    .as_ref()
+                    .map(|path| crate::remote::git::from_native(&std::path::absolute(path)?, &root))
+                    .transpose()?;
+                crate::remote::hunk::native_sources(
+                    &root,
+                    file,
+                    repository,
+                    staged,
+                    self.live.as_ref(),
+                )
             })();
             native.map_err(|error| error.to_string())?
         };
-        if cancel.is_cancelled() { return Err("Preview closed".into()); }
-        crate::remote::hunk::prepare_target(sources, staged, self.live.as_ref(), self.target, self.tab_size)
+        if cancel.is_cancelled() {
+            return Err("Preview closed".into());
+        }
+        crate::remote::hunk::prepare_target(
+            sources,
+            staged,
+            self.live.as_ref(),
+            self.target,
+            self.tab_size,
+        )
     }
 }
 
@@ -143,25 +206,47 @@ impl App {
 
     fn hunk_preview_request(&mut self) -> Request {
         let file = self.hunk_popup_file.clone();
-        let repository = file.as_deref().and_then(|path| self.repository_hint_for_path(path));
+        let repository = file
+            .as_deref()
+            .and_then(|path| self.repository_hint_for_path(path));
         let status = self.hunk_popup_status;
         let line = self.hunk_popup_line;
         let editor = self.hunk_preview_editor();
-        let document = editor.as_ref().map(|editor| (editor.navigation_id, editor.content_version));
-        let inserted = status != 'S' && editor.as_ref().is_some_and(|editor| {
-            editor.line_changes(line).working() == Some(crate::line_changes::ChangeKind::Added)
-        });
+        let document = editor
+            .as_ref()
+            .map(|editor| (editor.navigation_id, editor.content_version));
+        let inserted = status != 'S'
+            && editor.as_ref().is_some_and(|editor| {
+                editor.line_changes(line).working() == Some(crate::line_changes::ChangeKind::Added)
+            });
         let tab_size = editor.as_ref().map_or(4, |editor| editor.tab_size);
-        let live = editor.as_ref().filter(|editor| editor.modified || status == 'N')
+        let live = editor
+            .as_ref()
+            .filter(|editor| editor.modified || status == 'N')
             .map(|editor| editor.rope.clone());
         let saved = editor.and_then(|editor| editor.saved_rope.clone());
         Request {
-            remote: self.remote_workspace.clone(), root: self.explorer.root.clone(),
-            file, repository,
-            target: self.hunk_preview_continuation.as_ref().filter(|next| next.action.is_none())
-                .map_or(if inserted { PeekTarget::InsertedLine(line) } else { PeekTarget::Line(line) },
-                    |next| PeekTarget::Hunk(next.next)),
-            status, document, tab_size, live, saved,
+            remote: self.remote_workspace.clone(),
+            root: self.explorer.root.clone(),
+            file,
+            repository,
+            target: self
+                .hunk_preview_continuation
+                .as_ref()
+                .filter(|next| next.action.is_none())
+                .map_or(
+                    if inserted {
+                        PeekTarget::InsertedLine(line)
+                    } else {
+                        PeekTarget::Line(line)
+                    },
+                    |next| PeekTarget::Hunk(next.next),
+                ),
+            status,
+            document,
+            tab_size,
+            live,
+            saved,
         }
     }
 
@@ -172,10 +257,16 @@ impl App {
         // Unsaved-buffer previews also work when Source Control is disabled.
         // The preview generation/document identity owns these results.
         let sender = self.background.sender.clone();
-        let cancel = self.background.spawn_cancellable("hunk-preview", move |cancel| {
-            let result = request.load(&cancel);
-            let _ = sender.send(BackgroundResult::HunkPeek(PeekResult { generation, document, result }));
-        });
+        let cancel = self
+            .background
+            .spawn_cancellable("hunk-preview", move |cancel| {
+                let result = request.load(&cancel);
+                let _ = sender.send(BackgroundResult::HunkPeek(PeekResult {
+                    generation,
+                    document,
+                    result,
+                }));
+            });
         self.hunk_preview_feedback = Some(Feedback::new(FeedbackState::Loading(cancel)));
     }
 
@@ -183,13 +274,19 @@ impl App {
         if !self.hunk_popup_active || self.hunk_popup_generation != result.generation {
             return false;
         }
-        let current = self.hunk_preview_editor().map(|editor| (editor.navigation_id, editor.content_version));
+        let current = self
+            .hunk_preview_editor()
+            .map(|editor| (editor.navigation_id, editor.content_version));
         let cancelled = self.hunk_preview_feedback.as_ref().is_some_and(|feedback| {
             matches!(&feedback.state, FeedbackState::Loading(cancel) if cancel.is_cancelled())
         });
-        if current != result.document && !cancelled
+        if current != result.document
+            && !cancelled
             && current.map(|document| document.0) == result.document.map(|document| document.0)
-            && let Some(next) = self.hunk_preview_continuation.as_ref().filter(|next| next.action.is_none())
+            && let Some(next) = self
+                .hunk_preview_continuation
+                .as_ref()
+                .filter(|next| next.action.is_none())
         {
             // A discard can finish reloading the clean editor while the next
             // preview is in flight. Read its new snapshot instead of closing.
@@ -204,17 +301,28 @@ impl App {
         match result.result {
             Ok(Some(peek)) => {
                 let advance = self.hunk_preview_continuation.take().is_some();
-                let changed_source = self.hunk_popup_status != 'N' && (self.hunk_popup_status == 'S') != peek.staged;
-                if self.hunk_popup_status != 'N' { self.hunk_popup_status = if peek.staged { 'S' } else { 'U' }; }
+                let changed_source =
+                    self.hunk_popup_status != 'N' && (self.hunk_popup_status == 'S') != peek.staged;
+                if self.hunk_popup_status != 'N' {
+                    self.hunk_popup_status = if peek.staged { 'S' } else { 'U' };
+                }
                 self.hunk_preview_feedback = None;
                 self.hunk_peek = Some(peek);
-                if advance { crate::ui_hunk_peek::reveal_current_change(self); }
-                if changed_source { self.refresh_git_line_status_async(); }
+                if advance {
+                    crate::ui_hunk_peek::reveal_current_change(self);
+                }
+                if changed_source {
+                    self.refresh_git_line_status_async();
+                }
             }
-            Ok(None) if self.hunk_popup_status != 'N' || self.hunk_preview_continuation.is_some() => {
+            Ok(None)
+                if self.hunk_popup_status != 'N' || self.hunk_preview_continuation.is_some() =>
+            {
                 let git = self.hunk_popup_status != 'N';
                 self.close_hunk_popup();
-                if git { self.refresh_git_line_status_async(); }
+                if git {
+                    self.refresh_git_line_status_async();
+                }
             }
             result => {
                 let error = result.err().unwrap_or_else(|| "No changes found".into());
@@ -232,41 +340,62 @@ impl App {
             return;
         }
         let (x, y) = self.hunk_popup_pos;
-        self.open_hunk_popup(x, y, self.hunk_popup_file.clone(), self.hunk_popup_line, self.hunk_popup_status);
+        self.open_hunk_popup(
+            x,
+            y,
+            self.hunk_popup_file.clone(),
+            self.hunk_popup_line,
+            self.hunk_popup_status,
+        );
     }
 
     #[cfg(test)]
     pub(crate) fn load_hunk_peek(&mut self) -> Result<HunkPeek, String> {
-        self.hunk_preview_request().load(&CancellationToken::new())?
+        self.hunk_preview_request()
+            .load(&CancellationToken::new())?
             .ok_or_else(|| "No changes found".into())
     }
 
     pub(crate) fn hunk_preview_action_pending(&self) -> bool {
-        self.hunk_preview_continuation.as_ref().is_some_and(|next| next.action.is_some())
+        self.hunk_preview_continuation
+            .as_ref()
+            .is_some_and(|next| next.action.is_some())
     }
 
     pub(crate) fn begin_hunk_preview_action(&mut self, action: &'static str) {
         self.hunk_preview_continuation = self.hunk_peek.as_ref().map(|peek| Continuation {
-            generation: self.hunk_popup_generation, next: peek.selected, action: Some(action),
+            generation: self.hunk_popup_generation,
+            next: peek.selected,
+            action: Some(action),
         });
     }
 
     pub(crate) fn finish_hunk_preview_action(&mut self, action: &str, success: bool) {
         let Some(next) = self.hunk_preview_continuation.as_ref().filter(|next| {
             next.generation == self.hunk_popup_generation && next.action == Some(action)
-        }) else { return; };
+        }) else {
+            return;
+        };
         let index = next.next;
         self.hunk_preview_continuation = None;
-        if success && self.hunk_popup_active { self.advance_hunk_preview(index); }
+        if success && self.hunk_popup_active {
+            self.advance_hunk_preview(index);
+        }
     }
 
     pub(crate) fn advance_hunk_preview(&mut self, next: usize) {
-        if !self.hunk_popup_active { return; }
-        if let Some(feedback) = self.hunk_preview_feedback.take() { feedback.cancel(); }
+        if !self.hunk_popup_active {
+            return;
+        }
+        if let Some(feedback) = self.hunk_preview_feedback.take() {
+            feedback.cancel();
+        }
         self.hunk_popup_generation = self.hunk_popup_generation.wrapping_add(1);
         self.hunk_peek = None;
         self.hunk_preview_continuation = Some(Continuation {
-            generation: self.hunk_popup_generation, next, action: None,
+            generation: self.hunk_popup_generation,
+            next,
+            action: None,
         });
         self.request_hunk_preview();
     }
@@ -275,7 +404,9 @@ impl App {
     #[track_caller]
     pub(crate) fn wait_for_hunk_preview(&mut self) {
         self.wait_for_background(std::time::Duration::from_secs(10), |app| {
-            !app.hunk_preview_feedback.as_ref().is_some_and(Feedback::loading)
+            !app.hunk_preview_feedback
+                .as_ref()
+                .is_some_and(Feedback::loading)
         });
     }
 }

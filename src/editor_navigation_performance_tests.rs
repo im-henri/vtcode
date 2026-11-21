@@ -12,7 +12,10 @@ fn reference_brackets(editor: &Editor, start: usize, end: usize) -> Option<(usiz
             stacks[kind].push(index);
         } else if let Some(kind) = closers.iter().position(|&close| ch == close) {
             if let Some(open) = stacks[kind].pop() {
-                if open < start && index >= end && enclosing.is_none_or(|(previous, _)| open > previous) {
+                if open < start
+                    && index >= end
+                    && enclosing.is_none_or(|(previous, _)| open > previous)
+                {
                     enclosing = Some((open, index));
                 }
             }

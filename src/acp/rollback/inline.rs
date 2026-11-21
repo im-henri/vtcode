@@ -84,7 +84,9 @@ impl Journal {
                         if !metadata.is_file() || metadata.len() > TEXT_LIMIT {
                             return None;
                         }
-                        fs::read_to_string(path).ok().filter(|text| !text.contains('\0'))
+                        fs::read_to_string(path)
+                            .ok()
+                            .filter(|text| !text.contains('\0'))
                     });
                 FileReview {
                     path: self.root.join(&edit.path),

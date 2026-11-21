@@ -126,18 +126,24 @@ impl ScopeEdit {
 
     pub(super) fn preserves_scope(self, editor: &crate::editor::Editor) -> bool {
         let rule = editor.scope_bubble_rules.for_editor(editor);
-        if rule.is_some_and(|rule| rule.delimiters.is_some_and(|mask|
-            mask & !crate::scope_bubble_config::Delimiter::Braces.bit() != 0))
-            && !self.preserves_depth
+        if rule.is_some_and(|rule| {
+            rule.delimiters.is_some_and(|mask| {
+                mask & !crate::scope_bubble_config::Delimiter::Braces.bit() != 0
+            })
+        }) && !self.preserves_depth
         {
             // Parentheses/brackets now affect membership as well as palette depth.
             return false;
         }
-        let language = rule.and_then(|rule| rule.syntax_for(editor).language())
+        let language = rule
+            .and_then(|rule| rule.syntax_for(editor).language())
             .or_else(|| editor.syntax_language_token());
-        if rule.is_some() && language.is_some_and(|name| {
-            crate::scope_bubble_config::language_key(name) == "python"
-        }) { return false; }
+        if rule.is_some()
+            && language
+                .is_some_and(|name| crate::scope_bubble_config::language_key(name) == "python")
+        {
+            return false;
+        }
         let javascript = if let Some(language) = language {
             [
                 "javascript",

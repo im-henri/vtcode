@@ -1,7 +1,7 @@
-use rustc_hash::FxHashMap;
 use crate::line_changes::LineChanges;
 use crate::merge_conflict_ui::{self, CONFLICT_MARKER, marker_badge, marker_color};
 use crate::ui_colors::{ChangeSurface, ensure_contrast};
+use rustc_hash::FxHashMap;
 use std::ops::Range;
 
 #[path = "ui_scrollbar_changes.rs"]
@@ -10,9 +10,9 @@ pub(crate) use scrollbar_changes::ChangeRows;
 
 #[path = "ui_minimap_cache.rs"]
 mod cache;
-pub(crate) use cache::MinimapCache;
 #[cfg(test)]
 use cache::Glyph;
+pub(crate) use cache::MinimapCache;
 
 #[cfg(test)]
 use ratatui::{
@@ -113,7 +113,10 @@ impl ChangeLineIndex {
         let mut bits = 0;
         for (bit, lines) in self.0.iter().enumerate() {
             let index = lines.partition_point(|&line| line < start);
-            if lines.get(index).is_some_and(|&line| include_tail || line < end) {
+            if lines
+                .get(index)
+                .is_some_and(|&line| include_tail || line < end)
+            {
                 bits |= 1 << bit;
             }
         }
@@ -245,7 +248,11 @@ fn minimap_row_markers(
             background,
             color,
             4.5,
-            &[colors.fg_text, Color::Rgb(0, 0, 0), Color::Rgb(255, 255, 255)],
+            &[
+                colors.fg_text,
+                Color::Rgb(0, 0, 0),
+                Color::Rgb(255, 255, 255),
+            ],
         );
         cells[count] = ("•", marker_style(color).fg(ink));
         count += 1;
@@ -317,7 +324,9 @@ pub(crate) fn scrollbar_change_rows_indexed(
         let change = changes.in_range(start, end, end == total_lines);
         if !compare && editor.has_unsaved_change_in_range(start, end) {
             change.merge(LineChanges::UNSAVED)
-        } else { change }
+        } else {
+            change
+        }
     })
 }
 
@@ -370,7 +379,10 @@ fn minimap_window(
     let bands = height.max(2);
     let len = bands.saturating_mul(scale);
     if total_lines <= len {
-        return MinimapWindow { start: 0, end: total_lines };
+        return MinimapWindow {
+            start: 0,
+            end: total_lines,
+        };
     }
     let max_scroll = total_lines - visible;
     let top_band = scroll.min(max_scroll) / scale;
@@ -432,7 +444,8 @@ impl MinimapLayout {
         let window = minimap_window(scrollable_lines, scroll, visible, height);
         // The first and last visible lines may share bands with offscreen
         // text. Include those bands using the same boundaries as the markers.
-        let view_start = minimap_row_after(scroll.saturating_add(1), window, height).saturating_sub(1);
+        let view_start =
+            minimap_row_after(scroll.saturating_add(1), window, height).saturating_sub(1);
         let view_end = minimap_row_after(scroll.saturating_add(visible), window, height);
         Self {
             window,
@@ -467,7 +480,10 @@ impl MinimapLayout {
         if row == start_row || last == 0 {
             return self.scroll;
         }
-        let target = self.view_start.saturating_add(row).saturating_sub(start_row);
+        let target = self
+            .view_start
+            .saturating_add(row)
+            .saturating_sub(start_row);
         if target == 0 {
             return 0;
         }
@@ -544,13 +560,17 @@ impl MinimapDrag {
 }
 
 fn minimap_change_in_range<T: Copy + Into<LineChanges>>(
-    changes: &[(usize, T)], start: usize, end: usize,
+    changes: &[(usize, T)],
+    start: usize,
+    end: usize,
 ) -> LineChanges {
     let index = changes.partition_point(|&(line, _)| line < start);
     changes[index..]
         .iter()
         .take_while(|&&(line, _)| line < end)
-        .fold(LineChanges::default(), |combined, &(_, change)| combined.merge(change.into()))
+        .fold(LineChanges::default(), |combined, &(_, change)| {
+            combined.merge(change.into())
+        })
 }
 
 fn minimap_source_range(window: MinimapWindow, row: usize, height: usize) -> (usize, usize) {
@@ -580,8 +600,15 @@ fn minimap_samples(start: usize, end: usize) -> impl Iterator<Item = (usize, u8)
     let len = end.saturating_sub(start);
     let count = len.min(4);
     (0..count).map(move |sample| {
-        let pixel = if count == 1 { 1 } else { sample * 3 / (count - 1) };
-        (start + sample * len / count, [0x09, 0x12, 0x24, 0xc0][pixel])
+        let pixel = if count == 1 {
+            1
+        } else {
+            sample * 3 / (count - 1)
+        };
+        (
+            start + sample * len / count,
+            [0x09, 0x12, 0x24, 0xc0][pixel],
+        )
     })
 }
 
@@ -620,7 +647,9 @@ fn draw_minimap_viewport_border(
     let bot_y = area.y + bot_row as u16;
     for x in area.x..area.x + area.width {
         for (y, symbol) in [(top_y, "▔"), (bot_y, "▁")] {
-            if symbol == "▁" && bot_y <= top_y { continue; }
+            if symbol == "▁" && bot_y <= top_y {
+                continue;
+            }
             if let Some(cell) = buf.cell_mut((x, y))
                 && !cell.modifier.contains(Modifier::BOLD)
             {
@@ -709,11 +738,19 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
         if source_line < total_lines {
             let has_conflict = conflicts.is_some_and(|index| {
                 merge_conflict_ui::has_conflict(
-                    index, source_line..row_end_line, editor.merge_conflicts.had_conflicts,
+                    index,
+                    source_line..row_end_line,
+                    editor.merge_conflicts.had_conflicts,
                 )
             });
             let markers = minimap_row_markers(
-                changes, diag_severity, has_search_match, has_conflict, width, bg, &colors,
+                changes,
+                diag_severity,
+                has_search_match,
+                has_conflict,
+                width,
+                bg,
+                &colors,
             );
             let row_bg = markers.background;
             let content_width = width - markers.width;
@@ -750,7 +787,10 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
                 }
             }
             for (offset, &(symbol, style)) in markers.cells[..markers.width].iter().enumerate() {
-                if let Some(cell) = buffer.cell_mut((area.x + (content_width + offset) as u16, area.y + row as u16)) {
+                if let Some(cell) = buffer.cell_mut((
+                    area.x + (content_width + offset) as u16,
+                    area.y + row as u16,
+                )) {
                     cell.set_symbol(symbol).set_style(style);
                 }
             }
@@ -815,7 +855,10 @@ pub(crate) fn draw_scrollbar_conflict(
     track: Color,
     navigation: Color,
 ) {
-    if let Some(cell) = f.buffer_mut().cell_mut((area.right() - 1, area.y + row as u16)) {
+    if let Some(cell) = f
+        .buffer_mut()
+        .cell_mut((area.right() - 1, area.y + row as u16))
+    {
         let style = if area.width > 1 {
             marker_badge(colors, marker_color(colors, track))
         } else {
@@ -871,12 +914,25 @@ fn scrollbar_row_cells(
 ) -> [(char, Style); 2] {
     let surface = if in_thumb { thumb } else { track };
     let navigation = if is_cursor {
-        ('━', Style::default().bg(surface)
-            .fg(colors.ui.readable_foreground(colors.bg_cursor, surface, 3.0)))
+        (
+            '━',
+            Style::default()
+                .bg(surface)
+                .fg(colors
+                    .ui
+                    .readable_foreground(colors.bg_cursor, surface, 3.0)),
+        )
     } else {
-        (if in_thumb { '█' } else { ' ' }, Style::default().fg(surface).bg(surface))
+        (
+            if in_thumb { '█' } else { ' ' },
+            Style::default().fg(surface).bg(surface),
+        )
     };
-    let navigation_bg = if is_cursor { navigation.1.fg.unwrap_or(colors.bg_cursor) } else { surface };
+    let navigation_bg = if is_cursor {
+        navigation.1.fg.unwrap_or(colors.bg_cursor)
+    } else {
+        surface
+    };
     let blank = (' ', Style::default().fg(track).bg(track));
     if let Some(color) = marker {
         return if width == 1 {
@@ -892,7 +948,9 @@ fn scrollbar_row_cells(
         let cell = combined.summary().map_or(navigation, |kind| {
             let mut style = Style::default().fg(color(kind)).bg(navigation_bg);
             if let Some(staged) = combined.staged() {
-                style = style.add_modifier(Modifier::UNDERLINED).underline_color(color(staged));
+                style = style
+                    .add_modifier(Modifier::UNDERLINED)
+                    .underline_color(color(staged));
             }
             (change.narrow_symbol(), style)
         });
@@ -900,18 +958,36 @@ fn scrollbar_row_cells(
     }
     if combined.working().is_none() {
         let staged = combined.staged().map_or(blank, |kind| {
-            (change.symbol(), Style::default().fg(color(kind)).bg(track).add_modifier(Modifier::UNDERLINED))
+            (
+                change.symbol(),
+                Style::default()
+                    .fg(color(kind))
+                    .bg(track)
+                    .add_modifier(Modifier::UNDERLINED),
+            )
         });
         return [navigation, staged];
     }
     let [upper, lower] = change.halves();
     let staged_lane = combined.staged().map_or(navigation, |kind| {
-        let symbol = scrollbar_changes::coverage_symbol(upper.staged().is_some(), lower.staged().is_some(), true);
-        (symbol, Style::default().fg(color(kind)).bg(navigation_bg).add_modifier(Modifier::UNDERLINED))
+        let symbol = scrollbar_changes::coverage_symbol(
+            upper.staged().is_some(),
+            lower.staged().is_some(),
+            true,
+        );
+        (
+            symbol,
+            Style::default()
+                .fg(color(kind))
+                .bg(navigation_bg)
+                .add_modifier(Modifier::UNDERLINED),
+        )
     });
     let [top, bottom] = [upper.working(), lower.working()];
     let working_lane = match (top, bottom) {
-        (Some(a), Some(b)) if color(a) != color(b) => ('▀', Style::default().fg(color(a)).bg(color(b))),
+        (Some(a), Some(b)) if color(a) != color(b) => {
+            ('▀', Style::default().fg(color(a)).bg(color(b)))
+        }
         (None, None) => blank,
         _ => {
             let symbol = scrollbar_changes::coverage_symbol(top.is_some(), bottom.is_some(), false);
@@ -994,7 +1070,8 @@ fn draw_scrollbar_with_mapping(
             let lines = if let Some((mapping, wrap)) = source_to_display {
                 let first = wrap.row_at(rows.start).logical;
                 let last = wrap.row_at(rows.end - 1).logical;
-                mapping.partition_point(|&row| row < first)..mapping.partition_point(|&row| row <= last)
+                mapping.partition_point(|&row| row < first)
+                    ..mapping.partition_point(|&row| row <= last)
             } else {
                 editor.overview_source_range(rows, wrapped)
             };
@@ -1002,7 +1079,14 @@ fn draw_scrollbar_with_mapping(
         });
         if !scrollable {
             if has_conflict {
-                draw_scrollbar_conflict(f, area, i, &colors, track, if in_thumb { thumb } else { track });
+                draw_scrollbar_conflict(
+                    f,
+                    area,
+                    i,
+                    &colors,
+                    track,
+                    if in_thumb { thumb } else { track },
+                );
             }
             continue;
         }
@@ -1011,17 +1095,24 @@ fn draw_scrollbar_with_mapping(
             .saturating_mul(total_lines)
             .div_ceil(height)
             .min(total_lines);
-        let (query_start, query_end) =
-            source_to_display.map_or_else(|| editor.map_or((source_start, source_end), |editor| {
-                (editor.overview_source_boundary(source_start), editor.overview_source_boundary(source_end))
-            }), |(mapping, wrap)| {
+        let (query_start, query_end) = source_to_display.map_or_else(
+            || {
+                editor.map_or((source_start, source_end), |editor| {
+                    (
+                        editor.overview_source_boundary(source_start),
+                        editor.overview_source_boundary(source_end),
+                    )
+                })
+            },
+            |(mapping, wrap)| {
                 let start = wrap.logical_boundary(source_start);
                 let end = wrap.logical_boundary(source_end);
                 (
                     mapping.partition_point(|&row| row < start),
                     mapping.partition_point(|&row| row < end),
                 )
-            });
+            },
+        );
         let includes_fallback = source_start == 0 && source_end > 0;
         let fallback_start = source_to_display
             .filter(|_| includes_fallback)
@@ -1068,7 +1159,9 @@ fn draw_scrollbar_with_mapping(
         } else {
             None
         };
-        let cells = scrollbar_row_cells(width, in_thumb, is_cursor, marker, change, &colors, track, thumb);
+        let cells = scrollbar_row_cells(
+            width, in_thumb, is_cursor, marker, change, &colors, track, thumb,
+        );
         let buffer = f.buffer_mut();
         for column in 0..width {
             let (symbol, style) = cells[usize::from(column >= width / 2)];
@@ -1079,7 +1172,9 @@ fn draw_scrollbar_with_mapping(
         if has_conflict {
             let surface = if in_thumb { thumb } else { track };
             let navigation_bg = if width == 1 && is_cursor {
-                colors.ui.readable_foreground(colors.bg_cursor, surface, 3.0)
+                colors
+                    .ui
+                    .readable_foreground(colors.bg_cursor, surface, 3.0)
             } else {
                 surface
             };
@@ -1125,24 +1220,58 @@ mod tests {
 
     #[test]
     fn overview_marks_keep_staged_removals_distinct_from_working_additions() {
-        for theme in [crate::app_theme::EditorTheme::Dark, crate::app_theme::EditorTheme::Light] {
+        for theme in [
+            crate::app_theme::EditorTheme::Dark,
+            crate::app_theme::EditorTheme::Light,
+        ] {
             let colors = theme.colors();
             let overlap = LineChanges::git('D', 'A');
-            let markers = minimap_row_markers(overlap, Some(2), false, false, 12, colors.ui.bg_minimap, &colors);
+            let markers = minimap_row_markers(
+                overlap,
+                Some(2),
+                false,
+                false,
+                12,
+                colors.ui.bg_minimap,
+                &colors,
+            );
             assert_eq!(markers.width, 3);
-            assert_eq!(markers.cells[..markers.width].iter().map(|cell| cell.0).collect::<Vec<_>>(), ["█", "•", " "]);
+            assert_eq!(
+                markers.cells[..markers.width]
+                    .iter()
+                    .map(|cell| cell.0)
+                    .collect::<Vec<_>>(),
+                ["█", "•", " "]
+            );
             assert_eq!(markers.cells[0].1.fg, Some(colors.ui.fg_minimap_warning));
-            assert_eq!(markers.cells[1].1.bg, Some(colors.ui.fg_gutter_deleted_secondary));
+            assert_eq!(
+                markers.cells[1].1.bg,
+                Some(colors.ui.fg_gutter_deleted_secondary)
+            );
             assert_eq!(markers.cells[2].1.bg, Some(colors.ui.fg_gutter_added));
 
-            let replacement = minimap_row_markers(LineChanges::git('M', ' '), None, false, false, 12, colors.ui.bg_minimap, &colors);
+            let replacement = minimap_row_markers(
+                LineChanges::git('M', ' '),
+                None,
+                false,
+                false,
+                12,
+                colors.ui.bg_minimap,
+                &colors,
+            );
             assert_eq!(replacement.width, 1);
             assert_eq!(replacement.cells[0].0, "•");
-            assert_eq!(replacement.cells[0].1.bg, Some(colors.ui.fg_gutter_modified_secondary));
+            assert_eq!(
+                replacement.cells[0].1.bg,
+                Some(colors.ui.fg_gutter_modified_secondary)
+            );
 
             let rows = ChangeRows::from_lines(10, 100, [(40, overlap), (45, 'D'.into())]);
-            let (track, thumb) = colors.ui.scrollbar_colors(colors.ui.bg_overview, false, false);
-            let [staged, working] = scrollbar_row_cells(2, true, false, None, rows.row(4), &colors, track, thumb);
+            let (track, thumb) = colors
+                .ui
+                .scrollbar_colors(colors.ui.bg_overview, false, false);
+            let [staged, working] =
+                scrollbar_row_cells(2, true, false, None, rows.row(4), &colors, track, thumb);
             assert_eq!(staged.0, '▝');
             assert_eq!(staged.1.fg, Some(colors.ui.fg_overview_deleted));
             assert_eq!(staged.1.bg, Some(thumb));
@@ -1150,11 +1279,15 @@ mod tests {
             assert_eq!(working.1.fg, Some(colors.ui.fg_overview_added));
             assert_eq!(working.1.bg, Some(colors.ui.fg_overview_deleted));
 
-            let [marker, _] = scrollbar_row_cells(1, true, false, None, rows.row(4), &colors, track, thumb);
+            let [marker, _] =
+                scrollbar_row_cells(1, true, false, None, rows.row(4), &colors, track, thumb);
             assert_eq!(marker.0, '▐');
             assert_eq!(marker.1.bg, Some(thumb));
             assert_eq!(marker.1.fg, Some(colors.ui.fg_overview_modified));
-            assert_eq!(marker.1.underline_color, Some(colors.ui.fg_overview_deleted));
+            assert_eq!(
+                marker.1.underline_color,
+                Some(colors.ui.fg_overview_deleted)
+            );
         }
     }
 
@@ -1298,7 +1431,10 @@ mod tests {
                         diagnostic_lines: &[],
                         diagnostic_index: None,
                         change_index: None,
-                        diff_changes: Some(MinimapDiffChanges { lines: &[(40, 'D')], staged: false }),
+                        diff_changes: Some(MinimapDiffChanges {
+                            lines: &[(40, 'D')],
+                            staged: false,
+                        }),
                         colors,
                         hovered: false,
                         active: false,
@@ -1325,7 +1461,9 @@ mod tests {
             ('X', false),
         ] {
             assert_eq!(
-                minimap_row_markers(status.into(), None, false, false, 3, Color::Black, &colors).width > 0,
+                minimap_row_markers(status.into(), None, false, false, 3, Color::Black, &colors)
+                    .width
+                    > 0,
                 expected,
                 "{status:?}"
             );
@@ -1384,7 +1522,10 @@ mod tests {
                         diagnostic_lines: &[],
                         diagnostic_index: None,
                         change_index: None,
-                        diff_changes: Some(MinimapDiffChanges { lines: &diff_changes, staged: false }),
+                        diff_changes: Some(MinimapDiffChanges {
+                            lines: &diff_changes,
+                            staged: false,
+                        }),
                         colors,
                         hovered: false,
                         active: false,
@@ -1482,7 +1623,10 @@ mod tests {
                             diagnostic_lines: &[],
                             diagnostic_index: None,
                             change_index: None,
-                            diff_changes: Some(MinimapDiffChanges { lines: &changes, staged: false }),
+                            diff_changes: Some(MinimapDiffChanges {
+                                lines: &changes,
+                                staged: false,
+                            }),
                             colors,
                             hovered: false,
                             active: false,
@@ -1560,7 +1704,10 @@ mod tests {
             let mut previous_window = 0;
             for scroll in 0..=max_scroll {
                 let layout = MinimapLayout::new(total, scroll, visible, height, false);
-                assert_eq!(layout.view_end - layout.view_start, (scroll % 4 + visible).div_ceil(4));
+                assert_eq!(
+                    layout.view_end - layout.view_start,
+                    (scroll % 4 + visible).div_ceil(4)
+                );
                 assert!(layout.view_start >= previous_row);
                 assert!(layout.window.start >= previous_window);
                 assert!(layout.view_end <= height);
@@ -1684,7 +1831,10 @@ mod tests {
     fn minimap_changes_are_clipped_to_the_rendered_source_range() {
         let changes = [(0, 'N'), (4990, 'U'), (5000, 'D'), (5010, 'S'), (9999, 'N')];
         assert!(minimap_change_in_range(&changes, 4980, 4990).is_empty());
-        assert_eq!(minimap_change_in_range(&changes, 4990, 5001), LineChanges::from('U').merge('D'.into()));
+        assert_eq!(
+            minimap_change_in_range(&changes, 4990, 5001),
+            LineChanges::from('U').merge('D'.into())
+        );
         assert_eq!(minimap_change_in_range(&changes, 5000, 5001), 'D'.into());
         assert!(minimap_change_in_range(&changes, 5010, 5010).is_empty());
     }

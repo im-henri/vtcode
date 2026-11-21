@@ -133,7 +133,9 @@ impl Subwords {
 
     /// The bytes of a token; nothing for the document start.
     pub(crate) fn bytes(&self, token: u16) -> &[u8] {
-        self.spellings.get(token as usize).map_or(&[], |bytes| bytes)
+        self.spellings
+            .get(token as usize)
+            .map_or(&[], |bytes| bytes)
     }
 
     /// Tokens spelling one piece.
@@ -165,7 +167,13 @@ impl Subwords {
     }
 
     /// Append tokens and their byte offsets, returning the start of the last piece.
-    pub(crate) fn encode(&self, text: &str, cache: &mut Cache, tokens: &mut Vec<u16>, starts: &mut Vec<u32>) -> usize {
+    pub(crate) fn encode(
+        &self,
+        text: &str,
+        cache: &mut Cache,
+        tokens: &mut Vec<u16>,
+        starts: &mut Vec<u32>,
+    ) -> usize {
         let mut last = 0;
         for (start, end) in pieces(text) {
             last = start;
@@ -209,7 +217,12 @@ impl Subwords {
             .as_chunks::<4>()
             .0
             .iter()
-            .map(|pair| (u16::from_le_bytes([pair[0], pair[1]]), u16::from_le_bytes([pair[2], pair[3]])))
+            .map(|pair| {
+                (
+                    u16::from_le_bytes([pair[0], pair[1]]),
+                    u16::from_le_bytes([pair[2], pair[3]]),
+                )
+            })
             .collect();
         *bytes = &bytes[4 + count * 4..];
         Self::new(merges)
@@ -240,16 +253,23 @@ pub(crate) fn learn(pieces: &FxHashMap<Box<[u8]>, u64>, count: usize) -> Vec<(u1
     for (index, word) in words.iter().enumerate() {
         for pair in word.windows(2) {
             *pairs.entry((pair[0], pair[1])).or_default() += uses[index];
-            holders.entry((pair[0], pair[1])).or_default().push(index as u32);
+            holders
+                .entry((pair[0], pair[1]))
+                .or_default()
+                .push(index as u32);
         }
     }
     // Most frequent first; ties go to the smaller pair, so that learning is
     // the same on every run.
-    let mut heap: BinaryHeap<(i64, std::cmp::Reverse<(u16, u16)>)> =
-        pairs.iter().map(|(&pair, &times)| (times, std::cmp::Reverse(pair))).collect();
+    let mut heap: BinaryHeap<(i64, std::cmp::Reverse<(u16, u16)>)> = pairs
+        .iter()
+        .map(|(&pair, &times)| (times, std::cmp::Reverse(pair)))
+        .collect();
     let mut merges = Vec::with_capacity(count);
     while merges.len() < count {
-        let Some((times, std::cmp::Reverse(pair))) = heap.pop() else { break };
+        let Some((times, std::cmp::Reverse(pair))) = heap.pop() else {
+            break;
+        };
         let current = pairs.get(&pair).copied().unwrap_or(0);
         if current != times {
             if current > 0 {

@@ -149,7 +149,9 @@ impl Manager {
     ) -> io::Result<()> {
         let window = output_window.max(WINDOW);
         if window > OUTPUT_WINDOW {
-            return Err(io::Error::other("Remote process output window exceeds limit"));
+            return Err(io::Error::other(
+                "Remote process output window exceeds limit",
+            ));
         }
         if self.lifetime.0.lock().unwrap().stopped {
             return Err(io::Error::new(
@@ -298,7 +300,11 @@ impl Manager {
         std::thread::Builder::new()
             .name("remote-tool-output".into())
             .spawn(move || {
-                let block = if window == WINDOW { BLOCK } else { OUTPUT_BLOCK };
+                let block = if window == WINDOW {
+                    BLOCK
+                } else {
+                    OUTPUT_BLOCK
+                };
                 let result = stream_output(id, reader, &output_flow, &output, block);
                 output_flow.0.lock().unwrap().closed = true;
                 output_flow.1.notify_all();
@@ -493,12 +499,16 @@ impl Stream {
             state.input_acknowledged = Some(std::time::Instant::now());
         }
         let completed = was_pending && state.input_pending == 0;
-        if completed { state.input_pending_since = None; }
+        if completed {
+            state.input_pending_since = None;
+        }
         drop(state);
         self.ready.notify_all();
         // A password prompt or a quiet program need not echo anything. Its
         // acknowledgement must still wake the cursor without terminal output.
-        if completed { self.wake.notify(); }
+        if completed {
+            self.wake.notify();
+        }
         Ok(())
     }
 }
@@ -696,7 +706,10 @@ impl Write for QueuedWriter {
         let mut queue = self.queue.0.lock().unwrap();
         let mut state = self.stream.state.lock().unwrap();
         if state.end {
-            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "Remote process stopped"));
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Remote process stopped",
+            ));
         }
         queue.push(bytes.to_vec(), 4 * 1024 * 1024)?;
         // Publish before releasing the queue: a fast acknowledgement cannot

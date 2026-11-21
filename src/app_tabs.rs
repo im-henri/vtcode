@@ -20,14 +20,27 @@ struct FileOpenOptions {
     skip_open_prompt: bool,
 }
 
-pub(crate) fn loaded_file_result(workspace_generation: u64, path: std::path::PathBuf, loaded: crate::editor::LoadedTextFile, skip_open_prompt: bool) -> crate::background::BackgroundResult {
+pub(crate) fn loaded_file_result(
+    workspace_generation: u64,
+    path: std::path::PathBuf,
+    loaded: crate::editor::LoadedTextFile,
+    skip_open_prompt: bool,
+) -> crate::background::BackgroundResult {
     let result = crate::background::BackgroundResult::FileLoaded {
-        workspace_generation, path, rope: loaded.rope, encoding: loaded.encoding,
-        file_size: loaded.file_size, last_disk_modified: loaded.last_disk_modified,
-        session_restores: Vec::new(), skip_open_prompt,
+        workspace_generation,
+        path,
+        rope: loaded.rope,
+        encoding: loaded.encoding,
+        file_size: loaded.file_size,
+        last_disk_modified: loaded.last_disk_modified,
+        session_restores: Vec::new(),
+        skip_open_prompt,
     };
     match loaded.remote_checkpoint {
-        Some(checkpoint) => crate::background::BackgroundResult::RemoteFileResult { checkpoint, result: Box::new(result) },
+        Some(checkpoint) => crate::background::BackgroundResult::RemoteFileResult {
+            checkpoint,
+            result: Box::new(result),
+        },
         None => result,
     }
 }
@@ -62,19 +75,24 @@ pub(crate) struct HighlightPrefetch {
 }
 
 impl HighlightPrefetch {
-    fn cancel(self) { self.token.cancel(); }
+    fn cancel(self) {
+        self.token.cancel();
+    }
 }
 
 /// The pool keeps one processor for input; a checkpoint slice may occupy one
 /// optional worker, so require at least one more for interactive syntax work.
 fn highlight_prefetch_supported() -> bool {
     static SUPPORTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *SUPPORTED.get_or_init(|| std::thread::available_parallelism().is_ok_and(|cores| cores.get() >= 3))
+    *SUPPORTED
+        .get_or_init(|| std::thread::available_parallelism().is_ok_and(|cores| cores.get() >= 3))
 }
 
 impl App {
     pub(crate) fn cancel_highlight_prefetch(&mut self) {
-        if let Some(prefetch) = self.highlight_prefetch.take() { prefetch.cancel(); }
+        if let Some(prefetch) = self.highlight_prefetch.take() {
+            prefetch.cancel();
+        }
     }
 
     /// Called once the visible rows of the active document are exact.
@@ -86,20 +104,29 @@ impl App {
         language: Option<&str>,
         theme_key: &str,
     ) {
-        if self.highlight_prefetch.as_ref().is_some_and(|pending| pending.path == file_path
-            && pending.version == content_version
-            && !pending.finished.load(std::sync::atomic::Ordering::Acquire))
-        {
+        if self.highlight_prefetch.as_ref().is_some_and(|pending| {
+            pending.path == file_path
+                && pending.version == content_version
+                && !pending.finished.load(std::sync::atomic::Ordering::Acquire)
+        }) {
             return;
         }
         self.cancel_highlight_prefetch();
-        if !highlight_prefetch_supported() || rope.len_lines() < HIGHLIGHT_PREFETCH_MIN_LINES
+        if !highlight_prefetch_supported()
+            || rope.len_lines() < HIGHLIGHT_PREFETCH_MIN_LINES
             || self.editor().is_some_and(|editor| editor.large_file_mode)
         {
             return;
         }
-        let Some(job) = self.highlighter.prepare_prefetch_job(rope, file_path, content_version, language, theme_key)
-        else { return; };
+        let Some(job) = self.highlighter.prepare_prefetch_job(
+            rope,
+            file_path,
+            content_version,
+            language,
+            theme_key,
+        ) else {
+            return;
+        };
         let (syntax_set, theme_set) = self.highlighter.shared_sets();
         let sender = self.background.sender.clone();
         let rope = rope.clone();
@@ -109,8 +136,13 @@ impl App {
             // Short slices: cancellation (any scroll, edit or tab change)
             // loses at most one slice, and the next pass resumes from the
             // checkpoints already published.
-            let batch = job.run_with_budget(&rope, &syntax_set, &theme_set,
-                &mut || cancel.is_cancelled(), HIGHLIGHT_PREFETCH_SLICE);
+            let batch = job.run_with_budget(
+                &rope,
+                &syntax_set,
+                &theme_set,
+                &mut || cancel.is_cancelled(),
+                HIGHLIGHT_PREFETCH_SLICE,
+            );
             // Mark completion before publishing, so applying this batch can
             // always schedule the next slice.
             done.store(true, std::sync::atomic::Ordering::Release);
@@ -119,7 +151,10 @@ impl App {
             }
         });
         self.highlight_prefetch = Some(HighlightPrefetch {
-            path: file_path.to_path_buf(), version: content_version, token, finished,
+            path: file_path.to_path_buf(),
+            version: content_version,
+            token,
+            finished,
         });
     }
 
@@ -131,24 +166,54 @@ impl App {
         let workspace_generation = self.workspace_generation;
         let sender = self.background.sender.clone();
         let activity_path = path.clone();
-        let remote = self.remote_workspace.clone().filter(|_| crate::remote::workspace::is_view_key(&path));
+        let remote = self
+            .remote_workspace
+            .clone()
+            .filter(|_| crate::remote::workspace::is_view_key(&path));
         // Gutter markers need the Git baseline right after the file loads.
         // Over SSH, request it together with the file instead of a round trip
         // later; the agent skips blobs over the large-file threshold, and the
         // gutter request that follows joins this one.
-        let sources_prefetch = remote.as_ref().filter(|_| self.source_control_enabled).map(|remote| (
-            remote.clone(), path.clone(), self.repository_hint_for_path(&path),
-            self.large_file_threshold_mb.saturating_mul(1024 * 1024),
-        ));
-        self.background.read_for_file("file-load", &activity_path, true, move || {
-            if let Some((remote, key, hint, limit)) = sources_prefetch {
-                let _ = std::thread::Builder::new().name("remote-git-sources".into())
-                    .spawn(move || remote.prefetch_git_sources(&key, hint.as_deref(), limit));
-            }
-            let result = remote.map_or_else(|| crate::editor::load_text_file(&path), |remote| remote.load_progress(&path,
-                crate::remote::text::progress(sender.clone(), workspace_generation, path.clone(), false)));
-            let _ = sender.send(file_load_result(workspace_generation, path, result, skip_open_prompt));
-        });
+        let sources_prefetch =
+            remote
+                .as_ref()
+                .filter(|_| self.source_control_enabled)
+                .map(|remote| {
+                    (
+                        remote.clone(),
+                        path.clone(),
+                        self.repository_hint_for_path(&path),
+                        self.large_file_threshold_mb.saturating_mul(1024 * 1024),
+                    )
+                });
+        self.background
+            .read_for_file("file-load", &activity_path, true, move || {
+                if let Some((remote, key, hint, limit)) = sources_prefetch {
+                    let _ = std::thread::Builder::new()
+                        .name("remote-git-sources".into())
+                        .spawn(move || remote.prefetch_git_sources(&key, hint.as_deref(), limit));
+                }
+                let result = remote.map_or_else(
+                    || crate::editor::load_text_file(&path),
+                    |remote| {
+                        remote.load_progress(
+                            &path,
+                            crate::remote::text::progress(
+                                sender.clone(),
+                                workspace_generation,
+                                path.clone(),
+                                false,
+                            ),
+                        )
+                    },
+                );
+                let _ = sender.send(file_load_result(
+                    workspace_generation,
+                    path,
+                    result,
+                    skip_open_prompt,
+                ));
+            });
     }
 
     /// Load one disk baseline and hydrate every saved view of that path on the
@@ -164,60 +229,98 @@ impl App {
         let workspace_generation = self.workspace_generation;
         let sender = self.background.sender.clone();
         let activity_path = path.clone();
-        let remote = self.remote_workspace.clone().filter(|_| crate::remote::workspace::is_view_key(&path));
-        self.background.read_for_file("session-file-load", &activity_path, foreground, move || {
-            crate::session::hydrate_saved_tabs(&project_root,
-                session_restores.iter_mut().map(|restore| &mut restore.tab));
-            let loaded = if !foreground && !crate::remote::workspace::is_view_key(&path)
-                && let [restore] = session_restores.as_slice()
-                && restore.can_defer()
-            {
-                match crate::fs_ops::open_document_source(&path, false) {
-                    Ok((_, metadata)) if metadata.len() >= crate::app::file_residency::MIN_LAZY_RESTORE_BYTES => {
-                        let _ = sender.send(crate::background::BackgroundResult::SessionFileDeferred {
-                            workspace_generation, path, restore_id: restore.id, file_size: metadata.len(),
-                            last_disk_modified: metadata.modified().ok(),
-                        });
-                        return;
+        let remote = self
+            .remote_workspace
+            .clone()
+            .filter(|_| crate::remote::workspace::is_view_key(&path));
+        self.background
+            .read_for_file("session-file-load", &activity_path, foreground, move || {
+                crate::session::hydrate_saved_tabs(
+                    &project_root,
+                    session_restores.iter_mut().map(|restore| &mut restore.tab),
+                );
+                let loaded = if !foreground
+                    && !crate::remote::workspace::is_view_key(&path)
+                    && let [restore] = session_restores.as_slice()
+                    && restore.can_defer()
+                {
+                    match crate::fs_ops::open_document_source(&path, false) {
+                        Ok((_, metadata))
+                            if metadata.len()
+                                >= crate::app::file_residency::MIN_LAZY_RESTORE_BYTES =>
+                        {
+                            let _ = sender.send(
+                                crate::background::BackgroundResult::SessionFileDeferred {
+                                    workspace_generation,
+                                    path,
+                                    restore_id: restore.id,
+                                    file_size: metadata.len(),
+                                    last_disk_modified: metadata.modified().ok(),
+                                },
+                            );
+                            return;
+                        }
+                        Ok((file, metadata)) => {
+                            crate::editor::decode_text_source(file, metadata, &path, None)
+                        }
+                        Err(error) => Err(error),
                     }
-                    Ok((file, metadata)) => crate::editor::decode_text_source(file, metadata, &path, None),
-                    Err(error) => Err(error),
+                } else {
+                    remote.as_ref().map_or_else(
+                        || crate::editor::load_text_file(&path),
+                        |remote| {
+                            remote.load_progress(
+                                &path,
+                                crate::remote::text::progress(
+                                    sender.clone(),
+                                    workspace_generation,
+                                    path.clone(),
+                                    false,
+                                ),
+                            )
+                        },
+                    )
+                };
+                match loaded {
+                    Ok(mut loaded) => {
+                        crate::session::share_recovered_disk_snapshot(
+                            session_restores.iter_mut().map(|restore| &mut restore.tab),
+                            &loaded.rope,
+                        );
+                        if let Some(remote) = &remote {
+                            remote.check_recovery(&path, &mut loaded, &session_restores);
+                        }
+                        let result = crate::background::BackgroundResult::FileLoaded {
+                            workspace_generation,
+                            path,
+                            rope: loaded.rope,
+                            encoding: loaded.encoding,
+                            file_size: loaded.file_size,
+                            last_disk_modified: loaded.last_disk_modified,
+                            session_restores,
+                            skip_open_prompt: true,
+                        };
+                        let result = match loaded.remote_checkpoint {
+                            Some(checkpoint) => {
+                                crate::background::BackgroundResult::RemoteFileResult {
+                                    checkpoint,
+                                    result: Box::new(result),
+                                }
+                            }
+                            None => result,
+                        };
+                        let _ = sender.send(result);
+                    }
+                    Err(error) => {
+                        let _ = sender.send(crate::background::BackgroundResult::FileLoadFailed {
+                            workspace_generation,
+                            path,
+                            error: error.to_string(),
+                            session_restores,
+                        });
+                    }
                 }
-            } else {
-                remote.as_ref().map_or_else(|| crate::editor::load_text_file(&path), |remote| remote.load_progress(&path,
-                    crate::remote::text::progress(sender.clone(), workspace_generation, path.clone(), false)))
-            };
-            match loaded {
-                Ok(mut loaded) => {
-                    crate::session::share_recovered_disk_snapshot(
-                        session_restores.iter_mut().map(|restore| &mut restore.tab), &loaded.rope);
-                    if let Some(remote) = &remote { remote.check_recovery(&path, &mut loaded, &session_restores); }
-                    let result = crate::background::BackgroundResult::FileLoaded {
-                        workspace_generation,
-                        path,
-                        rope: loaded.rope,
-                        encoding: loaded.encoding,
-                        file_size: loaded.file_size,
-                        last_disk_modified: loaded.last_disk_modified,
-                        session_restores,
-                        skip_open_prompt: true,
-                    };
-                    let result = match loaded.remote_checkpoint {
-                        Some(checkpoint) => crate::background::BackgroundResult::RemoteFileResult { checkpoint, result: Box::new(result) },
-                        None => result,
-                    };
-                    let _ = sender.send(result);
-                }
-                Err(error) => {
-                    let _ = sender.send(crate::background::BackgroundResult::FileLoadFailed {
-                        workspace_generation,
-                        path,
-                        error: error.to_string(),
-                        session_restores,
-                    });
-                }
-            }
-        });
+            });
     }
 
     /// Create a new Editor pre-configured with App-level settings like language_associations.
@@ -238,15 +341,24 @@ impl App {
     /// Snapshot editors keep independent text, but inherit the file's selected
     /// language. Look across panes/desks without probing the filesystem.
     pub(crate) fn language_override_for_path(&self, path: &Path) -> Option<String> {
-        self.tabs.get(self.active_tab).into_iter()
+        self.tabs
+            .get(self.active_tab)
+            .into_iter()
             .chain(self.tabs.iter())
             .chain(self.groups.iter().flat_map(|group| &group.tabs))
-            .filter(|tab| matches!(
-                tab.kind,
-                TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails
-            ))
+            .filter(|tab| {
+                matches!(
+                    tab.kind,
+                    TabKind::File
+                        | TabKind::GitRevision
+                        | TabKind::Diff(_)
+                        | TabKind::CommitDetails
+                )
+            })
             .find_map(|tab| {
-                tab.editor.file_path.as_deref()
+                tab.editor
+                    .file_path
+                    .as_deref()
                     .filter(|other| Self::same_open_path(other, path))
                     .and(tab.editor.language_override.as_ref())
             })
@@ -254,22 +366,30 @@ impl App {
     }
 
     pub(crate) fn set_editor_language(&mut self, language: Option<&str>) {
-        let Some(current) = self.tabs.get(self.active_tab).filter(|tab| matches!(
-            tab.kind,
-            TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails
-        ))
-        else { return; };
+        let Some(current) = self.tabs.get(self.active_tab).filter(|tab| {
+            matches!(
+                tab.kind,
+                TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails
+            )
+        }) else {
+            return;
+        };
         let path = current.editor.file_path.clone();
         let identity = current.editor.save_identity;
-        for tab in self.tabs.iter_mut()
+        for tab in self
+            .tabs
+            .iter_mut()
             .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
         {
             if !matches!(
                 tab.kind,
                 TabKind::File | TabKind::GitRevision | TabKind::Diff(_) | TabKind::CommitDetails
-            )
-                || !(tab.editor.save_identity == identity || path.as_deref().is_some_and(|path| {
-                    tab.editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, path))
+            ) || !(tab.editor.save_identity == identity
+                || path.as_deref().is_some_and(|path| {
+                    tab.editor
+                        .file_path
+                        .as_deref()
+                        .is_some_and(|other| Self::same_open_path(other, path))
                 }))
             {
                 continue;
@@ -280,7 +400,8 @@ impl App {
             tab.editor.language_override = language.map(str::to_owned);
             tab.editor.inferred_language = None;
             tab.editor.language_detection = None;
-            tab.editor.language_detection_epoch = tab.editor.language_detection_epoch.wrapping_add(1);
+            tab.editor.language_detection_epoch =
+                tab.editor.language_detection_epoch.wrapping_add(1);
             tab.editor.publish_document();
         }
         self.invalidate_visible_highlights();
@@ -296,7 +417,11 @@ impl App {
     }
 
     pub(crate) fn same_open_path(left: &Path, right: &Path) -> bool {
-        if crate::remote::workspace::is_view_key(left) || crate::remote::workspace::is_view_key(right) { return left == right; }
+        if crate::remote::workspace::is_view_key(left)
+            || crate::remote::workspace::is_view_key(right)
+        {
+            return left == right;
+        }
         crate::native_paths::same_spelling(left, right)
     }
 
@@ -335,18 +460,33 @@ impl App {
 
     /// Browse search matches in a reusable preview and retain existing tab states.
     pub(crate) fn open_file_from_search(&mut self, path: &Path) {
-        self.open_file_with_source(path, FileOpenOptions {
-            preview: self.enable_preview_tabs,
-            preserve_existing_preview: true,
-            ..Default::default()
-        }, None);
+        self.open_file_with_source(
+            path,
+            FileOpenOptions {
+                preview: self.enable_preview_tabs,
+                preserve_existing_preview: true,
+                ..Default::default()
+            },
+            None,
+        );
     }
 
     fn open_file_with_preview(&mut self, path: &Path, preview: bool) {
-        self.open_file_with_source(path, FileOpenOptions { preview, ..Default::default() }, None);
+        self.open_file_with_source(
+            path,
+            FileOpenOptions {
+                preview,
+                ..Default::default()
+            },
+            None,
+        );
     }
 
-    pub(crate) fn open_file_with_preloaded(&mut self, path: &Path, loaded: crate::editor::LoadedTextFile) {
+    pub(crate) fn open_file_with_preloaded(
+        &mut self,
+        path: &Path,
+        loaded: crate::editor::LoadedTextFile,
+    ) {
         self.open_file_with_source(path, FileOpenOptions::default(), Some(loaded));
     }
 
@@ -355,12 +495,20 @@ impl App {
         // workbench-wide Open With picker removes the loading tab on arrival.
         self.open_file_with_source(
             path,
-            FileOpenOptions { skip_open_prompt: true, ..Default::default() },
+            FileOpenOptions {
+                skip_open_prompt: true,
+                ..Default::default()
+            },
             None,
         );
     }
 
-    fn open_file_with_source(&mut self, path: &Path, options: FileOpenOptions, mut loaded: Option<crate::editor::LoadedTextFile>) {
+    fn open_file_with_source(
+        &mut self,
+        path: &Path,
+        options: FileOpenOptions,
+        mut loaded: Option<crate::editor::LoadedTextFile>,
+    ) {
         self.start_empty_window_document_services();
         self.cancel_remote_location();
         self.record_navigation();
@@ -369,15 +517,25 @@ impl App {
         if let Some(unused) = loaded {
             // Opening an already-live/shared buffer, or a pending Save As,
             // must not free a large prefetched Rope on the input thread.
-            self.background.spawn("remote-location-drop", move || drop(unused));
+            self.background
+                .spawn("remote-location-drop", move || drop(unused));
         }
     }
 
-    fn open_file_with_preview_inner(&mut self, path: &Path, options: FileOpenOptions, loaded: &mut Option<crate::editor::LoadedTextFile>) {
-        let FileOpenOptions { preview, preserve_existing_preview, skip_open_prompt } = options;
-        if self.pending_save_as.values().any(|(generation, target)|
-            *generation == self.workspace_generation && Self::paths_may_share_entry(target, path))
-        {
+    fn open_file_with_preview_inner(
+        &mut self,
+        path: &Path,
+        options: FileOpenOptions,
+        loaded: &mut Option<crate::editor::LoadedTextFile>,
+    ) {
+        let FileOpenOptions {
+            preview,
+            preserve_existing_preview,
+            skip_open_prompt,
+        } = options;
+        if self.pending_save_as.values().any(|(generation, target)| {
+            *generation == self.workspace_generation && Self::paths_may_share_entry(target, path)
+        }) {
             self.notify("Wait for Save As to finish before opening its destination.");
             return;
         }
@@ -408,7 +566,9 @@ impl App {
                     .as_ref()
                     .is_some_and(|fp| Self::same_open_path(fp, &open_path));
                 if matches {
-                    if !preserve_existing_preview { self.tabs[i].preview = false; }
+                    if !preserve_existing_preview {
+                        self.tabs[i].preview = false;
+                    }
                     self.active_tab = i;
                     self.active_pane = ActivePane::Editor;
                     self.sync_diff_tab();
@@ -420,7 +580,12 @@ impl App {
             }
         }
         // Check other split groups for the same file
-        for (group_idx, group) in self.groups.iter().enumerate().filter(|(i,_)| !self.navigation.restoring && self.group_in_current_desk(*i)) {
+        for (group_idx, group) in self
+            .groups
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.navigation.restoring && self.group_in_current_desk(*i))
+        {
             for (tab_idx, tab) in group.tabs.iter().enumerate() {
                 if tab.kind == TabKind::File {
                     let matches = tab
@@ -431,7 +596,9 @@ impl App {
                     if matches {
                         self.switch_group(group_idx);
                         self.active_tab = tab_idx;
-                        if !preserve_existing_preview { self.pin_preview_tab(); }
+                        if !preserve_existing_preview {
+                            self.pin_preview_tab();
+                        }
                         self.active_pane = ActivePane::Editor;
                         self.sync_diff_tab();
                         self.touch_tab_mru(tab_idx);
@@ -446,13 +613,20 @@ impl App {
         // Opening an existing document in another desk creates a view of the
         // live buffer, including unsaved edits; it never reloads the disk file.
         let saved_view = self.closed_file_views.get(&open_path).copied().or_else(|| {
-            self.closed_file_views.iter().find(|(path, _)| Self::same_open_path(path, &open_path))
+            self.closed_file_views
+                .iter()
+                .find(|(path, _)| Self::same_open_path(path, &open_path))
                 .map(|(_, position)| *position)
         });
-        if let Some(source) = self.groups.iter().flat_map(|g| &g.tabs).find(|tab|
+        if let Some(source) = self.groups.iter().flat_map(|g| &g.tabs).find(|tab| {
             tab.kind == TabKind::File
                 && (!tab.editor.bg_loading || tab.editor.pending_session_restore.is_some())
-                && tab.editor.file_path.as_ref().is_some_and(|path| Self::same_open_path(path,&open_path))) {
+                && tab
+                    .editor
+                    .file_path
+                    .as_ref()
+                    .is_some_and(|path| Self::same_open_path(path, &open_path))
+        }) {
             let mut tab = self.clone_desk_tab(source);
             tab.editor.pending_reopen_view = saved_view;
             tab.editor.restore_reopen_view();
@@ -490,7 +664,11 @@ impl App {
         #[cfg(windows)]
         let document = editor.save_identity;
         #[cfg(windows)]
-        let candidates = if loaded.is_none() { self.native_open_candidates(&open_path) } else { Vec::new() };
+        let candidates = if loaded.is_none() {
+            self.native_open_candidates(&open_path)
+        } else {
+            Vec::new()
+        };
         #[cfg(windows)]
         let deferred_preview = preview && self.enable_preview_tabs && !candidates.is_empty();
         #[cfg(windows)]
@@ -501,17 +679,25 @@ impl App {
         self.refresh_source_control_for_navigation();
 
         if let Some(loaded) = loaded.take() {
-            let _ = self.background.sender.send(loaded_file_result(self.workspace_generation, open_path, loaded, skip_open_prompt));
+            let _ = self.background.sender.send(loaded_file_result(
+                self.workspace_generation,
+                open_path,
+                loaded,
+                skip_open_prompt,
+            ));
         } else {
             #[cfg(windows)]
-            self.queue_native_file_open(native_open::Request {
-                path: open_path,
-                document,
-                skip_open_prompt,
-                preserve_existing_preview,
-                activate_existing_group: !self.navigation.restoring,
-                deferred_preview,
-            }, candidates);
+            self.queue_native_file_open(
+                native_open::Request {
+                    path: open_path,
+                    document,
+                    skip_open_prompt,
+                    preserve_existing_preview,
+                    activate_existing_group: !self.navigation.restoring,
+                    deferred_preview,
+                },
+                candidates,
+            );
             #[cfg(not(windows))]
             self.queue_background_file_load(open_path, skip_open_prompt);
         }
@@ -522,12 +708,18 @@ impl App {
     /// resume in bounded slices, including when large-file mode is active.
     pub(crate) fn refresh_visible_highlights_async(&mut self) {
         self.load_visible_deferred_files();
-        if let Some(path) = self.tabs.get(self.active_tab)
-            .filter(|tab| tab.editor.bg_loading).and_then(|tab| tab.editor.file_path.as_deref()) {
+        if let Some(path) = self
+            .tabs
+            .get(self.active_tab)
+            .filter(|tab| tab.editor.bg_loading)
+            .and_then(|tab| tab.editor.file_path.as_deref())
+        {
             self.background.prioritize_file_read(path);
         }
         self.refresh_current_editor_highlights_async();
-        let Some(tree) = self.split_tree.take() else { return; };
+        let Some(tree) = self.split_tree.take() else {
+            return;
+        };
         tree.visit_leaves(&mut |index| {
             if index == self.active_group
                 || index >= self.groups.len()
@@ -558,10 +750,22 @@ impl App {
 
     pub(crate) fn swap_group_highlight_requests(&mut self, index: usize) {
         let group = &mut self.groups[index];
-        std::mem::swap(&mut self.visible_highlight_key, &mut group.visible_highlight_key);
-        std::mem::swap(&mut self.visible_highlight_cancel_token, &mut group.visible_highlight_cancel_token);
-        std::mem::swap(&mut self.provisional_highlight_key, &mut group.provisional_highlight_key);
-        std::mem::swap(&mut self.provisional_highlight_cancel_token, &mut group.provisional_highlight_cancel_token);
+        std::mem::swap(
+            &mut self.visible_highlight_key,
+            &mut group.visible_highlight_key,
+        );
+        std::mem::swap(
+            &mut self.visible_highlight_cancel_token,
+            &mut group.visible_highlight_cancel_token,
+        );
+        std::mem::swap(
+            &mut self.provisional_highlight_key,
+            &mut group.provisional_highlight_key,
+        );
+        std::mem::swap(
+            &mut self.provisional_highlight_cancel_token,
+            &mut group.provisional_highlight_cancel_token,
+        );
     }
 
     pub(crate) fn invalidate_visible_highlights(&mut self) {
@@ -591,9 +795,13 @@ impl App {
         // share a working file's path but not its document version/context.
         // Pending diffs must wait for their fragment jobs below: preparing a
         // document job while loading would replace the working editor's cache.
-        let Some(editor) = self.tabs.get(self.active_tab)
-            .filter(|tab| matches!(tab.kind, TabKind::File | TabKind::GitRevision)
-                || diff_active && matches!(tab.kind, TabKind::Diff(_) | TabKind::CommitDetails))
+        let Some(editor) = self
+            .tabs
+            .get(self.active_tab)
+            .filter(|tab| {
+                matches!(tab.kind, TabKind::File | TabKind::GitRevision)
+                    || diff_active && matches!(tab.kind, TabKind::Diff(_) | TabKind::CommitDetails)
+            })
             .map(|tab| &tab.editor)
         else {
             self.visible_highlight_key = None;
@@ -646,25 +854,32 @@ impl App {
             } else {
                 self.diff_render_cache.rows.len()
             };
-            let generation = self.diff_refresh_generation
+            let generation = self
+                .diff_refresh_generation
                 .wrapping_add(self.git_compare_generation)
                 .wrapping_add(1)
                 .wrapping_mul(2)
                 .wrapping_add(u64::from(inline_diff));
             (start.min(count), count, generation)
         } else {
-            (scroll.min(editor.rope.len_lines()), editor.rope.len_lines(), 0)
+            (
+                scroll.min(editor.rope.len_lines()),
+                editor.rope.len_lines(),
+                0,
+            )
         };
         let visible_end = visible_start.saturating_add(viewport_height).min(row_count);
         let start = visible_start.saturating_sub(25);
         let end = visible_end.saturating_add(25).min(row_count);
         if self.visible_highlight_key.as_ref().is_some_and(|current| {
-            current.0 == file_path && current.1 == content_version
-                && current.4 == theme_key && current.5.as_deref() == language
+            current.0 == file_path
+                && current.1 == content_version
+                && current.4 == theme_key
+                && current.5.as_deref() == language
                 && current.6 == source_generation
-                && current.2 <= visible_start && current.3 >= visible_end
-        })
-        {
+                && current.2 <= visible_start
+                && current.3 >= visible_end
+        }) {
             // Do not cancel useful work on every wheel tick while its
             // prefetched range still covers the entire visible viewport.
             return;
@@ -677,7 +892,15 @@ impl App {
         let file_path = file_path.to_path_buf();
         let language = language.map(str::to_owned);
         let theme_key = theme_key.to_owned();
-        let key = (file_path.clone(), content_version, start, end, theme_key.clone(), language.clone(), source_generation);
+        let key = (
+            file_path.clone(),
+            content_version,
+            start,
+            end,
+            theme_key.clone(),
+            language.clone(),
+            source_generation,
+        );
         if let Some(token) = self.visible_highlight_cancel_token.take() {
             token.cancel();
         }
@@ -701,16 +924,31 @@ impl App {
                 };
                 let row = &diff_cache.rows[aligned_row];
                 let candidates = [
-                    (row.left_line, row.left_char_len(), row.left_highlight_hash()),
-                    (row.right_line, row.right_char_len(), row.right_highlight_hash()),
+                    (
+                        row.left_line,
+                        row.left_char_len(),
+                        row.left_highlight_hash(),
+                    ),
+                    (
+                        row.right_line,
+                        row.right_char_len(),
+                        row.right_highlight_hash(),
+                    ),
                 ];
                 for (side, (line, chars, hash)) in candidates.into_iter().enumerate() {
                     if let Some(line) = line
                         && chars <= crate::highlight::MAX_SYNTAX_LINE_CHARS
                         && seen.insert((line, hash))
-                        && self.highlighter.highlighted_fragment_by_hash_if_cached(
-                            hash, line, Some(&file_path), language.as_deref(), &theme_key,
-                        ).is_none()
+                        && self
+                            .highlighter
+                            .highlighted_fragment_by_hash_if_cached(
+                                hash,
+                                line,
+                                Some(&file_path),
+                                language.as_deref(),
+                                &theme_key,
+                            )
+                            .is_none()
                     {
                         pending.push((aligned_row, side, line, hash));
                     }
@@ -722,7 +960,10 @@ impl App {
             let registry_generation = self.highlighter.registry_generation();
             let (syntax_set, theme_set) = self.highlighter.shared_sets();
             let sender = self.background.sender.clone();
-            let activity = self.background.activity.start("Highlighting", activity_path.as_deref());
+            let activity = self
+                .background
+                .activity
+                .start("Highlighting", activity_path.as_deref());
             let token = self.background.submit_interactive(move |cancel| {
                 let _activity = activity.cancellable(cancel.clone()).running();
                 use crate::highlight::{FragmentHighlighter, Highlighter};
@@ -734,18 +975,32 @@ impl App {
                         return;
                     }
                     let row = &diff_cache.rows[aligned_row];
-                    let text = if side == 0 { &row.left_text } else { &row.right_text };
+                    let text = if side == 0 {
+                        &row.left_text
+                    } else {
+                        &row.right_text
+                    };
                     line.clear();
                     line.push_str(text);
                     Highlighter::normalize_line_for_highlighting(&mut line);
-                    let highlighter = highlighters[side].get_or_init(|| FragmentHighlighter::new(
-                        &diff_cache.syntax_first_lines[side], Some(&file_path), language.as_deref(),
-                        &theme_key, &syntax_set, &theme_set,
-                    ));
+                    let highlighter = highlighters[side].get_or_init(|| {
+                        FragmentHighlighter::new(
+                            &diff_cache.syntax_first_lines[side],
+                            Some(&file_path),
+                            language.as_deref(),
+                            &theme_key,
+                            &syntax_set,
+                            &theme_set,
+                        )
+                    });
                     entries.push((idx, hash, highlighter.highlight_line(&line)));
                 }
                 let _ = sender.send(crate::background::BackgroundResult::HighlightFragments {
-                    registry_generation, file_path, theme_key, language, entries,
+                    registry_generation,
+                    file_path,
+                    theme_key,
+                    language,
+                    entries,
                 });
             });
             self.visible_highlight_cancel_token = Some(token);
@@ -772,11 +1027,18 @@ impl App {
         }
         let Some(job) = job else {
             self.visible_highlight_key = Some(key);
-            self.schedule_highlight_prefetch(&rope, &file_path, content_version, language.as_deref(), &theme_key);
+            self.schedule_highlight_prefetch(
+                &rope,
+                &file_path,
+                content_version,
+                language.as_deref(),
+                &theme_key,
+            );
             return;
         };
         let provisional_job = (self.provisional_highlight_key.as_ref() != Some(&key))
-            .then(|| self.highlighter.prepare_provisional_job(&job)).flatten();
+            .then(|| self.highlighter.prepare_provisional_job(&job))
+            .flatten();
         let submit_provisional =
             provisional_job.is_some() && self.provisional_highlight_key.as_ref() != Some(&key);
         self.visible_highlight_key = Some(key.clone());
@@ -793,7 +1055,10 @@ impl App {
             let provisional_syntax_set = std::sync::Arc::clone(&syntax_set);
             let provisional_theme_set = std::sync::Arc::clone(&theme_set);
             let provisional_sender = sender.clone();
-            let activity = self.background.activity.start("Highlighting preview", activity_path.as_deref());
+            let activity = self
+                .background
+                .activity
+                .start("Highlighting preview", activity_path.as_deref());
             let token = self.background.submit_interactive(move |cancel| {
                 let _activity = activity.cancellable(cancel.clone()).running();
                 let batch = provisional_job.run(
@@ -809,7 +1074,10 @@ impl App {
             });
             self.provisional_highlight_cancel_token = Some(token);
         }
-        let activity = self.background.activity.start("Highlighting", activity_path.as_deref());
+        let activity = self
+            .background
+            .activity
+            .start("Highlighting", activity_path.as_deref());
         let token = self.background.submit_interactive(move |cancel| {
             let _activity = activity.cancellable(cancel.clone()).running();
             let batch = job.run(&rope, &syntax_set, &theme_set, || cancel.is_cancelled());
@@ -823,10 +1091,19 @@ impl App {
     pub(crate) fn insert_tab_after_active(&mut self, tab: Tab) -> usize {
         let index = self.active_tab.saturating_add(1).min(self.tabs.len());
         // Inserting between two members must keep the named group contiguous.
-        if let Some(group) = self.tabs.get(self.active_tab).and_then(|tab| self.tab_group(tab))
-            && self.tabs.get(index).and_then(|tab| self.tab_group(tab)).is_some_and(|next| next.id == group.id)
+        if let Some(group) = self
+            .tabs
+            .get(self.active_tab)
+            .and_then(|tab| self.tab_group(tab))
+            && self
+                .tabs
+                .get(index)
+                .and_then(|tab| self.tab_group(tab))
+                .is_some_and(|next| next.id == group.id)
         {
-            self.desks.membership.insert(tab.editor.navigation_id, group.id);
+            self.desks
+                .membership
+                .insert(tab.editor.navigation_id, group.id);
         }
         if index < self.tabs.len() {
             let shift = |old: usize| old.saturating_add(usize::from(old >= index));
@@ -865,7 +1142,9 @@ impl App {
 
     fn replace_other_preview_tab(&mut self) {
         let replace = self.tabs.iter().enumerate().position(|(index, tab)| {
-            index != self.active_tab && tab.preview && matches!(tab.kind, TabKind::File | TabKind::Diff(_))
+            index != self.active_tab
+                && tab.preview
+                && matches!(tab.kind, TabKind::File | TabKind::Diff(_))
         });
         if let Some(index) = replace {
             self.clear_transient_editor_state();
@@ -881,7 +1160,11 @@ impl App {
     }
 
     pub(crate) fn keep_preview_tab_open(&mut self, group: usize, index: usize) {
-        let tabs = if group == self.active_group { &mut self.tabs } else { &mut self.groups[group].tabs };
+        let tabs = if group == self.active_group {
+            &mut self.tabs
+        } else {
+            &mut self.groups[group].tabs
+        };
         if let Some(tab) = tabs.get_mut(index) {
             tab.preview = false;
             if self.source_control_preview.tab == Some(tab.kind) {
@@ -898,10 +1181,13 @@ impl App {
     /// Edits and pinned tabs must never be replaced by subsequent browsing.
     pub(crate) fn promote_modified_preview_tabs(&mut self) -> bool {
         let mut changed = false;
-        for tab in self.tabs.iter_mut()
+        for tab in self
+            .tabs
+            .iter_mut()
             .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
         {
-            if tab.preview && (!self.enable_preview_tabs || tab.pinned || tab.has_unsaved_changes()) {
+            if tab.preview && (!self.enable_preview_tabs || tab.pinned || tab.has_unsaved_changes())
+            {
                 tab.preview = false;
                 changed = true;
             }
@@ -913,20 +1199,43 @@ impl App {
         if self.active_tab == tab_idx {
             self.load_active_deferred_file();
         }
-        if let Some(id)=self.tabs.get(tab_idx).and_then(|t| self.desks.membership.get(&t.editor.navigation_id)).copied()
-            && let Some(group)=self.desks.groups.get_mut(&id) { group.collapsed=false; }
-        if tab_idx < self.tabs.len() && self.tab_mru_order.first() == Some(&tab_idx) { return; }
-        self.tab_mru_order.retain(|&i| i != tab_idx && i < self.tabs.len());
-        if tab_idx < self.tabs.len() { self.tab_mru_order.insert(0, tab_idx); }
+        if let Some(id) = self
+            .tabs
+            .get(tab_idx)
+            .and_then(|t| self.desks.membership.get(&t.editor.navigation_id))
+            .copied()
+            && let Some(group) = self.desks.groups.get_mut(&id)
+        {
+            group.collapsed = false;
+        }
+        if tab_idx < self.tabs.len() && self.tab_mru_order.first() == Some(&tab_idx) {
+            return;
+        }
+        self.tab_mru_order
+            .retain(|&i| i != tab_idx && i < self.tabs.len());
+        if tab_idx < self.tabs.len() {
+            self.tab_mru_order.insert(0, tab_idx);
+        }
         self.evict_inactive_large_files();
     }
 
     pub(crate) fn swap_tabs(&mut self, left: usize, right: usize) {
-        let moving=self.tabs[left].editor.navigation_id;
-        self.animations.tab_reorder.borrow_mut().request(self.active_group, moving);
-        let destination=self.desks.membership.get(&self.tabs[right].editor.navigation_id).copied();
-        if let Some(group)=destination {self.desks.membership.insert(moving,group);self.tabs[left].preview=false;}
-        else {self.desks.membership.remove(&moving);}
+        let moving = self.tabs[left].editor.navigation_id;
+        self.animations
+            .tab_reorder
+            .borrow_mut()
+            .request(self.active_group, moving);
+        let destination = self
+            .desks
+            .membership
+            .get(&self.tabs[right].editor.navigation_id)
+            .copied();
+        if let Some(group) = destination {
+            self.desks.membership.insert(moving, group);
+            self.tabs[left].preview = false;
+        } else {
+            self.desks.membership.remove(&moving);
+        }
         self.tabs.swap(left, right);
         crate::tab_collection::swapped(&mut self.tab_mru_order, left, right);
         if let Some(anchor) = &mut self.tab_scroll_manual_anchor {
@@ -941,8 +1250,15 @@ impl App {
             return;
         }
         let moving = self.tabs[source].editor.navigation_id;
-        self.animations.tab_reorder.borrow_mut().request(self.active_group, moving);
-        if let Some(&group) = self.desks.membership.get(&self.tabs[target].editor.navigation_id) {
+        self.animations
+            .tab_reorder
+            .borrow_mut()
+            .request(self.active_group, moving);
+        if let Some(&group) = self
+            .desks
+            .membership
+            .get(&self.tabs[target].editor.navigation_id)
+        {
             self.desks.membership.insert(moving, group);
         } else {
             self.desks.membership.remove(&moving);
@@ -974,7 +1290,9 @@ impl App {
     /// A drop beyond the tab strip's contents leaves any named group. Move the
     /// existing view without swapping other tabs or changing their membership.
     pub(crate) fn move_tab_to_end(&mut self, index: usize) {
-        let Some(tab) = self.tabs.get(index) else { return; };
+        let Some(tab) = self.tabs.get(index) else {
+            return;
+        };
         let moving = tab.editor.navigation_id;
         let last = self.tabs.len() - 1;
         self.move_tab(index, last);
@@ -1016,14 +1334,16 @@ impl App {
         self.desks.membership.remove(&tab.editor.navigation_id);
 
         if source_group == self.active_group {
-            self.navigation.move_editor(tab.editor.navigation_id, target_group);
+            self.navigation
+                .move_editor(tab.editor.navigation_id, target_group);
             self.active_tab = self
                 .active_tab
                 .saturating_sub(usize::from(tab_idx < self.active_tab))
                 .min(self.tabs.len().saturating_sub(1));
             crate::tab_collection::removed(&mut self.tab_mru_order, tab_idx);
         } else if source_group < self.groups.len() {
-            self.navigation.move_editor(tab.editor.navigation_id, target_group);
+            self.navigation
+                .move_editor(tab.editor.navigation_id, target_group);
             let source = &mut self.groups[source_group];
             crate::tab_collection::removed(&mut source.tab_mru_order, tab_idx);
             source.active_tab = source
@@ -1077,8 +1397,10 @@ impl App {
 
     pub(crate) fn can_duplicate_tab(&self, index: usize) -> bool {
         self.tabs.get(index).is_some_and(|tab| {
-            matches!(tab.kind, TabKind::File | TabKind::GitRevision | TabKind::MarkdownPreview)
-                && !tab.editor.bg_loading
+            matches!(
+                tab.kind,
+                TabKind::File | TabKind::GitRevision | TabKind::MarkdownPreview
+            ) && !tab.editor.bg_loading
         })
     }
 
@@ -1141,14 +1463,22 @@ impl App {
 
         // The focused group's tabs live in `self.tabs`; other panes keep
         // theirs in `groups`. Prefer the current pane if both have Settings.
-        let existing = self.tabs.iter()
+        let existing = self
+            .tabs
+            .iter()
             .position(|tab| tab.kind == TabKind::Settings)
             .map(|index| (self.active_group, index))
             .or_else(|| {
-                self.groups.iter().enumerate()
-                    .filter(|(group, _)| *group != self.active_group && self.group_in_current_desk(*group))
+                self.groups
+                    .iter()
+                    .enumerate()
+                    .filter(|(group, _)| {
+                        *group != self.active_group && self.group_in_current_desk(*group)
+                    })
                     .find_map(|(group, state)| {
-                        state.tabs.iter()
+                        state
+                            .tabs
+                            .iter()
                             .position(|tab| tab.kind == TabKind::Settings)
                             .map(|index| (group, index))
                     })
@@ -1198,15 +1528,29 @@ impl App {
                 && crate::ui_extension_info::tab_extension_id(tab).as_deref() == Some(extension_id)
         }) {
             self.active_tab = index;
-            if !preview { self.tabs[index].preview = false; }
+            if !preview {
+                self.tabs[index].preview = false;
+            }
         } else {
             let views = self.extension_views();
-            let name = views.iter().find(|ext| ext.id == extension_id)
+            let name = views
+                .iter()
+                .find(|ext| ext.id == extension_id)
                 .map_or("Unknown Extension", |ext| ext.name.as_str());
             let mut editor = self.new_editor();
-            editor.file_path = Some(std::path::PathBuf::from(format!("Extension: {name} [ext-info:{extension_id}]")));
-            let tab = Tab { preview, kind: TabKind::ExtensionInfo, ..Tab::new_file(editor) };
-            if let Some(index) = self.tabs.iter().position(|tab| tab.kind == TabKind::ExtensionInfo && tab.preview) {
+            editor.file_path = Some(std::path::PathBuf::from(format!(
+                "Extension: {name} [ext-info:{extension_id}]"
+            )));
+            let tab = Tab {
+                preview,
+                kind: TabKind::ExtensionInfo,
+                ..Tab::new_file(editor)
+            };
+            if let Some(index) = self
+                .tabs
+                .iter()
+                .position(|tab| tab.kind == TabKind::ExtensionInfo && tab.preview)
+            {
                 self.tabs[index] = tab;
                 self.active_tab = index;
             } else {
@@ -1389,18 +1733,32 @@ impl App {
             return false;
         }
         let preview_locs = self.markdown_preview_tab_locations();
-        let live_previews: Vec<_> = preview_locs.iter().filter_map(|&location| {
-            self.tab_at_location(location).map(|tab| tab.editor.navigation_id)
-        }).collect();
-        self.markdown_previews.retain_open(&live_previews, &self.background);
-        let visible_previews: Vec<_> = preview_locs.iter().filter_map(|&location| {
-            let active = match location {
-                (None, index) => self.active_tab == index,
-                (Some(group), index) => self.groups[group].active_tab == index,
-            };
-            active.then(|| self.tab_at_location(location).map(|tab| tab.editor.navigation_id)).flatten()
-        }).collect();
-        self.markdown_previews.set_visible(&visible_previews, &self.background);
+        let live_previews: Vec<_> = preview_locs
+            .iter()
+            .filter_map(|&location| {
+                self.tab_at_location(location)
+                    .map(|tab| tab.editor.navigation_id)
+            })
+            .collect();
+        self.markdown_previews
+            .retain_open(&live_previews, &self.background);
+        let visible_previews: Vec<_> = preview_locs
+            .iter()
+            .filter_map(|&location| {
+                let active = match location {
+                    (None, index) => self.active_tab == index,
+                    (Some(group), index) => self.groups[group].active_tab == index,
+                };
+                active
+                    .then(|| {
+                        self.tab_at_location(location)
+                            .map(|tab| tab.editor.navigation_id)
+                    })
+                    .flatten()
+            })
+            .collect();
+        self.markdown_previews
+            .set_visible(&visible_previews, &self.background);
         let mut changed = self.markdown_previews.poll();
         let has_preview = !preview_locs.is_empty();
         if self.markdown_preview != has_preview {
@@ -1459,7 +1817,8 @@ impl App {
 
             // Preview input owns visual rows; translate its pending position back
             // to the source before applying the normal source-to-preview sync.
-            let requested_source = self.tab_mut_at_location(preview_loc)
+            let requested_source = self
+                .tab_mut_at_location(preview_loc)
                 .and_then(|tab| tab.editor.markdown_preview_scroll.as_mut())
                 .and_then(|view| view.pending_source.take());
             if let Some(line) = requested_source {
@@ -1540,7 +1899,9 @@ impl App {
         self.clear_file_search_results();
         self.clear_global_search();
         self.search_history = Default::default();
-        for field in 0..4 { *self.global_search_field_history_mut(field) = Default::default(); }
+        for field in 0..4 {
+            *self.global_search_field_history_mut(field) = Default::default();
+        }
         self.search_query.clear();
         self.search_cursor = 0;
         self.search_selection_anchor = None;
@@ -1626,36 +1987,54 @@ impl App {
 
     pub(crate) fn change_workspace(&mut self, path: &std::path::Path) {
         if let Some(remote) = self.remote_workspace.clone() {
-            if path == self.explorer.root { return; }
+            if path == self.explorer.root {
+                return;
+            }
             self.workspace_open_generation = self.workspace_open_generation.wrapping_add(1);
             let request = self.workspace_open_generation;
             let source = self.workspace_generation;
             let path = path.to_path_buf();
             let sender = self.background.sender.clone();
             self.background.spawn("remote-open-workspace", move || {
-                let result = remote.open_workspace(&path).map_err(|error| error.to_string());
-                let _ = sender.send(crate::background::BackgroundResult::RemoteWorkspaceOpened { request, source, result });
+                let result = remote
+                    .open_workspace(&path)
+                    .map_err(|error| error.to_string());
+                let _ = sender.send(crate::background::BackgroundResult::RemoteWorkspaceOpened {
+                    request,
+                    source,
+                    result,
+                });
             });
             return;
         }
         self.change_workspace_ready(path, None);
     }
 
-    pub(crate) fn change_workspace_ready(&mut self, path: &std::path::Path, remote: Option<crate::remote::workspace::Workspace>) {
+    pub(crate) fn change_workspace_ready(
+        &mut self,
+        path: &std::path::Path,
+        remote: Option<crate::remote::workspace::Workspace>,
+    ) {
         if remote.is_some() || path.is_dir() {
             if crate::portable::workspace_dir(path)
                 == crate::portable::workspace_dir(&self.explorer.root)
             {
                 return;
             }
-            if self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
+            if self
+                .tabs
+                .iter()
+                .chain(self.groups.iter().flat_map(|group| &group.tabs))
                 .any(|tab| tab.kind == TabKind::ExtensionView && tab.has_unsaved_changes())
             {
                 self.notify("Save custom editor changes before opening another folder");
                 return;
             }
             if self.extension_manager.has_busy_runtimes()
-                && self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
+                && self
+                    .tabs
+                    .iter()
+                    .chain(self.groups.iter().flat_map(|group| &group.tabs))
                     .any(|tab| tab.kind == TabKind::ExtensionView)
             {
                 self.notify("Wait for the custom editor operation before opening another folder");
@@ -1791,8 +2170,16 @@ impl App {
         let mod_len: usize = if tab.has_unsaved_changes() { 2 } else { 0 };
         let pin_len: usize = if tab.pinned { "📌".width() } else { 0 };
         let icon_len = match tab.kind {
-            TabKind::File | TabKind::GitRevision if crate::ui_chrome_tabs::tab_icon(tab).is_empty() => 0,
-            TabKind::File | TabKind::GitRevision | TabKind::SourceControl | TabKind::CommitDetails | TabKind::AmendCommit => 2,
+            TabKind::File | TabKind::GitRevision
+                if crate::ui_chrome_tabs::tab_icon(tab).is_empty() =>
+            {
+                0
+            }
+            TabKind::File
+            | TabKind::GitRevision
+            | TabKind::SourceControl
+            | TabKind::CommitDetails
+            | TabKind::AmendCommit => 2,
             _ => 0,
         };
         let deleted_prefix_len: usize = if tab.kind == TabKind::File && tab.editor.disk_unavailable
@@ -1801,7 +2188,11 @@ impl App {
         } else {
             0
         };
-        1 + pin_len + mod_len + icon_len + deleted_prefix_len + display_width
+        1 + pin_len
+            + mod_len
+            + icon_len
+            + deleted_prefix_len
+            + display_width
             + crate::ui_chrome_tabs::tab_trailing_padding(tab).len()
     }
 
@@ -1810,16 +2201,29 @@ impl App {
             crate::ui_chrome_tabs::diff_tab_width(self, tab)
         } else if let TabKind::Chat(key) = tab.kind {
             let title = self.chat.editor_tab_title(key);
-            title.width() + 3 + crate::ui_chrome_tabs::tab_trailing_padding(tab).len()
+            title.width()
+                + 3
+                + crate::ui_chrome_tabs::tab_trailing_padding(tab).len()
                 + if tab.pinned { "📌".width() } else { 0 }
         } else if let TabKind::RemoteConnection(id) = tab.kind {
-            let width = if id == 0 { "SSH: Reconnect".width() } else {
-                "SSH: ".width() + self.remote_targets.attempt.as_ref().filter(|attempt| attempt.id == id)
-                    .map_or("Connection".width(), |attempt| attempt.target.name.width())
+            let width = if id == 0 {
+                "SSH: Reconnect".width()
+            } else {
+                "SSH: ".width()
+                    + self
+                        .remote_targets
+                        .attempt
+                        .as_ref()
+                        .filter(|attempt| attempt.id == id)
+                        .map_or("Connection".width(), |attempt| attempt.target.name.width())
             };
-            width + 4 + crate::ui_chrome_tabs::tab_trailing_padding(tab).len()
+            width
+                + 4
+                + crate::ui_chrome_tabs::tab_trailing_padding(tab).len()
                 + if tab.pinned { "📌".width() } else { 0 }
-        } else { Self::tab_ui_width(tab) }
+        } else {
+            Self::tab_ui_width(tab)
+        }
     }
 
     /// Reveal the active tab with the smallest horizontal cell movement.
@@ -1834,7 +2238,8 @@ impl App {
         if let Some(anchor_tab) = self.tab_scroll_manual_anchor {
             if self.active_tab == anchor_tab {
                 if self.tab_strip_scroll.is_none() {
-                    self.tab_scroll_offset = self.tab_scroll_offset.min(self.max_tab_scroll_offset());
+                    self.tab_scroll_offset =
+                        self.tab_scroll_offset.min(self.max_tab_scroll_offset());
                     return;
                 }
                 if crate::ui_chrome_tabs::strip_scroll_position(self, self.active_group).is_some() {
@@ -1861,7 +2266,12 @@ impl App {
     /// Compute the maximum meaningful tab scroll offset for the current tab bar.
     /// Returns the highest offset where the last tab is still visible.
     pub(crate) fn max_tab_scroll_offset(&self) -> usize {
-        let area_width = self.tab_bar_area.map_or(0, |a| usize::from(a.width.saturating_sub(crate::ui_desks::controls(self,a,self.active_group).width)));
+        let area_width = self.tab_bar_area.map_or(0, |a| {
+            usize::from(
+                a.width
+                    .saturating_sub(crate::ui_desks::controls(self, a, self.active_group).width),
+            )
+        });
         self.compute_max_tab_scroll(&self.tabs, area_width)
     }
 
@@ -1924,7 +2334,10 @@ mod tests {
             ("preview-button.MD", None),
             ("preview-button.txt", Some("Markdown")),
             ("preview-button", Some("Markdown")),
-        ].into_iter().flat_map(|case| [false, true].map(|split| (case, split))) {
+        ]
+        .into_iter()
+        .flat_map(|case| [false, true].map(|split| (case, split)))
+        {
             let mut app = App::test_new();
             let mut source = Editor::test_with_text("# Unsaved Markdown\n");
             source.file_path = Some(name.into());
@@ -1934,7 +2347,8 @@ mod tests {
             app.tabs = vec![Tab::new_file(source)];
             app.active_tab = 0;
             if split {
-                app.tabs.insert(0, Tab::new_file(Editor::test_with_text("other pane")));
+                app.tabs
+                    .insert(0, Tab::new_file(Editor::test_with_text("other pane")));
                 app.active_tab = 1;
                 app.create_split_group_dir(1, crate::app::SplitDirection::Horizontal);
             }
@@ -1950,11 +2364,22 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(180, 30)).unwrap();
             let click_preview = |app: &mut App, terminal: &mut Terminal<TestBackend>| {
                 terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
-                let button = app.breadcrumb_markdown_preview_area.expect("preview button");
-                for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
-                    crate::mouse::handle_mouse(app, MouseEvent {
-                        kind, column: button.x + 2, row: button.y, modifiers: KeyModifiers::NONE,
-                    });
+                let button = app
+                    .breadcrumb_markdown_preview_area
+                    .expect("preview button");
+                for kind in [
+                    MouseEventKind::Down(MouseButton::Left),
+                    MouseEventKind::Up(MouseButton::Left),
+                ] {
+                    crate::mouse::handle_mouse(
+                        app,
+                        MouseEvent {
+                            kind,
+                            column: button.x + 2,
+                            row: button.y,
+                            modifiers: KeyModifiers::NONE,
+                        },
+                    );
                 }
             };
 
@@ -1980,7 +2405,10 @@ mod tests {
             assert_eq!(app.tabs.len(), 2);
             assert_eq!(app.active_tab, 1);
             assert_eq!(app.tabs[1].editor.navigation_id, preview_id);
-            assert_eq!(app.tabs[1].editor.rope.to_string(), "Updated\n\n# Unsaved Markdown\n");
+            assert_eq!(
+                app.tabs[1].editor.rope.to_string(),
+                "Updated\n\n# Unsaved Markdown\n"
+            );
 
             app.close_tab(app.active_tab);
             assert_eq!(app.active_group, group);
@@ -2001,17 +2429,31 @@ mod tests {
         let rope = editor.rope.clone();
         app.tabs = vec![Tab::new_file(editor)];
         app.active_tab = 0;
-        let job = app.highlighter.prepare_job(
-            &rope, &path, 0, None, 0..rope.len_lines(), None, &app.syntax_theme,
-        ).unwrap();
+        let job = app
+            .highlighter
+            .prepare_job(
+                &rope,
+                &path,
+                0,
+                None,
+                0..rope.len_lines(),
+                None,
+                &app.syntax_theme,
+            )
+            .unwrap();
         let (syntaxes, themes) = app.highlighter.shared_sets();
-        assert!(app.highlighter.apply_batch_with_outcome(job.run(&rope, &syntaxes, &themes, || false)).accepted());
+        assert!(
+            app.highlighter
+                .apply_batch_with_outcome(job.run(&rope, &syntaxes, &themes, || false))
+                .accepted()
+        );
         app.editor_mut().unwrap().syntax_dirty_from = None;
         app.editor_mut().unwrap().syntax_dirty_through = None;
         app.refresh_visible_highlights_async();
-        let expected = app.highlighter.highlighted_line_if_cached(
-            "# Heading\n", 0, Some(&path), None, &app.syntax_theme,
-        ).unwrap();
+        let expected = app
+            .highlighter
+            .highlighted_line_if_cached("# Heading\n", 0, Some(&path), None, &app.syntax_theme)
+            .unwrap();
 
         app.toggle_markdown_preview_tab();
         assert_eq!(app.tabs[app.active_tab].kind, TabKind::MarkdownPreview);
@@ -2022,13 +2464,20 @@ mod tests {
             app.switch_group(group);
             app.refresh_visible_highlights_async();
             app.poll_background_results();
-            let actual = app.highlighter.highlighted_line_if_cached(
-                "# Heading\n", 0, Some(&path), None, &app.syntax_theme,
-            ).expect("opening or focusing a preview must preserve source syntax colors");
+            let actual = app
+                .highlighter
+                .highlighted_line_if_cached("# Heading\n", 0, Some(&path), None, &app.syntax_theme)
+                .expect("opening or focusing a preview must preserve source syntax colors");
             assert_eq!(actual, expected);
-            let preview_key = if group == 1 { &app.visible_highlight_key }
-                else { &app.groups[1].visible_highlight_key };
-            assert!(preview_key.is_none(), "rendered previews do not need source highlight jobs");
+            let preview_key = if group == 1 {
+                &app.visible_highlight_key
+            } else {
+                &app.groups[1].visible_highlight_key
+            };
+            assert!(
+                preview_key.is_none(),
+                "rendered previews do not need source highlight jobs"
+            );
         }
     }
 
@@ -2037,12 +2486,17 @@ mod tests {
         use crate::app::{EditorGroup, SplitDirection, SplitNode};
         use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
         let mut app = App::test_new();
-        for (key, name, foreground) in [("preview-a", "Preview A", "#123456"), ("preview-b", "Preview B", "#abcdef")] {
+        for (key, name, foreground) in [
+            ("preview-a", "Preview A", "#123456"),
+            ("preview-b", "Preview B", "#abcdef"),
+        ] {
             let mut theme = crate::app_theme::load_builtin_themes().remove(0);
             theme.config_key = key.into();
             theme.syntax_theme = key.into();
             theme.name = name.into();
-            theme.workbench_colors.insert("editor.foreground".into(), serde_json::json!(foreground));
+            theme
+                .workbench_colors
+                .insert("editor.foreground".into(), serde_json::json!(foreground));
             theme.token_colors.clear();
             app.loaded_themes.push(theme);
         }
@@ -2058,45 +2512,83 @@ mod tests {
         let mut pane = EditorGroup::new();
         pane.tabs.push(Tab::new_file(file));
         app.groups = vec![EditorGroup::new(), pane];
-        app.split_tree = Some(SplitNode::Split { direction: SplitDirection::Horizontal, children: vec![SplitNode::Leaf(0), SplitNode::Leaf(1)], ratios: vec![0.5,0.5] });
+        app.split_tree = Some(SplitNode::Split {
+            direction: SplitDirection::Horizontal,
+            children: vec![SplitNode::Leaf(0), SplitNode::Leaf(1)],
+            ratios: vec![0.5, 0.5],
+        });
 
         fn assert_rendered(app: &mut App, expected: Color) {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
             loop {
                 app.poll_background_results();
-                if app.highlighter.highlighted_line_if_cached("ZEBRA\n", 0, Some(Path::new("preview.rs")), None, &app.syntax_theme).is_some() { break; }
-                assert!(std::time::Instant::now() < deadline, "unfocused preview did not receive highlighting");
+                if app
+                    .highlighter
+                    .highlighted_line_if_cached(
+                        "ZEBRA\n",
+                        0,
+                        Some(Path::new("preview.rs")),
+                        None,
+                        &app.syntax_theme,
+                    )
+                    .is_some()
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "unfocused preview did not receive highlighting"
+                );
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
-            let mut terminal = Terminal::new(TestBackend::new(50,10)).unwrap();
-            terminal.draw(|f| crate::ui_helpers::draw_split_editor_for_group(f, app, Rect::new(0,0,50,10), 1)).unwrap();
-            let cell = terminal.backend().buffer().content.iter().find(|c| c.symbol() == "Z").expect("visible source token");
+            let mut terminal = Terminal::new(TestBackend::new(50, 10)).unwrap();
+            terminal
+                .draw(|f| {
+                    crate::ui_helpers::draw_split_editor_for_group(
+                        f,
+                        app,
+                        Rect::new(0, 0, 50, 10),
+                        1,
+                    )
+                })
+                .unwrap();
+            let cell = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .find(|c| c.symbol() == "Z")
+                .expect("visible source token");
             assert_eq!(cell.fg, expected);
             assert_eq!(app.active_group, 0);
             assert_eq!(app.tabs[app.active_tab].kind, TabKind::Settings);
         }
         app.set_theme_by_key("preview-a");
-        assert_rendered(&mut app, Color::Rgb(18,52,86));
+        assert_rendered(&mut app, Color::Rgb(18, 52, 86));
         app.open_settings_dropdown("theme", "Preview A");
         app.preview_settings_dropdown_value("theme", "Preview B");
-        assert_rendered(&mut app, Color::Rgb(171,205,239));
+        assert_rendered(&mut app, Color::Rgb(171, 205, 239));
         // Rapid previews must not leave a stale worker painting the old theme.
         app.preview_settings_dropdown_value("theme", "Preview A");
         app.preview_settings_dropdown_value("theme", "Preview B");
         app.close_settings_dropdown();
-        assert_rendered(&mut app, Color::Rgb(18,52,86));
+        assert_rendered(&mut app, Color::Rgb(18, 52, 86));
         app.open_palette();
         app.palette.query = "Preferences: Color Theme Preview B".into();
         app.update_palette_filter();
-        assert_rendered(&mut app, Color::Rgb(171,205,239));
+        assert_rendered(&mut app, Color::Rgb(171, 205, 239));
         crate::input_pickers::handle_palette_key(
-            &mut app, crossterm::event::KeyCode::Esc, crossterm::event::KeyModifiers::NONE,
+            &mut app,
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
         );
-        assert_rendered(&mut app, Color::Rgb(18,52,86));
+        assert_rendered(&mut app, Color::Rgb(18, 52, 86));
         // Reapplying the same key with edited color overrides needs a new job.
-        app.settings_effective.workbench_color_customizations.insert("editor.foreground".into(), serde_json::json!("#fedcba"));
+        app.settings_effective
+            .workbench_color_customizations
+            .insert("editor.foreground".into(), serde_json::json!("#fedcba"));
         app.set_theme_by_key("preview-a");
-        assert_rendered(&mut app, Color::Rgb(254,220,186));
+        assert_rendered(&mut app, Color::Rgb(254, 220, 186));
     }
 
     #[test]
@@ -2175,20 +2667,24 @@ mod tests {
     fn benchmark_unchanged_highlight_request_allocations() {
         let mut app = App::test_new();
         let mut editor = Editor::test_with_text(&"let value = 1;\n".repeat(1_000));
-        editor.file_path = Some(PathBuf::from("workspace/application/src/modules/editor/components/highlight_state.rs"));
+        editor.file_path = Some(PathBuf::from(
+            "workspace/application/src/modules/editor/components/highlight_state.rs",
+        ));
         editor.language_override = Some("Rust".into());
         editor.scroll_offset = 100;
         editor.viewport_height = 50;
         app.tabs.push(Tab::new_file(editor));
         app.active_tab = 0;
         app.refresh_current_editor_highlights_async();
-        let mut before = Vec::new(); let mut after = Vec::new();
+        let mut before = Vec::new();
+        let mut after = Vec::new();
         for sample in 0..7 {
             for borrowed in [sample % 2 == 0, sample % 2 != 0] {
                 let started = std::time::Instant::now();
                 for _ in 0..20_000 {
-                    if borrowed { app.refresh_current_editor_highlights_async(); }
-                    else {
+                    if borrowed {
+                        app.refresh_current_editor_highlights_async();
+                    } else {
                         // Original unchanged-viewport path created owned keys
                         // and snapshotted the rope before checking for reuse.
                         let editor = app.editor().unwrap();
@@ -2196,16 +2692,35 @@ mod tests {
                         let language = editor.syntax_language_token().map(str::to_owned);
                         let theme = app.syntax_theme.clone();
                         let rope = editor.rope.clone();
-                        let key = (path.clone(), editor.content_version, 75, 175, theme.clone(), language.clone(), 0);
-                        std::hint::black_box((app.visible_highlight_key.as_ref() == Some(&key), rope));
+                        let key = (
+                            path.clone(),
+                            editor.content_version,
+                            75,
+                            175,
+                            theme.clone(),
+                            language.clone(),
+                            0,
+                        );
+                        std::hint::black_box((
+                            app.visible_highlight_key.as_ref() == Some(&key),
+                            rope,
+                        ));
                     }
                 }
                 let elapsed = started.elapsed();
-                if borrowed { after.push(elapsed); } else { before.push(elapsed); }
+                if borrowed {
+                    after.push(elapsed);
+                } else {
+                    before.push(elapsed);
+                }
             }
         }
-        before.sort(); after.sort();
-        eprintln!("unchanged highlight viewport / 20,000 visits: owned={:?} borrowed={:?}", before[3], after[3]);
+        before.sort();
+        after.sort();
+        eprintln!(
+            "unchanged highlight viewport / 20,000 visits: owned={:?} borrowed={:?}",
+            before[3], after[3]
+        );
     }
 
     #[test]
@@ -2593,7 +3108,11 @@ mod tests {
 
         let result = app.move_tab_between_groups(0, 0, 1);
         assert!(!result);
-        assert_eq!(app.tabs.len(), 1, "invalid drops must not discard the source tab");
+        assert_eq!(
+            app.tabs.len(),
+            1,
+            "invalid drops must not discard the source tab"
+        );
         assert_eq!(app.tabs[0].editor.file_name(), "a.rs");
     }
 
@@ -2602,11 +3121,15 @@ mod tests {
         use crate::app::SplitDirection;
         for active_source in [false, true] {
             let mut app = App::test_new();
-            app.tabs = ["a.rs", "b.rs", "c.rs", "destination.rs"].into_iter()
-                .map(|name| make_tab(name, false, false)).collect();
+            app.tabs = ["a.rs", "b.rs", "c.rs", "destination.rs"]
+                .into_iter()
+                .map(|name| make_tab(name, false, false))
+                .collect();
             app.active_tab = 1;
             app.create_split_group_dir(3, SplitDirection::Horizontal);
-            if active_source { app.switch_group(0); }
+            if active_source {
+                app.switch_group(0);
+            }
             assert!(app.move_tab_between_groups(0, 0, 1));
             app.switch_group(0);
             assert_eq!(app.editor().unwrap().file_name(), "b.rs");
@@ -2618,8 +3141,10 @@ mod tests {
     fn splitting_an_earlier_tab_preserves_the_sources_selected_tab() {
         use crate::app::SplitDirection;
         let mut app = App::test_new();
-        app.tabs = ["a.rs", "b.rs", "c.rs"].into_iter()
-            .map(|name| make_tab(name, false, false)).collect();
+        app.tabs = ["a.rs", "b.rs", "c.rs"]
+            .into_iter()
+            .map(|name| make_tab(name, false, false))
+            .collect();
         app.active_tab = 1;
         app.create_split_group_dir(0, SplitDirection::Horizontal);
         app.switch_group(0);
@@ -2808,8 +3333,15 @@ mod tests {
 
     #[test]
     fn edge_case_bulk_tab_menus_stop_at_confirmation_and_keep_pinned_tabs() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-        for command in ["tab_close_all", "tab_close_others", "tab_close_right", "tab_close_left"] {
+        use crossterm::event::{
+            KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        };
+        for command in [
+            "tab_close_all",
+            "tab_close_others",
+            "tab_close_right",
+            "tab_close_left",
+        ] {
             for mouse in [false, true] {
                 let mut app = App::test_new();
                 app.tabs = vec![
@@ -2821,20 +3353,48 @@ mod tests {
                 app.tab_context_tab = if command == "tab_close_left" { 3 } else { 0 };
                 app.tab_context_active = true;
                 app.tab_context_pos = (0, 0);
-                let index = App::tab_context_items().iter().position(|item| item.1 == command).unwrap();
+                let index = App::tab_context_items()
+                    .iter()
+                    .position(|item| item.1 == command)
+                    .unwrap();
                 app.tab_context_selected = index;
                 if mouse {
-                    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 40)).unwrap();
-                    terminal.draw(|frame| crate::ui_chrome::draw_tab_context_menu(frame, &mut app)).unwrap();
-                    let event = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 3, row: index as u16 + 1, modifiers: KeyModifiers::NONE };
-                    assert!(crate::mouse_dialogs::handle_mouse_dialogs(&mut app, &event, event.column, event.row));
+                    let mut terminal =
+                        ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 40)).unwrap();
+                    terminal
+                        .draw(|frame| crate::ui_chrome::draw_tab_context_menu(frame, &mut app))
+                        .unwrap();
+                    let event = MouseEvent {
+                        kind: MouseEventKind::Down(MouseButton::Left),
+                        column: 3,
+                        row: index as u16 + 1,
+                        modifiers: KeyModifiers::NONE,
+                    };
+                    assert!(crate::mouse_dialogs::handle_mouse_dialogs(
+                        &mut app,
+                        &event,
+                        event.column,
+                        event.row
+                    ));
                 } else {
-                    assert_eq!(crate::input_dialogs::handle_tab_context_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), Some(false));
+                    assert_eq!(
+                        crate::input_dialogs::handle_tab_context_key(
+                            &mut app,
+                            KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+                        ),
+                        Some(false)
+                    );
                 }
                 assert!(app.confirm_close_active, "{command}, mouse={mouse}");
-                assert_eq!(app.tabs[app.confirm_close_tab].editor.file_name(), "dirty.rs");
+                assert_eq!(
+                    app.tabs[app.confirm_close_tab].editor.file_name(),
+                    "dirty.rs"
+                );
                 assert!(app.tabs.iter().any(|tab| tab.pinned));
-                assert_eq!(app.tabs.len(), if command == "tab_close_left" { 4 } else { 3 });
+                assert_eq!(
+                    app.tabs.len(),
+                    if command == "tab_close_left" { 4 } else { 3 }
+                );
             }
         }
     }
@@ -2845,11 +3405,27 @@ mod tests {
         for pinned in [true, false] {
             for ctrl in [true, false] {
                 let mut app = App::test_new();
-                app.tabs = vec![make_tab("keep.rs", pinned, !pinned), make_tab("close.rs", false, false)];
+                app.tabs = vec![
+                    make_tab("keep.rs", pinned, !pinned),
+                    make_tab("close.rs", false, false),
+                ];
                 app.active_tab = 0;
-                assert!(!crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)));
+                assert!(!crate::input_keyboard::handle_keyboard_event(
+                    &mut app,
+                    KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)
+                ));
                 assert!(app.chord_pending);
-                assert!(!crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Char('w'), if ctrl { KeyModifiers::CONTROL } else { KeyModifiers::NONE })));
+                assert!(!crate::input_keyboard::handle_keyboard_event(
+                    &mut app,
+                    KeyEvent::new(
+                        KeyCode::Char('w'),
+                        if ctrl {
+                            KeyModifiers::CONTROL
+                        } else {
+                            KeyModifiers::NONE
+                        }
+                    )
+                ));
                 assert!(!app.chord_pending);
                 assert_eq!(app.tabs.len(), 1);
                 assert_eq!(app.tabs[0].editor.file_name(), "keep.rs");
@@ -2862,13 +3438,19 @@ mod tests {
     fn edge_case_close_group_preserves_unsaved_work_and_other_splits() {
         for modified in [false, true] {
             let mut app = App::test_new();
-            app.tabs = vec![make_tab("other.rs", false, false), make_tab("active.rs", false, modified)];
+            app.tabs = vec![
+                make_tab("other.rs", false, false),
+                make_tab("active.rs", false, modified),
+            ];
             app.create_split_group_dir(1, crate::app::SplitDirection::Horizontal);
             assert_eq!(app.editor().unwrap().file_name(), "active.rs");
             app.execute_palette_command("close_group_tabs");
             assert_eq!(app.confirm_close_active, modified);
             assert_eq!(app.tabs.len(), 1);
-            assert_eq!(app.editor().unwrap().file_name(), if modified { "active.rs" } else { "other.rs" });
+            assert_eq!(
+                app.editor().unwrap().file_name(),
+                if modified { "active.rs" } else { "other.rs" }
+            );
             assert_eq!(app.split_active(), modified);
         }
     }

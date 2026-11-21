@@ -25,8 +25,18 @@ pub(crate) struct InlayHintDisplay {
 }
 
 impl InlayHintDisplay {
-    pub(crate) fn new(line: u32, column: u32, label: impl Into<String>, kind: Option<lsp_types::InlayHintKind>) -> Self {
-        Self { line, column, label: label.into(), kind }
+    pub(crate) fn new(
+        line: u32,
+        column: u32,
+        label: impl Into<String>,
+        kind: Option<lsp_types::InlayHintKind>,
+    ) -> Self {
+        Self {
+            line,
+            column,
+            label: label.into(),
+            kind,
+        }
     }
 
     pub(crate) fn color_kind_index(&self) -> usize {
@@ -320,15 +330,29 @@ impl DiffTextIndex {
     }
 
     fn column_at_cell(&self, text: &str, target: usize) -> usize {
-        if target >= self.cell_len { return self.char_len; }
-        if self.char_len == text.len() && self.cell_len == self.char_len { return target; }
-        let checkpoint = self.cell_checkpoints
-            .partition_point(|entry| entry.cell <= target).saturating_sub(1);
-        let (byte, mut character, mut cell) = self.cell_checkpoints.get(checkpoint)
+        if target >= self.cell_len {
+            return self.char_len;
+        }
+        if self.char_len == text.len() && self.cell_len == self.char_len {
+            return target;
+        }
+        let checkpoint = self
+            .cell_checkpoints
+            .partition_point(|entry| entry.cell <= target)
+            .saturating_sub(1);
+        let (byte, mut character, mut cell) = self
+            .cell_checkpoints
+            .get(checkpoint)
             .map_or((0, 0, 0), |entry| (entry.byte, entry.character, entry.cell));
         for grapheme in text[byte..].graphemes(true) {
-            let width = if grapheme.contains(char::is_control) { 0 } else { grapheme.width() };
-            if target < cell + width { return character; }
+            let width = if grapheme.contains(char::is_control) {
+                0
+            } else {
+                grapheme.width()
+            };
+            if target < cell + width {
+                return character;
+            }
             cell += width;
             character += grapheme.chars().count();
         }
@@ -404,9 +428,11 @@ impl AlignedDiffRow {
     ) -> Self {
         let prepare = |text: &str| {
             let index = DiffTextIndex::new(text);
-            let hash = crate::highlight::Highlighter::line_hash(
-                index.window(text, 0, crate::highlight::MAX_SYNTAX_LINE_CHARS),
-            );
+            let hash = crate::highlight::Highlighter::line_hash(index.window(
+                text,
+                0,
+                crate::highlight::MAX_SYNTAX_LINE_CHARS,
+            ));
             (index, hash)
         };
         let (left_text_index, left_highlight_hash) = prepare(&left_text);
@@ -484,12 +510,22 @@ impl AlignedDiffRow {
         self.right_text_index.window(&self.right_text, start, width)
     }
 
-    pub(crate) fn left_inline_text_window(&self, column: usize, width: usize) -> (&str, usize, usize) {
-        self.left_text_index.inline_window(&self.left_text, column, width)
+    pub(crate) fn left_inline_text_window(
+        &self,
+        column: usize,
+        width: usize,
+    ) -> (&str, usize, usize) {
+        self.left_text_index
+            .inline_window(&self.left_text, column, width)
     }
 
-    pub(crate) fn right_inline_text_window(&self, column: usize, width: usize) -> (&str, usize, usize) {
-        self.right_text_index.inline_window(&self.right_text, column, width)
+    pub(crate) fn right_inline_text_window(
+        &self,
+        column: usize,
+        width: usize,
+    ) -> (&str, usize, usize) {
+        self.right_text_index
+            .inline_window(&self.right_text, column, width)
     }
 
     pub(crate) fn left_highlight_hash(&self) -> u64 {
@@ -636,18 +672,28 @@ impl DiffRenderCache {
 
     pub(crate) fn with_algorithm(diff_lines: &[(char, String)], algorithm: DiffAlgorithm) -> Self {
         let syntax_first_lines = ['-', '+'].map(|side| {
-            let mut line = diff_lines.iter()
+            let mut line = diff_lines
+                .iter()
                 .find(|(kind, _)| *kind == ' ' || *kind == side)
-                .map(|(_, text)| text.chars().take(crate::highlight::MAX_SYNTAX_DETECTION_CHARS).collect())
+                .map(|(_, text)| {
+                    text.chars()
+                        .take(crate::highlight::MAX_SYNTAX_DETECTION_CHARS)
+                        .collect()
+                })
                 .unwrap_or_default();
             crate::highlight::Highlighter::normalize_line_for_highlighting(&mut line);
             line
         });
-        let syntax_hashes = syntax_first_lines.each_ref().map(|line| crate::highlight::Highlighter::line_hash(line));
+        let syntax_hashes = syntax_first_lines
+            .each_ref()
+            .map(|line| crate::highlight::Highlighter::line_hash(line));
         let moves = (algorithm == DiffAlgorithm::Smart)
-            .then(|| diff_algorithm::detect_moves(diff_lines)).flatten();
+            .then(|| diff_algorithm::detect_moves(diff_lines))
+            .flatten();
         let mut rows = align_diff_rows_with_algorithm(
-            diff_lines, algorithm, moves.as_ref().map(|moves| moves.rows.as_slice()),
+            diff_lines,
+            algorithm,
+            moves.as_ref().map(|moves| moves.rows.as_slice()),
         );
         let max_left_line = rows
             .iter()
@@ -667,9 +713,11 @@ impl DiffRenderCache {
             .unwrap_or(0);
 
         let last_target_line = max_right_line.saturating_sub(1);
-        let max_right_text_width = rows.iter()
+        let max_right_text_width = rows
+            .iter()
             .map(AlignedDiffRow::right_cell_len)
-            .max().unwrap_or(0);
+            .max()
+            .unwrap_or(0);
         let max_inline_text_width = max_right_text_width.max(max_left_text_width);
         let mut hunks = Vec::new();
         let mut target_line = 0usize;
@@ -711,11 +759,14 @@ impl DiffRenderCache {
                 target_end,
             });
         }
-        let target_changes = crate::app_git_display::target_line_markers_from_compare_diff(diff_lines, max_right_line)
-            .into_iter()
-            .enumerate()
-            .filter_map(|(line, status)| (status != ' ').then_some((line, status)))
-            .collect();
+        let target_changes = crate::app_git_display::target_line_markers_from_compare_diff(
+            diff_lines,
+            max_right_line,
+        )
+        .into_iter()
+        .enumerate()
+        .filter_map(|(line, status)| (status != ' ').then_some((line, status)))
+        .collect();
 
         let mut aligned_target_rows = vec![0; max_right_line];
         for (row_idx, row) in rows.iter_mut().enumerate() {
@@ -723,7 +774,8 @@ impl DiffRenderCache {
             // must not share colors, including late worker replies.
             use std::hash::Hasher;
             for (hash, syntax_hash) in [&mut row.left_highlight_hash, &mut row.right_highlight_hash]
-                .into_iter().zip(syntax_hashes)
+                .into_iter()
+                .zip(syntax_hashes)
             {
                 let mut hasher = rustc_hash::FxHasher::default();
                 hasher.write_u64(syntax_hash);
@@ -755,12 +807,19 @@ impl DiffRenderCache {
                 inline_target_rows[line] = removed_start.take().unwrap_or(inline_row);
             }
         }
-        let inline_target_text_rows = Self::index_inline_target_text_rows(&rows, &inline_rows, &inline_target_rows);
+        let inline_target_text_rows =
+            Self::index_inline_target_text_rows(&rows, &inline_rows, &inline_target_rows);
 
         let selectable_rows = Self::index_selectable_rows(&rows, &inline_rows);
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
-        let mut move_blocks: Vec<_> = moves.into_iter().flat_map(|moves| moves.lengths)
-            .map(|len| DiffMoveBlock { len, ends: [None; 2] }).collect();
+        let mut move_blocks: Vec<_> = moves
+            .into_iter()
+            .flat_map(|moves| moves.lengths)
+            .map(|len| DiffMoveBlock {
+                len,
+                ends: [None; 2],
+            })
+            .collect();
         Self::index_move_endpoints(&rows, &inline_rows, &overview_rows[1], &mut move_blocks);
         Self {
             algorithm,
@@ -796,7 +855,10 @@ impl DiffRenderCache {
 
     pub(crate) fn change_marker_width(&self) -> usize {
         // An arrow, the one-based move ID, and a separating space.
-        self.move_blocks.len().checked_ilog10().map_or(2, |digits| digits as usize + 3)
+        self.move_blocks
+            .len()
+            .checked_ilog10()
+            .map_or(2, |digits| digits as usize + 3)
     }
 
     fn index_move_endpoints(
@@ -805,8 +867,12 @@ impl DiffRenderCache {
         changes: &[Vec<usize>; 2],
         blocks: &mut [DiffMoveBlock],
     ) {
-        if blocks.is_empty() { return; }
-        for block in blocks.iter_mut() { block.ends = [None; 2]; }
+        if blocks.is_empty() {
+            return;
+        }
+        for block in blocks.iter_mut() {
+            block.ends = [None; 2];
+        }
         for (side, changed_rows) in changes.iter().enumerate() {
             for &inline_row in changed_rows {
                 let aligned_row = inline[inline_row].aligned_row;
@@ -817,8 +883,11 @@ impl DiffRenderCache {
                     (row.right_move, row.right_line)
                 };
                 if let (Some(id), Some(line)) = (id, line) {
-                    blocks[id.get() as usize - 1].ends[side]
-                        .get_or_insert(MoveEndpoint { line, aligned_row, inline_row });
+                    blocks[id.get() as usize - 1].ends[side].get_or_insert(MoveEndpoint {
+                        line,
+                        aligned_row,
+                        inline_row,
+                    });
                 }
             }
         }
@@ -846,7 +915,8 @@ impl DiffRenderCache {
     pub(crate) fn inline_text_row_for_target_line(&self, target_line: usize) -> Option<usize> {
         let row = *self.inline_target_text_rows.get(target_line)?;
         let entry = self.inline_rows.get(row)?;
-        (entry.kind != '-' && self.rows[entry.aligned_row].right_line == Some(target_line)).then_some(row)
+        (entry.kind != '-' && self.rows[entry.aligned_row].right_line == Some(target_line))
+            .then_some(row)
     }
 
     /// Overview markers follow target text, with hidden lines at their context marker.
@@ -867,7 +937,9 @@ impl DiffRenderCache {
         if self.context_lines.is_some() {
             return self.inline_row_targets.get(row).copied().unwrap_or(0);
         }
-        self.inline_target_rows.partition_point(|target_row| *target_row <= row).saturating_sub(1)
+        self.inline_target_rows
+            .partition_point(|target_row| *target_row <= row)
+            .saturating_sub(1)
     }
 
     pub(crate) fn target_line_for_aligned_row(&self, row: usize) -> usize {
@@ -889,17 +961,29 @@ impl DiffRenderCache {
         let mut start = 0;
         while start < rows.len() {
             if context(&rows[start]) {
-                inline.push(CachedInlineDiffRow { aligned_row: start, kind: ' ' });
+                inline.push(CachedInlineDiffRow {
+                    aligned_row: start,
+                    kind: ' ',
+                });
                 start += 1;
                 continue;
             }
             let mut end = start + 1;
-            while end < rows.len() && !context(&rows[end]) { end += 1; }
+            while end < rows.len() && !context(&rows[end]) {
+                end += 1;
+            }
             for kind in ['-', '+'] {
                 for (index, row) in rows[start..end].iter().enumerate() {
-                    let line = if kind == '-' { row.left_line } else { row.right_line };
+                    let line = if kind == '-' {
+                        row.left_line
+                    } else {
+                        row.right_line
+                    };
                     if line.is_some() {
-                        inline.push(CachedInlineDiffRow { aligned_row: start + index, kind });
+                        inline.push(CachedInlineDiffRow {
+                            aligned_row: start + index,
+                            kind,
+                        });
                     }
                 }
             }
@@ -914,7 +998,11 @@ impl DiffRenderCache {
         scroll_rows: &[usize],
     ) -> Vec<usize> {
         let mut result = scroll_rows.to_vec();
-        for (index, entry) in inline.iter().enumerate().filter(|(_, entry)| entry.kind != '-') {
+        for (index, entry) in inline
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.kind != '-')
+        {
             if let Some(line) = rows[entry.aligned_row].right_line {
                 result[line] = index;
             }
@@ -1028,9 +1116,14 @@ impl DiffRenderCache {
     ) -> Self {
         let mut ranges: Vec<Range<usize>> = Vec::new();
         for (index, row) in self.rows.iter().enumerate() {
-            if row.left_kind != '-' && row.right_kind != '+' { continue; }
+            if row.left_kind != '-' && row.right_kind != '+' {
+                continue;
+            }
             let start = index.saturating_sub(context);
-            let end = index.saturating_add(context).saturating_add(1).min(self.rows.len());
+            let end = index
+                .saturating_add(context)
+                .saturating_add(1)
+                .min(self.rows.len());
             if let Some(last) = ranges.last_mut().filter(|last| start <= last.end) {
                 last.end = last.end.max(end);
             } else {
@@ -1039,7 +1132,13 @@ impl DiffRenderCache {
         }
         if let Some(line) = reveal {
             let index = self.aligned_row_for_target_line(line);
-            ranges.push(index.saturating_sub(context)..index.saturating_add(context).saturating_add(1).min(self.rows.len()));
+            ranges.push(
+                index.saturating_sub(context)
+                    ..index
+                        .saturating_add(context)
+                        .saturating_add(1)
+                        .min(self.rows.len()),
+            );
         }
         if reveal.is_some() || !expanded.is_empty() {
             ranges.extend(expanded.iter().filter_map(|range| {
@@ -1049,8 +1148,11 @@ impl DiffRenderCache {
             ranges.sort_unstable_by_key(|range| range.start);
             let mut merged: Vec<Range<usize>> = Vec::new();
             for range in ranges {
-                if let Some(last) = merged.last_mut().filter(|last| range.start <= last.end) { last.end = last.end.max(range.end); }
-                else { merged.push(range); }
+                if let Some(last) = merged.last_mut().filter(|last| range.start <= last.end) {
+                    last.end = last.end.max(range.end);
+                } else {
+                    merged.push(range);
+                }
             }
             ranges = merged;
         }
@@ -1066,7 +1168,8 @@ impl DiffRenderCache {
             if range.start > previous {
                 let count = range.start - previous;
                 let text = format!("… {count} unchanged lines hidden …");
-                let mut gap = AlignedDiffRow::new(' ', None, text.clone(), None, ' ', None, text, None);
+                let mut gap =
+                    AlignedDiffRow::new(' ', None, text.clone(), None, ' ', None, text, None);
                 gap.hidden_lines = count;
                 context_gaps.push((rows.len(), previous..range.start));
                 rows.push(gap);
@@ -1086,22 +1189,42 @@ impl DiffRenderCache {
             result
         };
         let aligned_row_targets = targets(rows.iter().map(|row| row.right_line).collect());
-        let inline_row_targets = targets(inline_rows.iter().map(|entry| {
-            (entry.kind != '-').then_some(rows[entry.aligned_row].right_line).flatten()
-        }).collect());
+        let inline_row_targets = targets(
+            inline_rows
+                .iter()
+                .map(|entry| {
+                    (entry.kind != '-')
+                        .then_some(rows[entry.aligned_row].right_line)
+                        .flatten()
+                })
+                .collect(),
+        );
         let map_targets = |row_targets: &[usize]| {
             let mut row = 0;
-            (0..self.aligned_target_rows.len()).map(|line| {
-                while row + 1 < row_targets.len() && row_targets[row] < line { row += 1; }
-                row
-            }).collect()
+            (0..self.aligned_target_rows.len())
+                .map(|line| {
+                    while row + 1 < row_targets.len() && row_targets[row] < line {
+                        row += 1;
+                    }
+                    row
+                })
+                .collect()
         };
         let inline_target_rows: Vec<usize> = map_targets(&inline_row_targets);
-        let inline_target_text_rows = Self::index_inline_target_text_rows(&rows, &inline_rows, &inline_target_rows);
-        let max_left_text_width = rows.iter().filter(|row| row.hidden_lines == 0)
-            .map(AlignedDiffRow::left_cell_len).max().unwrap_or(0);
-        let max_right_text_width = rows.iter().filter(|row| row.hidden_lines == 0)
-            .map(AlignedDiffRow::right_cell_len).max().unwrap_or(0);
+        let inline_target_text_rows =
+            Self::index_inline_target_text_rows(&rows, &inline_rows, &inline_target_rows);
+        let max_left_text_width = rows
+            .iter()
+            .filter(|row| row.hidden_lines == 0)
+            .map(AlignedDiffRow::left_cell_len)
+            .max()
+            .unwrap_or(0);
+        let max_right_text_width = rows
+            .iter()
+            .filter(|row| row.hidden_lines == 0)
+            .map(AlignedDiffRow::right_cell_len)
+            .max()
+            .unwrap_or(0);
         let max_inline_text_width = max_right_text_width.max(max_left_text_width);
         let selectable_rows = Self::index_selectable_rows(&rows, &inline_rows);
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
@@ -1169,9 +1292,7 @@ impl DiffRenderCache {
             .hunks
             .partition_point(|hunk| hunk.target_start < cursor_line)
             .checked_sub(1)?;
-        self.hunks
-            .get(previous_hunk)
-            .map(|hunk| hunk.target_start)
+        self.hunks.get(previous_hunk).map(|hunk| hunk.target_start)
     }
 }
 
@@ -1192,8 +1313,14 @@ fn align_diff_rows_with_algorithm(
     while let Some((kind, text)) = diff_lines.get(i) {
         if *kind == ' ' {
             rows.push(AlignedDiffRow::new(
-                ' ', Some(left_line), text.clone(), None,
-                ' ', Some(right_line), text.clone(), None,
+                ' ',
+                Some(left_line),
+                text.clone(),
+                None,
+                ' ',
+                Some(right_line),
+                text.clone(),
+                None,
             ));
             left_line += 1;
             right_line += 1;
@@ -1217,11 +1344,15 @@ fn align_diff_rows_with_algorithm(
         let deletes = &diff_lines[start..middle];
         let inserts = &diff_lines[middle..i];
         let emit = |rows: &mut Vec<_>, left, right, paired| {
-            let (left_idx, left_text, left_move) = diff_line_side(deletes, left, left_line, moved, start);
-            let (right_idx, right_text, right_move) = diff_line_side(inserts, right, right_line, moved, middle);
+            let (left_idx, left_text, left_move) =
+                diff_line_side(deletes, left, left_line, moved, start);
+            let (right_idx, right_text, right_move) =
+                diff_line_side(inserts, right, right_line, moved, middle);
             let (left_highlights, right_highlights) = if paired {
                 let (old, new) = match algorithm {
-                    DiffAlgorithm::Smart => diff_algorithm::word_highlights(&left_text, &right_text),
+                    DiffAlgorithm::Smart => {
+                        diff_algorithm::word_highlights(&left_text, &right_text)
+                    }
                     DiffAlgorithm::Classic => compute_char_diff(&left_text, &right_text),
                 };
                 (Some(old), Some(new))
@@ -1229,8 +1360,14 @@ fn align_diff_rows_with_algorithm(
                 (None, None)
             };
             let mut row = AlignedDiffRow::new(
-                if left_idx.is_some() { '-' } else { ' ' }, left_idx, left_text, left_highlights,
-                if right_idx.is_some() { '+' } else { ' ' }, right_idx, right_text, right_highlights,
+                if left_idx.is_some() { '-' } else { ' ' },
+                left_idx,
+                left_text,
+                left_highlights,
+                if right_idx.is_some() { '+' } else { ' ' },
+                right_idx,
+                right_text,
+                right_highlights,
             );
             row.left_move = left_move;
             row.right_move = right_move;
@@ -1238,16 +1375,20 @@ fn align_diff_rows_with_algorithm(
         };
 
         if algorithm == DiffAlgorithm::Smart {
-            let (old_moved, new_moved) = moved.map_or(
-                (&[][..], &[][..]),
-                |moved| (&moved[start..middle], &moved[middle..i]),
-            );
+            let (old_moved, new_moved) = moved.map_or((&[][..], &[][..]), |moved| {
+                (&moved[start..middle], &moved[middle..i])
+            });
             let pairs = diff_algorithm::replacement_pairs(deletes, inserts, old_moved, new_moved);
             let (mut left, mut right) = (0, 0);
-            for (next_left, next_right) in pairs.into_iter().chain([(deletes.len(), inserts.len())]) {
+            for (next_left, next_right) in pairs.into_iter().chain([(deletes.len(), inserts.len())])
+            {
                 for offset in 0..(next_left - left).max(next_right - right) {
-                    emit(&mut rows, (left + offset < next_left).then_some(left + offset),
-                        (right + offset < next_right).then_some(right + offset), false);
+                    emit(
+                        &mut rows,
+                        (left + offset < next_left).then_some(left + offset),
+                        (right + offset < next_right).then_some(right + offset),
+                        false,
+                    );
                 }
                 if next_left < deletes.len() {
                     emit(&mut rows, Some(next_left), Some(next_right), true);
@@ -1277,8 +1418,13 @@ fn diff_line_side(
 ) -> (Option<usize>, String, Option<MoveId>) {
     index.map_or_else(
         || (None, String::new(), None),
-        |index| (Some(line_start + index), lines[index].1.clone(),
-            moved.and_then(|moved| moved[diff_start + index])),
+        |index| {
+            (
+                Some(line_start + index),
+                lines[index].1.clone(),
+                moved.and_then(|moved| moved[diff_start + index]),
+            )
+        },
     )
 }
 
@@ -1293,15 +1439,24 @@ pub enum DiffMode {
 pub struct GitFileChange<P = String> {
     pub path: P,
     pub original_path: Option<P>,
-    pub status: char,   // 'M' modified, 'A' added, 'D' deleted, 'R' renamed/moved, '?' untracked
+    pub status: char, // 'M' modified, 'A' added, 'D' deleted, 'R' renamed/moved, '?' untracked
     pub staged: bool,
     /// A collapsed untracked directory; index changes remain individual entries.
     pub directory: bool,
 }
 
 impl<P> GitFileChange<P> {
-    pub(crate) fn try_map_paths<Q, E>(self, mut convert: impl FnMut(P) -> Result<Q, E>) -> Result<GitFileChange<Q>, E> {
-        Ok(GitFileChange { path: convert(self.path)?, original_path: self.original_path.map(convert).transpose()?, status: self.status, staged: self.staged, directory: self.directory })
+    pub(crate) fn try_map_paths<Q, E>(
+        self,
+        mut convert: impl FnMut(P) -> Result<Q, E>,
+    ) -> Result<GitFileChange<Q>, E> {
+        Ok(GitFileChange {
+            path: convert(self.path)?,
+            original_path: self.original_path.map(convert).transpose()?,
+            status: self.status,
+            staged: self.staged,
+            directory: self.directory,
+        })
     }
 }
 impl<P: AsRef<Path>> GitFileChange<P> {
@@ -1324,11 +1479,11 @@ pub enum SourceControlRepositoryState {
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct GitCommitInfo {
     pub graph: String,     // topology prepared by the history worker
-    pub hash: String,       // short hash
-    pub full_hash: String,  // unambiguous identity, even in very large histories
-    pub message: String,    // first line of commit message
+    pub hash: String,      // short hash
+    pub full_hash: String, // unambiguous identity, even in very large histories
+    pub message: String,   // first line of commit message
     pub author: String,
-    pub time_ago: String,   // e.g. "2 hours ago"
+    pub time_ago: String,                  // e.g. "2 hours ago"
     pub branches: Vec<GitCommitReference>, // references pointing at this commit
 }
 
@@ -1397,7 +1552,6 @@ impl GitBranchPickerItem {
     }
 }
 
-
 #[derive(Clone)]
 pub struct KeyBinding {
     pub id: &'static str,
@@ -1418,7 +1572,10 @@ impl KeyBinding {
     pub(crate) fn display(&self) -> String {
         let first = self.display_first();
         self.chord.map_or(first.clone(), |(modifiers, code)| {
-            format!("{first}, {}", crate::app_shortcuts::display_stroke(modifiers, code))
+            format!(
+                "{first}, {}",
+                crate::app_shortcuts::display_stroke(modifiers, code)
+            )
         })
     }
 
@@ -1428,16 +1585,34 @@ impl KeyBinding {
             return "Unassigned".into();
         }
         let mut parts = Vec::new();
-        if modifiers.contains(KeyModifiers::CONTROL) { parts.push("Ctrl"); }
-        if modifiers.contains(KeyModifiers::ALT) { parts.push("Alt"); }
-        if modifiers.contains(KeyModifiers::SHIFT) { parts.push("Shift"); }
-        if modifiers.contains(KeyModifiers::SUPER) { parts.push("Super"); }
-        if modifiers.contains(KeyModifiers::HYPER) { parts.push("Hyper"); }
-        if modifiers.contains(KeyModifiers::META) { parts.push("Meta"); }
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            parts.push("Ctrl");
+        }
+        if modifiers.contains(KeyModifiers::ALT) {
+            parts.push("Alt");
+        }
+        if modifiers.contains(KeyModifiers::SHIFT) {
+            parts.push("Shift");
+        }
+        if modifiers.contains(KeyModifiers::SUPER) {
+            parts.push("Super");
+        }
+        if modifiers.contains(KeyModifiers::HYPER) {
+            parts.push("Hyper");
+        }
+        if modifiers.contains(KeyModifiers::META) {
+            parts.push("Meta");
+        }
         let key_name = match code {
             KeyCode::Char(' ') => "Space".into(),
             KeyCode::Char('+') => "Plus".into(),
-            KeyCode::Char(c) => if c.is_ascii_alphabetic() { c.to_ascii_uppercase().to_string() } else { c.to_string() },
+            KeyCode::Char(c) => {
+                if c.is_ascii_alphabetic() {
+                    c.to_ascii_uppercase().to_string()
+                } else {
+                    c.to_string()
+                }
+            }
             KeyCode::F(n) => format!("F{n}"),
             KeyCode::Enter => "Enter".into(),
             KeyCode::Esc => "Esc".into(),
@@ -1461,8 +1636,10 @@ impl KeyBinding {
     }
 
     pub(crate) fn is_modified(&self) -> bool {
-        crate::app_shortcuts::normalize((self.modifiers, self.code)) != crate::app_shortcuts::normalize((self.default_modifiers, self.default_code))
-            || self.chord.map(crate::app_shortcuts::normalize) != self.default_chord.map(crate::app_shortcuts::normalize)
+        crate::app_shortcuts::normalize((self.modifiers, self.code))
+            != crate::app_shortcuts::normalize((self.default_modifiers, self.default_code))
+            || self.chord.map(crate::app_shortcuts::normalize)
+                != self.default_chord.map(crate::app_shortcuts::normalize)
             || self.when().text() != self.default_when().text()
     }
 
@@ -1498,7 +1675,12 @@ impl KeyBinding {
         self.priority = 0;
     }
 
-    pub(crate) fn assign(&mut self, modifiers: KeyModifiers, code: KeyCode, chord: Option<(KeyModifiers, KeyCode)>) {
+    pub(crate) fn assign(
+        &mut self,
+        modifiers: KeyModifiers,
+        code: KeyCode,
+        chord: Option<(KeyModifiers, KeyCode)>,
+    ) {
         self.modifiers = modifiers;
         self.code = code;
         self.chord = if code == KeyCode::Null { None } else { chord };
@@ -1507,18 +1689,45 @@ impl KeyBinding {
 
 pub(crate) fn default_keybindings() -> Vec<KeyBinding> {
     let make = |id, label, modifiers: KeyModifiers, code: KeyCode| KeyBinding {
-        id, label, modifiers, code,
+        id,
+        label,
+        modifiers,
+        code,
         default_modifiers: modifiers,
         default_code: code,
-        chord: None, default_chord: None, built_in_handler: false, editor_only: false,
-        when: None, priority: 0,
+        chord: None,
+        default_chord: None,
+        built_in_handler: false,
+        editor_only: false,
+        when: None,
+        priority: 0,
     };
     let mut bindings = vec![
-        make("save", "Save File", KeyModifiers::CONTROL, KeyCode::Char('s')),
+        make(
+            "save",
+            "Save File",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('s'),
+        ),
         make("find", "Find", KeyModifiers::CONTROL, KeyCode::Char('f')),
-        make("find_replace", "Find & Replace", KeyModifiers::CONTROL, KeyCode::Char('h')),
-        make("toggle_explorer", "Toggle Explorer", KeyModifiers::CONTROL, KeyCode::Char('b')),
-        make("acp_chat", "Agent Chat", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('i')),
+        make(
+            "find_replace",
+            "Find & Replace",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('h'),
+        ),
+        make(
+            "toggle_explorer",
+            "Toggle Explorer",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('b'),
+        ),
+        make(
+            "acp_chat",
+            "Agent Chat",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('i'),
+        ),
         make(
             "toggle_terminal",
             "Toggle Right Terminal",
@@ -1531,52 +1740,247 @@ pub(crate) fn default_keybindings() -> Vec<KeyBinding> {
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
             KeyCode::Char('`'),
         ),
-        make("close_tab", "Close Tab", KeyModifiers::CONTROL, KeyCode::Char('w')),
-        make("new_file", "New File", KeyModifiers::CONTROL, KeyCode::Char('n')),
+        make(
+            "close_tab",
+            "Close Tab",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('w'),
+        ),
+        make(
+            "new_file",
+            "New File",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('n'),
+        ),
         make("undo", "Undo", KeyModifiers::CONTROL, KeyCode::Char('z')),
         make("redo", "Redo", KeyModifiers::CONTROL, KeyCode::Char('y')),
-        make("redo", "Redo", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('Z')),
+        make(
+            "redo",
+            "Redo",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('Z'),
+        ),
         make("copy", "Copy", KeyModifiers::CONTROL, KeyCode::Char('c')),
         make("cut", "Cut", KeyModifiers::CONTROL, KeyCode::Char('x')),
         make("paste", "Paste", KeyModifiers::CONTROL, KeyCode::Char('v')),
-        make("select_all", "Select All", KeyModifiers::CONTROL, KeyCode::Char('a')),
-        make("go_to_line", "Go to Line", KeyModifiers::CONTROL, KeyCode::Char('g')),
+        make(
+            "select_all",
+            "Select All",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('a'),
+        ),
+        make(
+            "go_to_line",
+            "Go to Line",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('g'),
+        ),
         make("navigate_back", "Go Back", KeyModifiers::ALT, KeyCode::Left),
-        make("navigate_forward", "Go Forward", KeyModifiers::ALT, KeyCode::Right),
-        make("duplicate_line", "Duplicate Line Down", KeyModifiers::ALT | KeyModifiers::SHIFT, KeyCode::Down),
-        make("select_next_occurrence", "Select Next Occurrence", KeyModifiers::CONTROL, KeyCode::Char('d')),
-        make("palette", "Command Palette", KeyModifiers::empty(), KeyCode::F(1)),
-        make("palette", "Command Palette", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('P')),
-        make("source_control", "Source Control", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('G')),
-        make("extensions", "Extensions", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('X')),
-        make("global_search", "Search in Files", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('F')),
-        make("delete_line", "Delete Line", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('K')),
-        make("toggle_comment", "Toggle Comment", KeyModifiers::CONTROL, KeyCode::Char('/')),
-        make("cursor_undo", "Cursor Undo", KeyModifiers::CONTROL, KeyCode::Char('u')),
-        make("clipboard_history", "Clipboard History", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('V')),
-        make("paste_plain", "Paste Without Formatting", KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::Char('v')),
-        make("toggle_word_wrap", "Toggle Word Wrap", KeyModifiers::ALT, KeyCode::Char('z')),
-        make("vtcomplete_inline_request", "GPTComplete: Predict Here", KeyModifiers::ALT, KeyCode::Char('i')),
-        make("join_lines", "Join Lines", KeyModifiers::CONTROL, KeyCode::Char('j')),
-        make("select_line", "Select Line", KeyModifiers::CONTROL, KeyCode::Char('l')),
-        make("rename_symbol", "Rename Symbol", KeyModifiers::empty(), KeyCode::F(2)),
-        make("find_next", "Find Next", KeyModifiers::empty(), KeyCode::F(3)),
-        make("find_prev", "Find Previous", KeyModifiers::SHIFT, KeyCode::F(3)),
-        make("next_diagnostic", "Next Diagnostic", KeyModifiers::empty(), KeyCode::F(8)),
-        make("prev_diagnostic", "Previous Diagnostic", KeyModifiers::SHIFT, KeyCode::F(8)),
-        make("toggle_menu_bar", "Toggle Menu Bar", KeyModifiers::empty(), KeyCode::F(10)),
-        make("go_to_definition", "Go to Definition", KeyModifiers::empty(), KeyCode::F(12)),
-        make("go_to_implementation", "Go to Implementation", KeyModifiers::CONTROL, KeyCode::F(12)),
-        make("find_references", "Find References", KeyModifiers::SHIFT, KeyCode::F(12)),
-        make("format_document", "Format Document", KeyModifiers::SHIFT | KeyModifiers::ALT, KeyCode::Char('F')),
-        make("toggle_problems", "Toggle Problems Panel", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('M')),
-        make("show_shortcuts", "Show Keyboard Shortcuts", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Char('/')),
+        make(
+            "navigate_forward",
+            "Go Forward",
+            KeyModifiers::ALT,
+            KeyCode::Right,
+        ),
+        make(
+            "duplicate_line",
+            "Duplicate Line Down",
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+            KeyCode::Down,
+        ),
+        make(
+            "select_next_occurrence",
+            "Select Next Occurrence",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('d'),
+        ),
+        make(
+            "palette",
+            "Command Palette",
+            KeyModifiers::empty(),
+            KeyCode::F(1),
+        ),
+        make(
+            "palette",
+            "Command Palette",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('P'),
+        ),
+        make(
+            "source_control",
+            "Source Control",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('G'),
+        ),
+        make(
+            "extensions",
+            "Extensions",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('X'),
+        ),
+        make(
+            "global_search",
+            "Search in Files",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('F'),
+        ),
+        make(
+            "delete_line",
+            "Delete Line",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('K'),
+        ),
+        make(
+            "toggle_comment",
+            "Toggle Comment",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('/'),
+        ),
+        make(
+            "cursor_undo",
+            "Cursor Undo",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('u'),
+        ),
+        make(
+            "clipboard_history",
+            "Clipboard History",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('V'),
+        ),
+        make(
+            "paste_plain",
+            "Paste Without Formatting",
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+            KeyCode::Char('v'),
+        ),
+        make(
+            "toggle_word_wrap",
+            "Toggle Word Wrap",
+            KeyModifiers::ALT,
+            KeyCode::Char('z'),
+        ),
+        make(
+            "vtcomplete_inline_request",
+            "GPTComplete: Predict Here",
+            KeyModifiers::ALT,
+            KeyCode::Char('i'),
+        ),
+        make(
+            "join_lines",
+            "Join Lines",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('j'),
+        ),
+        make(
+            "select_line",
+            "Select Line",
+            KeyModifiers::CONTROL,
+            KeyCode::Char('l'),
+        ),
+        make(
+            "rename_symbol",
+            "Rename Symbol",
+            KeyModifiers::empty(),
+            KeyCode::F(2),
+        ),
+        make(
+            "find_next",
+            "Find Next",
+            KeyModifiers::empty(),
+            KeyCode::F(3),
+        ),
+        make(
+            "find_prev",
+            "Find Previous",
+            KeyModifiers::SHIFT,
+            KeyCode::F(3),
+        ),
+        make(
+            "next_diagnostic",
+            "Next Diagnostic",
+            KeyModifiers::empty(),
+            KeyCode::F(8),
+        ),
+        make(
+            "prev_diagnostic",
+            "Previous Diagnostic",
+            KeyModifiers::SHIFT,
+            KeyCode::F(8),
+        ),
+        make(
+            "toggle_menu_bar",
+            "Toggle Menu Bar",
+            KeyModifiers::empty(),
+            KeyCode::F(10),
+        ),
+        make(
+            "go_to_definition",
+            "Go to Definition",
+            KeyModifiers::empty(),
+            KeyCode::F(12),
+        ),
+        make(
+            "go_to_implementation",
+            "Go to Implementation",
+            KeyModifiers::CONTROL,
+            KeyCode::F(12),
+        ),
+        make(
+            "find_references",
+            "Find References",
+            KeyModifiers::SHIFT,
+            KeyCode::F(12),
+        ),
+        make(
+            "format_document",
+            "Format Document",
+            KeyModifiers::SHIFT | KeyModifiers::ALT,
+            KeyCode::Char('F'),
+        ),
+        make(
+            "toggle_problems",
+            "Toggle Problems Panel",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('M'),
+        ),
+        make(
+            "show_shortcuts",
+            "Show Keyboard Shortcuts",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('/'),
+        ),
         make("next_tab", "Next Tab", KeyModifiers::CONTROL, KeyCode::Tab),
-        make("prev_tab", "Previous Tab", KeyModifiers::CONTROL | KeyModifiers::SHIFT, KeyCode::Tab),
-        make("next_tab_page", "Next Tab", KeyModifiers::CONTROL, KeyCode::PageDown),
-        make("prev_tab_page", "Previous Tab", KeyModifiers::CONTROL, KeyCode::PageUp),
-        make("workspace_next", "Next Folder", KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::PageDown),
-        make("workspace_previous", "Previous Folder", KeyModifiers::CONTROL | KeyModifiers::ALT, KeyCode::PageUp),
+        make(
+            "prev_tab",
+            "Previous Tab",
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Tab,
+        ),
+        make(
+            "next_tab_page",
+            "Next Tab",
+            KeyModifiers::CONTROL,
+            KeyCode::PageDown,
+        ),
+        make(
+            "prev_tab_page",
+            "Previous Tab",
+            KeyModifiers::CONTROL,
+            KeyCode::PageUp,
+        ),
+        make(
+            "workspace_next",
+            "Next Folder",
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+            KeyCode::PageDown,
+        ),
+        make(
+            "workspace_previous",
+            "Previous Folder",
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+            KeyCode::PageUp,
+        ),
     ];
     crate::app_shortcuts::append_builtins(&mut bindings);
     bindings
@@ -1598,14 +2002,22 @@ pub(crate) fn fuzzy_match(target: &str, query: &str) -> bool {
         let mut remaining = target.bytes();
         query.bytes().all(|expected| {
             remaining.any(|actual| {
-                if sensitive { actual == expected } else { actual.eq_ignore_ascii_case(&expected) }
+                if sensitive {
+                    actual == expected
+                } else {
+                    actual.eq_ignore_ascii_case(&expected)
+                }
             })
         })
     } else {
         let mut remaining = target.chars();
         query.chars().all(|expected| {
             remaining.any(|actual| {
-                if sensitive { actual == expected } else { actual.eq_ignore_ascii_case(&expected) }
+                if sensitive {
+                    actual == expected
+                } else {
+                    actual.eq_ignore_ascii_case(&expected)
+                }
             })
         })
     }
@@ -1623,8 +2035,12 @@ pub(crate) fn fuzzy_match_indices(target: &str, query: &str) -> Option<(i64, Vec
 
 /// Case-insensitive substring containment without allocating a lowercase copy.
 pub(crate) fn contains_ignore_case(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() { return true; }
-    if needle.len() > haystack.len() { return false; }
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
     let hb = haystack.as_bytes();
     let nb = needle.as_bytes();
     'outer: for start in 0..=(hb.len() - nb.len()) {
@@ -1814,7 +2230,11 @@ impl TabTextColor {
             Self::Pink => (Color::Rgb(244, 114, 182), Color::Rgb(157, 23, 77)),
         };
         let contrast = |color| crate::ui_colors::contrast_ratio(color, background);
-        if contrast(dark) > contrast(light) { dark } else { light }
+        if contrast(dark) > contrast(light) {
+            dark
+        } else {
+            light
+        }
     }
 }
 
@@ -1834,8 +2254,13 @@ impl Tab {
     /// before scheduling I/O as well as when applying its asynchronous result.
     pub(crate) fn reloadable_file_path(&mut self) -> Option<&std::path::Path> {
         if self.editor.file_path.is_none()
-            || matches!(self.kind, TabKind::Diff(_) | TabKind::GitRevision | TabKind::CommitDetails)
-        { return None; }
+            || matches!(
+                self.kind,
+                TabKind::Diff(_) | TabKind::GitRevision | TabKind::CommitDetails
+            )
+        {
+            return None;
+        }
         // Another pane can publish an edit before the next frame refreshes this
         // view. A cached clean flag must never authorize overwriting that edit.
         self.editor.refresh_document();
@@ -1872,7 +2297,10 @@ impl Tab {
     pub(crate) fn new_source_control(mut editor: Editor) -> Self {
         editor.suggested_file_name = Some("Source Control".into());
         editor.read_only = true;
-        Self { kind: TabKind::SourceControl, ..Self::new_file(editor) }
+        Self {
+            kind: TabKind::SourceControl,
+            ..Self::new_file(editor)
+        }
     }
 }
 
@@ -1905,7 +2333,9 @@ pub struct EditorGroup {
 }
 
 impl Default for EditorGroup {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EditorGroup {
@@ -1982,7 +2412,9 @@ impl SplitNode {
         match self {
             SplitNode::Leaf(g) => visit(*g),
             SplitNode::Split { children, .. } => {
-                for child in children { child.visit_leaves(visit); }
+                for child in children {
+                    child.visit_leaves(visit);
+                }
             }
         }
     }
@@ -1991,15 +2423,24 @@ impl SplitNode {
     pub(crate) fn remove_leaf(&mut self, group_id: usize) -> bool {
         match self {
             SplitNode::Leaf(_) => false,
-            SplitNode::Split { children, ratios, .. } => {
+            SplitNode::Split {
+                children, ratios, ..
+            } => {
                 // Check if any direct child is the target leaf
-                if let Some(idx) = children.iter().position(|c| matches!(c, SplitNode::Leaf(g) if *g == group_id)) {
+                if let Some(idx) = children
+                    .iter()
+                    .position(|c| matches!(c, SplitNode::Leaf(g) if *g == group_id))
+                {
                     children.remove(idx);
-                    if idx < ratios.len() { ratios.remove(idx); }
+                    if idx < ratios.len() {
+                        ratios.remove(idx);
+                    }
                     // Normalize ratios
                     let sum: f32 = ratios.iter().sum();
                     if sum > 0.0 {
-                        for r in ratios.iter_mut() { *r /= sum; }
+                        for r in ratios.iter_mut() {
+                            *r /= sum;
+                        }
                     }
                     return true;
                 }
@@ -2016,9 +2457,16 @@ impl SplitNode {
 
     /// Simplify the tree: unwrap single-child splits, collapse same-direction nesting.
     pub(crate) fn simplify(&mut self) {
-        if let SplitNode::Split { direction, children, ratios } = self {
+        if let SplitNode::Split {
+            direction,
+            children,
+            ratios,
+        } = self
+        {
             // Recursively simplify children first
-            for c in children.iter_mut() { c.simplify(); }
+            for c in children.iter_mut() {
+                c.simplify();
+            }
 
             // Single child → replace self with that child
             if children.len() == 1 {
@@ -2032,7 +2480,13 @@ impl SplitNode {
             let mut new_ratios = Vec::new();
             for (i, child) in children.drain(..).enumerate() {
                 let r = ratios.get(i).copied().unwrap_or(1.0 / (i + 1) as f32);
-                if let SplitNode::Split { direction: d, children: gc, ratios: gr, .. } = &child {
+                if let SplitNode::Split {
+                    direction: d,
+                    children: gc,
+                    ratios: gr,
+                    ..
+                } = &child
+                {
                     if *d == dir {
                         // Flatten: incorporate grandchildren with scaled ratios
                         for (j, gc_child) in gc.iter().enumerate() {
@@ -2090,10 +2544,14 @@ impl SplitNode {
     pub(crate) fn remap_indices(&mut self, map: &rustc_hash::FxHashMap<usize, usize>) {
         match self {
             SplitNode::Leaf(g) => {
-                if let Some(&new_idx) = map.get(g) { *g = new_idx; }
+                if let Some(&new_idx) = map.get(g) {
+                    *g = new_idx;
+                }
             }
             SplitNode::Split { children, .. } => {
-                for c in children { c.remap_indices(map); }
+                for c in children {
+                    c.remap_indices(map);
+                }
             }
         }
     }
@@ -2555,17 +3013,38 @@ mod tests {
     #[test]
     fn inline_replacements_group_removed_and_added_blocks_with_exact_source_mappings() {
         for (removed, added) in [(3, 3), (7, 2), (2, 7), (0, 4), (4, 0)] {
-            let base = format!("before\n{}after\n", (0..removed).map(|n| format!("old_{n}\n")).collect::<String>());
-            let target = format!("before\n{}after\n", (0..added).map(|n| format!("replacement_{n}\n")).collect::<String>());
+            let base = format!(
+                "before\n{}after\n",
+                (0..removed)
+                    .map(|n| format!("old_{n}\n"))
+                    .collect::<String>()
+            );
+            let target = format!(
+                "before\n{}after\n",
+                (0..added)
+                    .map(|n| format!("replacement_{n}\n"))
+                    .collect::<String>()
+            );
             let full = DiffRenderCache::new(&compute_file_diff(&base, &target));
             for cache in [full.clone(), full.with_context(0), full.with_context(1)] {
                 let kinds: String = cache.inline_rows.iter().map(|row| row.kind).collect();
-                assert_eq!(kinds, format!(" {}{} ", "-".repeat(removed), "+".repeat(added)));
-                let removed_lines: Vec<_> = cache.inline_rows.iter().filter(|row| row.kind == '-')
-                    .map(|entry| cache.rows[entry.aligned_row].left_line.unwrap()).collect();
+                assert_eq!(
+                    kinds,
+                    format!(" {}{} ", "-".repeat(removed), "+".repeat(added))
+                );
+                let removed_lines: Vec<_> = cache
+                    .inline_rows
+                    .iter()
+                    .filter(|row| row.kind == '-')
+                    .map(|entry| cache.rows[entry.aligned_row].left_line.unwrap())
+                    .collect();
                 assert_eq!(removed_lines, (1..removed + 1).collect::<Vec<_>>());
-                let added_lines: Vec<_> = cache.inline_rows.iter().filter(|row| row.kind == '+')
-                    .map(|entry| cache.rows[entry.aligned_row].right_line.unwrap()).collect();
+                let added_lines: Vec<_> = cache
+                    .inline_rows
+                    .iter()
+                    .filter(|row| row.kind == '+')
+                    .map(|entry| cache.rows[entry.aligned_row].right_line.unwrap())
+                    .collect();
                 assert_eq!(added_lines, (1..added + 1).collect::<Vec<_>>());
                 for line in 0..added + 2 {
                     let actual = cache.inline_rows.iter().position(|entry| {
@@ -2576,12 +3055,29 @@ mod tests {
                         assert_eq!(cache.target_line_for_inline_row(row), line);
                     }
                 }
-                assert!(cache.inline_target_rows().windows(2).all(|rows| rows[0] <= rows[1]));
-                assert!(cache.inline_target_text_rows().windows(2).all(|rows| rows[0] <= rows[1]));
+                assert!(
+                    cache
+                        .inline_target_rows()
+                        .windows(2)
+                        .all(|rows| rows[0] <= rows[1])
+                );
+                assert!(
+                    cache
+                        .inline_target_text_rows()
+                        .windows(2)
+                        .all(|rows| rows[0] <= rows[1])
+                );
                 if added > 0 {
-                    assert!(cache.inline_row_for_target_line(1) <= 1, "the scroll anchor must include the removed block or its leading context marker");
+                    assert!(
+                        cache.inline_row_for_target_line(1) <= 1,
+                        "the scroll anchor must include the removed block or its leading context marker"
+                    );
                     assert_eq!(cache.inline_text_row_for_target_line(1), Some(removed + 1));
-                    assert_eq!(cache.inline_target_text_rows()[1], removed + 1, "overview markers must follow target text");
+                    assert_eq!(
+                        cache.inline_target_text_rows()[1],
+                        removed + 1,
+                        "overview markers must follow target text"
+                    );
                 }
             }
         }
@@ -2594,7 +3090,14 @@ mod tests {
             "before\nnew_a\nnew_b\nmiddle\nnew_c\nnew_d\nafter\n",
         ));
         for cache in [cache.clone(), cache.with_context(0), cache.with_context(1)] {
-            assert_eq!(cache.inline_rows.iter().map(|row| row.kind).collect::<String>(), " --++ --++ ");
+            assert_eq!(
+                cache
+                    .inline_rows
+                    .iter()
+                    .map(|row| row.kind)
+                    .collect::<String>(),
+                " --++ --++ "
+            );
         }
     }
 
@@ -2752,7 +3255,7 @@ pub(crate) struct RenameState {
     // Rename dialog (file/folder)
     pub active: bool,
     pub query: String,
-    pub cursor: usize, // byte cursor position in rename input
+    pub cursor: usize,                   // byte cursor position in rename input
     pub selection_anchor: Option<usize>, // byte anchor for Shift+Arrow selection
     pub placeholder_active: bool, // true when renaming a temporary new file/folder placeholder
     pub target: Option<PathBuf>,

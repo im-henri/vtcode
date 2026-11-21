@@ -17,16 +17,31 @@ pub(crate) fn save_text_documents_before_exit(app: &mut App) -> Result<(), Strin
     }
     app.sync_duplicate_file_tabs();
     let mut jobs = rustc_hash::FxHashMap::default();
-    for tab in app.tabs.iter().chain(app.groups.iter().flat_map(|group| &group.tabs)) {
-        if tab.kind != crate::app::TabKind::File || !tab.has_unsaved_changes() { continue; }
+    for tab in app
+        .tabs
+        .iter()
+        .chain(app.groups.iter().flat_map(|group| &group.tabs))
+    {
+        if tab.kind != crate::app::TabKind::File || !tab.has_unsaved_changes() {
+            continue;
+        }
         let editor = &tab.editor;
         if editor.read_only || editor.bg_loading {
-            return Err(format!("Cannot save {} while it is read-only or loading", editor.file_name()));
+            return Err(format!(
+                "Cannot save {} while it is read-only or loading",
+                editor.file_name()
+            ));
         }
-        let request = editor.background_save_request(app.trim_trailing_on_save, app.insert_final_newline, false)
-            .ok_or("Use Save As for untitled documents before Save and Quit, or choose Keep Unsaved")?;
-        if jobs.get(&request.path).is_none_or(|previous: &crate::editor::BackgroundSaveRequest|
-            request.source_content_version > previous.source_content_version)
+        let request = editor
+            .background_save_request(app.trim_trailing_on_save, app.insert_final_newline, false)
+            .ok_or(
+                "Use Save As for untitled documents before Save and Quit, or choose Keep Unsaved",
+            )?;
+        if jobs
+            .get(&request.path)
+            .is_none_or(|previous: &crate::editor::BackgroundSaveRequest| {
+                request.source_content_version > previous.source_content_version
+            })
         {
             jobs.insert(request.path.clone(), request);
         }
@@ -37,7 +52,9 @@ pub(crate) fn save_text_documents_before_exit(app: &mut App) -> Result<(), Strin
             return Err("Remote connection is unavailable. Choose Keep unsaved & quit to preserve your local edits.".into());
         }
         for (_, request) in jobs {
-            if !app.queue_background_save_job(request) { return Err("Remote save could not start. Your edits remain open.".into()); }
+            if !app.queue_background_save_job(request) {
+                return Err("Remote save could not start. Your edits remain open.".into());
+            }
         }
         return Err("Saving remote files…".into());
     }
@@ -45,17 +62,42 @@ pub(crate) fn save_text_documents_before_exit(app: &mut App) -> Result<(), Strin
         let saved = match crate::editor::write_background_save(&request) {
             Ok(saved) => saved,
             Err(error) => {
-                let message = format!("Could not save {}: {error}. Your edits remain open.", request.path.display());
-                app.show_file_save_error(&request.path, request.source_document_id, app.workspace_generation, error);
+                let message = format!(
+                    "Could not save {}: {error}. Your edits remain open.",
+                    request.path.display()
+                );
+                app.show_file_save_error(
+                    &request.path,
+                    request.source_document_id,
+                    app.workspace_generation,
+                    error,
+                );
                 return Err(message);
             }
         };
-        let modified = saved.metadata.as_ref().and_then(|metadata| metadata.modified().ok());
+        let modified = saved
+            .metadata
+            .as_ref()
+            .and_then(|metadata| metadata.modified().ok());
         let size = saved.metadata.as_ref().map(std::fs::Metadata::len);
-        for tab in app.tabs.iter_mut().chain(app.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
-            if tab.kind == crate::app::TabKind::File && tab.editor.file_path.as_ref() == Some(&request.path) {
-                tab.editor.apply_background_save(request.source_content_version, &request.rope,
-                    saved.rope.clone(), request.encoding, modified, size, saved.transformed_lines, threshold);
+        for tab in app
+            .tabs
+            .iter_mut()
+            .chain(app.groups.iter_mut().flat_map(|group| &mut group.tabs))
+        {
+            if tab.kind == crate::app::TabKind::File
+                && tab.editor.file_path.as_ref() == Some(&request.path)
+            {
+                tab.editor.apply_background_save(
+                    request.source_content_version,
+                    &request.rope,
+                    saved.rope.clone(),
+                    request.encoding,
+                    modified,
+                    size,
+                    saved.transformed_lines,
+                    threshold,
+                );
             }
         }
     }
@@ -67,17 +109,22 @@ pub(crate) fn save_text_documents_before_exit(app: &mut App) -> Result<(), Strin
 pub(crate) fn handle_exit_confirm_key(app: &mut App, key: KeyEvent) -> Option<bool> {
     let choice = match key.code {
         KeyCode::Enter => Some('y'),
-        KeyCode::Char(choice @ ('y' | 'Y' | 'd' | 'D' | 'k' | 'K')) => Some(choice.to_ascii_lowercase()),
+        KeyCode::Char(choice @ ('y' | 'Y' | 'd' | 'D' | 'k' | 'K')) => {
+            Some(choice.to_ascii_lowercase())
+        }
         _ => None,
     };
     if app.exit_confirm_active && choice.is_some() && app.workspace_sets_saving() {
         app.modal.error = Some("Wait for workspaces to finish saving before quitting".into());
         return Some(false);
     }
-    if app.exit_confirm_active && app.workspaces.exit.is_none() && !app.workspaces.parked.is_empty() {
+    if app.exit_confirm_active && app.workspaces.exit.is_none() && !app.workspaces.parked.is_empty()
+    {
         let choice = match key.code {
             KeyCode::Enter => Some('y'),
-            KeyCode::Char(choice @ ('y' | 'Y' | 'd' | 'D' | 'k' | 'K')) => Some(choice.to_ascii_lowercase()),
+            KeyCode::Char(choice @ ('y' | 'Y' | 'd' | 'D' | 'k' | 'K')) => {
+                Some(choice.to_ascii_lowercase())
+            }
             _ => None,
         };
         if let Some(choice) = choice {
@@ -86,7 +133,11 @@ pub(crate) fn handle_exit_confirm_key(app: &mut App, key: KeyEvent) -> Option<bo
             return Some(false);
         }
     }
-    if app.exit_confirm_active && let Some(choice) = choice { app.workspace_exit_choice(choice); }
+    if app.exit_confirm_active
+        && let Some(choice) = choice
+    {
+        app.workspace_exit_choice(choice);
+    }
     let result = handle_exit_confirm_key_inner(app, key, false);
     if result == Some(true) && app.workspaces.exit.is_some() {
         app.exit_confirm_active = false;
@@ -97,21 +148,34 @@ pub(crate) fn handle_exit_confirm_key(app: &mut App, key: KeyEvent) -> Option<bo
 }
 
 pub(crate) fn confirm_large_backup(app: &mut App) -> bool {
-    let Some(previous) = app.exit_backup_warning.take() else { return false; };
+    let Some(previous) = app.exit_backup_warning.take() else {
+        return false;
+    };
     let current = app.large_backup_warning();
     if current.as_ref().is_some_and(|current| current != &previous) {
         app.exit_backup_warning = current;
-        app.modal = crate::ui_modal::ModalState { kind: Some(crate::ui_modal::Kind::ExitBackup),
-            focus: 1, error: Some("Files changed. Review the updated backup sizes before quitting.".into()),
-            ..Default::default() };
+        app.modal = crate::ui_modal::ModalState {
+            kind: Some(crate::ui_modal::Kind::ExitBackup),
+            focus: 1,
+            error: Some("Files changed. Review the updated backup sizes before quitting.".into()),
+            ..Default::default()
+        };
         return false;
     }
     app.exit_recovery.approved = current;
-    handle_exit_confirm_key_inner(app, KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), true)
-        .unwrap_or(false)
+    handle_exit_confirm_key_inner(
+        app,
+        KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+        true,
+    )
+    .unwrap_or(false)
 }
 
-fn handle_exit_confirm_key_inner(app: &mut App, key: KeyEvent, backup_confirmed: bool) -> Option<bool> {
+fn handle_exit_confirm_key_inner(
+    app: &mut App,
+    key: KeyEvent,
+    backup_confirmed: bool,
+) -> Option<bool> {
     if !app.exit_confirm_active {
         return None;
     }
@@ -133,12 +197,17 @@ fn handle_exit_confirm_key_inner(app: &mut App, key: KeyEvent, backup_confirmed:
             }
         }
     }
-    if matches!(key.code, KeyCode::Enter | KeyCode::Char('y' | 'Y' | 'd' | 'D' | 'k' | 'K'))
-        && (!app.pending_file_saves.is_empty() || !app.deferred_file_saves.is_empty())
+    if matches!(
+        key.code,
+        KeyCode::Enter | KeyCode::Char('y' | 'Y' | 'd' | 'D' | 'k' | 'K')
+    ) && (!app.pending_file_saves.is_empty() || !app.deferred_file_saves.is_empty())
     {
         let keep_remote = matches!(key.code, KeyCode::Char('k' | 'K'))
             && app.remote_workspace.is_some()
-            && app.pending_file_saves.keys().chain(app.deferred_file_saves.keys())
+            && app
+                .pending_file_saves
+                .keys()
+                .chain(app.deferred_file_saves.keys())
                 .all(|path| crate::remote::workspace::is_view_key(path));
         if keep_remote {
             // A save may have reached disk without its acknowledgement. Stop
@@ -148,7 +217,9 @@ fn handle_exit_confirm_key_inner(app: &mut App, key: KeyEvent, backup_confirmed:
         } else {
             let message = if app.remote_workspace.is_some() {
                 "A remote save is pending. Choose Keep unsaved & quit to preserve local edits without waiting for the connection."
-            } else { "Wait for pending file saves before quitting" };
+            } else {
+                "Wait for pending file saves before quitting"
+            };
             app.modal.error = Some(message.into());
             app.notify(message);
             return Some(false);
@@ -169,7 +240,9 @@ fn handle_exit_confirm_key_inner(app: &mut App, key: KeyEvent, backup_confirmed:
                     return Some(false);
                 }
                 app.custom_exit_started = false;
-                if app.save_error.is_none() { app.show_save_error(error); }
+                if app.save_error.is_none() {
+                    app.show_save_error(error);
+                }
                 return Some(false);
             }
             return Some(true);
@@ -230,18 +303,24 @@ pub(crate) fn handle_tab_context_key(app: &mut App, key: KeyEvent) -> Option<boo
             if let Some((_, cmd, _)) = items.get(selected) {
                 let tab = app.tab_context_tab;
                 app.close_tab_context_menu();
-                if cmd.starts_with("tab_group_") || matches!(*cmd, "tab_move_desk" | "tab_copy_desk") {
+                if cmd.starts_with("tab_group_")
+                    || matches!(*cmd, "tab_move_desk" | "tab_copy_desk")
+                {
                     app.sync_duplicate_file_tabs();
                     app.active_tab = tab;
                     crate::ui_desks::command(app, cmd);
                     return Some(false);
                 }
                 match *cmd {
-                    "tab_new_window" | "tab_move_window" => app.request_tab_window(tab, *cmd == "tab_move_window"),
+                    "tab_new_window" | "tab_move_window" => {
+                        app.request_tab_window(tab, *cmd == "tab_move_window")
+                    }
                     "tab_text_color" => app.open_tab_text_color_menu(tab),
                     "tab_rename_terminal" => app.rename_context_terminal(),
                     "tab_find_terminal" => {
-                        if let Some(index) = app.tabs.get(tab).and_then(|tab| tab.terminal_idx) { app.begin_terminal_find(index); }
+                        if let Some(index) = app.tabs.get(tab).and_then(|tab| tab.terminal_idx) {
+                            app.begin_terminal_find(index);
+                        }
                     }
                     "tab_close" => {
                         app.close_tab(tab);
@@ -304,12 +383,20 @@ pub(crate) fn handle_tab_context_key(app: &mut App, key: KeyEvent) -> Option<boo
                         }
                     }
                     "tab_open_folder" => {
-                        if let Some(parent) = app.tabs.get(tab).and_then(|t| t.editor.file_path.as_ref()).and_then(|p| p.parent()).map(|p| p.to_path_buf()) {
+                        if let Some(parent) = app
+                            .tabs
+                            .get(tab)
+                            .and_then(|t| t.editor.file_path.as_ref())
+                            .and_then(|p| p.parent())
+                            .map(|p| p.to_path_buf())
+                        {
                             app.open_external(crate::external_open::Request::SystemApp(parent));
                         }
                     }
                     "tab_open_system" => {
-                        if let Some(path) = app.tabs.get(tab).and_then(|t| t.editor.file_path.clone()) {
+                        if let Some(path) =
+                            app.tabs.get(tab).and_then(|t| t.editor.file_path.clone())
+                        {
                             app.open_external(crate::external_open::Request::SystemApp(path));
                         }
                     }
@@ -385,7 +472,9 @@ pub(crate) fn handle_menu_key(app: &mut App, key: KeyEvent) -> Option<bool> {
             } else {
                 items.iter().rposition(|(_, command)| !command.is_empty())
             };
-            if let Some(index) = index { app.menu_item_selected = index; }
+            if let Some(index) = index {
+                app.menu_item_selected = index;
+            }
             app.menu_open = true;
         }
         KeyCode::Enter => {
@@ -474,7 +563,9 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
         return None;
     }
     // Keybinding capture mode
-    if app.handle_shortcut_editor_key(key) { return Some(false); }
+    if app.handle_shortcut_editor_key(key) {
+        return Some(false);
+    }
     if app.settings_value_editing {
         match key.code {
             KeyCode::Esc => app.cancel_numeric_setting_edit(),
@@ -482,12 +573,7 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
                 let _ = app.commit_numeric_setting_edit();
             }
             _ => {
-                app.edit_text_input(
-                    TextInputId::SettingsValue,
-                    key.code,
-                    key.modifiers,
-                    None,
-                );
+                app.edit_text_input(TextInputId::SettingsValue, key.code, key.modifiers, None);
             }
         }
         return Some(false);
@@ -546,8 +632,8 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
             KeyCode::Tab | KeyCode::BackTab if app.settings_dropdown_setting_id.is_none() => {
                 app.close_settings_dropdown();
                 app.settings_focus_categories = false;
-                app.settings_focus_control = key.code == KeyCode::Tab
-                    && !key.modifiers.contains(KeyModifiers::SHIFT);
+                app.settings_focus_control =
+                    key.code == KeyCode::Tab && !key.modifiers.contains(KeyModifiers::SHIFT);
                 if app.settings_focus_control {
                     app.ensure_settings_selection_visible();
                 }
@@ -571,7 +657,10 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
     }
     if app.settings_focus_categories
         && app.settings_category_picker_area.is_some()
-        && matches!(key.code, KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Up | KeyCode::Down)
+        && matches!(
+            key.code,
+            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Up | KeyCode::Down
+        )
     {
         app.open_settings_category_dropdown();
         return Some(false);
@@ -589,11 +678,18 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
             app.settings_editor_active = false;
         }
         KeyCode::Tab | KeyCode::BackTab => {
-            let current = if app.settings_focus_categories { 1 }
-                else if app.settings_focus_control { 2 } else { 0 };
-            let reverse = key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
+            let current = if app.settings_focus_categories {
+                1
+            } else if app.settings_focus_control {
+                2
+            } else {
+                0
+            };
+            let reverse =
+                key.code == KeyCode::BackTab || key.modifiers.contains(KeyModifiers::SHIFT);
             let mut next = (current + if reverse { 2 } else { 1 }) % 3;
-            if next == 1 && app.settings_category_area.is_none()
+            if next == 1
+                && app.settings_category_area.is_none()
                 && app.settings_category_picker_area.is_none()
             {
                 next = if reverse { 0 } else { 2 };
@@ -634,7 +730,11 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
         }
         KeyCode::Home | KeyCode::End if app.settings_focus_categories => {
             let rows = app.settings_category_visual_rows();
-            let row = if key.code == KeyCode::Home { rows.first() } else { rows.last() };
+            let row = if key.code == KeyCode::Home {
+                rows.first()
+            } else {
+                rows.last()
+            };
             if let Some(&(category, child, label)) = row {
                 app.select_settings_page(category, child.then_some(label));
             }
@@ -644,7 +744,9 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
                 let idx = app
                     .settings_category_selected
                     .min(App::settings_categories().len().saturating_sub(1));
-                if app.settings_selected_section(idx).is_some() || App::settings_sections(idx).is_empty() {
+                if app.settings_selected_section(idx).is_some()
+                    || App::settings_sections(idx).is_empty()
+                {
                     app.settings_focus_categories = false;
                     app.settings_focus_control = true;
                 } else {
@@ -683,8 +785,11 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
             }
         }
         KeyCode::Delete | KeyCode::Backspace
-            if app.settings_focus_control && key.modifiers.is_empty()
-                && let Some(index) = app.settings_items().get(app.settings_selected)
+            if app.settings_focus_control
+                && key.modifiers.is_empty()
+                && let Some(index) = app
+                    .settings_items()
+                    .get(app.settings_selected)
                     .and_then(|(_, _, id)| crate::ui_settings_shortcuts::binding_index(id)) =>
         {
             // On a focused shortcut row (not the search field), Delete removes it.
@@ -699,12 +804,8 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
             }
         }
         _ => {
-            let result = app.edit_text_input(
-                TextInputId::SettingsSearch,
-                key.code,
-                key.modifiers,
-                None,
-            );
+            let result =
+                app.edit_text_input(TextInputId::SettingsSearch, key.code, key.modifiers, None);
             if result.consumed {
                 app.settings_focus_categories = false;
                 app.settings_focus_control = false;
@@ -724,7 +825,9 @@ pub(crate) fn handle_settings_panel_key(app: &mut App, key: KeyEvent) -> Option<
         return None;
     }
     // Keybinding capture mode
-    if app.handle_shortcut_editor_key(key) { return Some(false); }
+    if app.handle_shortcut_editor_key(key) {
+        return Some(false);
+    }
     match key.code {
         KeyCode::Esc => app.settings_active = false,
         KeyCode::Up => {
@@ -785,7 +888,10 @@ mod tests {
         app.groups.push(group);
         app.exit_confirm_active = true;
 
-        assert_eq!(handle_exit_confirm_key(&mut app, key(KeyCode::Char('y'))), Some(true));
+        assert_eq!(
+            handle_exit_confirm_key(&mut app, key(KeyCode::Char('y'))),
+            Some(true)
+        );
         assert!(!settings_path.exists());
         assert_eq!(std::fs::read_to_string(file_path).unwrap().trim_end(), "y");
     }
@@ -937,9 +1043,11 @@ mod tests {
         app.settings_editor_search = "animations".into();
         let results = app.settings_filtered_indices_for_category(7);
         assert!(!results.is_empty());
-        assert!(results
-            .iter()
-            .all(|&index| App::setting_field_kind(&items[index].2) != "heading"));
+        assert!(
+            results
+                .iter()
+                .all(|&index| App::setting_field_kind(&items[index].2) != "heading")
+        );
         app.settings_selected = results[0];
         handle_settings_editor_key(&mut app, key(KeyCode::Down));
         assert_eq!(app.settings_selected, results[1]);

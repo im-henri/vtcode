@@ -115,12 +115,18 @@ impl DirectoryCache {
         state.generation = state.generation.wrapping_add(1);
         state.directories.retain(|directory, listing| {
             let affected = parents.contains(directory.as_path())
-                || directory.ancestors().any(|ancestor| paths.contains(ancestor));
+                || directory
+                    .ancestors()
+                    .any(|ancestor| paths.contains(ancestor));
             if !structural {
                 if affected {
                     // Content writes invalidate size/date keys, not names.
                     listing.metadata = false;
-                    if listing.order.as_ref().is_some_and(|order| needs_metadata(order.sort)) {
+                    if listing
+                        .order
+                        .as_ref()
+                        .is_some_and(|order| needs_metadata(order.sort))
+                    {
                         listing.order = None;
                     }
                 }
@@ -267,18 +273,32 @@ impl DirectoryCache {
             if let Some(listing) = state.directories.get(directory)
                 && Arc::ptr_eq(&listing.entries, &entries)
                 && let Some(order) = &listing.order
-                && order.sort == sort && order.locale == ordering.locale() {
-                return Some(OrderedListing { entries, indices: order.indices.clone() });
+                && order.sort == sort
+                && order.locale == ordering.locale()
+            {
+                return Some(OrderedListing {
+                    entries,
+                    indices: order.indices.clone(),
+                });
             }
         }
         let mut indices: Vec<_> = (0..entries.len()).collect();
         if entries.len() >= KEYED_SORT_MIN_ENTRIES && ordering.has_sort_keys() {
             // Collation keys once per name: a 20,000-entry folder otherwise
             // runs ~290,000 full collation comparisons on expansion.
-            let keys: Vec<_> = entries.iter().map(|(_, is_dir, _, _, name)| {
-                if sort == ExplorerSortMode::Type && !*is_dir { ordering.extension_key(name) } else { ordering.name_key(name) }
-            }).collect();
-            if cancel.is_some_and(|token| token.is_cancelled()) { return None; }
+            let keys: Vec<_> = entries
+                .iter()
+                .map(|(_, is_dir, _, _, name)| {
+                    if sort == ExplorerSortMode::Type && !*is_dir {
+                        ordering.extension_key(name)
+                    } else {
+                        ordering.name_key(name)
+                    }
+                })
+                .collect();
+            if cancel.is_some_and(|token| token.is_cancelled()) {
+                return None;
+            }
             indices.sort_by(|&a, &b| {
                 let (_, a_dir, a_size, a_time, _) = &entries[a];
                 let (_, b_dir, b_size, b_time, _) = &entries[b];
@@ -301,18 +321,31 @@ impl DirectoryCache {
                         ExplorerSortMode::Name => name(),
                         ExplorerSortMode::Size => b_size.cmp(a_size).then_with(name),
                         ExplorerSortMode::Modified => b_time.cmp(a_time).then_with(name),
-                        ExplorerSortMode::Type => if *a_dir { name() } else { ordering.extensions(a_name, b_name) },
+                        ExplorerSortMode::Type => {
+                            if *a_dir {
+                                name()
+                            } else {
+                                ordering.extensions(a_name, b_name)
+                            }
+                        }
                     }
                 })
             });
         }
-        if cancel.is_some_and(|token| token.is_cancelled()) { return None; }
+        if cancel.is_some_and(|token| token.is_cancelled()) {
+            return None;
+        }
         let indices = Arc::new(indices);
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(listing) = state.directories.get_mut(directory)
             && Arc::ptr_eq(&listing.entries, &entries)
-            && (!needs_metadata(sort) || listing.metadata) {
-            listing.order = Some(Projection { sort, locale: ordering.locale().to_owned(), indices: indices.clone() });
+            && (!needs_metadata(sort) || listing.metadata)
+        {
+            listing.order = Some(Projection {
+                sort,
+                locale: ordering.locale().to_owned(),
+                indices: indices.clone(),
+            });
         }
         Some(OrderedListing { entries, indices })
     }
@@ -328,9 +361,18 @@ mod tests {
     use super::*;
 
     fn sample(directory: &Path) -> Vec<DirectoryEntry> {
-        [("z.h", 1, 3), ("õ.h", 3, 1), ("a.rs", 2, 2)].into_iter()
-            .map(|(name, size, modified)| (directory.join(name), false, size,
-                SystemTime::UNIX_EPOCH + Duration::from_secs(modified), name.to_owned())).collect()
+        [("z.h", 1, 3), ("õ.h", 3, 1), ("a.rs", 2, 2)]
+            .into_iter()
+            .map(|(name, size, modified)| {
+                (
+                    directory.join(name),
+                    false,
+                    size,
+                    SystemTime::UNIX_EPOCH + Duration::from_secs(modified),
+                    name.to_owned(),
+                )
+            })
+            .collect()
     }
     fn names(listing: &OrderedListing) -> Vec<&str> {
         listing.iter().map(|entry| entry.4.as_str()).collect()
@@ -338,26 +380,55 @@ mod tests {
 
     #[test]
     fn keyed_ordering_of_large_listings_matches_the_comparers_in_every_mode() {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!("../tests/fixtures/vscode-ordering.json")).unwrap();
-        let mut names: Vec<String> = fixture["inputs"]["names"].as_array().unwrap().iter()
-            .map(|value| value.as_str().unwrap().to_owned()).collect();
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/vscode-ordering.json")).unwrap();
+        let mut names: Vec<String> = fixture["inputs"]["names"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_owned())
+            .collect();
         for index in 0..300 {
             names.push(format!("item_{index}.txt"));
-            names.push(format!("Item_{:03}.{}", index % 17, ["rs", "RS", "md", "", "tar.gz"][index % 5]));
+            names.push(format!(
+                "Item_{:03}.{}",
+                index % 17,
+                ["rs", "RS", "md", "", "tar.gz"][index % 5]
+            ));
             names.push(format!(".hidden{}", index % 11));
             names.push(format!("É{}é", index % 7));
         }
         let directory = Path::new("keyed");
-        let entries: Vec<DirectoryEntry> = names.iter().enumerate().map(|(index, name)| (directory.join(format!("{index}")),
-            index % 9 == 0, (index % 13) as u64, SystemTime::UNIX_EPOCH + Duration::from_secs((index % 5) as u64), name.clone())).collect();
+        let entries: Vec<DirectoryEntry> = names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                (
+                    directory.join(format!("{index}")),
+                    index % 9 == 0,
+                    (index % 13) as u64,
+                    SystemTime::UNIX_EPOCH + Duration::from_secs((index % 5) as u64),
+                    name.clone(),
+                )
+            })
+            .collect();
         assert!(entries.len() >= KEYED_SORT_MIN_ENTRIES);
         // fr-CA uses the comparer path (backwards secondary); it must agree too.
         for locale in ["en-US", "de-DE", "sv-SE", "ja-JP", "tr-TR", "fr-CA"] {
             let ordering = crate::file_order::FileOrder::new(locale).unwrap();
             assert_eq!(ordering.has_sort_keys(), locale != "fr-CA");
-            for sort in [ExplorerSortMode::Name, ExplorerSortMode::Size, ExplorerSortMode::Modified, ExplorerSortMode::Type] {
+            for sort in [
+                ExplorerSortMode::Name,
+                ExplorerSortMode::Size,
+                ExplorerSortMode::Modified,
+                ExplorerSortMode::Type,
+            ] {
                 let cache = DirectoryCache::default();
-                let listing = cache.get_ordered(directory, sort, &ordering, true, None, || Some(entries.clone())).unwrap();
+                let listing = cache
+                    .get_ordered(directory, sort, &ordering, true, None, || {
+                        Some(entries.clone())
+                    })
+                    .unwrap();
                 let mut expected: Vec<_> = (0..entries.len()).collect();
                 expected.sort_by(|&a, &b| {
                     let (_, a_dir, a_size, a_time, a_name) = &entries[a];
@@ -368,17 +439,28 @@ mod tests {
                             ExplorerSortMode::Name => name(),
                             ExplorerSortMode::Size => b_size.cmp(a_size).then_with(name),
                             ExplorerSortMode::Modified => b_time.cmp(a_time).then_with(name),
-                            ExplorerSortMode::Type => if *a_dir { name() } else { ordering.extensions(a_name, b_name) },
+                            ExplorerSortMode::Type => {
+                                if *a_dir {
+                                    name()
+                                } else {
+                                    ordering.extensions(a_name, b_name)
+                                }
+                            }
                         }
                     })
                 });
-                let expected: Vec<&str> = expected.iter().map(|&index| entries[index].4.as_str()).collect();
+                let expected: Vec<&str> = expected
+                    .iter()
+                    .map(|&index| entries[index].4.as_str())
+                    .collect();
                 assert_eq!(names_of(&listing), expected, "{locale} {sort:?}");
             }
         }
     }
 
-    fn names_of(listing: &OrderedListing) -> Vec<&str> { listing.iter().map(|entry| entry.4.as_str()).collect() }
+    fn names_of(listing: &OrderedListing) -> Vec<&str> {
+        listing.iter().map(|entry| entry.4.as_str()).collect()
+    }
 
     #[test]
     fn sort_and_locale_projections_share_one_snapshot_and_keep_inflight_ordering() {
@@ -387,19 +469,53 @@ mod tests {
         let en = crate::file_order::FileOrder::new("en-US").unwrap();
         let et = crate::file_order::FileOrder::new("et-EE").unwrap();
         let read = |sort, locale: &crate::file_order::FileOrder| {
-            cache.get_ordered(directory, sort, locale, true, None, || Some(sample(directory))).unwrap()
+            cache
+                .get_ordered(directory, sort, locale, true, None, || {
+                    Some(sample(directory))
+                })
+                .unwrap()
         };
         let original = read(ExplorerSortMode::Name, &en);
         let again = read(ExplorerSortMode::Name, &en);
-        assert!(Arc::ptr_eq(&original.indices, &again.indices), "unchanged projections do not sort again");
-        assert_eq!(names(&read(ExplorerSortMode::Type, &en)), ["õ.h", "z.h", "a.rs"]);
-        assert_eq!(names(&read(ExplorerSortMode::Name, &et)), ["a.rs", "z.h", "õ.h"]);
-        assert_eq!(names(&original), ["a.rs", "õ.h", "z.h"], "a new locale cannot mutate an old worker's result");
-        assert_eq!(cache.read_count(), 1, "name/type/locale changes need no directory reread");
-        assert_eq!(names(&read(ExplorerSortMode::Modified, &et)), ["z.h", "a.rs", "õ.h"]);
-        assert_eq!(names(&read(ExplorerSortMode::Size, &et)), ["õ.h", "a.rs", "z.h"]);
-        assert_eq!(names(&read(ExplorerSortMode::Name, &en)), ["a.rs", "õ.h", "z.h"]);
-        assert_eq!(cache.read_count(), 2, "size and date share one metadata snapshot");
+        assert!(
+            Arc::ptr_eq(&original.indices, &again.indices),
+            "unchanged projections do not sort again"
+        );
+        assert_eq!(
+            names(&read(ExplorerSortMode::Type, &en)),
+            ["õ.h", "z.h", "a.rs"]
+        );
+        assert_eq!(
+            names(&read(ExplorerSortMode::Name, &et)),
+            ["a.rs", "z.h", "õ.h"]
+        );
+        assert_eq!(
+            names(&original),
+            ["a.rs", "õ.h", "z.h"],
+            "a new locale cannot mutate an old worker's result"
+        );
+        assert_eq!(
+            cache.read_count(),
+            1,
+            "name/type/locale changes need no directory reread"
+        );
+        assert_eq!(
+            names(&read(ExplorerSortMode::Modified, &et)),
+            ["z.h", "a.rs", "õ.h"]
+        );
+        assert_eq!(
+            names(&read(ExplorerSortMode::Size, &et)),
+            ["õ.h", "a.rs", "z.h"]
+        );
+        assert_eq!(
+            names(&read(ExplorerSortMode::Name, &en)),
+            ["a.rs", "õ.h", "z.h"]
+        );
+        assert_eq!(
+            cache.read_count(),
+            2,
+            "size and date share one metadata snapshot"
+        );
     }
 
     #[test]
@@ -407,20 +523,59 @@ mod tests {
         let cache = DirectoryCache::default();
         let directory = Path::new("workspace");
         let order = crate::file_order::FileOrder::new("en-US").unwrap();
-        cache.get_ordered(directory, ExplorerSortMode::Size, &order, true, None, || Some(sample(directory))).unwrap();
+        cache
+            .get_ordered(
+                directory,
+                ExplorerSortMode::Size,
+                &order,
+                true,
+                None,
+                || Some(sample(directory)),
+            )
+            .unwrap();
         cache.invalidate_paths([directory.join("a.rs").as_path()], false);
-        cache.get_ordered(directory, ExplorerSortMode::Name, &order, true, None,
-            || panic!("content-only writes do not change filenames")).unwrap();
-        let modified = cache.get_ordered(directory, ExplorerSortMode::Modified, &order, true, None, || {
-            let mut entries = sample(directory);
-            entries[2].3 += Duration::from_secs(20);
-            Some(entries)
-        }).unwrap();
+        cache
+            .get_ordered(
+                directory,
+                ExplorerSortMode::Name,
+                &order,
+                true,
+                None,
+                || panic!("content-only writes do not change filenames"),
+            )
+            .unwrap();
+        let modified = cache
+            .get_ordered(
+                directory,
+                ExplorerSortMode::Modified,
+                &order,
+                true,
+                None,
+                || {
+                    let mut entries = sample(directory);
+                    entries[2].3 += Duration::from_secs(20);
+                    Some(entries)
+                },
+            )
+            .unwrap();
         assert_eq!(names(&modified)[0], "a.rs");
         assert_eq!(cache.read_count(), 2);
         cache.invalidate_paths([directory.join("a.rs").as_path()], true);
-        cache.get_ordered(directory, ExplorerSortMode::Type, &order, true, None, || Some(sample(directory))).unwrap();
-        assert_eq!(cache.read_count(), 3, "structure changes still require a fresh directory listing");
+        cache
+            .get_ordered(
+                directory,
+                ExplorerSortMode::Type,
+                &order,
+                true,
+                None,
+                || Some(sample(directory)),
+            )
+            .unwrap();
+        assert_eq!(
+            cache.read_count(),
+            3,
+            "structure changes still require a fresh directory listing"
+        );
     }
 
     #[test]
@@ -428,16 +583,36 @@ mod tests {
         let cache = DirectoryCache::default();
         let directory = Path::new("workspace");
         let ordering = crate::file_order::FileOrder::new("en-US").unwrap();
-        cache.get_ordered(directory, ExplorerSortMode::Name, &ordering, true, None, || {
-            cache.invalidate_paths([directory], true);
-            Some(sample(directory))
-        }).unwrap();
+        cache
+            .get_ordered(
+                directory,
+                ExplorerSortMode::Name,
+                &ordering,
+                true,
+                None,
+                || {
+                    cache.invalidate_paths([directory], true);
+                    Some(sample(directory))
+                },
+            )
+            .unwrap();
         assert!(cache.0.lock().unwrap().directories.is_empty());
         let token = crate::background::CancellationToken::new();
-        assert!(cache.get_ordered(directory, ExplorerSortMode::Name, &ordering, true, Some(&token), || {
-            token.cancel();
-            Some(sample(directory))
-        }).is_none());
+        assert!(
+            cache
+                .get_ordered(
+                    directory,
+                    ExplorerSortMode::Name,
+                    &ordering,
+                    true,
+                    Some(&token),
+                    || {
+                        token.cancel();
+                        Some(sample(directory))
+                    }
+                )
+                .is_none()
+        );
         assert!(cache.0.lock().unwrap().directories.is_empty());
     }
 
@@ -497,21 +672,27 @@ mod tests {
     fn failed_or_cancelled_reads_are_not_cached() {
         let cache = DirectoryCache::default();
         let path = Path::new("workspace");
-        assert!(cache
-            .get_or_read(path, ExplorerSortMode::Name, true, None, || None)
-            .is_none());
+        assert!(
+            cache
+                .get_or_read(path, ExplorerSortMode::Name, true, None, || None)
+                .is_none()
+        );
         let token = crate::background::CancellationToken::new();
-        assert!(cache
-            .get_or_read(path, ExplorerSortMode::Name, true, Some(&token), || {
-                token.cancel();
-                Some(Vec::new())
-            })
-            .is_none());
-        assert!(cache
-            .get_or_read(path, ExplorerSortMode::Name, true, Some(&token), || panic!(
-                "cancelled scan did I/O"
-            ))
-            .is_none());
+        assert!(
+            cache
+                .get_or_read(path, ExplorerSortMode::Name, true, Some(&token), || {
+                    token.cancel();
+                    Some(Vec::new())
+                })
+                .is_none()
+        );
+        assert!(
+            cache
+                .get_or_read(path, ExplorerSortMode::Name, true, Some(&token), || panic!(
+                    "cancelled scan did I/O"
+                ))
+                .is_none()
+        );
         cache
             .get_or_read(
                 path,

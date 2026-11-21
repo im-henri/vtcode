@@ -20,11 +20,17 @@ fn compressed_remote_messages_require_exactly_one_complete_zlib_stream() {
     let value = "compressible message".repeat(100);
     let mut packet = encode(&value).unwrap();
     assert_eq!(packet.remove(0), 1);
-    assert_eq!(decode_compressed(&packet).unwrap(), serde_json::to_vec(&value).unwrap());
+    assert_eq!(
+        decode_compressed(&packet).unwrap(),
+        serde_json::to_vec(&value).unwrap()
+    );
 
     let mut trailing = packet.clone();
     trailing.extend_from_slice(b"trailing bytes");
-    assert_eq!(decode_compressed(&trailing).unwrap_err().kind(), io::ErrorKind::InvalidData);
+    assert_eq!(
+        decode_compressed(&trailing).unwrap_err().kind(),
+        io::ErrorKind::InvalidData
+    );
 
     let mut truncated = packet.clone();
     truncated.pop();
@@ -39,7 +45,10 @@ fn compressed_remote_messages_require_exactly_one_complete_zlib_stream() {
 fn decoder_rejects_unknown_encodings_before_reserving_a_transfer() {
     let mut frames = Vec::new();
     write_message(&mut frames, 'S', 42, 7, &vec![2; CHUNK + 1]).unwrap();
-    let first = frames.split_inclusive(|byte| *byte == b'\n').next().unwrap();
+    let first = frames
+        .split_inclusive(|byte| *byte == b'\n')
+        .next()
+        .unwrap();
     let mut decoder = Decoder::new('S', 42);
     assert!(decoder.line(first).is_err());
     assert!(!decoder.in_progress(7));
@@ -52,33 +61,90 @@ fn decoder_rejects_non_utf8_in_an_active_record_but_keeps_binary_shell_output() 
     let invalid = format!("{PREFIX}S:{:016x}:1:0:1:", 42);
     let mut packet = invalid.into_bytes();
     packet.extend_from_slice(b"\xff\n");
-    assert!(decoder.line_with_output(&packet, |_| panic!("protocol bytes reached shell output")).is_err());
+    assert!(
+        decoder
+            .line_with_output(&packet, |_| panic!("protocol bytes reached shell output"))
+            .is_err()
+    );
 
     let output = b"shell output \xff\n";
     let mut observed = Vec::new();
-    assert!(decoder.line_with_output(output, |line| observed.extend_from_slice(line)).unwrap().is_none());
+    assert!(
+        decoder
+            .line_with_output(output, |line| observed.extend_from_slice(line))
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(observed, output);
 }
 
 #[test]
 fn search_output_discards_obsolete_batches_and_finishes_partial_frames() {
-    let hit = |label: &str| search::Hit { path: RemotePath::new(b"file.txt".to_vec()).unwrap(),
-        line: 1, start: 0, end: 1, text: label.into() };
+    let hit = |label: &str| search::Hit {
+        path: RemotePath::new(b"file.txt".to_vec()).unwrap(),
+        line: 1,
+        start: 0,
+        end: 1,
+        text: label.into(),
+    };
     let mut queue = OutputQueue::default();
-    queue.push(Response { id: 0, result: Ok(Reply::SearchProgress { request: 7, hits: vec![hit("started")] }) }).unwrap();
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::SearchProgress {
+                request: 7,
+                hits: vec![hit("started")],
+            }),
+        })
+        .unwrap();
     let packet = queue.packets.front_mut().unwrap();
     // An incompressible packet forces the normal multi-frame/reassembly path.
-    packet.data = encode(&Response { id: 0, result: Ok(Reply::SearchProgress { request: 7,
-        hits: vec![hit(&(0..20_000).map(|i| format!("{i:x}")).collect::<String>())] }) }).unwrap();
+    packet.data = encode(&Response {
+        id: 0,
+        result: Ok(Reply::SearchProgress {
+            request: 7,
+            hits: vec![hit(&(0..20_000)
+                .map(|i| format!("{i:x}"))
+                .collect::<String>())],
+        }),
+    })
+    .unwrap();
     queue.bytes = packet.data.len();
     let mut bytes = Vec::new();
     queue.step(&mut bytes, 42).unwrap();
     assert!(queue.packets.front().unwrap().offset > 0);
-    queue.push(Response { id: 0, result: Ok(Reply::SearchProgress { request: 7, hits: vec![hit("obsolete")] }) }).unwrap();
-    queue.push(Response { id: 7, result: Ok(Reply::Search { hits: Vec::new(), truncated: false, draft_aliases: Vec::new() }) }).unwrap();
-    queue.push(Response { id: 0, result: Ok(Reply::SearchProgress { request: 8, hits: vec![hit("current")] }) }).unwrap();
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::SearchProgress {
+                request: 7,
+                hits: vec![hit("obsolete")],
+            }),
+        })
+        .unwrap();
+    queue
+        .push(Response {
+            id: 7,
+            result: Ok(Reply::Search {
+                hits: Vec::new(),
+                truncated: false,
+                draft_aliases: Vec::new(),
+            }),
+        })
+        .unwrap();
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::SearchProgress {
+                request: 8,
+                hits: vec![hit("current")],
+            }),
+        })
+        .unwrap();
     queue.discard_obsolete_search(8).unwrap();
-    while !queue.is_empty() { queue.step(&mut bytes, 42).unwrap(); }
+    while !queue.is_empty() {
+        queue.step(&mut bytes, 42).unwrap();
+    }
     let mut decoder = Decoder::new('S', 42);
     let mut current = false;
     let mut partial = false;
@@ -87,9 +153,19 @@ fn search_output_discards_obsolete_batches_and_finishes_partial_frames() {
         if let Some((_, data)) = decoder.line(line).unwrap() {
             let reply: Response = serde_json::from_slice(&data).unwrap();
             match reply.result {
-                Ok(Reply::SearchProgress { request: 8, hits }) => { assert_eq!(&*hits[0].text, "current"); current = true; }
-                Ok(Reply::SearchProgress { request: 7, hits }) => { assert_ne!(&*hits[0].text, "obsolete"); partial = true; }
-                Err(error) => { assert_eq!(reply.id, 7); assert_eq!(error.into_io().kind(), io::ErrorKind::Interrupted); cancelled = true; }
+                Ok(Reply::SearchProgress { request: 8, hits }) => {
+                    assert_eq!(&*hits[0].text, "current");
+                    current = true;
+                }
+                Ok(Reply::SearchProgress { request: 7, hits }) => {
+                    assert_ne!(&*hits[0].text, "obsolete");
+                    partial = true;
+                }
+                Err(error) => {
+                    assert_eq!(reply.id, 7);
+                    assert_eq!(error.into_io().kind(), io::ErrorKind::Interrupted);
+                    cancelled = true;
+                }
                 other => panic!("unexpected reply: {other:?}"),
             }
         }
@@ -100,62 +176,145 @@ fn search_output_discards_obsolete_batches_and_finishes_partial_frames() {
 
 #[test]
 fn search_progress_queue_errors_keep_the_request_id_in_the_wire_frame() {
-    let mut queue = OutputQueue { bytes: MAX_MESSAGE * 2, ..OutputQueue::default() };
-    queue.push(Response { id: 0, result: Ok(Reply::SearchProgress { request: 7, hits: Vec::new() }) }).unwrap();
+    let mut queue = OutputQueue {
+        bytes: MAX_MESSAGE * 2,
+        ..OutputQueue::default()
+    };
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::SearchProgress {
+                request: 7,
+                hits: Vec::new(),
+            }),
+        })
+        .unwrap();
     let mut bytes = Vec::new();
     queue.step(&mut bytes, 42).unwrap();
     let (id, data) = Decoder::new('S', 42).line(&bytes).unwrap().unwrap();
     let response: Response = serde_json::from_slice(&data).unwrap();
     assert_eq!(id, 7);
     assert_eq!(response.id, id);
-    assert!(response.result.unwrap_err().to_string().contains("queue is full"));
+    assert!(
+        response
+            .result
+            .unwrap_err()
+            .to_string()
+            .contains("queue is full")
+    );
 }
 
 #[test]
 fn history_page_queue_error_keeps_the_history_id_and_offset() {
-    let page = serde_json::from_value(serde_json::json!({ "offset": 200, "result": { "Ok": [[], false] } })).unwrap();
-    let mut queue = OutputQueue { bytes: MAX_MESSAGE * 2, ..OutputQueue::default() };
-    queue.push(Response { id: 0, result: Ok(Reply::HistoryPage { history: 7, page }) }).unwrap();
+    let page = serde_json::from_value(
+        serde_json::json!({ "offset": 200, "result": { "Ok": [[], false] } }),
+    )
+    .unwrap();
+    let mut queue = OutputQueue {
+        bytes: MAX_MESSAGE * 2,
+        ..OutputQueue::default()
+    };
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::HistoryPage { history: 7, page }),
+        })
+        .unwrap();
     let mut bytes = Vec::new();
     queue.step(&mut bytes, 42).unwrap();
     let (id, data) = Decoder::new('S', 42).line(&bytes).unwrap().unwrap();
     assert_ne!(id & EVENT_ID, 0);
     let response: Response = serde_json::from_slice(&data).unwrap();
     assert_eq!(response.id, 0);
-    let Reply::HistoryPage { history, page } = response.result.unwrap() else { panic!() };
+    let Reply::HistoryPage { history, page } = response.result.unwrap() else {
+        panic!()
+    };
     assert_eq!(history, 7);
     let page = serde_json::to_value(page).unwrap();
     assert_eq!(page["offset"], 200);
-    assert!(page["result"]["Err"].as_str().unwrap().contains("queue is full"));
+    assert!(
+        page["result"]["Err"]
+            .as_str()
+            .unwrap()
+            .contains("queue is full")
+    );
 }
 
 #[test]
 fn search_progress_batches_finish_before_their_terminal_reply_without_blocking_other_requests() {
     let mut entropy = 7u64;
-    let text = (0..40_000).map(|_| {
-        entropy ^= entropy << 13;
-        entropy ^= entropy >> 7;
-        entropy ^= entropy << 17;
-        char::from(b' ' + (entropy % 95) as u8)
-    }).collect::<String>();
-    let hit = |text: String| search::Hit { path: RemotePath::new(b"file.txt".to_vec()).unwrap(),
-        line: 1, start: 0, end: 1, text: text.into() };
+    let text = (0..40_000)
+        .map(|_| {
+            entropy ^= entropy << 13;
+            entropy ^= entropy >> 7;
+            entropy ^= entropy << 17;
+            char::from(b' ' + (entropy % 95) as u8)
+        })
+        .collect::<String>();
+    let hit = |text: String| search::Hit {
+        path: RemotePath::new(b"file.txt".to_vec()).unwrap(),
+        line: 1,
+        start: 0,
+        end: 1,
+        text: text.into(),
+    };
     let mut queue = OutputQueue::default();
-    queue.push(Response { id: 0, result: Ok(Reply::SearchProgress { request: 7, hits: vec![hit(text)] }) }).unwrap();
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::SearchProgress {
+                request: 7,
+                hits: vec![hit(text)],
+            }),
+        })
+        .unwrap();
     let mut bytes = Vec::new();
     queue.step(&mut bytes, 42).unwrap();
-    assert!(!queue.is_empty(), "exercise a partially written progress event");
-    queue.push(Response { id: 0, result: Ok(Reply::SearchProgress { request: 7, hits: vec![hit("second".into())] }) }).unwrap();
-    queue.push(Response { id: 7, result: Ok(Reply::Search { hits: Vec::new(), truncated: false, draft_aliases: Vec::new() }) }).unwrap();
-    queue.push(Response { id: 8, result: Ok(Reply::Done) }).unwrap();
-    while !queue.is_empty() { queue.step(&mut bytes, 42).unwrap(); }
+    assert!(
+        !queue.is_empty(),
+        "exercise a partially written progress event"
+    );
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::SearchProgress {
+                request: 7,
+                hits: vec![hit("second".into())],
+            }),
+        })
+        .unwrap();
+    queue
+        .push(Response {
+            id: 7,
+            result: Ok(Reply::Search {
+                hits: Vec::new(),
+                truncated: false,
+                draft_aliases: Vec::new(),
+            }),
+        })
+        .unwrap();
+    queue
+        .push(Response {
+            id: 8,
+            result: Ok(Reply::Done),
+        })
+        .unwrap();
+    while !queue.is_empty() {
+        queue.step(&mut bytes, 42).unwrap();
+    }
     let mut decoder = Decoder::new('S', 42);
     let mut received = Vec::new();
     for line in bytes.split_inclusive(|byte| *byte == b'\n') {
         if let Some((_, data)) = decoder.line(line).unwrap() {
             let response: Response = serde_json::from_slice(&data).unwrap();
             received.push(match response.result.unwrap() {
-                Reply::SearchProgress { hits, .. } => if hits[0].text.len() > 100 { "first" } else { "second" },
+                Reply::SearchProgress { hits, .. } => {
+                    if hits[0].text.len() > 100 {
+                        "first"
+                    } else {
+                        "second"
+                    }
+                }
                 Reply::Search { .. } => "done",
                 Reply::Done => "other request",
                 _ => panic!("unexpected reply"),
@@ -168,37 +327,100 @@ fn search_progress_batches_finish_before_their_terminal_reply_without_blocking_o
 #[test]
 fn large_git_startup_progress_finishes_before_completion_without_blocking_other_replies() {
     let mut entropy = 13u64;
-    let files = (0..128).map(|_| {
-        let path = (0..192).map(|_| {
-            entropy ^= entropy << 13; entropy ^= entropy >> 7; entropy ^= entropy << 17;
-            b'a' + (entropy % 26) as u8
-        }).collect();
-        crate::app::GitFileChange { path: RemotePath::new(path).unwrap(), original_path: None,
-            status: 'M', staged: false, directory: false }
-    }).collect();
-    let discovery = || git::Discovery { roots: vec![RemotePath::default()], parent: None, errors: Vec::new() };
+    let files = (0..128)
+        .map(|_| {
+            let path = (0..192)
+                .map(|_| {
+                    entropy ^= entropy << 13;
+                    entropy ^= entropy >> 7;
+                    entropy ^= entropy << 17;
+                    b'a' + (entropy % 26) as u8
+                })
+                .collect();
+            crate::app::GitFileChange {
+                path: RemotePath::new(path).unwrap(),
+                original_path: None,
+                status: 'M',
+                staged: false,
+                directory: false,
+            }
+        })
+        .collect();
+    let discovery = || git::Discovery {
+        roots: vec![RemotePath::default()],
+        parent: None,
+        errors: Vec::new(),
+    };
     let mut queue = OutputQueue::default();
-    queue.push(Response { id: 0, result: Ok(Reply::GitStatusProgress { request: 7,
-        progress: git::StatusProgress::Repository { root: RemotePath::default(), branch: "main".into() } }) }).unwrap();
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::GitStatusProgress {
+                request: 7,
+                progress: git::StatusProgress::Repository {
+                    root: RemotePath::default(),
+                    branch: "main".into(),
+                },
+            }),
+        })
+        .unwrap();
     let mut bytes = Vec::new();
     queue.step(&mut bytes, 42).unwrap();
-    queue.push(Response { id: 0, result: Ok(Reply::GitStatusProgress { request: 7,
-        progress: git::StatusProgress::Snapshot { discovery: discovery(), scan: Box::new(git::Scan {
-            root: RemotePath::default(), branch: "main".into(), files, operation: None, worktree_paths: None,
-        }) } }) }).unwrap();
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::GitStatusProgress {
+                request: 7,
+                progress: git::StatusProgress::Snapshot {
+                    discovery: discovery(),
+                    scan: Box::new(git::Scan {
+                        root: RemotePath::default(),
+                        branch: "main".into(),
+                        files,
+                        operation: None,
+                        worktree_paths: None,
+                    }),
+                },
+            }),
+        })
+        .unwrap();
     queue.step(&mut bytes, 42).unwrap();
-    assert!(!queue.is_empty(), "the primary snapshot must span multiple frames");
-    queue.push(Response { id: 7, result: Ok(Reply::GitStatus { discovery: discovery(), scans: Vec::new() }) }).unwrap();
-    queue.push(Response { id: 8, result: Ok(Reply::Done) }).unwrap();
-    while !queue.is_empty() { queue.step(&mut bytes, 42).unwrap(); }
+    assert!(
+        !queue.is_empty(),
+        "the primary snapshot must span multiple frames"
+    );
+    queue
+        .push(Response {
+            id: 7,
+            result: Ok(Reply::GitStatus {
+                discovery: discovery(),
+                scans: Vec::new(),
+            }),
+        })
+        .unwrap();
+    queue
+        .push(Response {
+            id: 8,
+            result: Ok(Reply::Done),
+        })
+        .unwrap();
+    while !queue.is_empty() {
+        queue.step(&mut bytes, 42).unwrap();
+    }
     let mut decoder = Decoder::new('S', 42);
     let mut received = Vec::new();
     for line in bytes.split_inclusive(|byte| *byte == b'\n') {
         if let Some((_, data)) = decoder.line(line).unwrap() {
             let response: Response = serde_json::from_slice(&data).unwrap();
             received.push(match response.result.unwrap() {
-                Reply::GitStatusProgress { progress: git::StatusProgress::Repository { .. }, .. } => "branch",
-                Reply::GitStatusProgress { progress: git::StatusProgress::Snapshot { scan, .. }, .. } => {
+                Reply::GitStatusProgress {
+                    progress: git::StatusProgress::Repository { .. },
+                    ..
+                } => "branch",
+                Reply::GitStatusProgress {
+                    progress: git::StatusProgress::Snapshot { scan, .. },
+                    ..
+                } => {
                     assert_eq!(scan.files.len(), 128);
                     "snapshot"
                 }
@@ -208,32 +430,72 @@ fn large_git_startup_progress_finishes_before_completion_without_blocking_other_
             });
         }
     }
-    assert_eq!(received, ["branch", "other request", "snapshot", "complete"]);
+    assert_eq!(
+        received,
+        ["branch", "other request", "snapshot", "complete"]
+    );
 }
 
 #[test]
 fn terminal_output_keeps_order_and_eof_while_another_terminal_can_echo() {
     let mut entropy = 23u64;
-    let output: Vec<u8> = (0..32 * 1024).map(|_| {
-        entropy ^= entropy << 13; entropy ^= entropy >> 7; entropy ^= entropy << 17;
-        entropy as u8
-    }).collect();
+    let output: Vec<u8> = (0..32 * 1024)
+        .map(|_| {
+            entropy ^= entropy << 13;
+            entropy ^= entropy >> 7;
+            entropy ^= entropy << 17;
+            entropy as u8
+        })
+        .collect();
     let mut queue = OutputQueue::default();
-    queue.push(Response { id: 0, result: Ok(Reply::SearchProgress { request: 7, hits: Vec::new() }) }).unwrap();
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::SearchProgress {
+                request: 7,
+                hits: Vec::new(),
+            }),
+        })
+        .unwrap();
     for (process, bytes) in [(7, output.as_slice()), (7, b"tail"), (8, b"echo")] {
-        queue.push(Response { id: 0, result: Ok(Reply::ProcessData { process, data: URL_SAFE_NO_PAD.encode(bytes) }) }).unwrap();
+        queue
+            .push(Response {
+                id: 0,
+                result: Ok(Reply::ProcessData {
+                    process,
+                    data: URL_SAFE_NO_PAD.encode(bytes),
+                }),
+            })
+            .unwrap();
     }
-    queue.push(Response { id: 0, result: Ok(Reply::ProcessEnd { process: 7, error: None }) }).unwrap();
+    queue
+        .push(Response {
+            id: 0,
+            result: Ok(Reply::ProcessEnd {
+                process: 7,
+                error: None,
+            }),
+        })
+        .unwrap();
     // Request and process IDs use separate ordering domains.
-    queue.push(Response { id: 7, result: Ok(Reply::Done) }).unwrap();
+    queue
+        .push(Response {
+            id: 7,
+            result: Ok(Reply::Done),
+        })
+        .unwrap();
     let mut wire = Vec::new();
     queue.step(&mut wire, 42).unwrap();
     let (_, first) = Decoder::new('S', 42).line(&wire).unwrap().unwrap();
-    assert!(matches!(serde_json::from_slice::<Response>(&first).unwrap().result,
-        Ok(Reply::ProcessData { process: 8, .. })));
+    assert!(matches!(
+        serde_json::from_slice::<Response>(&first).unwrap().result,
+        Ok(Reply::ProcessData { process: 8, .. })
+    ));
     queue.step(&mut wire, 42).unwrap();
     assert!(queue.packets.iter().any(|packet| packet.offset != 0));
-    while !queue.is_empty() { queue.step(&mut wire, 42).unwrap(); }
+    while !queue.is_empty() {
+        queue.step(&mut wire, 42).unwrap();
+    }
     let mut decoder = Decoder::new('S', 42);
     let mut received = Vec::new();
     let mut actual = Vec::new();
@@ -250,15 +512,24 @@ fn terminal_output_keeps_order_and_eof_while_another_terminal_can_echo() {
                     assert_eq!(URL_SAFE_NO_PAD.decode(data).unwrap(), b"echo");
                     received.push("echo");
                 }
-                Reply::ProcessEnd { process: 7, error: None } => received.push("end"),
+                Reply::ProcessEnd {
+                    process: 7,
+                    error: None,
+                } => received.push("end"),
                 Reply::SearchProgress { .. } => received.push("search"),
                 Reply::Done => received.push("request"),
                 other => panic!("unexpected reply: {other:?}"),
             }
         }
     }
-    assert_eq!(received.iter().copied().filter(|item| !matches!(*item, "search" | "request")).collect::<Vec<_>>(),
-        ["echo", "bulk", "tail", "end"]);
+    assert_eq!(
+        received
+            .iter()
+            .copied()
+            .filter(|item| !matches!(*item, "search" | "request"))
+            .collect::<Vec<_>>(),
+        ["echo", "bulk", "tail", "end"]
+    );
     assert!(received.contains(&"search") && received.contains(&"request"));
     assert_eq!(&actual[..output.len()], output);
     assert_eq!(&actual[output.len()..], b"tail");
@@ -268,17 +539,36 @@ fn terminal_output_keeps_order_and_eof_while_another_terminal_can_echo() {
 #[test]
 fn continuous_terminal_output_cannot_starve_workspace_replies() {
     let mut queue = OutputQueue::default();
-    queue.push(Response { id: 7, result: Ok(Reply::Done) }).unwrap();
+    queue
+        .push(Response {
+            id: 7,
+            result: Ok(Reply::Done),
+        })
+        .unwrap();
     let mut decoder = Decoder::new('S', 42);
     let mut completed = false;
     for _ in 0..9 {
-        queue.push(Response { id: 0, result: Ok(Reply::ProcessData { process: 1, data: URL_SAFE_NO_PAD.encode(b"output") }) }).unwrap();
-        let mut bytes = Vec::new(); queue.step(&mut bytes, 42).unwrap();
+        queue
+            .push(Response {
+                id: 0,
+                result: Ok(Reply::ProcessData {
+                    process: 1,
+                    data: URL_SAFE_NO_PAD.encode(b"output"),
+                }),
+            })
+            .unwrap();
+        let mut bytes = Vec::new();
+        queue.step(&mut bytes, 42).unwrap();
         for line in bytes.split_inclusive(|byte| *byte == b'\n') {
-            if let Some((id, _)) = decoder.line(line).unwrap() { completed |= id == 7; }
+            if let Some((id, _)) = decoder.line(line).unwrap() {
+                completed |= id == 7;
+            }
         }
     }
-    assert!(completed, "workspace traffic must make progress during a terminal flood");
+    assert!(
+        completed,
+        "workspace traffic must make progress during a terminal flood"
+    );
 }
 
 #[derive(Default)]
@@ -441,18 +731,39 @@ fn transport_cpu_benchmark() {
 #[test]
 fn diagnostics_observer_only_sees_non_protocol_output() {
     let mut decoder = Decoder::new('S', 42);
-    let mut data = vec![0]; data.extend((0..10_000).map(|n| (n % 251) as u8));
-    let mut frames = Vec::new(); write_message(&mut frames, 'S', 42, 7, &data).unwrap();
-    let mut seen = Vec::new(); let mut complete = None;
+    let mut data = vec![0];
+    data.extend((0..10_000).map(|n| (n % 251) as u8));
+    let mut frames = Vec::new();
+    write_message(&mut frames, 'S', 42, 7, &data).unwrap();
+    let mut seen = Vec::new();
+    let mut complete = None;
     for line in frames.split_inclusive(|b| *b == b'\n') {
-        if let Some(message) = decoder.line_with_output(line, |output| seen.push(output.to_vec())).unwrap() { complete = Some(message); }
+        if let Some(message) = decoder
+            .line_with_output(line, |output| seen.push(output.to_vec()))
+            .unwrap()
+        {
+            complete = Some(message);
+        }
     }
     assert_eq!(complete.unwrap().1, data[1..]);
-    let mut echo = Vec::new(); write_message(&mut echo, 'C', 42, 8, &[0, 1, 2, 3]).unwrap();
-    for line in echo.split_inclusive(|b| *b == b'\n') { decoder.line_with_output(line, |output| seen.push(output.to_vec())).unwrap(); }
+    let mut echo = Vec::new();
+    write_message(&mut echo, 'C', 42, 8, &[0, 1, 2, 3]).unwrap();
+    for line in echo.split_inclusive(|b| *b == b'\n') {
+        decoder
+            .line_with_output(line, |output| seen.push(output.to_vec()))
+            .unwrap();
+    }
     let broken = format!("{PREFIX}S:000000000000002a:broken\n");
-    assert!(decoder.line_with_output(broken.as_bytes(), |output| seen.push(output.to_vec())).is_err());
+    assert!(
+        decoder
+            .line_with_output(broken.as_bytes(), |output| seen.push(output.to_vec()))
+            .is_err()
+    );
     assert!(seen.is_empty(), "No frame payload may reach diagnostics");
-    decoder.line_with_output(b"ssh: Permission denied (publickey).\n", |output| seen.push(output.to_vec())).unwrap();
+    decoder
+        .line_with_output(b"ssh: Permission denied (publickey).\n", |output| {
+            seen.push(output.to_vec())
+        })
+        .unwrap();
     assert_eq!(seen, [b"ssh: Permission denied (publickey).\n".to_vec()]);
 }

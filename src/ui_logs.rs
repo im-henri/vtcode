@@ -8,12 +8,12 @@ use crate::{
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Frame, layout::Rect, style::Style, widgets::Paragraph};
 use std::collections::{BTreeMap, VecDeque};
-#[path = "ui_output_text.rs"]
-mod text;
 #[path = "ui_output_layout.rs"]
 mod layout;
 #[path = "ui_output_styles.rs"]
 mod styles;
+#[path = "ui_output_text.rs"]
+mod text;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Source {
@@ -148,7 +148,9 @@ impl View {
         }
         if removed > 0 || !appended.is_empty() {
             let removed_lines = editor.rope.char_to_line(removed);
-            if !reset { self.first_line = self.first_line.saturating_add(removed_lines as u64); }
+            if !reset {
+                self.first_line = self.first_line.saturating_add(removed_lines as u64);
+            }
             let dirty_from = if removed == 0 {
                 editor.rope.len_lines().saturating_sub(1)
             } else {
@@ -217,8 +219,10 @@ impl State {
             self.source = source;
         }
         self.log = match source {
-            Source::RemoteSsh => self.remote_log.clone().or_else(|| self.log.clone()
-                .filter(|log| !log.same(&self.git))),
+            Source::RemoteSsh => self
+                .remote_log
+                .clone()
+                .or_else(|| self.log.clone().filter(|log| !log.same(&self.git))),
             Source::Git => Some(self.git.clone()),
         };
         self.dropdown = None;
@@ -245,7 +249,12 @@ impl State {
     pub(crate) fn find_input_state(&mut self) -> (&mut String, &mut usize, &mut Option<usize>) {
         self.reader().find_input_state()
     }
-    pub(crate) fn edit_find_input(&mut self, code: KeyCode, modifiers: KeyModifiers, paste: Option<&str>) -> crate::text_input::TextInputResult {
+    pub(crate) fn edit_find_input(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        paste: Option<&str>,
+    ) -> crate::text_input::TextInputResult {
         self.reader().edit_find_input(code, modifiers, paste)
     }
     fn reader(&mut self) -> &mut text::Reader {
@@ -370,9 +379,15 @@ pub(crate) fn draw_content(frame: &mut Frame, app: &mut App, area: Rect) {
     let viewport = app.text_input_viewport(crate::text_input::TextInputId::OutputFind);
     app.logs.reader().set_find_viewport(viewport);
     app.logs.visible = !area.is_empty();
-    app.logs
-        .reader()
-        .draw(frame, &app.colors, area, text_focused, mouse, log.as_ref(), source);
+    app.logs.reader().draw(
+        frame,
+        &app.colors,
+        area,
+        text_focused,
+        mouse,
+        log.as_ref(),
+        source,
+    );
     if let Some(hit) = app.logs.reader().find_hit_map() {
         app.register_text_input(crate::text_input::TextInputId::OutputFind, hit);
     }
@@ -388,7 +403,10 @@ pub(crate) fn draw_toolbar(frame: &mut Frame, app: &mut App, area: Rect) {
     if area.is_empty() {
         return;
     }
-    let remote = app.remote_workspace.as_ref().filter(|_| app.logs.source == Source::RemoteSsh);
+    let remote = app
+        .remote_workspace
+        .as_ref()
+        .filter(|_| app.logs.source == Source::RemoteSsh);
     let capturing = remote.is_some_and(|remote| remote.client.capturing_cpu());
     let can_capture = remote.is_some_and(|remote| remote.client.can_capture_cpu()) && !capturing;
     let autoscroll = app
@@ -438,7 +456,11 @@ pub(crate) fn draw_toolbar(frame: &mut Frame, app: &mut App, area: Rect) {
         (
             autoscroll_rect,
             Control::Autoscroll,
-            if autoscroll { "✓ Autoscroll" } else { "Autoscroll" },
+            if autoscroll {
+                "✓ Autoscroll"
+            } else {
+                "Autoscroll"
+            },
             app.logs.log.is_none(),
         ),
         (more, Control::More, "⋯", false),
@@ -463,7 +485,11 @@ pub(crate) fn draw_toolbar(frame: &mut Frame, app: &mut App, area: Rect) {
                 .fg(dropdown.foreground.over(fill).unwrap_or(app.colors.fg_text));
             let text_width = rect.width.saturating_sub(3);
             let label = crate::ui_performance::clip_middle(
-                if rect.width < 24 && app.logs.source == Source::RemoteSsh { "Remote SSH" } else { label },
+                if rect.width < 24 && app.logs.source == Source::RemoteSsh {
+                    "Remote SSH"
+                } else {
+                    label
+                },
                 text_width as usize,
             );
             frame.render_widget(Paragraph::new(format!(" {label}")).style(style), rect);
@@ -496,13 +522,23 @@ pub(crate) fn draw_toolbar(frame: &mut Frame, app: &mut App, area: Rect) {
 
 fn menu_actions(app: &App, menu: Control) -> Vec<(&'static str, Control)> {
     if menu == Control::Source {
-        return Source::ALL.into_iter().map(|source| (source.label(), Control::Channel(source))).collect();
+        return Source::ALL
+            .into_iter()
+            .map(|source| (source.label(), Control::Channel(source)))
+            .collect();
     }
     let mut items = vec![
         ("Select Output…", Control::Source),
         ("Copy all output", Control::Copy),
         ("Clear output", Control::Clear),
-        (if app.logs.reader.as_ref().is_none_or(|reader| reader.wrap) { "✓ Wrap lines" } else { "Wrap lines" }, Control::Wrap),
+        (
+            if app.logs.reader.as_ref().is_none_or(|reader| reader.wrap) {
+                "✓ Wrap lines"
+            } else {
+                "Wrap lines"
+            },
+            Control::Wrap,
+        ),
         (
             if app
                 .logs
@@ -524,10 +560,12 @@ fn menu_actions(app: &App, menu: Control) -> Vec<(&'static str, Control)> {
 }
 fn disabled(app: &App, control: Control) -> bool {
     match control {
-        Control::CaptureCpu => app.logs.source != Source::RemoteSsh || app
-            .remote_workspace
-            .as_ref()
-            .is_none_or(|remote| !remote.client.can_capture_cpu() || remote.client.capturing_cpu()),
+        Control::CaptureCpu => {
+            app.logs.source != Source::RemoteSsh
+                || app.remote_workspace.as_ref().is_none_or(|remote| {
+                    !remote.client.can_capture_cpu() || remote.client.capturing_cpu()
+                })
+        }
         Control::Copy | Control::Autoscroll => app.logs.log.is_none(),
         _ => false,
     }
@@ -584,8 +622,13 @@ fn action(app: &mut App, control: Control) {
                 Some(control)
             };
             app.logs.selected = if control == Control::Source {
-                Source::ALL.iter().position(|source| *source == app.logs.source).unwrap_or(0)
-            } else { 0 };
+                Source::ALL
+                    .iter()
+                    .position(|source| *source == app.logs.source)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
         }
         Control::Channel(source) => app.logs.select_source(source),
         Control::Copy => {
@@ -641,12 +684,23 @@ pub(crate) fn mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if blocked(app) {
         return false;
     }
-    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)
-        | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-        | MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight)
-        && app.text_input_area(crate::text_input::TextInputId::OutputFind)
-            .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
-        && app.handle_background_text_input_mouse(mouse.kind, mouse.column, mouse.row, mouse.modifiers) {
+    if matches!(
+        mouse.kind,
+        MouseEventKind::Down(MouseButton::Right)
+            | MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight
+    ) && app
+        .text_input_area(crate::text_input::TextInputId::OutputFind)
+        .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
+        && app.handle_background_text_input_mouse(
+            mouse.kind,
+            mouse.column,
+            mouse.row,
+            mouse.modifiers,
+        )
+    {
         return true;
     }
     if matches!(
@@ -932,7 +986,9 @@ pub(crate) fn hint(app: &App) -> Option<String> {
             }
         }
         Control::Copy => "Copy all displayed output".into(),
-        Control::Autoscroll => "Autoscroll · Scroll up to pause; scroll past the bottom to resume".into(),
+        Control::Autoscroll => {
+            "Autoscroll · Scroll up to pause; scroll past the bottom to resume".into()
+        }
         Control::CaptureCpu => {
             "Measure headless process and thread CPU for 10 seconds · Runs only when requested"
                 .into()
@@ -1044,7 +1100,8 @@ impl App {
         self.logs.dropdown = None;
     }
     pub(crate) fn show_remote_diagnostics(&mut self) {
-        self.side_notice.dismiss(crate::app_remote_connection::NOTICE_ID);
+        self.side_notice
+            .dismiss(crate::app_remote_connection::NOTICE_ID);
         self.remote_connection.details = false;
         self.logs.select_source(Source::RemoteSsh);
         self.show_output();
@@ -1056,7 +1113,12 @@ impl App {
             .and_then(|remote| remote.diagnostics())
             .or_else(|| self.remote_connection.diagnostic_log())
             .or_else(|| self.logs.remote_log.clone())
-            .or_else(|| self.logs.log.clone().filter(|_| self.logs.source == Source::RemoteSsh));
+            .or_else(|| {
+                self.logs
+                    .log
+                    .clone()
+                    .filter(|_| self.logs.source == Source::RemoteSsh)
+            });
         let Some(log) = log else {
             self.notify("No SSH connection events are available yet");
             return;

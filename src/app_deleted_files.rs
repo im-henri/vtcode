@@ -4,7 +4,9 @@ use crate::native_paths::{same_spelling, strip_spelling_prefix};
 use std::path::{Path, PathBuf};
 
 fn normalized(path: &Path) -> PathBuf {
-    if crate::remote::workspace::is_view_key(path) { return path.to_owned(); }
+    if crate::remote::workspace::is_view_key(path) {
+        return path.to_owned();
+    }
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
@@ -14,8 +16,14 @@ impl App {
     pub(crate) fn close_deleted_file_tabs(&mut self, path: &Path, confirmed: bool) -> bool {
         // A hidden pane may still have a clean view of a shared dirty document.
         // Classify all views from current shared state before detaching any.
-        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
-            if matches!(tab.kind, TabKind::File | TabKind::MarkdownPreview) { tab.editor.refresh_document(); }
+        for tab in self
+            .tabs
+            .iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+        {
+            if matches!(tab.kind, TabKind::File | TabKind::MarkdownPreview) {
+                tab.editor.refresh_document();
+            }
         }
         let target = normalized(path);
         // A save can briefly displace its old file. Its completion requests a
@@ -28,7 +36,8 @@ impl App {
         let mut aliases_to_check = Vec::new();
         let mut matches = |tab: &Tab| {
             if !matches!(tab.kind, TabKind::File | TabKind::MarkdownPreview)
-                || (tab.editor.bg_loading && tab.editor.pending_session_restore.is_some()
+                || (tab.editor.bg_loading
+                    && tab.editor.pending_session_restore.is_some()
                     && !tab.editor.restoring_deferred_file())
                 || !(confirmed
                     || tab.editor.last_disk_modified.is_some()
@@ -37,15 +46,22 @@ impl App {
             {
                 return false;
             }
-            let Some(path) = &tab.editor.file_path else { return false; };
+            let Some(path) = &tab.editor.file_path else {
+                return false;
+            };
             let candidate = normalized(path);
-            if !confirmed && saving.iter().any(|saving| same_spelling(&candidate, saving)) {
+            if !confirmed
+                && saving
+                    .iter()
+                    .any(|saving| same_spelling(&candidate, saving))
+            {
                 return false;
             }
             if strip_spelling_prefix(&candidate, &target).is_some() {
                 return true;
             }
-            if cfg!(windows) && !crate::remote::workspace::is_view_key(path)
+            if cfg!(windows)
+                && !crate::remote::workspace::is_view_key(path)
                 && crate::native_paths::strip_possible_alias_prefix(&candidate, &target).is_some()
             {
                 // The notification establishes absence for its own spelling.
@@ -57,7 +73,9 @@ impl App {
         let mut closed_paths = Vec::new();
         let mut recovered = 0;
         let detach = |tab: &mut Tab, paths: &mut Vec<PathBuf>, recovered: &mut usize| {
-            if tab.kind == TabKind::File { tab.editor.refresh_document(); }
+            if tab.kind == TabKind::File {
+                tab.editor.refresh_document();
+            }
             // Another view has already recovered this shared document.
             if tab.kind == TabKind::File && tab.editor.file_path.is_none() {
                 tab.preview = false;
@@ -74,7 +92,8 @@ impl App {
                 for state in tab
                     .editor
                     .undo_stack
-                    .write().iter_mut()
+                    .write()
+                    .iter_mut()
                     .chain(tab.editor.redo_stack.write().iter_mut())
                 {
                     state.modified = state.rope.len_bytes() != 0;
@@ -95,17 +114,22 @@ impl App {
         let mut changed = false;
         for group in &mut self.groups {
             let mut group_changed = false;
-            crate::tab_collection::retain(&mut group.tabs, &mut group.active_tab, &mut group.tab_mru_order, |_, tab| {
-                if !matches(tab) {
-                    return true;
-                }
-                group_changed = true;
-                if detach(tab, &mut closed_paths, &mut recovered) {
-                    return true;
-                }
-                closed_paths.push(tab.editor.file_path.clone().unwrap());
-                false
-            });
+            crate::tab_collection::retain(
+                &mut group.tabs,
+                &mut group.active_tab,
+                &mut group.tab_mru_order,
+                |_, tab| {
+                    if !matches(tab) {
+                        return true;
+                    }
+                    group_changed = true;
+                    if detach(tab, &mut closed_paths, &mut recovered) {
+                        return true;
+                    }
+                    closed_paths.push(tab.editor.file_path.clone().unwrap());
+                    false
+                },
+            );
             if group_changed {
                 group.hovered_tab = None;
                 group.hovered_close_btn = false;
@@ -144,8 +168,14 @@ impl App {
             self.forget_remote_file_changes(&path);
             self.lsp_manager.did_close(&path);
         }
-        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
-            if tab.kind == TabKind::File { tab.editor.refresh_document(); }
+        for tab in self
+            .tabs
+            .iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+        {
+            if tab.kind == TabKind::File {
+                tab.editor.refresh_document();
+            }
         }
         // Reopen Closed Editor must not recreate a deleted file with empty text.
         self.closed_tab_paths

@@ -72,21 +72,34 @@ impl Operation {
         // Reuse already returned subprocess output, on its worker. Retain at
         // most the log's own byte budget, and sanitize bounded UTF-8 chunks.
         let mut start = text.len().saturating_sub(super::MAX_TEXT);
-        while !text.is_char_boundary(start) { start += 1; }
-        if start > 0 {
-            self.0.record(phase, format!("[{start} earlier output bytes omitted]"));
+        while !text.is_char_boundary(start) {
+            start += 1;
         }
-        struct Output<'a> { operation: &'a Operation, phase: &'static str, text: String }
+        if start > 0 {
+            self.0
+                .record(phase, format!("[{start} earlier output bytes omitted]"));
+        }
+        struct Output<'a> {
+            operation: &'a Operation,
+            phase: &'static str,
+            text: String,
+        }
         impl Output<'_> {
             fn flush(&mut self) {
                 if !self.text.trim().is_empty() {
-                    self.operation.0.record(self.phase, std::mem::take(&mut self.text));
-                } else { self.text.clear(); }
+                    self.operation
+                        .0
+                        .record(self.phase, std::mem::take(&mut self.text));
+                } else {
+                    self.text.clear();
+                }
             }
         }
         impl vte::Perform for Output<'_> {
             fn print(&mut self, character: char) {
-                if self.text.len() + character.len_utf8() > 1800 { self.flush(); }
+                if self.text.len() + character.len_utf8() > 1800 {
+                    self.flush();
+                }
                 self.text.push(character);
             }
             fn execute(&mut self, byte: u8) {
@@ -97,24 +110,38 @@ impl Operation {
         }
         // One parser spans all record boundaries, including split ANSI/OSC
         // sequences and UTF-8. No escape sequence can reach the Output reader.
-        let mut output = Output { operation: self, phase, text: String::new() };
+        let mut output = Output {
+            operation: self,
+            phase,
+            text: String::new(),
+        };
         let mut parser = vte::Parser::new();
-        for &byte in text[start..].as_bytes() { parser.advance(&mut output, byte); }
+        for &byte in text[start..].as_bytes() {
+            parser.advance(&mut output, byte);
+        }
         output.flush();
     }
     pub(crate) fn network(&self, result: &remote::git::NetworkResult) {
         let last_phase = {
             let mut state = self.0.state.lock().unwrap();
-            if state.finished { return; }
+            if state.finished {
+                return;
+            }
             state.finished = true;
             state.phase
         };
         self.output("stdout", &result.stdout);
         self.output("stderr", &result.stderr);
         if result.success {
-            self.0.record("Completed", "Git command exited successfully".into());
+            self.0
+                .record("Completed", "Git command exited successfully".into());
         } else {
-            self.0.record("Failed", format!("last phase: {last_phase}; Git command exited unsuccessfully; see stderr above"));
+            self.0.record(
+                "Failed",
+                format!(
+                    "last phase: {last_phase}; Git command exited unsuccessfully; see stderr above"
+                ),
+            );
         }
     }
     fn new(
@@ -245,7 +272,9 @@ impl Operation {
                     scans.len()
                 ),
                 Reply::GitBranches(branches) => format!("{} branches", branches.len()),
-                Reply::Search { hits, truncated, .. } => {
+                Reply::Search {
+                    hits, truncated, ..
+                } => {
                     format!("{} matches; truncated={truncated}", hits.len())
                 }
                 Reply::Files { files, .. } => files.as_ref().map_or_else(
@@ -279,15 +308,35 @@ impl Operation {
 }
 
 impl Log {
-    pub(crate) fn operation(&self, scope: &'static str, name: &'static str, target: &str) -> Operation {
+    pub(crate) fn operation(
+        &self,
+        scope: &'static str,
+        name: &'static str,
+        target: &str,
+    ) -> Operation {
         Operation::new(
-            Attempt { log: self.clone(), id: 0 },
+            Attempt {
+                log: self.clone(),
+                id: 0,
+            },
             self.0.next_operation.fetch_add(1, Ordering::Relaxed),
-            scope, name, field(target),
+            scope,
+            name,
+            field(target),
         )
     }
-    pub(crate) fn git_request(&self, attempt: u64, id: u64, command: &Command, workspace: &str) -> Option<Operation> {
-        Attempt { log: self.clone(), id: attempt }.request(id, command, workspace)
+    pub(crate) fn git_request(
+        &self,
+        attempt: u64,
+        id: u64,
+        command: &Command,
+        workspace: &str,
+    ) -> Option<Operation> {
+        Attempt {
+            log: self.clone(),
+            id: attempt,
+        }
+        .request(id, command, workspace)
     }
 }
 
@@ -295,10 +344,18 @@ impl Attempt {
     pub(crate) fn workspace_changes(&self, batch: &remote::watch::Batch) {
         // One record per already-debounced native notification, not per OS
         // event. No extra messages, node work or file metadata reads.
-        self.log.append(self.id, "Filesystem notification", Body::WorkspaceChanges {
-            workspace: field(&batch.root_uri), paths: batch.states.len(),
-            structural: batch.structural, git: batch.git, rescan: batch.rescan, active: batch.active,
-        });
+        self.log.append(
+            self.id,
+            "Filesystem notification",
+            Body::WorkspaceChanges {
+                workspace: field(&batch.root_uri),
+                paths: batch.states.len(),
+                structural: batch.structural,
+                git: batch.git,
+                rescan: batch.rescan,
+                active: batch.active,
+            },
+        );
     }
     pub(crate) fn notification(&self, command: &Command) -> Option<Operation> {
         // Called by the existing output worker, never the input/UI pump. File
@@ -497,8 +554,17 @@ fn describe(command: &Command) -> Option<(&'static str, String)> {
             ),
         )),
         Command::Explorer(_) => Some(("Refresh Explorer", String::new())),
-        Command::GitStatus { known, include_untracked, .. } => Some(("Git status",
-            format!("untracked={include_untracked}; discover={}", known.is_none()))),
+        Command::GitStatus {
+            known,
+            include_untracked,
+            ..
+        } => Some((
+            "Git status",
+            format!(
+                "untracked={include_untracked}; discover={}",
+                known.is_none()
+            ),
+        )),
         Command::GitAction { repo, task } => {
             use crate::git_tasks::Task;
             path(
@@ -527,7 +593,11 @@ fn describe(command: &Command) -> Option<(&'static str, String)> {
         Command::GitNetwork { repo, push, args } => path(
             if *push {
                 "Git push"
-            } else if args.len() == 3 && args[0] == "fetch" && args[1] == "--all" && args[2] == "--prune" {
+            } else if args.len() == 3
+                && args[0] == "fetch"
+                && args[1] == "--all"
+                && args[2] == "--prune"
+            {
                 "Git fetch --all --prune"
             } else if args.first().is_some_and(|arg| arg == "fetch") {
                 "Git fetch"
@@ -538,7 +608,9 @@ fn describe(command: &Command) -> Option<(&'static str, String)> {
             },
             repo,
         ),
-        Command::GitSources { file, .. } | Command::GitDiffSources { file, .. } => path("Git diff sources", file),
+        Command::GitSources { file, .. } | Command::GitDiffSources { file, .. } => {
+            path("Git diff sources", file)
+        }
         Command::GitFileStats { change, .. } => path("Read Git file statistics", &change.path),
         Command::HunkSources { file, .. } => path("Read hunk sources", file),
         Command::HunkAction(action) => path(
@@ -561,7 +633,9 @@ fn describe(command: &Command) -> Option<(&'static str, String)> {
             path("Read Git blame", file)
         }
         Command::HistoryStart { repository, .. } => path("Read Git history", repository),
-        Command::HistoryNext { history } => Some(("Request Git history page", format!("history #{history}"))),
+        Command::HistoryNext { history } => {
+            Some(("Request Git history page", format!("history #{history}")))
+        }
         Command::Files {
             known_version: None,
             ..

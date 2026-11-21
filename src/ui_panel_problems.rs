@@ -92,12 +92,18 @@ pub(super) fn nearest(layout: &Layout, index: usize, forward: bool) -> Option<us
     let index = index.min(layout.total.saturating_sub(1));
     let ahead = |i: usize| (i..layout.total).find(|&i| selectable(layout, i));
     let behind = |i: usize| (0..=i).rev().find(|&i| selectable(layout, i));
-    if forward { ahead(index).or_else(|| behind(index)) } else { behind(index).or_else(|| ahead(index)) }
+    if forward {
+        ahead(index).or_else(|| behind(index))
+    } else {
+        behind(index).or_else(|| ahead(index))
+    }
 }
 
 /// The keyboard selection, when the panel has focus.
 pub(super) fn selected(app: &mut App, layout: &Layout) -> Option<usize> {
-    (app.active_pane == ActivePane::Panel).then(|| nearest(layout, app.problem_selected, true)).flatten()
+    (app.active_pane == ActivePane::Panel)
+        .then(|| nearest(layout, app.problem_selected, true))
+        .flatten()
 }
 
 pub(super) fn activate_index(app: &mut App, index: usize) {
@@ -209,7 +215,11 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let summary = format!(
         " Problems: {}, {}, {} info",
         crate::helpers::counted(errors + app.cached_problems_error_count, "error", "errors"),
-        crate::helpers::counted(warnings + app.cached_problems_warning_count, "warning", "warnings"),
+        crate::helpers::counted(
+            warnings + app.cached_problems_warning_count,
+            "warning",
+            "warnings"
+        ),
         info + app.cached_problems_info_count
     );
     let bg = app.colors.ui.bg_panel;
@@ -296,10 +306,13 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                 let message = diagnostic.message.lines().next().unwrap_or_default();
                 let message = crate::ui_pickers::truncate_to_width(
                     message,
-                    text_width as usize - (icon.width() + location.width()).min(text_width as usize),
+                    text_width as usize
+                        - (icon.width() + location.width()).min(text_width as usize),
                 );
                 let color = app.colors.ui.readable_foreground(
-                    app.colors.ui.problem_icon_color(diagnostic.severity, row_bg),
+                    app.colors
+                        .ui
+                        .problem_icon_color(diagnostic.severity, row_bg),
                     row_bg,
                     4.5,
                 );

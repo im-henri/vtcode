@@ -287,7 +287,10 @@ impl EditorContextSnapshot {
 #[derive(Debug, Clone)]
 pub(crate) enum TextEditRequest {
     /// Open generated text in a new unsaved buffer; the user chooses its path.
-    OpenDocument { name: String, text: String },
+    OpenDocument {
+        name: String,
+        text: String,
+    },
     InsertText {
         line: usize,
         col: usize,

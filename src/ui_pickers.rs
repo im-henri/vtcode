@@ -69,15 +69,23 @@ mod tests {
     fn input_field_text(text: &str, focused: bool, prefix: &str) -> String {
         use ratatui::{Terminal, backend::TestBackend};
         let mut terminal = Terminal::new(TestBackend::new(20, 1)).unwrap();
-        terminal.draw(|frame| {
-            let area = frame.area();
-            crate::ui_widgets::InputField::new(text)
-                .prefix(prefix, Color::Reset)
-                .placeholder_text(if focused { "" } else { "type here" })
-                .cursor_marker("")
-                .render(frame, area);
-        }).unwrap();
-        terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect()
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                crate::ui_widgets::InputField::new(text)
+                    .prefix(prefix, Color::Reset)
+                    .placeholder_text(if focused { "" } else { "type here" })
+                    .cursor_marker("")
+                    .render(frame, area);
+            })
+            .unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
     }
 
     #[test]
@@ -104,5 +112,4 @@ mod tests {
         assert!(text.starts_with("> "));
         assert!(text.contains("world"));
     }
-
 }

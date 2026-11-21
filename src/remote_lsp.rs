@@ -51,18 +51,23 @@ impl workspace::Workspace {
                 encoded.push('/');
             }
             let windows = self.windows_paths();
-            let drive_root = windows && path.is_absolute() && path.0.len() == 2
-                && path.0[0].is_ascii_alphabetic() && path.0[1] == b':';
+            let drive_root = windows
+                && path.is_absolute()
+                && path.0.len() == 2
+                && path.0[0].is_ascii_alphabetic()
+                && path.0[1] == b':';
             // Match the node's native file URLs, including literal @ in mount
             // names. Escape a POSIX drive-like first component before parsing
             // so the URL parser cannot normalize it as a Windows drive letter.
-            let posix_drive_like = !windows && encoded == "file:///"
+            let posix_drive_like = !windows
+                && encoded == "file:///"
                 && path.0.first().is_some_and(u8::is_ascii_alphabetic)
                 && matches!(path.0.get(1), Some(b':' | b'|'))
                 && path.0.get(2).is_none_or(|&byte| byte == b'/');
             encoded.reserve(path.0.len());
             for (index, byte) in path.0.into_iter().enumerate() {
-                if !byte.is_ascii_graphic() || b"\"#%<>?\\`{}".contains(&byte)
+                if !byte.is_ascii_graphic()
+                    || b"\"#%<>?\\`{}".contains(&byte)
                     || (posix_drive_like && index == 1)
                 {
                     const HEX: &[u8; 16] = b"0123456789ABCDEF";
@@ -73,7 +78,9 @@ impl workspace::Workspace {
                     encoded.push(char::from(byte));
                 }
             }
-            if drive_root { encoded.push('/'); }
+            if drive_root {
+                encoded.push('/');
+            }
             url::Url::parse(&encoded).ok().map(Into::into)
         } else {
             let root_uri = url::Url::parse(&self.client.hello().root_uri).ok()?;
@@ -91,7 +98,9 @@ impl workspace::Workspace {
             let mut bytes = uri_path(&uri)?;
             // Directory URLs (including file:///C:/) carry a trailing slash;
             // RemotePath stores components, with no trailing separator.
-            while bytes.len() > 1 && bytes.last() == Some(&b'/') { bytes.pop(); }
+            while bytes.len() > 1 && bytes.last() == Some(&b'/') {
+                bytes.pop();
+            }
             let mut root = uri_path(&root_uri)?;
             while root.last() == Some(&b'/') {
                 root.pop();

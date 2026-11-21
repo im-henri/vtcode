@@ -115,7 +115,10 @@ fn check_region_with_file_icons(
                 // registry/renderer conformance tests assert exact role values;
                 // this broad surface audit catches unresolved/reset colors.
                 if !matches!(cell.fg, Color::Rgb(..)) || !matches!(cell.bg, Color::Rgb(..)) {
-                    failures.push(format!("{label}: unresolved colors {:?} on {:?}", cell.fg, cell.bg));
+                    failures.push(format!(
+                        "{label}: unresolved colors {:?} on {:?}",
+                        cell.fg, cell.bg
+                    ));
                     return;
                 }
                 continue;
@@ -124,7 +127,9 @@ fn check_region_with_file_icons(
             // fill (including custom gradient midpoints). Verify the best
             // achievable contrast there instead of demanding invented colors.
             let best = *contrast_floors.entry(cell.bg).or_insert_with(|| {
-                palette.contrast_palette.iter()
+                palette
+                    .contrast_palette
+                    .iter()
                     .filter_map(|&color| contrast_ratio(color, cell.bg))
                     .fold(0.0f32, f32::max)
             });
@@ -214,14 +219,20 @@ fn title_bar_controls_remain_readable_when_idle_hovered_open_and_unfocused() {
                             crate::ui_chrome::agent_chat_button_area(area)
                                 .map_or(u16::MAX, |area| area.x + 1)
                         } else if hover >= 4 {
-                            (0..width).find(|&x| {
-                                crate::ui_chrome::navigation_button_at(&app, x, 0)
-                                    .is_some_and(|(_, forward)| forward == (hover == 5))
-                            }).unwrap_or(u16::MAX)
+                            (0..width)
+                                .find(|&x| {
+                                    crate::ui_chrome::navigation_button_at(&app, x, 0)
+                                        .is_some_and(|(_, forward)| forward == (hover == 5))
+                                })
+                                .unwrap_or(u16::MAX)
                         } else {
                             u16::MAX
                         };
-                        app.mouse_row = if hover == 1 || hover >= 4 { 0 } else { u16::MAX };
+                        app.mouse_row = if hover == 1 || hover >= 4 {
+                            0
+                        } else {
+                            u16::MAX
+                        };
                         app.hovered_close_button = hover == 2;
                         app.hovered_menu = (hover == 3).then_some(0);
                         let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
@@ -341,7 +352,8 @@ fn source_control_header_and_file_actions_remain_readable() {
     let mut failures = Vec::new();
     app.source_control_files = [true, false]
         .into_iter()
-        .map(|staged| crate::app::GitFileChange { directory: false,
+        .map(|staged| crate::app::GitFileChange {
+            directory: false,
             path: "example.rs".into(),
             original_path: None,
             status: 'M',
@@ -424,7 +436,8 @@ fn source_control_review_app(theme: &ThemeFile) -> App {
     app.sc_graph_height = 8;
     app.source_control_files = [('M', "changed.rs"), ('D', "removed.rs"), ('?', "new.rs")]
         .into_iter()
-        .map(|(status, name)| crate::app::GitFileChange { directory: false,
+        .map(|(status, name)| crate::app::GitFileChange {
+            directory: false,
             path: format!("src/{name}"),
             original_path: None,
             status,
@@ -981,7 +994,9 @@ fn imported_roles_are_preserved_and_native_contrast_fallbacks_use_the_theme_pale
             for preferred in colors.ui.contrast_palette {
                 let resolved = colors.ui.readable_foreground(preferred, background, 4.5);
                 assert!(colors.ui.contrast_palette.contains(&resolved));
-                if colors.ui.preserve_theme_colors || contrast_ratio(preferred, background).is_some_and(|r| r >= 4.5) {
+                if colors.ui.preserve_theme_colors
+                    || contrast_ratio(preferred, background).is_some_and(|r| r >= 4.5)
+                {
                     assert_eq!(
                         resolved, preferred,
                         "{}: authored foreground changed",
@@ -1438,8 +1453,16 @@ fn workbench_input_selections_and_carets_remain_readable_across_themes() {
             let field =
                 &terminal.backend().buffer()[find_cell(terminal.backend().buffer(), "ordinary")];
             if app.colors.ui.preserve_theme_colors {
-                assert_eq!(caret.bg, field.fg, "{} field={case}: themed caret block", theme.name);
-                assert_eq!(caret.fg, field.bg, "{} field={case}: inverted caret text", theme.name);
+                assert_eq!(
+                    caret.bg, field.fg,
+                    "{} field={case}: themed caret block",
+                    theme.name
+                );
+                assert_eq!(
+                    caret.fg, field.bg,
+                    "{} field={case}: inverted caret text",
+                    theme.name
+                );
                 continue;
             }
             for (label, foreground, background, minimum) in [
@@ -1988,7 +2011,8 @@ fn file_type_colors_stay_independent_of_color_themes_and_selection() {
         .collect();
     app.source_control_files = FILES
         .iter()
-        .map(|(name, _, _)| crate::app::GitFileChange { directory: false,
+        .map(|(name, _, _)| crate::app::GitFileChange {
+            directory: false,
             path: (*name).into(),
             original_path: None,
             status: 'M',
@@ -2092,7 +2116,6 @@ fn file_type_colors_stay_independent_of_color_themes_and_selection() {
                 &format!("{} source control {focused}", theme.name),
                 1,
             );
-
         }
     }
 }
@@ -2213,7 +2236,10 @@ fn file_and_symbol_icon_roles_reach_tabs_breadcrumbs_and_pickers() {
     ] {
         let (x, y) = find_cell(buffer, name);
         let icon = &buffer[(x - 2, y)];
-        assert_eq!(icon.fg, app.colors.ui.quick_icon_color(expected, icon.bg, selected));
+        assert_eq!(
+            icon.fg,
+            app.colors.ui.quick_icon_color(expected, icon.bg, selected)
+        );
     }
     snapshot(buffer, "independent icon roles");
     app.quick_open_results = vec![app.explorer.root.join("example.py")];
@@ -2284,30 +2310,58 @@ fn ignored_entries_use_readable_hover_and_selection_colors_for_names_and_icons()
         for theme in [EditorTheme::Dark, EditorTheme::Light] {
             app.colors = theme.colors();
             for focused in [false, true] {
-                app.active_pane = if focused { ActivePane::Explorer } else { ActivePane::Editor };
+                app.active_pane = if focused {
+                    ActivePane::Explorer
+                } else {
+                    ActivePane::Editor
+                };
                 for state in 0..3 {
                     let selected = state == 2;
                     let hovered = state == 1;
                     app.explorer_multi_selected.clear();
                     if selected {
-                        app.explorer_multi_selected.push(app.explorer.entries[3].path.clone());
+                        app.explorer_multi_selected
+                            .push(app.explorer.entries[3].path.clone());
                     }
                     app.hovered_explorer = hovered.then_some(3);
                     let mut terminal = Terminal::new(TestBackend::new(80, 18)).unwrap();
-                    terminal.draw(|frame| crate::ui_chrome::draw_explorer(frame, &mut app, frame.area())).unwrap();
+                    terminal
+                        .draw(|frame| {
+                            crate::ui_chrome::draw_explorer(frame, &mut app, frame.area())
+                        })
+                        .unwrap();
                     let buffer = terminal.backend().buffer();
                     let (x, y) = find_cell(buffer, "ignored.rs");
                     let cell = &buffer[(x, y)];
                     let expected = if selected || hovered {
-                        app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
-                            app.colors.bg_sidebar, selected, focused, hovered).fg.unwrap()
-                    } else { app.colors.ui.git_status_color('I', app.colors.bg_sidebar) };
-                    assert_eq!(cell.fg, expected, "folder={is_dir}, focused={focused}, state={state}");
+                        app.colors
+                            .ui
+                            .list_row_style(
+                                app.colors.ui.sidebar_foreground,
+                                app.colors.bg_sidebar,
+                                selected,
+                                focused,
+                                hovered,
+                            )
+                            .fg
+                            .unwrap()
+                    } else {
+                        app.colors.ui.git_status_color('I', app.colors.bg_sidebar)
+                    };
+                    assert_eq!(
+                        cell.fg, expected,
+                        "folder={is_dir}, focused={focused}, state={state}"
+                    );
                     let icon = (0..x).find(|&x| buffer[(x, y)].symbol() != " ").unwrap();
                     assert_eq!(buffer[(icon, y)].fg, expected);
                     let mut failures = Vec::new();
-                    check_region(buffer, Rect::new(x, y, 10, 1), "ignored Explorer entry",
-                        &mut failures, &app.colors.ui);
+                    check_region(
+                        buffer,
+                        Rect::new(x, y, 10, 1),
+                        "ignored Explorer entry",
+                        &mut failures,
+                        &app.colors.ui,
+                    );
                     assert_readable(failures);
                 }
             }
@@ -2369,16 +2423,26 @@ fn sidebar_lists_compose_selection_hover_and_decorations_on_the_sidebar() {
             );
         }
         for (name, badge, foreground) in [
-            ("untracked.rs", Some("U"), ColorLayer::rgba(221, 255, 187, 224)),
-            ("renamed.rs", Some("R"), ColorLayer::rgba(255, 187, 221, 224)),
+            (
+                "untracked.rs",
+                Some("U"),
+                ColorLayer::rgba(221, 255, 187, 224),
+            ),
+            (
+                "renamed.rs",
+                Some("R"),
+                ColorLayer::rgba(255, 187, 221, 224),
+            ),
             ("ignored.rs", None, ColorLayer::rgba(187, 238, 255, 224)),
         ] {
             let (x, y) = find_cell(buffer, name);
             assert_eq!(buffer[(x, y)].bg, sidebar);
             assert_eq!(buffer[(x, y)].fg, foreground.over(sidebar).unwrap());
             if let Some(badge) = badge {
-                let badge = (0..80).rev()
-                    .find(|&x| buffer[(x, y)].symbol() == badge).unwrap();
+                let badge = (0..80)
+                    .rev()
+                    .find(|&x| buffer[(x, y)].symbol() == badge)
+                    .unwrap();
                 assert_eq!(buffer[(badge, y)].fg, foreground.over(sidebar).unwrap());
             } else {
                 assert!(!(x + name.len() as u16..80).any(|x| buffer[(x, y)].symbol() == "I"));
@@ -2401,7 +2465,6 @@ fn sidebar_lists_compose_selection_hover_and_decorations_on_the_sidebar() {
             cell.fg,
             ColorLayer::rgba(221, 255, 204, 224).over(cell.bg).unwrap()
         );
-
     }
 }
 
@@ -2458,25 +2521,27 @@ fn explorer_sticky_folders_use_sidebar_sticky_colors_instead_of_editor_sticky_co
     let mut app = sidebar_list_app();
     app.colors = theme.to_theme_colors();
     let folder = app.explorer.root.join("sticky_source");
-    app.explorer.set_test_entries((0..20)
-        .map(|index| FileEntry {
-            path: if index == 0 {
-                folder.clone()
-            } else {
-                folder.join(format!("child_{index}.rs"))
-            },
-            name: if index == 0 {
-                "sticky_source".into()
-            } else {
-                format!("child_{index}.rs")
-            },
-            is_dir: index == 0,
-            depth: usize::from(index > 0),
-            expanded: index == 0,
-            git_status: GitStatus::Unmodified,
-            git_status_summary: GitStatusSummary::default(),
-        })
-        .collect());
+    app.explorer.set_test_entries(
+        (0..20)
+            .map(|index| FileEntry {
+                path: if index == 0 {
+                    folder.clone()
+                } else {
+                    folder.join(format!("child_{index}.rs"))
+                },
+                name: if index == 0 {
+                    "sticky_source".into()
+                } else {
+                    format!("child_{index}.rs")
+                },
+                is_dir: index == 0,
+                depth: usize::from(index > 0),
+                expanded: index == 0,
+                git_status: GitStatus::Unmodified,
+                git_status_summary: GitStatusSummary::default(),
+            })
+            .collect(),
+    );
     app.explorer_multi_selected.clear();
     app.explorer.scroll_offset = 5;
     let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
@@ -2629,7 +2694,12 @@ fn keyboard_shortcut_text_remains_readable_on_its_own_rows() {
             let content = app.settings_sidebar_area.unwrap();
             check_region(
                 terminal.backend().buffer(),
-                Rect::new(content.x, content.y.saturating_sub(1), content.width, content.height + 1),
+                Rect::new(
+                    content.x,
+                    content.y.saturating_sub(1),
+                    content.width,
+                    content.height + 1,
+                ),
                 &format!("{}: keyboard shortcuts, editing={editing}", theme.name),
                 &mut failures,
                 &app.colors.ui,
@@ -2666,7 +2736,10 @@ fn shortcut_labels_and_table_use_dedicated_theme_roles() {
     let row = layout
         .rows
         .iter()
-        .find(|row| crate::ui_settings_shortcuts::binding_index(&items[row.index].2).is_some_and(|i| i % 2 == 1))
+        .find(|row| {
+            crate::ui_settings_shortcuts::binding_index(&items[row.index].2)
+                .is_some_and(|i| i % 2 == 1)
+        })
         .unwrap();
     let y = content.y + row.start as u16;
     assert_eq!(
@@ -2679,7 +2752,11 @@ fn shortcut_labels_and_table_use_dedicated_theme_roles() {
     let cap = (content.x..content.right())
         .find(|&x| buffer[(x, y)].fg == Color::Rgb(255, 255, 255))
         .expect("key cap foreground");
-    assert!(buffer[(cap, y)].modifier.contains(ratatui::style::Modifier::UNDERLINED));
+    assert!(
+        buffer[(cap, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::UNDERLINED)
+    );
     assert_eq!(buffer[(cap, y)].underline_color, Color::Rgb(153, 221, 255));
     snapshot(buffer, "independent shortcut roles");
 }
@@ -2885,10 +2962,18 @@ fn search_sidebar_text_and_matches_use_sidebar_and_find_roles() {
                 let cell = &buffer[(x, y)];
                 let row = &buffer[(x - 1, y)];
                 assert_eq!(cell.fg, row.fg, "match inherits the result row text");
-                assert_eq!(cell.bg, crate::theme_workbench::ColorLayer::rgba(204, 128, 64, 128)
-                    .over(row.bg).unwrap());
-                assert_eq!(cell.underline_color, crate::theme_workbench::ColorLayer::rgba(255, 255, 153, 128)
-                    .over(cell.bg).unwrap());
+                assert_eq!(
+                    cell.bg,
+                    crate::theme_workbench::ColorLayer::rgba(204, 128, 64, 128)
+                        .over(row.bg)
+                        .unwrap()
+                );
+                assert_eq!(
+                    cell.underline_color,
+                    crate::theme_workbench::ColorLayer::rgba(255, 255, 153, 128)
+                        .over(cell.bg)
+                        .unwrap()
+                );
                 assert!(!cell.modifier.contains(ratatui::style::Modifier::BOLD));
                 let (file_x, file_y) = find_cell(buffer, "example.rs");
                 let count = &buffer[(file_x + 13, file_y)];
@@ -2936,39 +3021,80 @@ fn search_result_find_colors_follow_themes_selection_hover_and_preview() {
         // preview does. Imported roles retain alpha until the row is painted.
         app.colors = theme.to_theme_colors();
         let roles = crate::vscode_color_registry::resolve(
-            &theme.workbench_colors, theme.is_light, theme.high_contrast);
-        let fill = ColorLayer::resolve(&roles, "editor.findMatchHighlightBackground", ColorLayer::default());
-        let border = ColorLayer::resolve(&roles, "editor.findMatchHighlightBorder", ColorLayer::default());
+            &theme.workbench_colors,
+            theme.is_light,
+            theme.high_contrast,
+        );
+        let fill = ColorLayer::resolve(
+            &roles,
+            "editor.findMatchHighlightBackground",
+            ColorLayer::default(),
+        );
+        let border = ColorLayer::resolve(
+            &roles,
+            "editor.findMatchHighlightBorder",
+            ColorLayer::default(),
+        );
         for (active, selected, hovered) in [
-            (false, false, false), (true, false, false),
-            (false, true, false), (true, true, false), (true, false, true),
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (true, true, false),
+            (true, false, true),
         ] {
-            app.active_pane = if active { ActivePane::Explorer } else { ActivePane::Editor };
+            app.active_pane = if active {
+                ActivePane::Explorer
+            } else {
+                ActivePane::Editor
+            };
             app.global_search_selected = if selected { 1 } else { 0 };
             app.mouse_col = u16::MAX;
             app.mouse_row = u16::MAX;
             let mut terminal = Terminal::new(TestBackend::new(60, 16)).unwrap();
-            terminal.draw(|frame| crate::ui_search_panel::draw_search_panel(frame, &mut app, frame.area())).unwrap();
+            terminal
+                .draw(|frame| {
+                    crate::ui_search_panel::draw_search_panel(frame, &mut app, frame.area())
+                })
+                .unwrap();
             let (x, y) = find_cell(terminal.backend().buffer(), "row1 needle after");
             if hovered {
                 (app.mouse_col, app.mouse_row) = (x, y);
-                terminal.draw(|frame| crate::ui_search_panel::draw_search_panel(frame, &mut app, frame.area())).unwrap();
+                terminal
+                    .draw(|frame| {
+                        crate::ui_search_panel::draw_search_panel(frame, &mut app, frame.area())
+                    })
+                    .unwrap();
             }
             let buffer = terminal.backend().buffer();
             let row = &buffer[(x, y)];
-            let expected_bg = if theme.high_contrast { row.bg } else { fill.over(row.bg).unwrap_or(row.bg) };
+            let expected_bg = if theme.high_contrast {
+                row.bg
+            } else {
+                fill.over(row.bg).unwrap_or(row.bg)
+            };
             for col in x + 5..x + 11 {
                 let matched = &buffer[(col, y)];
-                assert_eq!(matched.bg, expected_bg,
-                    "{}: active={active}, selected={selected}, hover={hovered}", theme.name);
+                assert_eq!(
+                    matched.bg, expected_bg,
+                    "{}: active={active}, selected={selected}, hover={hovered}",
+                    theme.name
+                );
                 assert_eq!(matched.fg, row.fg, "{}: preserve result text", theme.name);
                 assert!(!matched.modifier.contains(ratatui::style::Modifier::BOLD));
                 if let Some(outline) = border.border(expected_bg) {
-                    assert!(matched.modifier.contains(ratatui::style::Modifier::UNDERLINED));
+                    assert!(
+                        matched
+                            .modifier
+                            .contains(ratatui::style::Modifier::UNDERLINED)
+                    );
                     assert_eq!(matched.underline_color, outline);
                 }
             }
-            assert_eq!(buffer[(x + 12, y)].bg, row.bg, "highlight stops at the match boundary");
+            assert_eq!(
+                buffer[(x + 12, y)].bg,
+                row.bg,
+                "highlight stops at the match boundary"
+            );
             if !active && !selected && !hovered {
                 snapshot(buffer, &format!("{} search results", theme.name));
             }
@@ -2979,16 +3105,24 @@ fn search_result_find_colors_follow_themes_selection_hover_and_preview() {
 #[test]
 fn monokai_search_results_use_the_registered_orange_fill_instead_of_white_bold_text() {
     let mut app = search_list_app();
-    app.colors = crate::app_theme_loader::builtin_theme("monokai").unwrap().to_theme_colors();
+    app.colors = crate::app_theme_loader::builtin_theme("monokai")
+        .unwrap()
+        .to_theme_colors();
     let mut terminal = Terminal::new(TestBackend::new(60, 16)).unwrap();
-    terminal.draw(|frame| crate::ui_search_panel::draw_search_panel(frame, &mut app, frame.area())).unwrap();
+    terminal
+        .draw(|frame| crate::ui_search_panel::draw_search_panel(frame, &mut app, frame.area()))
+        .unwrap();
     let buffer = terminal.backend().buffer();
     let (x, y) = find_cell(buffer, "row1 needle after");
     // Upstream #ea5c0055 over Monokai's #1e1f1c sidebar.
     assert_eq!(buffer[(x + 5, y)].bg, Color::Rgb(98, 51, 19));
     assert_eq!(buffer[(x + 5, y)].fg, buffer[(x, y)].fg);
     assert_eq!(buffer[(x + 12, y)].bg, Color::Rgb(30, 31, 28));
-    assert!(!buffer[(x + 5, y)].modifier.contains(ratatui::style::Modifier::BOLD));
+    assert!(
+        !buffer[(x + 5, y)]
+            .modifier
+            .contains(ratatui::style::Modifier::BOLD)
+    );
 }
 
 #[test]
@@ -2996,36 +3130,69 @@ fn search_results_honor_default_transparent_and_high_contrast_find_roles() {
     use crate::theme_workbench::ColorLayer;
     for (high_contrast, fill, border) in [
         (false, serde_json::Value::Null, serde_json::Value::Null),
-        (false, serde_json::json!("#ff000000"), serde_json::json!("#00ff0000")),
-        (false, serde_json::Value::Null, serde_json::json!("#aabbcc80")),
-        (true, serde_json::json!("#ff0000"), serde_json::json!("#aabbcc80")),
+        (
+            false,
+            serde_json::json!("#ff000000"),
+            serde_json::json!("#00ff0000"),
+        ),
+        (
+            false,
+            serde_json::Value::Null,
+            serde_json::json!("#aabbcc80"),
+        ),
+        (
+            true,
+            serde_json::json!("#ff0000"),
+            serde_json::json!("#aabbcc80"),
+        ),
     ] {
         let mut theme = theme_with_popup_and_control_roles();
         theme.high_contrast = high_contrast;
         // A null authored color inherits the registered default. Alpha zero
         // explicitly disables the fill; high contrast uses outlines only.
         let default_fill = !high_contrast && fill.is_null();
-        theme.workbench_colors.insert("editor.findMatchHighlightBackground".into(), fill);
-        theme.workbench_colors.insert("editor.findMatchHighlightBorder".into(), border.clone());
+        theme
+            .workbench_colors
+            .insert("editor.findMatchHighlightBackground".into(), fill);
+        theme
+            .workbench_colors
+            .insert("editor.findMatchHighlightBorder".into(), border.clone());
         let mut app = search_list_app();
         app.colors = theme.to_theme_colors();
         let mut terminal = Terminal::new(TestBackend::new(60, 16)).unwrap();
-        terminal.draw(|frame| crate::ui_search_panel::draw_search_panel(frame, &mut app, frame.area())).unwrap();
+        terminal
+            .draw(|frame| crate::ui_search_panel::draw_search_panel(frame, &mut app, frame.area()))
+            .unwrap();
         let buffer = terminal.backend().buffer();
         let (x, y) = find_cell(buffer, "row1 needle after");
         let matched = &buffer[(x + 5, y)];
         let row = &buffer[(x, y)];
         let background = if default_fill {
             ColorLayer::rgba(234, 92, 0, 85).over(row.bg).unwrap()
-        } else { row.bg };
+        } else {
+            row.bg
+        };
         assert_eq!(matched.bg, background);
         assert_eq!(matched.fg, buffer[(x, y)].fg);
         assert!(!matched.modifier.contains(ratatui::style::Modifier::BOLD));
         if border == serde_json::json!("#aabbcc80") {
-            assert!(matched.modifier.contains(ratatui::style::Modifier::UNDERLINED));
-            assert_eq!(matched.underline_color, ColorLayer::rgba(170, 187, 204, 128).over(matched.bg).unwrap());
+            assert!(
+                matched
+                    .modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+            );
+            assert_eq!(
+                matched.underline_color,
+                ColorLayer::rgba(170, 187, 204, 128)
+                    .over(matched.bg)
+                    .unwrap()
+            );
         } else {
-            assert!(!matched.modifier.contains(ratatui::style::Modifier::UNDERLINED));
+            assert!(
+                !matched
+                    .modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
+            );
         }
     }
 }
@@ -3608,7 +3775,8 @@ fn sticky_editor_app() -> App {
             line: 1,
             parent: Some(0),
         },
-    ].into();
+    ]
+    .into();
     app
 }
 
@@ -3768,7 +3936,9 @@ fn merge_marker_app(mode: usize) -> App {
         "<<<<<<< HEAD 界 extra long branch name label\ncurrent value\n||||||| base\ncommon value\n=======\nincoming value\n>>>>>>> branch\nordinary value\n",
     );
     editor.saved_rope = Some(editor.rope.clone());
-    editor.merge_conflicts.index = Some(std::sync::Arc::new(crate::merge_conflicts::Index::update(None, editor.rope.clone())));
+    editor.merge_conflicts.index = Some(std::sync::Arc::new(
+        crate::merge_conflicts::Index::update(None, editor.rope.clone()),
+    ));
     editor.word_wrap = mode == 1;
     editor.large_file_mode = mode == 2;
     app.tabs.push(crate::app::Tab::new_file(editor));
@@ -3851,7 +4021,11 @@ fn merge_marker_headers_and_buttons_use_their_own_theme_roles_in_every_renderer(
                 let style = app.colors.ui.codelens_style(app.colors.bg_editor);
                 assert_eq!(cell.bg, app.colors.bg_editor);
                 assert_eq!(Some(cell.fg), style.fg);
-                let button = app.editor().unwrap().ai_review.merge_hits
+                let button = app
+                    .editor()
+                    .unwrap()
+                    .ai_review
+                    .merge_hits
                     .iter()
                     .find(|button| button.action == action)
                     .unwrap();
@@ -3867,11 +4041,12 @@ fn merge_marker_headers_and_buttons_use_their_own_theme_roles_in_every_renderer(
             terminal
                 .draw(|frame| crate::editor_ai_review::draw(frame, &mut app, frame.area()))
                 .unwrap();
-            assert_eq!(
-                terminal.backend().buffer()[(x, y)].bg,
-                app.colors.bg_editor
+            assert_eq!(terminal.backend().buffer()[(x, y)].bg, app.colors.bg_editor);
+            assert!(
+                terminal.backend().buffer()[(x, y)]
+                    .modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED)
             );
-            assert!(terminal.backend().buffer()[(x, y)].modifier.contains(ratatui::style::Modifier::UNDERLINED));
         }
     }
     for role in [
@@ -4023,9 +4198,7 @@ fn merge_marker_labels_and_actions_remain_readable_across_themes() {
                 app.mouse_col = x;
                 app.mouse_row = y;
                 terminal
-                    .draw(|frame| {
-                        crate::editor_ai_review::draw(frame, &mut app, frame.area())
-                    })
+                    .draw(|frame| crate::editor_ai_review::draw(frame, &mut app, frame.area()))
                     .unwrap();
                 check_region(
                     terminal.backend().buffer(),
@@ -4237,8 +4410,16 @@ fn search_popup_matches_layer_find_colors_over_selected_and_unselected_rows() {
         let matched = &terminal.backend().buffer()[(x + label.len() as u16, y)];
         let cell = &terminal.backend().buffer()[(x, y)];
         assert_eq!(matched.fg, cell.fg);
-        assert_eq!(matched.bg, ColorLayer::rgba(204, 128, 64, 128).over(cell.bg).unwrap());
-        assert_eq!(matched.underline_color, ColorLayer::rgba(255, 255, 153, 128).over(matched.bg).unwrap());
+        assert_eq!(
+            matched.bg,
+            ColorLayer::rgba(204, 128, 64, 128).over(cell.bg).unwrap()
+        );
+        assert_eq!(
+            matched.underline_color,
+            ColorLayer::rgba(255, 255, 153, 128)
+                .over(matched.bg)
+                .unwrap()
+        );
         assert!(!matched.modifier.contains(ratatui::style::Modifier::BOLD));
         let background = if y == find_cell(terminal.backend().buffer(), "example.py:1").1 {
             ColorLayer::rgba(48, 72, 56, 192)
@@ -4571,26 +4752,55 @@ fn completion_kind_colors_reach_selected_and_unselected_popup_rows() {
 fn completion_kind_badges_have_a_separator_before_aligned_labels() {
     use lsp_types::CompletionItemKind as Kind;
     let mut app = App::test_new();
-    app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
+    app.tabs
+        .push(crate::app::Tab::new_file(crate::editor::Editor::new()));
     app.code_area = Some(Rect::new(0, 0, 100, 30));
     app.lsp_completion_active = true;
     app.lsp_manager.completion_items = [
-        (Kind::VARIABLE, "measurements"), (Kind::CLASS, "ResultType"), (Kind::CONSTANT, "MAX_EMAX"),
-        (Kind::FUNCTION, "mean"), (Kind::INTERFACE, "Protocol"), (Kind::MODULE, "package"),
-        (Kind::PROPERTY, "field"), (Kind::KEYWORD, "while"), (Kind::SNIPPET, "template"), (Kind::ENUM, "Variant"),
-    ].into_iter().map(|(kind, label)| crate::lsp::LspCompletionItem {
-        label: label.into(), insert_text: label.into(), detail: None, kind: Some(kind),
-        text_edit_range: None, additional_text_edits: vec![], is_snippet: false,
-        original_item: None, documentation: None,
-    }).collect();
-    let geometry = crate::ui_search_dialog::lsp_completion_popup_geometry(&mut app, Rect::new(0, 0, 100, 30)).unwrap();
+        (Kind::VARIABLE, "measurements"),
+        (Kind::CLASS, "ResultType"),
+        (Kind::CONSTANT, "MAX_EMAX"),
+        (Kind::FUNCTION, "mean"),
+        (Kind::INTERFACE, "Protocol"),
+        (Kind::MODULE, "package"),
+        (Kind::PROPERTY, "field"),
+        (Kind::KEYWORD, "while"),
+        (Kind::SNIPPET, "template"),
+        (Kind::ENUM, "Variant"),
+    ]
+    .into_iter()
+    .map(|(kind, label)| crate::lsp::LspCompletionItem {
+        label: label.into(),
+        insert_text: label.into(),
+        detail: None,
+        kind: Some(kind),
+        text_edit_range: None,
+        additional_text_edits: vec![],
+        is_snippet: false,
+        original_item: None,
+        documentation: None,
+    })
+    .collect();
+    let geometry =
+        crate::ui_search_dialog::lsp_completion_popup_geometry(&mut app, Rect::new(0, 0, 100, 30))
+            .unwrap();
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| crate::ui_search_dialog::draw_lsp_completion(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui_search_dialog::draw_lsp_completion(frame, &mut app))
+        .unwrap();
     for item in &app.lsp_manager.completion_items {
         let (x, y) = find_cell(terminal.backend().buffer(), &item.label);
-        assert_eq!(x, geometry.inner_area.x + 4, "badge column and one separator: {}", item.label);
+        assert_eq!(
+            x,
+            geometry.inner_area.x + 4,
+            "badge column and one separator: {}",
+            item.label
+        );
         assert_eq!(terminal.backend().buffer()[(x - 1, y)].symbol(), " ");
-        assert_eq!(terminal.backend().buffer()[(x - 1, y)].bg, terminal.backend().buffer()[(x, y)].bg);
+        assert_eq!(
+            terminal.backend().buffer()[(x - 1, y)].bg,
+            terminal.backend().buffer()[(x, y)].bg
+        );
     }
 }
 

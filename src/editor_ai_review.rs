@@ -42,7 +42,11 @@ fn clear_review_row(f: &mut Frame, area: Rect, background: Color) {
 #[derive(Clone)]
 enum ExtraKind {
     Actions(usize),
-    Merge { line: usize, offset: u16, footer: bool },
+    Merge {
+        line: usize,
+        offset: u16,
+        footer: bool,
+    },
     Removed(Arc<str>),
     More(usize),
     Blame(u16),
@@ -288,8 +292,12 @@ impl ReviewView {
         code: Rect,
         inline_blame: Option<crate::editor_blame::InlineDetails>,
     ) {
-        let merge_index = editor.merge_conflicts.index.as_ref()
-            .filter(|index| index.source.is_instance(&editor.rope) && !index.regions.is_empty()).cloned();
+        let merge_index = editor
+            .merge_conflicts
+            .index
+            .as_ref()
+            .filter(|index| index.source.is_instance(&editor.rope) && !index.regions.is_empty())
+            .cloned();
         let previous_index = self.selected_index().unwrap_or(0);
         let previous_selected = self.selected;
         let previous_inline = self.inline_blame;
@@ -457,22 +465,52 @@ impl ReviewView {
             if let Some(index) = &merge_index {
                 for &region in &index.regions {
                     // A folded conflict has no visible header/actions until unfolded.
-                    if editor.folded_ranges.iter().any(|(&start, &end)| start < region.start && region.start < end) { continue; }
+                    if editor
+                        .folded_ranges
+                        .iter()
+                        .any(|(&start, &end)| start < region.start && region.start < end)
+                    {
+                        continue;
+                    }
                     let base = base_for_line(editor, region.start, wrapped, width);
                     for offset in 0..crate::merge_conflict_ui::action_rows(code.width) {
-                        self.extras.push(Extra { base, position: 0, kind: ExtraKind::Merge { line: region.start, offset, footer: false } });
+                        self.extras.push(Extra {
+                            base,
+                            position: 0,
+                            kind: ExtraKind::Merge {
+                                line: region.start,
+                                offset,
+                                footer: false,
+                            },
+                        });
                     }
                     if editor.merge_conflicts.review.is_none() {
                         let base = if wrapped {
-                            editor.wrapped_row_for_position(region.end, editor.line_len(region.end), width) + 1
-                        } else { base_for_line(editor, region.end, false, width) + 1 }.min(base_total);
-                        self.extras.push(Extra { base, position: 0, kind: ExtraKind::Merge { line: region.start, offset: 0, footer: true } });
+                            editor.wrapped_row_for_position(
+                                region.end,
+                                editor.line_len(region.end),
+                                width,
+                            ) + 1
+                        } else {
+                            base_for_line(editor, region.end, false, width) + 1
+                        }
+                        .min(base_total);
+                        self.extras.push(Extra {
+                            base,
+                            position: 0,
+                            kind: ExtraKind::Merge {
+                                line: region.start,
+                                offset: 0,
+                                footer: true,
+                            },
+                        });
                     }
                 }
             }
             self.merge_index = merge_index;
             self.merge_editor = editor.merge_conflicts.review.is_some();
-            self.extras.sort_by_key(|extra| (extra.base, !matches!(extra.kind, ExtraKind::Blame(_))));
+            self.extras
+                .sort_by_key(|extra| (extra.base, !matches!(extra.kind, ExtraKind::Blame(_))));
             for (index, extra) in self.extras.iter_mut().enumerate() {
                 extra.position = extra.base + index;
             }
@@ -856,7 +894,12 @@ fn draw_toolbar(
 
 pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let area = crate::merge_conflict_ui::draw_merge_editor(f, app, area);
-    let has_merge = app.editor().is_some_and(|editor| editor.merge_conflicts.current(&editor.rope).is_some_and(|index| !index.regions.is_empty()));
+    let has_merge = app.editor().is_some_and(|editor| {
+        editor
+            .merge_conflicts
+            .current(&editor.rope)
+            .is_some_and(|index| !index.regions.is_empty())
+    });
     let file = app
         .tabs
         .get(app.active_tab)
@@ -931,7 +974,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             inline_blame,
         );
         let editor = &mut app.tabs[app.active_tab].editor;
-        if code.height > 0 && !editor.bg_loading && !editor.load_failed
+        if code.height > 0
+            && !editor.bg_loading
+            && !editor.load_failed
             && let Some(file) = file.as_ref()
             && let Some(chunk) = view.requested_navigation.take()
         {
@@ -1017,19 +1062,35 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                 app.colors.bg_sidebar,
             );
             match extra.kind {
-                ExtraKind::Merge { line, offset, footer } => {
-                    clear_review_row(f, Rect::new(paint.x, y, paint.width, 1), app.colors.bg_editor);
+                ExtraKind::Merge {
+                    line,
+                    offset,
+                    footer,
+                } => {
+                    clear_review_row(
+                        f,
+                        Rect::new(paint.x, y, paint.width, 1),
+                        app.colors.bg_editor,
+                    );
                     if offset == 0
                         && !footer
                         && let Some(x) = crate::ui_editor_highlight::change_gutter_column(gutter)
                     {
-                        let color = merge_conflict_ui::marker_color(&app.colors, app.colors.bg_editor);
+                        let color =
+                            merge_conflict_ui::marker_color(&app.colors, app.colors.bg_editor);
                         f.buffer_mut()[(x, y)]
                             .set_symbol(CONFLICT_MARKER)
                             .set_style(merge_conflict_ui::marker_badge(&app.colors, color));
                     }
-                    crate::merge_conflict_ui::draw_actions(f, app, Rect::new(code.x, y, code.width, 1),
-                        line, offset, footer, &mut view.merge_hits);
+                    crate::merge_conflict_ui::draw_actions(
+                        f,
+                        app,
+                        Rect::new(code.x, y, code.width, 1),
+                        line,
+                        offset,
+                        footer,
+                        &mut view.merge_hits,
+                    );
                 }
                 ExtraKind::Blame(offset) => {
                     view.blame_rows.push((row as u16, offset));
@@ -1197,12 +1258,17 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
     // Inline blame moves with the same source cells, never with a virtual row.
     let editor = &mut app.tabs[app.active_tab].editor;
-    for annotation in [&mut editor.blame.inline_annotation, &mut editor.blame.inline_candidate] {
+    for annotation in [
+        &mut editor.blame.inline_annotation,
+        &mut editor.blame.inline_candidate,
+    ] {
         *annotation = annotation.and_then(|(mut area, line)| {
             let source = source_rows.get(area.y.checked_sub(code.y)? as usize)?;
-            let row = view.source_rows.iter().position(|mapped| mapped.is_some_and(|mapped| {
-                mapped.line_idx == source.line_idx && mapped.start_col == source.start_col
-            }))?;
+            let row = view.source_rows.iter().position(|mapped| {
+                mapped.is_some_and(|mapped| {
+                    mapped.line_idx == source.line_idx && mapped.start_col == source.start_col
+                })
+            })?;
             area.y = code.y + row as u16;
             Some((area, line))
         });
@@ -1257,7 +1323,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             // The source renderer already painted Git/unsaved change markers.
             // Keep them when adapting the thumb to virtual conflict/review rows.
             let cell = &mut f.buffer_mut()[(scrollbar.right() - 1, y)];
-            if !app.cached_overview_change_rows.row(row).changes().is_empty() {
+            if !app
+                .cached_overview_change_rows
+                .row(row)
+                .changes()
+                .is_empty()
+            {
                 if view.merge_index.is_some() && scrollbar.width == 1 && cell.symbol() != "━" {
                     cell.set_bg(navigation_bg);
                 }
@@ -1303,7 +1374,9 @@ impl App {
     }
 
     pub(crate) fn handle_editor_review_mouse(&mut self, mouse: MouseEvent) -> bool {
-        if crate::merge_conflict_ui::handle_mouse(self, mouse) { return true; }
+        if crate::merge_conflict_ui::handle_mouse(self, mouse) {
+            return true;
+        }
         let position = (mouse.column, mouse.row).into();
         let target = self
             .tabs
@@ -1425,7 +1498,12 @@ impl App {
             self.mouse_hover_changed = true;
             return true;
         }
-        let merge_hit = editor.ai_review.merge_hits.iter().find(|hit| hit.area.contains(position)).cloned();
+        let merge_hit = editor
+            .ai_review
+            .merge_hits
+            .iter()
+            .find(|hit| hit.area.contains(position))
+            .cloned();
         if let Some(hit) = merge_hit
             && !matches!(mouse.kind, MouseEventKind::Drag(_) | MouseEventKind::Up(_))
         {
@@ -1434,8 +1512,12 @@ impl App {
                 crate::ui_panels::capture_pointer(self, button);
             }
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                if !current { return true; }
-                if group != self.active_group { self.switch_group(group); }
+                if !current {
+                    return true;
+                }
+                if group != self.active_group {
+                    self.switch_group(group);
+                }
                 self.active_pane = ActivePane::Editor;
                 self.merge_action(hit.action, Some(hit.line));
             }

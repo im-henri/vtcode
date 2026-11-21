@@ -3,11 +3,11 @@ use std::fmt::Write as FmtWrite;
 use unicode_width::UnicodeWidthStr;
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::Span,
     widgets::Paragraph,
-    Frame,
 };
 use rustc_hash::FxHashMap;
 
@@ -19,10 +19,10 @@ use crate::ui_dialogs::get_cached_blame_line;
 use crate::ui_welcome::draw_welcome_screen;
 
 use crate::ui_editor_highlight::*;
-#[path = "ui_editor_text.rs"]
-pub(crate) mod prepared_text;
 #[path = "ui_editor_plain_runs.rs"]
 mod plain_runs;
+#[path = "ui_editor_text.rs"]
+pub(crate) mod prepared_text;
 #[path = "ui_editor_source_lines.rs"]
 mod source_lines;
 use crate::ui_editor_minimap::{
@@ -45,21 +45,24 @@ const MAX_RICH_RENDER_LINE_CHARS: usize = crate::highlight::MAX_SYNTAX_LINE_CHAR
 mod render_performance_tests;
 
 #[cfg(test)]
-#[path = "ui_editor_responsiveness_tests.rs"]
-mod responsiveness_tests;
-#[cfg(test)]
-#[path = "word_highlight_settings_tests.rs"]
-mod word_highlight_settings_tests;
-#[cfg(test)]
 #[path = "cross_tab_word_highlight_tests.rs"]
 mod cross_tab_word_highlight_tests;
+#[cfg(test)]
+#[path = "ui_editor_responsiveness_tests.rs"]
+mod responsiveness_tests;
 #[cfg(test)]
 #[path = "ui_editor_viewport_tests.rs"]
 mod viewport_tests;
 #[cfg(test)]
 #[path = "ui_editor_whitespace_tests.rs"]
 mod whitespace_tests;
+#[cfg(test)]
+#[path = "word_highlight_settings_tests.rs"]
+mod word_highlight_settings_tests;
 
+#[cfg(test)]
+#[path = "ui_editor_cell_batch_tests.rs"]
+mod cell_batch_tests;
 #[cfg(test)]
 #[path = "ui_editor_decoration_tests.rs"]
 mod decoration_tests;
@@ -70,14 +73,11 @@ mod hotpath_tests;
 #[path = "ui_editor_pending_wrap_tests.rs"]
 mod pending_wrap_tests;
 #[cfg(test)]
-#[path = "ui_editor_cell_batch_tests.rs"]
-mod cell_batch_tests;
+#[path = "ui_editor_plain_run_tests.rs"]
+mod plain_run_tests;
 #[cfg(test)]
 #[path = "ui_editor_row_work_tests.rs"]
 mod row_work_tests;
-#[cfg(test)]
-#[path = "ui_editor_plain_run_tests.rs"]
-mod plain_run_tests;
 
 #[cfg(test)]
 thread_local! {
@@ -87,16 +87,24 @@ thread_local! {
 
 fn reference_row_preparation() -> bool {
     #[cfg(test)]
-    { return REFERENCE_ROW_PREPARATION.get(); }
+    {
+        return REFERENCE_ROW_PREPARATION.get();
+    }
     #[cfg(not(test))]
-    { false }
+    {
+        false
+    }
 }
 
 fn reference_cell_paint() -> bool {
     #[cfg(test)]
-    { return REFERENCE_CELL_PAINT.get(); }
+    {
+        return REFERENCE_CELL_PAINT.get();
+    }
     #[cfg(not(test))]
-    { false }
+    {
+        false
+    }
 }
 
 /// Terminal-width tab and virtual-space runs borrow a fixed pool. Larger
@@ -124,7 +132,9 @@ fn marked_tab(width: usize) -> std::borrow::Cow<'static, str> {
 }
 
 fn indent_guide_depth(visual_col: usize, indent_columns: usize, tab_size: usize) -> Option<usize> {
-    (visual_col < indent_columns && tab_size > 0 && visual_col.is_multiple_of(tab_size)
+    (visual_col < indent_columns
+        && tab_size > 0
+        && visual_col.is_multiple_of(tab_size)
         && indent_columns - visual_col >= tab_size)
         .then(|| visual_col / tab_size)
 }
@@ -138,10 +148,21 @@ fn guide_glyph(ch: char, whitespace_visible: bool) -> &'static str {
     }
 }
 
-fn guide_style(style: Style, color: Color, whitespace_color: Color, whitespace_visible: bool) -> Style {
+fn guide_style(
+    style: Style,
+    color: Color,
+    whitespace_color: Color,
+    whitespace_visible: bool,
+) -> Style {
     let color = if whitespace_visible && style.bg == Some(color) {
-        if style.bg == Some(whitespace_color) { style.fg.unwrap_or(color) } else { whitespace_color }
-    } else { color };
+        if style.bg == Some(whitespace_color) {
+            style.fg.unwrap_or(color)
+        } else {
+            whitespace_color
+        }
+    } else {
+        color
+    };
     style.fg(color).remove_modifier(Modifier::DIM)
 }
 
@@ -161,7 +182,12 @@ fn visible_search_runs(
     output: &mut Vec<(usize, usize, bool)>,
 ) {
     scratch.clear();
-    scratch.extend(matches.iter().copied().filter(|&(from, to, _)| from < end && to > start));
+    scratch.extend(
+        matches
+            .iter()
+            .copied()
+            .filter(|&(from, to, _)| from < end && to > start),
+    );
     flatten_priority_ranges(scratch, output);
 }
 
@@ -271,10 +297,13 @@ pub(crate) fn refresh_editor_change_index(app: &mut App, diff_changes: Option<&[
     let Some(editor) = app.tabs.get(app.active_tab).map(|tab| &tab.editor) else {
         return;
     };
-    let (source_ptr, source_len) = diff_changes.map_or_else(|| {
-        let source = editor.git_change_lines();
-        (source.as_ptr() as usize, source.len())
-    }, |source| (source.as_ptr() as usize, source.len()));
+    let (source_ptr, source_len) = diff_changes.map_or_else(
+        || {
+            let source = editor.git_change_lines();
+            (source.as_ptr() as usize, source.len())
+        },
+        |source| (source.as_ptr() as usize, source.len()),
+    );
     let compare = diff_changes.is_some();
     let key = (
         editor.navigation_id,
@@ -335,8 +364,11 @@ pub(crate) struct CursorWordEntry {
 }
 
 pub(crate) fn forget_word_snapshots(app: &mut App, view: u64) {
-    app.editor_cursor_word_cache.get_mut().retain(|entry| entry.key.0 != view);
-    app.editor_selection_word_cache.retain(|entry| entry.editor != view);
+    app.editor_cursor_word_cache
+        .get_mut()
+        .retain(|entry| entry.key.0 != view);
+    app.editor_selection_word_cache
+        .retain(|entry| entry.editor != view);
 }
 
 fn refresh_cursor_word(
@@ -346,7 +378,12 @@ fn refresh_cursor_word(
     cache: &mut std::collections::VecDeque<CursorWordEntry>,
 ) {
     *current_word = cached_cursor_word(editor, cache);
-    *current_key = (editor.navigation_id, editor.cursor_line, editor.cursor_col, editor.content_version);
+    *current_key = (
+        editor.navigation_id,
+        editor.cursor_line,
+        editor.cursor_col,
+        editor.content_version,
+    );
 }
 
 /// Share the immutable word between painting and background-analysis targets.
@@ -362,7 +399,9 @@ pub(crate) fn cached_cursor_word(
         editor.content_version,
     );
     if let Some(index) = cache.iter().rposition(|entry| {
-        entry.key.0 == key.0 && entry.key.1 == key.1 && entry.key.3 == key.3
+        entry.key.0 == key.0
+            && entry.key.1 == key.1
+            && entry.key.3 == key.3
             && entry.source.is_instance(&editor.rope)
             && entry.range.map_or(entry.key.2 == key.2, |(start, end)| {
                 (start..end).contains(&key.2)
@@ -377,27 +416,44 @@ pub(crate) fn cached_cursor_word(
     } else {
         let range = editor.word_range_at_cursor();
         let word = range.map(|(start, end)| {
-            std::sync::Arc::from(editor.rope.line(editor.cursor_line).slice(start..end).to_string())
+            std::sync::Arc::from(
+                editor
+                    .rope
+                    .line(editor.cursor_line)
+                    .slice(start..end)
+                    .to_string(),
+            )
         });
         cache.retain(|entry| entry.key.0 != editor.navigation_id);
         if cache.len() >= MAX_CACHED_EDITOR_PANES {
             cache.pop_front();
         }
         cache.push_back(CursorWordEntry {
-            key, source: editor.rope.clone(), range, word: word.clone(),
+            key,
+            source: editor.rope.clone(),
+            range,
+            word: word.clone(),
         });
         word
     }
 }
 
-fn paint_editor_row(f: &mut Frame, rows: &mut prepared_text::Rows, spans: &mut Vec<Span<'_>>, marker: Option<Style>, colors: &crate::app_theme::ThemeColors) {
+fn paint_editor_row(
+    f: &mut Frame,
+    rows: &mut prepared_text::Rows,
+    spans: &mut Vec<Span<'_>>,
+    marker: Option<Style>,
+    colors: &crate::app_theme::ThemeColors,
+) {
     if let Some(marker) = marker {
         // Only decorated marker lines need a contrast check. Ordinary syntax
         // stays exactly as authored, and controls retain their own fills.
         for span in spans.iter_mut() {
             let background = span.style.bg.or(marker.bg).unwrap_or(colors.bg_editor);
             let foreground = span.style.fg.or(marker.fg).unwrap_or(colors.fg_text);
-            span.style = span.style.fg(colors.ui.readable_foreground(foreground, background, 4.5));
+            span.style = span
+                .style
+                .fg(colors.ui.readable_foreground(foreground, background, 4.5));
         }
     }
     rows.push(f.buffer_mut(), spans, marker.unwrap_or_default());
@@ -405,10 +461,11 @@ fn paint_editor_row(f: &mut Frame, rows: &mut prepared_text::Rows, spans: &mut V
 
 fn plain_theme_style(color: Color) -> crate::textmate::Style {
     let mut style = PLAIN_STYLE;
-    if let Color::Rgb(r,g,b) = color { style.foreground = crate::textmate::Color {r,g,b,a:255}; }
+    if let Color::Rgb(r, g, b) = color {
+        style.foreground = crate::textmate::Color { r, g, b, a: 255 };
+    }
     style
 }
-
 
 /// Occurrence highlighting only accepts short single-line selections. Check
 /// the rope range before copying it so dragging over a generated/minified line
@@ -424,7 +481,9 @@ fn selection_occurrence_text(editor: &crate::editor::Editor) -> Option<String> {
         // Preserve the existing trimmed-length rule, including selections
         // padded with whitespace, without allocating rejected selections.
         let leading = slice.chars().take_while(|c| c.is_whitespace()).count();
-        let trailing = slice.chars_at(slice.len_chars()).reversed()
+        let trailing = slice
+            .chars_at(slice.len_chars())
+            .reversed()
             .take(slice.len_chars() - leading)
             .take_while(|c| c.is_whitespace())
             .count();
@@ -450,7 +509,8 @@ fn cached_selection_occurrence_text(
 ) -> Option<std::sync::Arc<str>> {
     let range = editor.selection_range()?;
     if let Some(index) = cache.iter().rposition(|entry| {
-        entry.editor == editor.navigation_id && entry.range == range
+        entry.editor == editor.navigation_id
+            && entry.range == range
             && entry.source.is_instance(&editor.rope)
     }) {
         let entry = cache.remove(index).unwrap();
@@ -463,9 +523,14 @@ fn cached_selection_occurrence_text(
     // Preserve matching of whitespace-padded selections without retaining
     // arbitrary amounts of text from a generated line in each visited tab.
     if text.as_ref().is_none_or(|text| text.len() <= 4096) {
-        if cache.len() >= MAX_CACHED_EDITOR_PANES { cache.pop_front(); }
+        if cache.len() >= MAX_CACHED_EDITOR_PANES {
+            cache.pop_front();
+        }
         cache.push_back(SelectionWordEntry {
-            editor: editor.navigation_id, range, source: editor.rope.clone(), text: text.clone(),
+            editor: editor.navigation_id,
+            range,
+            source: editor.rope.clone(),
+            text: text.clone(),
         });
     }
     text
@@ -491,7 +556,9 @@ pub(crate) fn prepare_shared_word_highlight(app: &mut App) {
         let editor = &tab.editor;
         if !matches!(
             tab.kind,
-            crate::app::TabKind::File | crate::app::TabKind::GitRevision | crate::app::TabKind::Diff(_)
+            crate::app::TabKind::File
+                | crate::app::TabKind::GitRevision
+                | crate::app::TabKind::Diff(_)
         ) || editor.large_file_mode
         {
             return None;
@@ -515,13 +582,23 @@ pub(crate) fn prepare_shared_word_highlight(app: &mut App) {
     let find_options = (app.search_case_sensitive, app.search_whole_word);
     if let Some((word, selected)) = source {
         if app.shared_word_highlight.as_ref().is_some_and(|current| {
-            current.selected == selected && current.find_options == find_options
+            current.selected == selected
+                && current.find_options == find_options
                 && (std::sync::Arc::ptr_eq(&current.word, &word) || current.word == word)
         }) {
             return;
         }
-        let char_len = if word.is_ascii() { word.len() } else { word.chars().count() };
-        app.shared_word_highlight = Some(SharedWordHighlight { word, char_len, selected, find_options });
+        let char_len = if word.is_ascii() {
+            word.len()
+        } else {
+            word.chars().count()
+        };
+        app.shared_word_highlight = Some(SharedWordHighlight {
+            word,
+            char_len,
+            selected,
+            find_options,
+        });
     } else if app.shared_word_highlight.take().is_none() {
         return;
     }
@@ -529,9 +606,13 @@ pub(crate) fn prepare_shared_word_highlight(app: &mut App) {
 }
 
 fn occurrence_find_options(app: &App) -> (bool, bool) {
-    app.shared_word_highlight.as_ref()
+    app.shared_word_highlight
+        .as_ref()
         .filter(|_| app.highlight_words_across_tabs)
-        .map_or((app.search_case_sensitive, app.search_whole_word), |query| query.find_options)
+        .map_or(
+            (app.search_case_sensitive, app.search_whole_word),
+            |query| query.find_options,
+        )
 }
 
 /// Render a large document without ever materializing or scanning an entire
@@ -575,10 +656,27 @@ pub(crate) fn cached_overview_change_rows(
         diff_ptr,
         diff_len,
         app.git_compare_generation,
-        (app.diff_refresh_generation, editor.folded_ranges.revision(),
-            if editor.word_wrap { editor.content_version } else { 0 },
-            if editor.word_wrap { editor.wrap_revision } else { 0 }, editor.word_wrap,
-            if editor.word_wrap { editor.effective_wrap_width() } else { 0 }, editor.overview_total_rows()),
+        (
+            app.diff_refresh_generation,
+            editor.folded_ranges.revision(),
+            if editor.word_wrap {
+                editor.content_version
+            } else {
+                0
+            },
+            if editor.word_wrap {
+                editor.wrap_revision
+            } else {
+                0
+            },
+            editor.word_wrap,
+            if editor.word_wrap {
+                editor.effective_wrap_width()
+            } else {
+                0
+            },
+            editor.overview_total_rows(),
+        ),
     );
     refresh_editor_change_index(app, diff_changes);
     if app.cached_overview_change_rows_key.as_ref() != Some(&key) {
@@ -643,7 +741,12 @@ pub(crate) fn refresh_cached_editor_diagnostics(app: &mut App) {
         extension_version,
     );
 
-    let diagnostics = merged_diagnostics_from(&app.lsp_manager, &app.extension_manager, file_path, &app.editor().unwrap().rope);
+    let diagnostics = merged_diagnostics_from(
+        &app.lsp_manager,
+        &app.extension_manager,
+        file_path,
+        &app.editor().unwrap().rope,
+    );
     app.cached_diag_lines = std::sync::Arc::new(
         diagnostics
             .iter()
@@ -763,7 +866,10 @@ fn document_highlights_for_line(
     );
 }
 
-fn inlay_hints_for_line(hints: &[crate::app::InlayHintDisplay], line: u32) -> &[crate::app::InlayHintDisplay] {
+fn inlay_hints_for_line(
+    hints: &[crate::app::InlayHintDisplay],
+    line: u32,
+) -> &[crate::app::InlayHintDisplay] {
     let start = hints.partition_point(|hint| hint.line < line);
     let end = start + hints[start..].partition_point(|hint| hint.line == line);
     &hints[start..end]
@@ -775,10 +881,12 @@ fn highlight_column_ranges(
     output: &mut Vec<(usize, usize)>,
 ) {
     output.clear();
-    output.extend(highlights.iter().map(|&(sl, sc, el, ec)| (
-        if line == sl { sc as usize } else { 0 },
-        if line == el { ec as usize } else { usize::MAX },
-    )));
+    output.extend(highlights.iter().map(|&(sl, sc, el, ec)| {
+        (
+            if line == sl { sc as usize } else { 0 },
+            if line == el { ec as usize } else { usize::MAX },
+        )
+    }));
     merge_column_ranges(output);
 }
 
@@ -794,8 +902,16 @@ fn diagnostic_column_ranges(
     scratch.extend(indices.iter().map(|&index| {
         let diagnostic = &diagnostics[index];
         (
-            if line == diagnostic.line { diagnostic.col } else { 0 },
-            if line == diagnostic.end_line { diagnostic.end_col } else { usize::MAX },
+            if line == diagnostic.line {
+                diagnostic.col
+            } else {
+                0
+            },
+            if line == diagnostic.end_line {
+                diagnostic.end_col
+            } else {
+                usize::MAX
+            },
             colors.ui.diagnostic(diagnostic.severity),
         )
     }));
@@ -814,9 +930,11 @@ fn semantic_color_for_token(
     let theme = theme?;
     // A file usually has just a handful of token type/modifier combinations.
     // Resolve theme selectors once per combination, never once per character.
-    *cache.entry((token.token_type, token._token_modifiers)).or_insert_with(|| {
-        crate::lsp::themed_semantic_token_style(token, legend, language, Some(theme))
-    })
+    *cache
+        .entry((token.token_type, token._token_modifiers))
+        .or_insert_with(|| {
+            crate::lsp::themed_semantic_token_style(token, legend, language, Some(theme))
+        })
 }
 
 #[cfg(test)]
@@ -833,10 +951,17 @@ fn editor_semantic_color_for_token(
     let theme = theme?;
     // The cache lives for one editor draw. Resolve the server and language
     // only for a new style, including caching unsupported token styles.
-    *cache.entry((token.token_type, token._token_modifiers)).or_insert_with(|| {
-        let legend = manager.semantic_legend_for_file(editor.file_path.as_deref())?;
-        crate::lsp::themed_semantic_token_style(token, legend, editor.language_name(), Some(theme))
-    })
+    *cache
+        .entry((token.token_type, token._token_modifiers))
+        .or_insert_with(|| {
+            let legend = manager.semantic_legend_for_file(editor.file_path.as_deref())?;
+            crate::lsp::themed_semantic_token_style(
+                token,
+                legend,
+                editor.language_name(),
+                Some(theme),
+            )
+        })
 }
 
 #[cfg(test)]
@@ -854,7 +979,10 @@ fn syntax_foregrounds_for_range(
         if span_end > start && span_start < end {
             let from = span_start.max(start) - start;
             let to = span_end.min(end) - start;
-            foregrounds[from..to].fill(Some(crate::ui_colors::syntax_color(style.foreground, background)));
+            foregrounds[from..to].fill(Some(crate::ui_colors::syntax_color(
+                style.foreground,
+                background,
+            )));
         }
         span_start = span_end;
         if span_start >= end {
@@ -887,11 +1015,19 @@ impl<'a> SyntaxForegroundCursor<'a> {
     ) -> Self {
         let (spans, lengths) = source.unwrap_or((&[], &[]));
         Self {
-            spans, lengths, background, next: 0, end: 0, color: None,
+            spans,
+            lengths,
+            background,
+            next: 0,
+            end: 0,
+            color: None,
             #[cfg(test)]
-            reference: reference_cell_paint().then(|| (
-                _start, syntax_foregrounds_for_range(spans, lengths, background, _start, _end),
-            )),
+            reference: reference_cell_paint().then(|| {
+                (
+                    _start,
+                    syntax_foregrounds_for_range(spans, lengths, background, _start, _end),
+                )
+            }),
         }
     }
 
@@ -911,7 +1047,10 @@ impl<'a> SyntaxForegroundCursor<'a> {
             self.end = self.end.saturating_add(length);
             // No color conversion for spans wholly left of the viewport.
             if self.end > column {
-                self.color = Some(crate::ui_colors::syntax_color(style.foreground, self.background));
+                self.color = Some(crate::ui_colors::syntax_color(
+                    style.foreground,
+                    self.background,
+                ));
             }
         }
         self.color
@@ -1040,19 +1179,25 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
     let mut selection_style = app.copy_animation_selection_style();
     let extra_cursor_viewport = ExtraCursorViewport::new(
         editor,
-        scroll..editor.visible_line_at(scroll, visible_lines).unwrap_or(editor.line_count()),
+        scroll
+            ..editor
+                .visible_line_at(scroll, visible_lines)
+                .unwrap_or(editor.line_count()),
     );
     let mut extra_cursor_scratch = ExtraCursorLine::default();
 
     let mut gutter_lines = gutter::Rows::new(f, gutter_area, colors.bg_dark);
-    let mut code_lines = prepared_text::Rows::new(code_area, Style::default().bg(app.colors.bg_editor));
+    let mut code_lines =
+        prepared_text::Rows::new(code_area, Style::default().bg(app.colors.bg_editor));
     let mut gutter_num_buf = String::with_capacity(gutter_width + 2);
     let mut line_matches = Vec::with_capacity(8);
     let mut visible_matches = Vec::new();
     let mut line_search_runs = Vec::new();
-    let animate = app.animation_settings.editor_effects_enabled() && app.terminal_has_focus && !app.rendering_inactive_editor
-            && editor.extra_cursors.is_empty()
-            && !app.should_render_diff_for_active_editor();
+    let animate = app.animation_settings.editor_effects_enabled()
+        && app.terminal_has_focus
+        && !app.rendering_inactive_editor
+        && editor.extra_cursors.is_empty()
+        && !app.should_render_diff_for_active_editor();
     let mut animation_geometry = app.animation_frame_cache.geometry(code_area, animate);
 
     animation_geometry.defer_gradients(app.editor_gradient_area);
@@ -1061,14 +1206,22 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
     let mut spans = Vec::with_capacity(32);
     let mut cell_batch = String::with_capacity(visible_width);
     for screen_row in 0..visible_lines {
-        let line_idx = editor.visible_line_at(scroll, screen_row).unwrap_or(editor.line_count());
+        let line_idx = editor
+            .visible_line_at(scroll, screen_row)
+            .unwrap_or(editor.line_count());
         if line_idx >= editor.rope.len_lines() {
             format_empty_gutter_row(&mut gutter_num_buf, render_line_numbers, gutter_width);
-            gutter_lines.push(f, [Span::styled(
-                gutter_num_buf.as_str(),
-                Style::default().fg(colors.fg_tilde).bg(colors.bg_dark),
-            )]);
-            spans.push(Span::styled(crate::helpers::spaces(visible_width), Style::default().bg(colors.bg_editor)));
+            gutter_lines.push(
+                f,
+                [Span::styled(
+                    gutter_num_buf.as_str(),
+                    Style::default().fg(colors.fg_tilde).bg(colors.bg_dark),
+                )],
+            );
+            spans.push(Span::styled(
+                crate::helpers::spaces(visible_width),
+                Style::default().bg(colors.bg_editor),
+            ));
             code_lines.push(f.buffer_mut(), &mut spans, Style::default());
             continue;
         }
@@ -1102,11 +1255,14 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
         } else {
             Style::default().fg(colors.ui.fg_line_number).bg(gutter_bg)
         };
-        gutter_lines.push(f, [
-            Span::styled(gutter_num_buf.as_str(), number_style),
-            bookmark,
-            Span::styled(" ", Style::default().bg(gutter_bg)),
-        ]);
+        gutter_lines.push(
+            f,
+            [
+                Span::styled(gutter_num_buf.as_str(), number_style),
+                bookmark,
+                Span::styled(" ", Style::default().bg(gutter_bg)),
+            ],
+        );
 
         let line_bg = if is_current_line {
             colors.bg_line_highlight
@@ -1114,7 +1270,8 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
             colors.bg_editor
         };
         let line = editor.rope.line(line_idx);
-        let line_bg = crate::merge_conflict_ui::content_background(editor, line_idx, &colors, line_bg);
+        let line_bg =
+            crate::merge_conflict_ui::content_background(editor, line_idx, &colors, line_bg);
         let merge_style = colors.ui.merge_marker_style(line.chars(), line_bg);
         let line_bg = merge_style.and_then(|style| style.bg).unwrap_or(line_bg);
         let content_len = editor.line_len(line_idx);
@@ -1149,8 +1306,12 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
             );
         }
         let mut syntax_foregrounds = SyntaxForegroundCursor::new(
-            cached_highlight.as_ref().map(|(spans, lengths)| (spans.as_slice(), lengths.as_slice())),
-            line_bg, slice_start, slice_end,
+            cached_highlight
+                .as_ref()
+                .map(|(spans, lengths)| (spans.as_slice(), lengths.as_slice())),
+            line_bg,
+            slice_start,
+            slice_end,
         );
         matches_for_line(
             &app.tabs[app.active_tab].file_search.search_matches,
@@ -1160,7 +1321,13 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
             &mut line_matches,
         );
         if !reference_cell_paint() {
-            visible_search_runs(&line_matches, slice_start, slice_end, &mut visible_matches, &mut line_search_runs);
+            visible_search_runs(
+                &line_matches,
+                slice_start,
+                slice_end,
+                &mut visible_matches,
+                &mut line_search_runs,
+            );
         }
         let mut search_runs = ValueRangeCursor::new(&line_search_runs, slice_start);
 
@@ -1185,7 +1352,9 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
                 tab_column = Some(0);
                 width
             } else {
-                if let Some(previous) = &mut tab_column { *previous += 1; }
+                if let Some(previous) = &mut tab_column {
+                    *previous += 1;
+                }
                 unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
             };
             let selected = selection.is_some_and(|(sl, sc, el, ec)| {
@@ -1215,7 +1384,9 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
                 .at(absolute_col)
                 .unwrap_or(colors.fg_text);
             let mut style = Style::default().fg(foreground).bg(line_bg);
-            if link_hover.is_some_and(|(line, start, end)| line == line_idx && (start..end).contains(&absolute_col)) {
+            if link_hover.is_some_and(|(line, start, end)| {
+                line == line_idx && (start..end).contains(&absolute_col)
+            }) {
                 style = style.add_modifier(Modifier::UNDERLINED);
             }
             if let Some(current) = search_style {
@@ -1234,11 +1405,20 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
                     } else {
                         0
                     };
-                    animation_geometry.record_primary_cursor(screen_row, animation_col, cursor_width, style);
+                    animation_geometry.record_primary_cursor(
+                        screen_row,
+                        animation_col,
+                        cursor_width,
+                        style,
+                    );
                 }
                 if !(primary && bar_caret) {
                     style = style.patch(crate::ui_colors::block_cursor_style(
-                        colors.bg_cursor, colors.fg_cursor, style.bg.unwrap_or(line_bg), colors.ui.contrast_colors()));
+                        colors.bg_cursor,
+                        colors.fg_cursor,
+                        style.bg.unwrap_or(line_bg),
+                        colors.ui.contrast_colors(),
+                    ));
                 }
             }
 
@@ -1246,7 +1426,14 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
                 code_lines.flush(&mut spans, &mut cell_batch, cell_batch_style);
                 let tab_width = cell_width.min(visible_width.saturating_sub(rendered_width));
                 spans.push(Span::styled(crate::helpers::spaces(tab_width), style));
-                animation_geometry.push(line_idx, absolute_col, ch, screen_row, animation_col, tab_width);
+                animation_geometry.push(
+                    line_idx,
+                    absolute_col,
+                    ch,
+                    screen_row,
+                    animation_col,
+                    tab_width,
+                );
                 animation_col += tab_width;
                 rendered_width += tab_width;
             } else {
@@ -1267,7 +1454,14 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
                 if animation_geometry.enabled() || bar_caret {
                     let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
                     if animation_geometry.enabled() {
-                        animation_geometry.push(line_idx, absolute_col, ch, screen_row, animation_col, width);
+                        animation_geometry.push(
+                            line_idx,
+                            absolute_col,
+                            ch,
+                            screen_row,
+                            animation_col,
+                            width,
+                        );
                     }
                     animation_col += width;
                 }
@@ -1282,25 +1476,39 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
         if slice_end == content_len && content_len >= h_scroll {
             animation_geometry.push(line_idx, content_len, '\0', screen_row, animation_col, 1);
         }
-        let search_eol = line_matches.iter().find_map(|&(start, end, current)|
-            (start <= content_len && end > content_len).then_some(current));
+        let search_eol = line_matches.iter().find_map(|&(start, end, current)| {
+            (start <= content_len && end > content_len).then_some(current)
+        });
         if ((is_current_line && cursor_col == content_len && show_cursor) || search_eol.is_some())
             && content_len >= h_scroll
             && content_len < h_scroll.saturating_add(visible_width)
             && rendered_width < visible_width
         {
             let style = if is_current_line && cursor_col == content_len && show_cursor {
-                animation_geometry.record_primary_cursor(screen_row, animation_col, 1, Style::default().bg(line_bg));
-                if bar_caret { Style::default().bg(line_bg) } else {
-                    crate::ui_colors::block_cursor_style(colors.bg_cursor, colors.fg_cursor, line_bg, colors.ui.contrast_colors())
+                animation_geometry.record_primary_cursor(
+                    screen_row,
+                    animation_col,
+                    1,
+                    Style::default().bg(line_bg),
+                );
+                if bar_caret {
+                    Style::default().bg(line_bg)
+                } else {
+                    crate::ui_colors::block_cursor_style(
+                        colors.bg_cursor,
+                        colors.fg_cursor,
+                        line_bg,
+                        colors.ui.contrast_colors(),
+                    )
                 }
             } else {
-                colors.ui.find_style(Style::default(), search_eol == Some(true), colors.bg_search_match)
+                colors.ui.find_style(
+                    Style::default(),
+                    search_eol == Some(true),
+                    colors.bg_search_match,
+                )
             };
-            spans.push(Span::styled(
-                " ",
-                style,
-            ));
+            spans.push(Span::styled(" ", style));
             rendered_width += 1;
         }
         if rendered_width < visible_width {
@@ -1317,7 +1525,12 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
 
     let change_rows = crate::ui_editor_minimap::ChangeRows::default();
     if minimap_area.width > 0 {
-        draw_minimap_separator(f, minimap_sep_area, colors.ui.fg_overview_border, colors.bg_editor);
+        draw_minimap_separator(
+            f,
+            minimap_sep_area,
+            colors.ui.fg_overview_border,
+            colors.bg_editor,
+        );
         draw_minimap(
             f,
             MinimapParams {
@@ -1459,10 +1672,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     };
     // A wrapped continuation can occupy every code column. Keep a blank
     // connector lane after fold/diff markers so its fallback rail stays whole.
-    let scope_rail_width = u16::from(
-        app.animation_settings
-            .scope_enabled_for(editor),
-    );
+    let scope_rail_width = u16::from(app.animation_settings.scope_enabled_for(editor));
 
     // Whole-document width analysis is intentionally disabled in large-file
     // mode. Rope line lengths are constant-time, so derive an exact width for
@@ -1472,8 +1682,15 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         .saturating_add(area.height as usize)
         .min(editor.rope.len_lines());
     let visible_max_line_width = editor.render_line_cache.borrow_mut().visible_line_width(
-        (editor.content_version, editor.wrap_revision, editor.tab_size),
-        &editor.rope, first, end, editor.cursor_line,
+        (
+            editor.content_version,
+            editor.wrap_revision,
+            editor.tab_size,
+        ),
+        &editor.rope,
+        first,
+        end,
+        editor.cursor_line,
     );
     // Whole-document analysis belongs to the active editor. Inactive panes
     // have their own visible-line cache, not the active file's width estimate.
@@ -1520,13 +1737,14 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         0
     };
     let scrollbar_width = 1 + u16::from(review_diff);
-    let code_width_estimate = area.width.saturating_sub(
-        gutter_width as u16 + 2 + scope_rail_width + minimap_est + scrollbar_width,
-    );
-    let wrapped_diff = app.diff_inline_scroll.aligned && app.diff_inline_scroll.wrap.enabled()
+    let code_width_estimate = area
+        .width
+        .saturating_sub(gutter_width as u16 + 2 + scope_rail_width + minimap_est + scrollbar_width);
+    let wrapped_diff = app.diff_inline_scroll.aligned
+        && app.diff_inline_scroll.wrap.enabled()
         && app.should_render_diff_for_active_editor();
-    let show_h_scrollbar = max_line_width > code_width_estimate as usize
-        && !effective_word_wrap && !wrapped_diff;
+    let show_h_scrollbar =
+        max_line_width > code_width_estimate as usize && !effective_word_wrap && !wrapped_diff;
 
     // Split vertically: editor content | optional horizontal scrollbar
     let v_layout = Layout::default()
@@ -1549,7 +1767,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let minimap_sep_width: u16 = u16::from(minimap_width > 0);
     let editor_layout = editor_columns(
-        editor_row_area, gutter_width as u16 + 2 + scope_rail_width, minimap_width,
+        editor_row_area,
+        gutter_width as u16 + 2 + scope_rail_width,
+        minimap_width,
     );
 
     let full_gutter_area = editor_layout[0];
@@ -1570,9 +1790,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     let minimap_sep_area = editor_layout[2];
     let minimap_area = editor_layout[3];
     let scrollbar_area = editor_layout[4];
-    let animate = app.animation_settings.editor_effects_enabled() && app.terminal_has_focus && !app.rendering_inactive_editor
-            && app.tabs[app.active_tab].editor.extra_cursors.is_empty()
-            && !app.should_render_diff_for_active_editor();
+    let animate = app.animation_settings.editor_effects_enabled()
+        && app.terminal_has_focus
+        && !app.rendering_inactive_editor
+        && app.tabs[app.active_tab].editor.extra_cursors.is_empty()
+        && !app.should_render_diff_for_active_editor();
     let mut animation_geometry = app.animation_frame_cache.geometry(code_area, animate);
 
     if rich_features_enabled && app.show_color_preview {
@@ -1650,16 +1872,28 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     let mut selection_style = app.copy_animation_selection_style();
     let (occurrence_case_sensitive, occurrence_whole_word) = occurrence_find_options(app);
-    let crate::app::Tab { editor, file_search, .. } = &mut app.tabs[app.active_tab];
+    let crate::app::Tab {
+        editor,
+        file_search,
+        ..
+    } = &mut app.tabs[app.active_tab];
 
     if bounded_render_mode {
         if editor.blame.enabled {
-            editor.blame.rows = (0..code_area.height as usize).map(|row| {
-                let line_idx = editor.visible_line_at(editor.scroll_offset, row).unwrap_or(editor.line_count());
-                (line_idx < editor.rope.len_lines()).then_some(crate::editor::WrappedRowInfo {
-                    line_idx, start_col: 0, end_col: 0, line_len: 0, is_first: true,
+            editor.blame.rows = (0..code_area.height as usize)
+                .map(|row| {
+                    let line_idx = editor
+                        .visible_line_at(editor.scroll_offset, row)
+                        .unwrap_or(editor.line_count());
+                    (line_idx < editor.rope.len_lines()).then_some(crate::editor::WrappedRowInfo {
+                        line_idx,
+                        start_col: 0,
+                        end_col: 0,
+                        line_len: 0,
+                        is_first: true,
+                    })
                 })
-            }).collect();
+                .collect();
         }
         draw_large_file_editor(
             f,
@@ -1700,11 +1934,19 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             let mut width = 0usize;
             for ch in line.chars().take_while(|ch| matches!(ch, ' ' | '\t')) {
-                width += if ch == '\t' { tab_size - width % tab_size } else { 1 };
+                width += if ch == '\t' {
+                    tab_size - width % tab_size
+                } else {
+                    1
+                };
             }
-            (width / tab_size).checked_sub(1).map(|level| level * tab_size)
+            (width / tab_size)
+                .checked_sub(1)
+                .map(|level| level * tab_size)
         }
-    } else { None };
+    } else {
+        None
+    };
 
     // Cursor color: brighter for overwrite mode
     let overwrite = editor.overwrite_mode;
@@ -1714,8 +1956,21 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         app.colors.bg_cursor
     };
     let cursor_fg = app.colors.fg_cursor;
-    let cursor_style = |surface| crate::ui_colors::block_cursor_style(cursor_bg, cursor_fg, surface, app.colors.ui.contrast_colors());
-    let caret_style = |surface| if bar_caret { Style::default() } else { cursor_style(surface) };
+    let cursor_style = |surface| {
+        crate::ui_colors::block_cursor_style(
+            cursor_bg,
+            cursor_fg,
+            surface,
+            app.colors.ui.contrast_colors(),
+        )
+    };
+    let caret_style = |surface| {
+        if bar_caret {
+            Style::default()
+        } else {
+            cursor_style(surface)
+        }
+    };
     let show_cursors = (app.cursor_visible
         || bar_caret
         || (app.terminal_has_focus
@@ -1740,7 +1995,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         if exact_wrap_layout {
             animation_geometry.set_wrapped(wrap_width);
         }
-        if editor.blame.enabled { editor.blame.rows = wrapped_rows.iter().copied().map(Some).collect(); }
+        if editor.blame.enabled {
+            editor.blame.rows = wrapped_rows.iter().copied().map(Some).collect();
+        }
         let cursor_wrap_row = editor.wrapped_row_for_position(cursor_line, cursor_col, wrap_width);
 
         let gutter_bg = app.colors.bg_dark;
@@ -1833,13 +2090,21 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             let gutter_row = gutter_area.y + (len_as_u16(gutter_lines.len()));
             let is_fold_hovered =
                 fold_char != " " && app.mouse_row == gutter_row && app.mouse_col == fold_col;
-            let fold_style = crate::ui_editor_folds::gutter_style(&app.colors, bg, fold_char == "+", is_fold_hovered);
+            let fold_style = crate::ui_editor_folds::gutter_style(
+                &app.colors,
+                bg,
+                fold_char == "+",
+                is_fold_hovered,
+            );
 
-            gutter_lines.push(f, [
-                Span::styled(line_num_display, num_style),
-                Span::styled(diff_char, diff_style),
-                Span::styled(fold_char, fold_style),
-            ]);
+            gutter_lines.push(
+                f,
+                [
+                    Span::styled(line_num_display, num_style),
+                    Span::styled(diff_char, diff_style),
+                    Span::styled(fold_char, fold_style),
+                ],
+            );
         }
 
         format_empty_gutter_row(&mut gutter_num_buf, render_line_numbers, gutter_width);
@@ -1858,15 +2123,20 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         let search_matches = &file_search.search_matches;
         let search_current = file_search.search_current;
         let occurrence_is_selection = if app.highlight_words_across_tabs {
-            app.shared_word_highlight.as_ref().is_some_and(|query| query.selected)
+            app.shared_word_highlight
+                .as_ref()
+                .is_some_and(|query| query.selected)
         } else {
             has_selection
         };
         let cursor_word_owned: Option<std::sync::Arc<str>>;
         let cursor_word: Option<&str> = if app.highlight_words_across_tabs {
-            app.shared_word_highlight.as_ref().map(|query| query.word.as_ref())
+            app.shared_word_highlight
+                .as_ref()
+                .map(|query| query.word.as_ref())
         } else if has_selection {
-            cursor_word_owned = cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache);
+            cursor_word_owned =
+                cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache);
             cursor_word_owned.as_deref()
         } else if file_search.search_active {
             None
@@ -1881,15 +2151,26 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             app.cached_cursor_word.as_deref()
         };
 
-        let mut code_lines = prepared_text::Rows::new(code_area, Style::default().bg(app.colors.bg_editor).remove_modifier(Modifier::DIM));
+        let mut code_lines = prepared_text::Rows::new(
+            code_area,
+            Style::default()
+                .bg(app.colors.bg_editor)
+                .remove_modifier(Modifier::DIM),
+        );
         let wrap_spaces_pool: &str = &crate::helpers::spaces(wrap_width);
         let mut line_text_buf = RenderLineText::Borrowed("");
         let mut word_occurrences = None;
         let cursor_word_char_len = if app.highlight_words_across_tabs {
-            app.shared_word_highlight.as_ref().map_or(0, |query| query.char_len)
+            app.shared_word_highlight
+                .as_ref()
+                .map_or(0, |query| query.char_len)
         } else {
             cursor_word.map_or(0, |w| {
-                if w.is_ascii() { w.len() } else { w.chars().count() }
+                if w.is_ascii() {
+                    w.len()
+                } else {
+                    w.chars().count()
+                }
             })
         };
         if let Some(word) = cursor_word {
@@ -1978,7 +2259,8 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 );
             }
             let clean_line = line_text_buf.trim_end_matches(['\n', '\r']);
-            let clean_line_char_count = logical_line_char_count - (line_text_buf.len() - clean_line.len());
+            let clean_line_char_count =
+                logical_line_char_count - (line_text_buf.len() - clean_line.len());
             if new_logical_line {
                 bracket_depth_line = Some(line_idx);
                 logical_paint_end = if !exact_wrap_layout && !reference_pending_wrap_paint() {
@@ -2000,11 +2282,17 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
             if new_logical_line {
                 cached_hl_wrap = app.highlighter.render_line(
-                    &line_text_buf, line_idx, file_path.as_deref(), syntax_language.as_deref(),
-                    app.syntax_theme.as_str(), editor.content_version,
+                    &line_text_buf,
+                    line_idx,
+                    file_path.as_deref(),
+                    syntax_language.as_deref(),
+                    app.syntax_theme.as_str(),
+                    editor.content_version,
                 );
                 comment_ranges = app.comment_whitespace_mode.and_then(|_| {
-                    cached_hl_wrap.as_ref().map(|line| std::rc::Rc::clone(&line.comments))
+                    cached_hl_wrap
+                        .as_ref()
+                        .map(|line| std::rc::Rc::clone(&line.comments))
                 });
             }
             let highlighted = HighlightedLine::new(
@@ -2021,7 +2309,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     clean_line_char_count
                 } else {
                     let last_visible = if reference_row_preparation() {
-                        wrapped_rows.iter().rev().find(|visible| visible.line_idx == line_idx).unwrap()
+                        wrapped_rows
+                            .iter()
+                            .rev()
+                            .find(|visible| visible.line_idx == line_idx)
+                            .unwrap()
                     } else {
                         // Continuations are adjacent: locate their end without
                         // rescanning every later logical line in this viewport.
@@ -2029,7 +2321,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                             .partition_point(|visible| visible.line_idx == line_idx);
                         &wrapped_rows[row_index + count - 1]
                     };
-                    last_visible.end_col.min(logical_paint_end).saturating_add(1)
+                    last_visible
+                        .end_col
+                        .min(logical_paint_end)
+                        .saturating_add(1)
                 };
                 #[cfg(test)]
                 if !exact_wrap_layout {
@@ -2053,7 +2348,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                             .as_ref()
                             .map(|line| (&line.spans, line.lengths.as_slice())),
                         decode_end,
-                        LineWhitespace::needs_boundary(editor.whitespace_mode, app.comment_whitespace_mode),
+                        LineWhitespace::needs_boundary(
+                            editor.whitespace_mode,
+                            app.comment_whitespace_mode,
+                        ),
                     ),
                 );
                 let line_start = bracket_depth_index
@@ -2098,7 +2396,12 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 editor_bg
             };
-            let line_bg = crate::merge_conflict_ui::content_background(editor, line_idx, &app.colors, line_bg);
+            let line_bg = crate::merge_conflict_ui::content_background(
+                editor,
+                line_idx,
+                &app.colors,
+                line_bg,
+            );
             let merge_style = app
                 .colors
                 .ui
@@ -2147,7 +2450,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     line_u32_hl,
                     &mut line_highlights_buf,
                 );
-                highlight_column_ranges(&line_highlights_buf, line_u32_hl, &mut line_highlight_columns);
+                highlight_column_ranges(
+                    &line_highlights_buf,
+                    line_u32_hl,
+                    &mut line_highlight_columns,
+                );
 
                 // Diagnostics are indexed when providers publish a new revision;
                 // rendering only visits matches for this visible line.
@@ -2158,8 +2465,14 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     line_idx,
                     &mut line_diags_buf,
                 );
-                diagnostic_column_ranges(&file_diagnostics, &line_diags_buf, line_idx, &app.colors,
-                    &mut line_diagnostic_columns, &mut line_diagnostic_runs);
+                diagnostic_column_ranges(
+                    &file_diagnostics,
+                    &line_diags_buf,
+                    line_idx,
+                    &app.colors,
+                    &mut line_diagnostic_columns,
+                    &mut line_diagnostic_runs,
+                );
 
                 // Detect inline color values (#RGB, #RRGGBB)
                 inline_colors = app.show_color_preview.then(|| {
@@ -2175,7 +2488,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             // Retain its provider slice and token cursor instead of restarting
             // the scan from column zero on each terminal row.
             if new_logical_line || reference_row_preparation() {
-                line_semantic_wrap = if editor.blame.revision.is_none() && app.show_semantic_tokens && !app.lsp_semantic_tokens.is_empty() {
+                line_semantic_wrap = if editor.blame.revision.is_none()
+                    && app.show_semantic_tokens
+                    && !app.lsp_semantic_tokens.is_empty()
+                {
                     let line_u32 = line_idx as u32;
                     let start = app
                         .lsp_semantic_tokens
@@ -2200,9 +2516,12 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             let ts = editor.tab_size;
             let mut prev_ch = abs_col.checked_sub(1).map(|col| wrapped_chars[col]);
             let mut whitespace = LineWhitespace::new(
-                editor.whitespace_mode, app.comment_whitespace_mode,
+                editor.whitespace_mode,
+                app.comment_whitespace_mode,
                 comment_ranges.as_deref().map_or(&[], Vec::as_slice),
-                glyphs.whitespace, abs_col, line_idx == cursor_line,
+                glyphs.whitespace,
+                abs_col,
+                line_idx == cursor_line,
             );
             wrap_batch_buf.clear();
             let mut wrap_batch_style = Style::default();
@@ -2240,7 +2559,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     // Inject inline color swatch before #color value
                     if let Some(color) = color_previews.at(abs_col) {
                         if !wrap_batch_buf.is_empty() {
-                            code_lines.flush(&mut line_spans, &mut wrap_batch_buf, wrap_batch_style);
+                            code_lines.flush(
+                                &mut line_spans,
+                                &mut wrap_batch_buf,
+                                wrap_batch_style,
+                            );
                         }
                         line_spans.push(Span::styled("▉", Style::default().fg(color).bg(line_bg)));
                         animation_col += 1;
@@ -2263,9 +2586,13 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                             let st = &line_semantic_wrap[sem_tok_idx];
                             if col_u32 >= st.start_char && col_u32 < st.start_char + st.length {
                                 if sem_color_idx != sem_tok_idx {
-                                    sem_color = editor_semantic_color_for_token(st,
-                                        &app.lsp_manager, editor, app.semantic_theme_colors.as_ref(),
-                                        &mut semantic_color_cache);
+                                    sem_color = editor_semantic_color_for_token(
+                                        st,
+                                        &app.lsp_manager,
+                                        editor,
+                                        app.semantic_theme_colors.as_ref(),
+                                        &mut semantic_color_cache,
+                                    );
                                     sem_color_idx = sem_tok_idx;
                                 }
                                 if let Some(color) = sem_color {
@@ -2287,11 +2614,17 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     }
                     let search_match = search_runs.at(abs_col);
                     if let Some(is_current) = search_match {
-                        s = app.colors.ui.find_style(s, is_current, app.colors.bg_search_match);
+                        s = app
+                            .colors
+                            .ui
+                            .find_style(s, is_current, app.colors.bg_search_match);
                     }
                     // LSP document highlight (semantic symbol occurrences)
                     if document_occurrences.contains(abs_col) {
-                        s = app.colors.ui.occurrence_style(s, app.colors.bg_word_highlight, false);
+                        s = app
+                            .colors
+                            .ui
+                            .occurrence_style(s, app.colors.bg_word_highlight, false);
                     }
                     if occurrences
                         .as_mut()
@@ -2330,22 +2663,44 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     if let Some(color) = diagnostic_runs.at(abs_col) {
                         s = s.add_modifier(Modifier::UNDERLINED).underline_color(color);
                     }
-                    if link_hover.is_some_and(|(line, start, end)| line_idx == line && abs_col >= start && abs_col < end) {
+                    if link_hover.is_some_and(|(line, start, end)| {
+                        line_idx == line && abs_col >= start && abs_col < end
+                    }) {
                         s = s.add_modifier(Modifier::UNDERLINED);
                     }
-                    let indent_depth = app.show_indent_guides.then(||
-                        indent_guide_depth(wrap_visual_col, indent_columns, ts)).flatten();
+                    let indent_depth = app
+                        .show_indent_guides
+                        .then(|| indent_guide_depth(wrap_visual_col, indent_columns, ts))
+                        .flatten();
                     let guide_color = if let Some(depth) = indent_depth {
-                        Some(app.colors.ui.indent_guide_color(depth, cursor_indent == Some(wrap_visual_col)))
+                        Some(
+                            app.colors
+                                .ui
+                                .indent_guide_color(depth, cursor_indent == Some(wrap_visual_col)),
+                        )
                     } else if ch == ' ' {
-                        bracket_cache_matches.then(|| app.cached_bracket_guides.at(line_idx, abs_col)).flatten().map(|g| {
-                            let index = (g.2 as usize).wrapping_sub(1) % 6;
-                            if editor.cursor_line >= g.0 && editor.cursor_line < g.1 { app.colors.ui.bracket_guides_active[index] }
-                            else { app.colors.ui.bracket_guides[index] }
-                        })
-                    } else { None };
-                    let show_ws = whitespace.shows(ch, abs_col,
-                        ch == ' ' && (prev_ch == Some(' ') || wrapped_chars.get(abs_col + 1) == Some(&' ')), cell_selected);
+                        bracket_cache_matches
+                            .then(|| app.cached_bracket_guides.at(line_idx, abs_col))
+                            .flatten()
+                            .map(|g| {
+                                let index = (g.2 as usize).wrapping_sub(1) % 6;
+                                if editor.cursor_line >= g.0 && editor.cursor_line < g.1 {
+                                    app.colors.ui.bracket_guides_active[index]
+                                } else {
+                                    app.colors.ui.bracket_guides[index]
+                                }
+                            })
+                    } else {
+                        None
+                    };
+                    let show_ws = whitespace.shows(
+                        ch,
+                        abs_col,
+                        ch == ' '
+                            && (prev_ch == Some(' ')
+                                || wrapped_chars.get(abs_col + 1) == Some(&' ')),
+                        cell_selected,
+                    );
                     if let Some(color) = guide_color {
                         s = guide_style(s, color, app.colors.ui.fg_whitespace, show_ws);
                     }
@@ -2365,7 +2720,12 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                             } else {
                                 0
                             };
-                            animation_geometry.record_primary_cursor(code_lines.len(), animation_col, cursor_width, s);
+                            animation_geometry.record_primary_cursor(
+                                code_lines.len(),
+                                animation_col,
+                                cursor_width,
+                                s,
+                            );
                             s = s.patch(caret_style(s.bg.unwrap_or(line_bg)));
                         } else {
                             s = s.patch(cursor_style(s.bg.unwrap_or(line_bg)));
@@ -2379,29 +2739,52 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     if animation_geometry.enabled() || bar_caret {
                         let animation_width = if ch == '\t' {
                             ts.saturating_sub(wrap_visual_col % ts.max(1)).max(1)
-                        } else { unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) };
+                        } else {
+                            unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
+                        };
                         if animation_geometry.enabled() {
-                            animation_geometry.push(line_idx, abs_col, ch, code_lines.len(), animation_col, animation_width);
+                            animation_geometry.push(
+                                line_idx,
+                                abs_col,
+                                ch,
+                                code_lines.len(),
+                                animation_col,
+                                animation_width,
+                            );
                         }
                         animation_col += animation_width;
                     }
                     if guide_color.is_some() {
                         if !wrap_batch_buf.is_empty() {
-                            code_lines.flush(&mut line_spans, &mut wrap_batch_buf, wrap_batch_style);
+                            code_lines.flush(
+                                &mut line_spans,
+                                &mut wrap_batch_buf,
+                                wrap_batch_style,
+                            );
                         }
                         line_spans.push(Span::styled(guide_glyph(ch, show_ws), s));
                         if ch == '\t' {
-                            push_cell_padding(&mut line_spans, ts.saturating_sub(wrap_visual_col % ts.max(1)).max(1) - 1, s);
+                            push_cell_padding(
+                                &mut line_spans,
+                                ts.saturating_sub(wrap_visual_col % ts.max(1)).max(1) - 1,
+                                s,
+                            );
                         }
                         wrap_batch_style = s;
                     } else if ch == '\t' {
                         // Tab: expand to tab_size-aligned spaces
                         let tab_w = ts.saturating_sub(wrap_visual_col % ts).max(1);
                         if !wrap_batch_buf.is_empty() {
-                            code_lines.flush(&mut line_spans, &mut wrap_batch_buf, wrap_batch_style);
+                            code_lines.flush(
+                                &mut line_spans,
+                                &mut wrap_batch_buf,
+                                wrap_batch_style,
+                            );
                         }
                         if show_ws {
-                            let ns = s.fg(app.colors.ui.fg_whitespace).remove_modifier(Modifier::DIM);
+                            let ns = s
+                                .fg(app.colors.ui.fg_whitespace)
+                                .remove_modifier(Modifier::DIM);
                             line_spans.push(Span::styled(marked_tab(tab_w), ns));
                             wrap_batch_style = ns;
                         } else {
@@ -2412,19 +2795,29 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                         if show_ws {
                             let ws_ch = "·";
                             if !wrap_batch_buf.is_empty() {
-                                code_lines.flush(&mut line_spans, &mut wrap_batch_buf, wrap_batch_style);
+                                code_lines.flush(
+                                    &mut line_spans,
+                                    &mut wrap_batch_buf,
+                                    wrap_batch_style,
+                                );
                             }
                             line_spans.push(Span::styled(
                                 ws_ch,
-                                s.fg(app.colors.ui.fg_whitespace).remove_modifier(Modifier::DIM),
+                                s.fg(app.colors.ui.fg_whitespace)
+                                    .remove_modifier(Modifier::DIM),
                             ));
-                            wrap_batch_style =
-                                s.fg(app.colors.ui.fg_whitespace).remove_modifier(Modifier::DIM);
+                            wrap_batch_style = s
+                                .fg(app.colors.ui.fg_whitespace)
+                                .remove_modifier(Modifier::DIM);
                         } else if s == wrap_batch_style && !wrap_batch_buf.is_empty() {
                             wrap_batch_buf.push(ch);
                         } else {
                             if !wrap_batch_buf.is_empty() {
-                                code_lines.flush(&mut line_spans, &mut wrap_batch_buf, wrap_batch_style);
+                                code_lines.flush(
+                                    &mut line_spans,
+                                    &mut wrap_batch_buf,
+                                    wrap_batch_style,
+                                );
                             }
                             wrap_batch_buf.push(ch);
                             wrap_batch_style = s;
@@ -2471,10 +2864,13 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 );
             }
             let paints_line_end = source_end_prepared && row.end_col == row.line_len;
-            let search_eol = (paints_line_end || reference_row_preparation()).then(||
-                line_matches_buf.iter().find_map(|&(start, end, current)|
-                    (start <= row.line_len && end > row.line_len).then_some(current))
-            ).flatten();
+            let search_eol = (paints_line_end || reference_row_preparation())
+                .then(|| {
+                    line_matches_buf.iter().find_map(|&(start, end, current)| {
+                        (start <= row.line_len && end > row.line_len).then_some(current)
+                    })
+                })
+                .flatten();
             let cursor_at_end = line_idx == cursor_line && cursor_col == row.end_col;
             if ((show_cursors && cursor_at_end) || search_eol.is_some())
                 && source_end_prepared
@@ -2486,12 +2882,28 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     rendered_cols += 1;
                 }
                 if show_cursors && cursor_at_end {
-                    animation_geometry.record_primary_cursor(code_lines.len(), animation_col.max(rendered_cols), 1, Style::default().bg(line_bg));
+                    animation_geometry.record_primary_cursor(
+                        code_lines.len(),
+                        animation_col.max(rendered_cols),
+                        1,
+                        Style::default().bg(line_bg),
+                    );
                 }
                 line_spans.push(Span::styled(
                     " ",
-                    if show_cursors && cursor_at_end { if bar_caret { Style::default().bg(line_bg) } else { cursor_style(line_bg) } }
-                    else { app.colors.ui.find_style(Style::default(), search_eol == Some(true), app.colors.bg_search_match) },
+                    if show_cursors && cursor_at_end {
+                        if bar_caret {
+                            Style::default().bg(line_bg)
+                        } else {
+                            cursor_style(line_bg)
+                        }
+                    } else {
+                        app.colors.ui.find_style(
+                            Style::default(),
+                            search_eol == Some(true),
+                            app.colors.bg_search_match,
+                        )
+                    },
                 ));
                 animation_col = animation_col.max(rendered_cols).saturating_add(1);
             } else if show_inactive_cursor
@@ -2512,7 +2924,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                         .add_modifier(ratatui::style::Modifier::UNDERLINED),
                 ));
             }
-            if show_cursors && source_end_prepared && (paints_line_end || reference_row_preparation()) {
+            if show_cursors
+                && source_end_prepared
+                && (paints_line_end || reference_row_preparation())
+            {
                 for &ec_col in &extra_cursor_line.columns {
                     if ec_col == row.end_col
                         && row.end_col == row.line_len
@@ -2522,20 +2937,26 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                             line_spans.push(Span::styled(" ", Style::default().bg(line_bg)));
                             rendered_cols += 1;
                         }
-                        line_spans.push(Span::styled(
-                            " ",
-                            cursor_style(line_bg),
-                        ));
-                        animation_geometry.push(line_idx, ec_col, '\0', code_lines.len(), animation_col.max(rendered_cols), 1);
+                        line_spans.push(Span::styled(" ", cursor_style(line_bg)));
+                        animation_geometry.push(
+                            line_idx,
+                            ec_col,
+                            '\0',
+                            code_lines.len(),
+                            animation_col.max(rendered_cols),
+                            1,
+                        );
                         animation_col = animation_col.max(rendered_cols).saturating_add(1);
                     }
                 }
             }
             if (row.is_first || row_index == 0) && editor.is_fold_start(line_idx) {
                 folded_rows.push(crate::ui_editor_folds::Row {
-                    line: line_idx, screen_row: row_index,
+                    line: line_idx,
+                    screen_row: row_index,
                     content_width: line_spans.iter().map(|span| span.content.width()).sum(),
-                    start_col: row.start_col, end_col: row.end_col,
+                    start_col: row.start_col,
+                    end_col: row.end_col,
                 });
             }
             // Show wrap indicator "↩" at the end of non-last wrapped segments
@@ -2569,7 +2990,13 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             } else if line_spans.len() > wrap_width {
                 line_spans.truncate(wrap_width);
             }
-            paint_editor_row(f, &mut code_lines, &mut line_spans, merge_style, &app.colors);
+            paint_editor_row(
+                f,
+                &mut code_lines,
+                &mut line_spans,
+                merge_style,
+                &app.colors,
+            );
         }
         code_lines.finish(f.buffer_mut());
         apply_editor_gradients(
@@ -2614,7 +3041,12 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             true,
         );
         if minimap_sep_width > 0 {
-            draw_minimap_separator(f, minimap_sep_area, app.colors.ui.fg_overview_border, app.colors.bg_editor);
+            draw_minimap_separator(
+                f,
+                minimap_sep_area,
+                app.colors.ui.fg_overview_border,
+                app.colors.bg_editor,
+            );
         }
         if minimap_width > 0 {
             draw_minimap(
@@ -2652,9 +3084,18 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     // Get visible line indices (respecting folds)
     let display_lines = editor.visible_lines(scroll, visible_lines);
     if editor.blame.enabled {
-        editor.blame.rows = display_lines.iter().map(|&line_idx| Some(crate::editor::WrappedRowInfo {
-            line_idx, start_col: 0, end_col: 0, line_len: 0, is_first: true,
-        })).collect();
+        editor.blame.rows = display_lines
+            .iter()
+            .map(|&line_idx| {
+                Some(crate::editor::WrappedRowInfo {
+                    line_idx,
+                    start_col: 0,
+                    end_col: 0,
+                    line_len: 0,
+                    is_first: true,
+                })
+            })
+            .collect();
     }
 
     // Draw gutter
@@ -2713,13 +3154,21 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         let gutter_row = gutter_area.y + (len_as_u16(gutter_lines.len()));
         let is_fold_hovered =
             fold_char != " " && app.mouse_row == gutter_row && app.mouse_col == fold_col;
-        let fold_style = crate::ui_editor_folds::gutter_style(&app.colors, bg, fold_char == "+", is_fold_hovered);
+        let fold_style = crate::ui_editor_folds::gutter_style(
+            &app.colors,
+            bg,
+            fold_char == "+",
+            is_fold_hovered,
+        );
 
-        gutter_lines.push(f, [
-            Span::styled(line_num_display, num_style),
-            Span::styled(diff_char, diff_style),
-            Span::styled(fold_char, fold_style),
-        ]);
+        gutter_lines.push(
+            f,
+            [
+                Span::styled(line_num_display, num_style),
+                Span::styled(diff_char, diff_style),
+                Span::styled(fold_char, fold_style),
+            ],
+        );
     }
     // Fill remaining gutter lines
     format_empty_gutter_row(&mut gutter_num_buf, render_line_numbers, gutter_width);
@@ -2739,15 +3188,20 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     let search_current = app.tabs[app.active_tab].file_search.search_current;
     // Word/selection occurrence highlighting
     let occurrence_is_selection = if app.highlight_words_across_tabs {
-        app.shared_word_highlight.as_ref().is_some_and(|query| query.selected)
+        app.shared_word_highlight
+            .as_ref()
+            .is_some_and(|query| query.selected)
     } else {
         has_selection
     };
     let cursor_word_owned_nw: Option<std::sync::Arc<str>>;
     let cursor_word: Option<&str> = if app.highlight_words_across_tabs {
-        app.shared_word_highlight.as_ref().map(|query| query.word.as_ref())
+        app.shared_word_highlight
+            .as_ref()
+            .map(|query| query.word.as_ref())
     } else if has_selection {
-        cursor_word_owned_nw = cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache);
+        cursor_word_owned_nw =
+            cached_selection_occurrence_text(editor, &mut app.editor_selection_word_cache);
         cursor_word_owned_nw.as_deref()
     } else if app.tabs[app.active_tab].file_search.search_active {
         None
@@ -2788,7 +3242,12 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         && bracket_depth_index
             .as_ref()
             .is_none_or(|index| index.enabled());
-    let mut code_lines = prepared_text::Rows::new(code_area, Style::default().bg(app.colors.bg_editor).remove_modifier(Modifier::DIM));
+    let mut code_lines = prepared_text::Rows::new(
+        code_area,
+        Style::default()
+            .bg(app.colors.bg_editor)
+            .remove_modifier(Modifier::DIM),
+    );
     let spaces_pool: &str = &crate::helpers::spaces(code_area.width as usize);
     let file_diags_non_wrap = std::sync::Arc::clone(&app.cached_editor_diagnostics);
     let mut inline_annotation = None;
@@ -2796,10 +3255,16 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     let diag_indices_by_line = std::sync::Arc::clone(&app.cached_diag_indices_by_line);
     let wide_diag_indices = std::sync::Arc::clone(&app.cached_wide_diag_indices);
     let cursor_word_char_len = if app.highlight_words_across_tabs {
-        app.shared_word_highlight.as_ref().map_or(0, |query| query.char_len)
+        app.shared_word_highlight
+            .as_ref()
+            .map_or(0, |query| query.char_len)
     } else {
         cursor_word.map_or(0, |w| {
-            if w.is_ascii() { w.len() } else { w.chars().count() }
+            if w.is_ascii() {
+                w.len()
+            } else {
+                w.chars().count()
+            }
         })
     };
     if let Some(word) = cursor_word {
@@ -2847,11 +3312,16 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             rope_line,
         );
         let clean_line = line_text_buf.trim_end_matches(['\n', '\r']);
-        let clean_line_char_count = rope_line.len_chars() - (line_text_buf.len() - clean_line.len());
+        let clean_line_char_count =
+            rope_line.len_chars() - (line_text_buf.len() - clean_line.len());
 
         let cached_hl = app.highlighter.render_line(
-            &line_text_buf, i, file_path.as_deref(), syntax_language.as_deref(),
-            app.syntax_theme.as_str(), editor.content_version,
+            &line_text_buf,
+            i,
+            file_path.as_deref(),
+            syntax_language.as_deref(),
+            app.syntax_theme.as_str(),
+            editor.content_version,
         );
         let highlighted = HighlightedLine::new(
             cached_hl
@@ -2900,7 +3370,13 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         };
 
         // Collect search matches on this line
-        matches_for_line(search_matches, &editor.rope, i, search_current, &mut line_matches_buf);
+        matches_for_line(
+            search_matches,
+            &editor.rope,
+            i,
+            search_current,
+            &mut line_matches_buf,
+        );
         flatten_priority_ranges(&line_matches_buf, &mut line_match_runs);
 
         // Match positions are independent of the horizontal viewport.
@@ -2935,7 +3411,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             line_u32_hl,
             &mut line_highlights_buf,
         );
-        highlight_column_ranges(&line_highlights_buf, line_u32_hl, &mut line_highlight_columns);
+        highlight_column_ranges(
+            &line_highlights_buf,
+            line_u32_hl,
+            &mut line_highlight_columns,
+        );
 
         // Diagnostics are indexed when providers publish a new revision;
         // rendering only visits matches for this visible line.
@@ -2946,8 +3426,14 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             i,
             &mut line_diags_buf,
         );
-        diagnostic_column_ranges(&file_diags_non_wrap, &line_diags_buf, i, &app.colors,
-            &mut line_diagnostic_columns, &mut line_diagnostic_runs);
+        diagnostic_column_ranges(
+            &file_diags_non_wrap,
+            &line_diags_buf,
+            i,
+            &app.colors,
+            &mut line_diagnostic_columns,
+            &mut line_diagnostic_runs,
+        );
 
         // Pre-compute main selection column range for this line
         let main_sel_cols: Option<(usize, usize)> = if has_selection {
@@ -2967,24 +3453,28 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         };
 
         let comment_ranges = app.comment_whitespace_mode.and_then(|_| {
-            cached_hl.as_ref().map(|line| std::rc::Rc::clone(&line.comments))
+            cached_hl
+                .as_ref()
+                .map(|line| std::rc::Rc::clone(&line.comments))
         });
 
         // Build character by character for cursor, selection, and search highlighting
         // Pre-compute semantic token ranges for this line
-        let line_semantic: &[crate::lsp::DecodedSemanticToken] =
-            if editor.blame.revision.is_none() && app.show_semantic_tokens && !app.lsp_semantic_tokens.is_empty() {
-                let line_u32 = i as u32;
-                let start = app
-                    .lsp_semantic_tokens
-                    .partition_point(|t| t.line < line_u32);
-                let end = app
-                    .lsp_semantic_tokens
-                    .partition_point(|t| t.line <= line_u32);
-                &app.lsp_semantic_tokens[start..end]
-            } else {
-                &[]
-            };
+        let line_semantic: &[crate::lsp::DecodedSemanticToken] = if editor.blame.revision.is_none()
+            && app.show_semantic_tokens
+            && !app.lsp_semantic_tokens.is_empty()
+        {
+            let line_u32 = i as u32;
+            let start = app
+                .lsp_semantic_tokens
+                .partition_point(|t| t.line < line_u32);
+            let end = app
+                .lsp_semantic_tokens
+                .partition_point(|t| t.line <= line_u32);
+            &app.lsp_semantic_tokens[start..end]
+        } else {
+            &[]
+        };
         line_spans.clear();
         let mut col = editor
             .render_line_cache
@@ -2996,14 +3486,17 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         let ts = editor.tab_size;
         let mut prev_ch = col.checked_sub(1).map(|previous| glyphs.chars[previous]);
         let mut whitespace = LineWhitespace::new(
-            editor.whitespace_mode, app.comment_whitespace_mode,
+            editor.whitespace_mode,
+            app.comment_whitespace_mode,
             comment_ranges.as_deref().map_or(&[], Vec::as_slice),
-            glyphs.whitespace, col, i == cursor_line,
+            glyphs.whitespace,
+            col,
+            i == cursor_line,
         );
         let mut sem_tok_idx: usize = 0; // track current semantic token for O(1) lookup
         let mut sem_color_idx = usize::MAX;
         let mut sem_color = None;
-                                        // Span batching: accumulate chars with same style to reduce allocations
+        // Span batching: accumulate chars with same style to reduce allocations
         batch_buf.clear();
         // Calculate leading whitespace for indent guides
         let leading_whitespace = glyphs.leading_whitespace;
@@ -3019,7 +3512,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         });
 
         let line_bg = crate::merge_conflict_ui::content_background(editor, i, &app.colors, line_bg);
-        let merge_style = app.colors.ui.merge_marker_style(clean_line.chars(), line_bg);
+        let merge_style = app
+            .colors
+            .ui
+            .merge_marker_style(clean_line.chars(), line_bg);
         let line_bg = merge_style.and_then(|style| style.bg).unwrap_or(line_bg);
 
         // File diff highlight: green background for added lines in compare mode
@@ -3057,19 +3553,28 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         // Range decorations share a style up to their next boundary. A single
         // diagnostic or search hit must not force the entire row into cell work.
         let plain_line = plain_runs::enabled()
-            && extra_cursor_line.columns.is_empty() && extra_cursor_line.selections.is_empty()
-            && inline_colors.as_ref().is_none_or(|colors| colors.is_empty())
+            && extra_cursor_line.columns.is_empty()
+            && extra_cursor_line.selections.is_empty()
+            && inline_colors
+                .as_ref()
+                .is_none_or(|colors| colors.is_empty())
             && !matching_bracket.is_some_and(|(line, _)| i == line || is_current_line)
             && !matching_tag.is_some_and(|(a, _, _, b, _, _)| i == a || i == b)
             && !link_hover.is_some_and(|(line, _, _)| i == line);
-        let decorated_indent = if app.show_indent_guides || app.indent_rainbow { leading_whitespace } else { 0 };
-        let has_bracket_guides = bracket_cache_matches && !app.cached_bracket_guides.as_slice().is_empty();
+        let decorated_indent = if app.show_indent_guides || app.indent_rainbow {
+            leading_whitespace
+        } else {
+            0
+        };
+        let has_bracket_guides =
+            bracket_cache_matches && !app.cached_bracket_guides.as_slice().is_empty();
         'syntax_spans: for (span_index, ((style, syntax_text), &span_end)) in highlighted
             .iter_from_span(first_span)
             .zip(&glyphs.span_ends[first_span..])
             .enumerate()
         {
-            let span_start = (first_span + span_index).checked_sub(1)
+            let span_start = (first_span + span_index)
+                .checked_sub(1)
                 .map_or(0, |previous| glyphs.span_ends[previous]);
             if col >= visible_end {
                 break;
@@ -3090,17 +3595,26 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     let col_u32 = col as u32;
                     while sem_tok_idx < line_semantic.len() {
                         let token = &line_semantic[sem_tok_idx];
-                        if token.start_char + token.length > col_u32 { break; }
+                        if token.start_char + token.length > col_u32 {
+                            break;
+                        }
                         sem_tok_idx += 1;
                     }
                     if let Some(token) = line_semantic.get(sem_tok_idx) {
                         if col_u32 >= token.start_char {
                             if sem_color_idx != sem_tok_idx {
-                                sem_color = editor_semantic_color_for_token(token, &app.lsp_manager,
-                                    editor, app.semantic_theme_colors.as_ref(), &mut semantic_color_cache);
+                                sem_color = editor_semantic_color_for_token(
+                                    token,
+                                    &app.lsp_manager,
+                                    editor,
+                                    app.semantic_theme_colors.as_ref(),
+                                    &mut semantic_color_cache,
+                                );
                                 sem_color_idx = sem_tok_idx;
                             }
-                            if let Some(color) = sem_color { text_style = text_style.patch(color); }
+                            if let Some(color) = sem_color {
+                                text_style = text_style.patch(color);
+                            }
                             style_end = style_end.min((token.start_char + token.length) as usize);
                         } else {
                             style_end = style_end.min(token.start_char as usize);
@@ -3113,42 +3627,77 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     let (search, boundary) = search_runs.run(col);
                     end = end.min(boundary);
                     if let Some(current) = search {
-                        style = app.colors.ui.find_style(style, current, app.colors.bg_search_match);
+                        style =
+                            app.colors
+                                .ui
+                                .find_style(style, current, app.colors.bg_search_match);
                     }
                     let (document, boundary) = document_occurrences.run(col);
                     end = end.min(boundary);
                     if document {
-                        style = app.colors.ui.occurrence_style(style, app.colors.bg_word_highlight, false);
+                        style = app.colors.ui.occurrence_style(
+                            style,
+                            app.colors.bg_word_highlight,
+                            false,
+                        );
                     }
                     if let Some(occurrences) = &mut occurrences {
                         let (word, boundary) = occurrences.run(col);
                         end = end.min(boundary);
                         if word && (!occurrence_is_selection || search.is_none()) {
-                            style = app.colors.ui.occurrence_style(style, app.colors.bg_word_highlight, occurrence_is_selection);
+                            style = app.colors.ui.occurrence_style(
+                                style,
+                                app.colors.bg_word_highlight,
+                                occurrence_is_selection,
+                            );
                         }
                     }
                     let (diagnostic, boundary) = diagnostic_runs.run(col);
                     end = end.min(boundary);
                     if let Some(color) = diagnostic {
-                        style = style.add_modifier(Modifier::UNDERLINED).underline_color(color);
+                        style = style
+                            .add_modifier(Modifier::UNDERLINED)
+                            .underline_color(color);
                     }
                     let (todo, boundary) = todo_cursor.run(col);
                     end = end.min(boundary);
                     if let Some(kind) = todo {
-                        style = style.fg(kind.color(&app.colors)).add_modifier(Modifier::BOLD);
+                        style = style
+                            .fg(kind.color(&app.colors))
+                            .add_modifier(Modifier::BOLD);
                     }
-                    let selected = main_sel_cols.is_some_and(|(start, end)| col >= start && col < end);
+                    let selected =
+                        main_sel_cols.is_some_and(|(start, end)| col >= start && col < end);
                     if let Some((start, stop)) = main_sel_cols {
-                        if col < start { end = end.min(start); }
-                        else if col < stop { end = end.min(stop); }
+                        if col < start {
+                            end = end.min(start);
+                        } else if col < stop {
+                            end = end.min(stop);
+                        }
                     }
-                    if is_current_line && (show_cursors || show_inactive_cursor) && col <= cursor_col {
+                    if is_current_line
+                        && (show_cursors || show_inactive_cursor)
+                        && col <= cursor_col
+                    {
                         end = end.min(cursor_col);
                     }
-                    let end = plain_runs::end(&glyphs.chars, col, end, app.bracket_pair_colorization,
-                        decorated_indent, has_bracket_guides, selected, &mut whitespace, &glyphs.source_spaces);
+                    let end = plain_runs::end(
+                        &glyphs.chars,
+                        col,
+                        end,
+                        app.bracket_pair_colorization,
+                        decorated_indent,
+                        has_bracket_guides,
+                        selected,
+                        &mut whitespace,
+                        &glyphs.source_spaces,
+                    );
                     if end > col {
-                        let style = if selected { selection_style.apply(style) } else { style };
+                        let style = if selected {
+                            selection_style.apply(style)
+                        } else {
+                            style
+                        };
                         if style != batch_style {
                             code_lines.flush(&mut line_spans, &mut batch_buf, batch_style);
                             batch_style = style;
@@ -3160,7 +3709,13 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                         }
                         if animation_geometry.enabled() || bar_caret {
                             if animation_geometry.enabled() {
-                                animation_geometry.push_unit_width_run(i, col, &glyphs.chars[col..end], code_lines.len(), animation_col);
+                                animation_geometry.push_unit_width_run(
+                                    i,
+                                    col,
+                                    &glyphs.chars[col..end],
+                                    code_lines.len(),
+                                    animation_col,
+                                );
                             }
                             animation_col += end - col;
                         }
@@ -3187,9 +3742,18 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     if animation_geometry.enabled() || bar_caret {
                         let animation_width = if ch == '\t' {
                             ts.saturating_sub(visual_col % ts.max(1)).max(1)
-                        } else { unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) };
+                        } else {
+                            unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
+                        };
                         if animation_geometry.enabled() {
-                            animation_geometry.push(i, col, ch, code_lines.len(), animation_col, animation_width);
+                            animation_geometry.push(
+                                i,
+                                col,
+                                ch,
+                                code_lines.len(),
+                                animation_col,
+                                animation_width,
+                            );
                         }
                         animation_col += animation_width;
                     }
@@ -3204,25 +3768,45 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                             s = s.fg(color);
                         }
                     }
-                    let indent_depth = app.show_indent_guides.then(||
-                        indent_guide_depth(visual_col, indent_columns, ts)).flatten();
+                    let indent_depth = app
+                        .show_indent_guides
+                        .then(|| indent_guide_depth(visual_col, indent_columns, ts))
+                        .flatten();
                     let guide_color = if let Some(depth) = indent_depth {
-                        Some(app.colors.ui.indent_guide_color(depth, cursor_indent == Some(visual_col)))
+                        Some(
+                            app.colors
+                                .ui
+                                .indent_guide_color(depth, cursor_indent == Some(visual_col)),
+                        )
                     } else if ch == ' ' {
-                        bracket_cache_matches.then(|| app.cached_bracket_guides.at(i, col)).flatten().map(|g| {
-                            let index = (g.2 as usize).wrapping_sub(1) % 6;
-                            if editor.cursor_line >= g.0 && editor.cursor_line < g.1 { app.colors.ui.bracket_guides_active[index] }
-                            else { app.colors.ui.bracket_guides[index] }
-                        })
-                    } else { None };
+                        bracket_cache_matches
+                            .then(|| app.cached_bracket_guides.at(i, col))
+                            .flatten()
+                            .map(|g| {
+                                let index = (g.2 as usize).wrapping_sub(1) % 6;
+                                if editor.cursor_line >= g.0 && editor.cursor_line < g.1 {
+                                    app.colors.ui.bracket_guides_active[index]
+                                } else {
+                                    app.colors.ui.bracket_guides[index]
+                                }
+                            })
+                    } else {
+                        None
+                    };
                     // Search match highlight
                     let search_match = search_runs.at(col);
                     if let Some(is_current) = search_match {
-                        s = app.colors.ui.find_style(s, is_current, app.colors.bg_search_match);
+                        s = app
+                            .colors
+                            .ui
+                            .find_style(s, is_current, app.colors.bg_search_match);
                     }
                     // LSP document highlight (semantic symbol occurrences)
                     if document_occurrences.contains(col) {
-                        s = app.colors.ui.occurrence_style(s, app.colors.bg_word_highlight, false);
+                        s = app
+                            .colors
+                            .ui
+                            .occurrence_style(s, app.colors.bg_word_highlight, false);
                     }
                     // Word occurrence highlight
                     if occurrences
@@ -3260,7 +3844,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     if let Some(color) = diagnostic_runs.at(col) {
                         s = s.add_modifier(Modifier::UNDERLINED).underline_color(color);
                     }
-                    if link_hover.is_some_and(|(line, start, end)| i == line && col >= start && col < end) {
+                    if link_hover
+                        .is_some_and(|(line, start, end)| i == line && col >= start && col < end)
+                    {
                         s = s.add_modifier(Modifier::UNDERLINED);
                     }
                     // TODO/FIXME/HACK/NOTE marker highlight
@@ -3282,8 +3868,14 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                         };
                         s = s.bg(rainbow_bg);
                     }
-                    let show_ws = whitespace.shows(ch, col,
-                        ch == ' ' && (prev_ch == Some(' ') || glyphs.source_spaces.get(col + 1) == Some(&true)), cell_selected);
+                    let show_ws = whitespace.shows(
+                        ch,
+                        col,
+                        ch == ' '
+                            && (prev_ch == Some(' ')
+                                || glyphs.source_spaces.get(col + 1) == Some(&true)),
+                        cell_selected,
+                    );
                     if let Some(color) = guide_color {
                         s = guide_style(s, color, app.colors.ui.fg_whitespace, show_ws);
                     }
@@ -3304,7 +3896,12 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                             } else {
                                 0
                             };
-                            animation_geometry.record_primary_cursor(code_lines.len(), cursor_animation_col, cursor_width, s);
+                            animation_geometry.record_primary_cursor(
+                                code_lines.len(),
+                                cursor_animation_col,
+                                cursor_width,
+                                s,
+                            );
                             s = s.patch(caret_style(s.bg.unwrap_or(line_bg)));
                         } else {
                             s = s.patch(cursor_style(s.bg.unwrap_or(line_bg)));
@@ -3318,12 +3915,18 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                         }
                         line_spans.push(Span::styled(guide_glyph(ch, show_ws), s));
                         if ch == '\t' {
-                            push_cell_padding(&mut line_spans, ts.saturating_sub(visual_col % ts.max(1)).max(1) - 1, s);
+                            push_cell_padding(
+                                &mut line_spans,
+                                ts.saturating_sub(visual_col % ts.max(1)).max(1) - 1,
+                                s,
+                            );
                         }
                         batch_style = s;
                     } else if ch == ' ' {
                         if show_ws {
-                            let ns = s.fg(app.colors.ui.fg_whitespace).remove_modifier(Modifier::DIM);
+                            let ns = s
+                                .fg(app.colors.ui.fg_whitespace)
+                                .remove_modifier(Modifier::DIM);
                             if !batch_buf.is_empty() {
                                 code_lines.flush(&mut line_spans, &mut batch_buf, batch_style);
                             }
@@ -3345,7 +3948,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                             code_lines.flush(&mut line_spans, &mut batch_buf, batch_style);
                         }
                         if show_ws {
-                            let ns = s.fg(app.colors.ui.fg_whitespace).remove_modifier(Modifier::DIM);
+                            let ns = s
+                                .fg(app.colors.ui.fg_whitespace)
+                                .remove_modifier(Modifier::DIM);
                             line_spans.push(Span::styled(marked_tab(tab_w), ns));
                             batch_style = ns;
                         } else {
@@ -3356,7 +3961,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                         // Regular non-space characters
                         if show_ws {
                             let ws_ch = "·";
-                            let ns = s.fg(app.colors.ui.fg_whitespace).remove_modifier(Modifier::DIM);
+                            let ns = s
+                                .fg(app.colors.ui.fg_whitespace)
+                                .remove_modifier(Modifier::DIM);
                             if !batch_buf.is_empty() {
                                 code_lines.flush(&mut line_spans, &mut batch_buf, batch_style);
                             }
@@ -3435,23 +4042,41 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 .iter()
                 .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
                 .sum();
-            let padding = draw_start.saturating_sub(h_scroll).saturating_sub(rendered_cols);
+            let padding = draw_start
+                .saturating_sub(h_scroll)
+                .saturating_sub(rendered_cols);
             push_cell_padding(&mut line_spans, padding, Style::default().bg(line_bg));
             rendered_cols += padding;
             let selected = draw_end - draw_start;
-            push_cell_padding(&mut line_spans, selected, selection_style.apply(Style::default()));
+            push_cell_padding(
+                &mut line_spans,
+                selected,
+                selection_style.apply(Style::default()),
+            );
             if animation_geometry.enabled() {
                 for (offset, virtual_col) in (draw_start..draw_end).enumerate() {
-                    animation_geometry.push(i, virtual_col, ' ', code_lines.len(), rendered_cols + offset, 1);
+                    animation_geometry.push(
+                        i,
+                        virtual_col,
+                        ' ',
+                        code_lines.len(),
+                        rendered_cols + offset,
+                        1,
+                    );
                 }
             }
         }
 
         // Cursor at end of line (adjusted for h_scroll)
-        let search_eol = line_matches_buf.iter().find_map(|&(start, end, current)|
-            (start <= line_len && end > line_len).then_some(current));
+        let search_eol = line_matches_buf.iter().find_map(|&(start, end, current)| {
+            (start <= line_len && end > line_len).then_some(current)
+        });
         let cursor_at_end = is_current_line && cursor_col >= line_len;
-        let main_draw_col = if search_eol.is_some() { line_len } else { cursor_col.min(line_len) };
+        let main_draw_col = if search_eol.is_some() {
+            line_len
+        } else {
+            cursor_col.min(line_len)
+        };
         if (is_current_line || search_eol.is_some())
             && main_draw_col >= col
             && main_draw_col >= h_scroll
@@ -3461,15 +4086,28 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 .iter()
                 .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
                 .sum();
-            let padding = main_draw_col.saturating_sub(h_scroll).saturating_sub(rendered_cols);
+            let padding = main_draw_col
+                .saturating_sub(h_scroll)
+                .saturating_sub(rendered_cols);
             push_cell_padding(&mut line_spans, padding, Style::default().bg(line_bg));
             rendered_cols += padding;
             // Always reserve the cursor column to keep blame text stable
             let eol_style = if show_cursors && cursor_at_end {
-                animation_geometry.record_primary_cursor(code_lines.len(), rendered_cols, 1, Style::default().bg(line_bg));
-                if bar_caret { Style::default().bg(line_bg) } else { cursor_style(line_bg) }
+                animation_geometry.record_primary_cursor(
+                    code_lines.len(),
+                    rendered_cols,
+                    1,
+                    Style::default().bg(line_bg),
+                );
+                if bar_caret {
+                    Style::default().bg(line_bg)
+                } else {
+                    cursor_style(line_bg)
+                }
             } else if let Some(current) = search_eol {
-                app.colors.ui.find_style(Style::default(), current, app.colors.bg_search_match)
+                app.colors
+                    .ui
+                    .find_style(Style::default(), current, app.colors.bg_search_match)
             } else if show_inactive_cursor && cursor_at_end {
                 Style::default()
                     .bg(line_bg)
@@ -3496,7 +4134,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     .iter()
                     .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
                     .sum();
-                let padding = ec_col.saturating_sub(h_scroll).saturating_sub(rendered_cols);
+                let padding = ec_col
+                    .saturating_sub(h_scroll)
+                    .saturating_sub(rendered_cols);
                 push_cell_padding(&mut line_spans, padding, Style::default().bg(line_bg));
                 rendered_cols += padding;
                 let (eol_str, eol_style) = (" ", cursor_style(line_bg));
@@ -3506,17 +4146,28 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         }
         if editor.is_fold_start(i) {
             folded_rows.push(crate::ui_editor_folds::Row {
-                line: i, screen_row: code_lines.len(),
+                line: i,
+                screen_row: code_lines.len(),
                 content_width: line_spans.iter().map(|span| span.content.width()).sum(),
-                start_col: h_scroll, end_col: h_scroll.saturating_add(visible_width),
+                start_col: h_scroll,
+                end_col: h_scroll.saturating_add(visible_width),
             });
         }
         // LSP inlay hints inline
-        if editor.blame.revision.is_none() && app.show_inlay_hints && !app.lsp_inlay_hints.is_empty() {
+        if editor.blame.revision.is_none()
+            && app.show_inlay_hints
+            && !app.lsp_inlay_hints.is_empty()
+        {
             for hint in inlay_hints_for_line(&app.lsp_inlay_hints, i as u32) {
                 fmt_buf.clear();
                 let _ = write!(fmt_buf, " {} ", hint.label);
-                code_lines.flush(&mut line_spans, &mut fmt_buf, app.colors.ui.inlay_hint_style(hint.color_kind_index(), line_bg));
+                code_lines.flush(
+                    &mut line_spans,
+                    &mut fmt_buf,
+                    app.colors
+                        .ui
+                        .inlay_hint_style(hint.color_kind_index(), line_bg),
+                );
                 fmt_buf.clear();
             }
         }
@@ -3529,7 +4180,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 let label = &app.lsp_code_lenses[idx].1;
                 fmt_buf.clear();
                 let _ = write!(fmt_buf, "  ▷ {label}");
-                code_lines.flush(&mut line_spans, &mut fmt_buf, app.colors.ui.codelens_style(line_bg));
+                code_lines.flush(
+                    &mut line_spans,
+                    &mut fmt_buf,
+                    app.colors.ui.codelens_style(line_bg),
+                );
                 fmt_buf.clear();
             }
         }
@@ -3541,12 +4196,15 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 .sum();
             let start = blame_column.saturating_add(2);
             if start < visible_width {
-                inline_candidate = Some((Rect::new(
-                    code_area.x + start as u16,
-                    code_area.y + len_as_u16(code_lines.len()),
-                    (visible_width - start) as u16,
-                    1,
-                ), i));
+                inline_candidate = Some((
+                    Rect::new(
+                        code_area.x + start as u16,
+                        code_area.y + len_as_u16(code_lines.len()),
+                        (visible_width - start) as u16,
+                        1,
+                    ),
+                    i,
+                ));
             }
             if inline_candidate.is_some()
                 && let Some(blame_text) = get_cached_blame_line(app, editor, i)
@@ -3556,11 +4214,14 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 // Blame is drawn over the bubble, including its spaces. Its
                 // rendered extent must not alter the source contour.
                 let hit = Rect::new(
-                    code_area.x.saturating_add(len_as_u16(blame_column.saturating_add(2))),
+                    code_area
+                        .x
+                        .saturating_add(len_as_u16(blame_column.saturating_add(2))),
                     code_area.y + len_as_u16(code_lines.len()),
                     len_as_u16(unicode_width::UnicodeWidthStr::width(blame_text.as_str())),
                     1,
-                ).intersection(code_area);
+                )
+                .intersection(code_area);
                 if !hit.is_empty() {
                     inline_annotation = Some((hit, i));
                 }
@@ -3569,7 +4230,11 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                     blame_column,
                     unicode_width::UnicodeWidthStr::width(fmt_buf.as_str()),
                 );
-                code_lines.flush(&mut line_spans, &mut fmt_buf, Style::default().fg(app.colors.fg_dim));
+                code_lines.flush(
+                    &mut line_spans,
+                    &mut fmt_buf,
+                    Style::default().fg(app.colors.fg_dim),
+                );
                 fmt_buf.clear();
             }
         }
@@ -3663,23 +4328,28 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 let dim_factor =
                     ((distance - FOCUS_MODE_DIM_START) as f32 / FOCUS_MODE_DIM_RANGE).min(0.7);
                 for span in &mut line_spans {
-                        let dimmed_fg = match span.style.fg {
-                            Some(Color::Rgb(r, g, b)) => {
-                                let f = 1.0 - dim_factor;
-                                Color::Rgb(
-                                    (f32::from(r) * f) as u8,
-                                    (f32::from(g) * f) as u8,
-                                    (f32::from(b) * f) as u8,
-                                )
-                            }
-                            _ => span.style.fg.unwrap_or(app.colors.fg_dim),
-                        };
-                        span.style = span.style.fg(dimmed_fg);
+                    let dimmed_fg = match span.style.fg {
+                        Some(Color::Rgb(r, g, b)) => {
+                            let f = 1.0 - dim_factor;
+                            Color::Rgb(
+                                (f32::from(r) * f) as u8,
+                                (f32::from(g) * f) as u8,
+                                (f32::from(b) * f) as u8,
+                            )
+                        }
+                        _ => span.style.fg.unwrap_or(app.colors.fg_dim),
+                    };
+                    span.style = span.style.fg(dimmed_fg);
                 }
             }
         }
-        paint_editor_row(f, &mut code_lines, &mut line_spans,
-            merge_style.map(|style| style.bg(line_bg)), &app.colors);
+        paint_editor_row(
+            f,
+            &mut code_lines,
+            &mut line_spans,
+            merge_style.map(|style| style.bg(line_bg)),
+            &app.colors,
+        );
     }
 
     // Fill empty lines below content
@@ -3749,27 +4419,51 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 break;
             }
             let y = code_area.y + si as u16;
-            if app.tabs[app.active_tab].editor.blame.inline_annotation.is_some_and(|(area, _)| area.y == y) {
+            if app.tabs[app.active_tab]
+                .editor
+                .blame
+                .inline_annotation
+                .is_some_and(|(area, _)| area.y == y)
+            {
                 app.tabs[app.active_tab].editor.blame.inline_annotation = None;
             }
-            if app.tabs[app.active_tab].editor.blame.inline_candidate.is_some_and(|(area, _)| area.y == y) {
+            if app.tabs[app.active_tab]
+                .editor
+                .blame
+                .inline_candidate
+                .is_some_and(|(area, _)| area.y == y)
+            {
                 app.tabs[app.active_tab].editor.blame.inline_candidate = None;
             }
             if app.tabs[app.active_tab].editor.blame.enabled {
                 if let Some(row) = app.tabs[app.active_tab].editor.blame.rows.get_mut(si) {
                     *row = Some(crate::editor::WrappedRowInfo {
-                        line_idx: *_line_idx, start_col: 0, end_col: 0, line_len: 0, is_first: true,
+                        line_idx: *_line_idx,
+                        start_col: 0,
+                        end_col: 0,
+                        line_len: 0,
+                        is_first: true,
                     });
                 }
             }
-            let row_area = Rect::new(gutter_area.x, y, code_area.right().saturating_sub(gutter_area.x), 1);
+            let row_area = Rect::new(
+                gutter_area.x,
+                y,
+                code_area.right().saturating_sub(gutter_area.x),
+                1,
+            );
             let hovered = row_area.contains((app.mouse_col, app.mouse_row).into());
-            let mut sticky_style = app.colors.ui.sticky_scroll_style(app.colors.bg_editor, hovered);
+            let mut sticky_style = app
+                .colors
+                .ui
+                .sticky_scroll_style(app.colors.bg_editor, hovered);
             let sticky_bg = sticky_style.bg.unwrap_or(app.colors.bg_editor);
             if si + 1 == sticky_lines.len().min(code_area.height as usize)
                 && let Some(border) = app.colors.ui.sticky_border.border(sticky_bg)
             {
-                sticky_style = sticky_style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+                sticky_style = sticky_style
+                    .add_modifier(Modifier::UNDERLINED)
+                    .underline_color(border);
             }
             // Build padded/truncated text to fill code area width
             let mut display: String = {
@@ -3803,10 +4497,17 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             }
             gutter_buf.truncate(gw + 2);
             f.render_widget(
-                Paragraph::new(gutter_buf)
-                    .style(sticky_style.fg(app.colors.ui.readable_foreground(
-                        app.colors.ui.line_number_foreground.over(sticky_bg)
-                            .unwrap_or_else(|| app.colors.ui.description_color(sticky_bg)), sticky_bg, 4.5))),
+                Paragraph::new(gutter_buf).style(
+                    sticky_style.fg(app.colors.ui.readable_foreground(
+                        app.colors
+                            .ui
+                            .line_number_foreground
+                            .over(sticky_bg)
+                            .unwrap_or_else(|| app.colors.ui.description_color(sticky_bg)),
+                        sticky_bg,
+                        4.5,
+                    )),
+                ),
                 Rect::new(gutter_area.x, y, gutter_area.width, 1),
             );
         }
@@ -3824,7 +4525,12 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Draw minimap separator
     if minimap_sep_width > 0 {
-        draw_minimap_separator(f, minimap_sep_area, app.colors.ui.fg_overview_border, app.colors.bg_editor);
+        draw_minimap_separator(
+            f,
+            minimap_sep_area,
+            app.colors.ui.fg_overview_border,
+            app.colors.bg_editor,
+        );
     }
 
     // Draw minimap
@@ -3861,7 +4567,9 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             diagnostic_lines: diag_lines,
             diagnostic_index: Some(&app.cached_diagnostic_index),
             change_rows: &change_rows,
-            cursor_line: app.tabs[app.active_tab].editor.overview_row_for_line(cursor_line),
+            cursor_line: app.tabs[app.active_tab]
+                .editor
+                .overview_row_for_line(cursor_line),
             colors: app.colors,
             hovered: app.hovered_scrollbar,
             active: app.dragging_v_scrollbar,
@@ -3872,12 +4580,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Draw horizontal scrollbar
     if show_h_scrollbar && h_scrollbar_area.height > 0 {
-        let h_area = Rect::new(
-            code_area.x,
-            h_scrollbar_area.y,
-            code_area.width,
-            1,
-        );
+        let h_area = Rect::new(code_area.x, h_scrollbar_area.y, code_area.width, 1);
         app.h_scrollbar_area = Some(h_area);
         draw_horizontal_scrollbar(
             f,
@@ -3907,8 +4610,19 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Sticky headers own their rows. Cosmetic overlays are clipped below them
     // and run before either editor tooltip or the outer dialog layer is drawn.
-    let sticky_rows = if app.sticky_scroll && scroll > 0 { app.cached_sticky_lines.len().min(code_area.height as usize) as u16 } else { 0 };
-    crate::ui_editor_folds::draw(f, app, code_area, &folded_rows, sticky_rows as usize, &mut animation_geometry);
+    let sticky_rows = if app.sticky_scroll && scroll > 0 {
+        app.cached_sticky_lines.len().min(code_area.height as usize) as u16
+    } else {
+        0
+    };
+    crate::ui_editor_folds::draw(
+        f,
+        app,
+        code_area,
+        &folded_rows,
+        sticky_rows as usize,
+        &mut animation_geometry,
+    );
     animation_geometry.occlude_top(sticky_rows);
     let animation_gutter = Rect::new(
         scope_rail_area.x,
@@ -3939,7 +4653,7 @@ pub(crate) fn draw_animation_frame_tooltips(f: &mut Frame, app: &mut App) {
 mod tests {
     use super::*;
     use crate::{app::Tab, editor::Editor};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn selected_word_occurrences_remain_visible_alongside_find_matches() {
@@ -3976,13 +4690,26 @@ mod tests {
                     editor.cursor_line = 0;
                     editor.selection_anchor = Some((0, start));
                     editor.cursor_col = start + selected.chars().count();
-                    terminal.draw(|frame| draw_editor(frame, &mut app, frame.area())).unwrap();
+                    terminal
+                        .draw(|frame| draw_editor(frame, &mut app, frame.area()))
+                        .unwrap();
                     let buffer = terminal.backend().buffer();
-                    let cells_with_bg = |bg| buffer.content.iter().filter(|cell| cell.bg == bg).count();
-                    assert!(cells_with_bg(occurrence_bg) >= selected.chars().count(),
-                        "selected={selected}, wrap={word_wrap}: other occurrences must be highlighted");
-                    assert_eq!(cells_with_bg(find_bg), 6, "other Find match, wrap={word_wrap}");
-                    assert_eq!(cells_with_bg(current_find_bg), 6, "current Find match, wrap={word_wrap}");
+                    let cells_with_bg =
+                        |bg| buffer.content.iter().filter(|cell| cell.bg == bg).count();
+                    assert!(
+                        cells_with_bg(occurrence_bg) >= selected.chars().count(),
+                        "selected={selected}, wrap={word_wrap}: other occurrences must be highlighted"
+                    );
+                    assert_eq!(
+                        cells_with_bg(find_bg),
+                        6,
+                        "other Find match, wrap={word_wrap}"
+                    );
+                    assert_eq!(
+                        cells_with_bg(current_find_bg),
+                        6,
+                        "current Find match, wrap={word_wrap}"
+                    );
                     assert!(app.search_active);
                     assert_eq!(app.search_matches, matches);
                 }
@@ -3990,9 +4717,18 @@ mod tests {
                 // selection must not recolor all remaining Find matches.
                 app.search_current = 0;
                 app.jump_to_current_match();
-                terminal.draw(|frame| draw_editor(frame, &mut app, frame.area())).unwrap();
+                terminal
+                    .draw(|frame| draw_editor(frame, &mut app, frame.area()))
+                    .unwrap();
                 let buffer = terminal.backend().buffer();
-                assert_eq!(buffer.content.iter().filter(|cell| cell.bg == find_bg).count(), 6);
+                assert_eq!(
+                    buffer
+                        .content
+                        .iter()
+                        .filter(|cell| cell.bg == find_bg)
+                        .count(),
+                    6
+                );
                 assert!(!buffer.content.iter().any(|cell| cell.bg == occurrence_bg));
                 assert_eq!(app.search_matches, matches);
             }
@@ -4007,7 +4743,10 @@ mod tests {
             ("界".repeat(60), true),
             ("界".repeat(100), false),
             ("x".repeat(500_000), false),
-            (format!("{}token{}", " ".repeat(300), "\t".repeat(300)), true),
+            (
+                format!("{}token{}", " ".repeat(300), "\t".repeat(300)),
+                true,
+            ),
             (" ".repeat(1_000), false),
         ] {
             let mut editor = Editor::test_with_text(&text);
@@ -4064,7 +4803,15 @@ mod tests {
 
         let visible = inlay_hints_for_line(&hints, 750);
 
-        assert_eq!(visible, &[crate::app::InlayHintDisplay::new(750, 3, ": type_750", None)]);
+        assert_eq!(
+            visible,
+            &[crate::app::InlayHintDisplay::new(
+                750,
+                3,
+                ": type_750",
+                None
+            )]
+        );
     }
 
     #[test]
@@ -4172,8 +4919,8 @@ mod tests {
                 app.sticky_scroll = false;
 
                 let area = Rect::new(0, 0, 30, 4);
-                let mut terminal =
-                    Terminal::new(TestBackend::new(area.width, area.height)).expect("test terminal");
+                let mut terminal = Terminal::new(TestBackend::new(area.width, area.height))
+                    .expect("test terminal");
                 terminal
                     .draw(|frame| draw_editor(frame, &mut app, area))
                     .expect("editor draw");
@@ -4195,7 +4942,11 @@ mod tests {
                     } else {
                         "·"
                     };
-                    assert_eq!(cell.symbol(), symbol, "word_wrap={word_wrap}, mode={mode:?}");
+                    assert_eq!(
+                        cell.symbol(),
+                        symbol,
+                        "word_wrap={word_wrap}, mode={mode:?}"
+                    );
                     assert_eq!(
                         cell.bg, app.colors.bg_editor,
                         "word_wrap={word_wrap}, mode={mode:?}"
@@ -4352,7 +5103,9 @@ mod tests {
         editor.insert_char('x');
 
         let mut app = App::test_new();
-        app.colors = crate::app_theme_loader::builtin_theme("monokai").unwrap().to_theme_colors();
+        app.colors = crate::app_theme_loader::builtin_theme("monokai")
+            .unwrap()
+            .to_theme_colors();
         app.tabs.push(Tab::new_file(editor));
         app.active_tab = 0;
         app.show_line_numbers = true;
@@ -4366,22 +5119,31 @@ mod tests {
             if exact {
                 let editor = app.editor_mut().unwrap();
                 let diff = crate::editor::compute_unsaved_diff_markers(
-                    editor.saved_rope.as_ref().unwrap(), &editor.rope,
+                    editor.saved_rope.as_ref().unwrap(),
+                    &editor.rope,
                 );
                 editor.apply_unsaved_diff_cache(editor.content_version, diff);
             }
-            terminal.draw(|frame| draw_editor(frame, &mut app, area)).unwrap();
+            terminal
+                .draw(|frame| draw_editor(frame, &mut app, area))
+                .unwrap();
             let buffer = terminal.backend().buffer();
             let gutter = app.gutter_area.expect("gutter area");
             let marker_col = change_gutter_column(gutter).unwrap();
-            let markers: Vec<_> = (gutter.top()..gutter.bottom()).filter_map(|y| {
-                let cell = buffer.cell((marker_col, y))?;
-                (cell.symbol() == "┃").then_some((y, cell.fg))
-            }).collect();
-            assert_eq!(markers, [
-                (gutter.y + 1, app.colors.ui.fg_gutter_added),
-                (gutter.y + 7, app.colors.ui.fg_gutter_modified),
-            ], "exact={exact}");
+            let markers: Vec<_> = (gutter.top()..gutter.bottom())
+                .filter_map(|y| {
+                    let cell = buffer.cell((marker_col, y))?;
+                    (cell.symbol() == "┃").then_some((y, cell.fg))
+                })
+                .collect();
+            assert_eq!(
+                markers,
+                [
+                    (gutter.y + 1, app.colors.ui.fg_gutter_added),
+                    (gutter.y + 7, app.colors.ui.fg_gutter_modified),
+                ],
+                "exact={exact}"
+            );
         }
     }
 
@@ -4510,12 +5272,20 @@ mod tests {
                 app.show_line_numbers = true;
                 app.show_minimap = false;
                 app.rulers.clear();
-                let theme = crate::vscode_theme::customized_theme(&crate::app_theme::load_builtin_themes().remove(0),
+                let theme = crate::vscode_theme::customized_theme(
+                    &crate::app_theme::load_builtin_themes().remove(0),
                     &std::collections::BTreeMap::from([
                         ("editor.background".into(), serde_json::json!("#0a141e")),
-                        ("editorStickyScroll.background".into(), serde_json::json!("#28323c")),
-                        ("editor.lineHighlightBackground".into(), serde_json::json!("#46505a")),
-                    ]));
+                        (
+                            "editorStickyScroll.background".into(),
+                            serde_json::json!("#28323c"),
+                        ),
+                        (
+                            "editor.lineHighlightBackground".into(),
+                            serde_json::json!("#46505a"),
+                        ),
+                    ]),
+                );
                 app.colors = theme.to_theme_colors();
                 app.cached_sticky_scopes = (0..scope_count)
                     .map(|line| crate::background::StickyScopeLine {
@@ -4525,12 +5295,17 @@ mod tests {
                     .collect();
 
                 let area = Rect::new(0, 0, 70, 12);
-                let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
+                let mut terminal =
+                    Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
                 app.sticky_scroll = false;
-                terminal.draw(|frame| draw_editor(frame, &mut app, area)).unwrap();
+                terminal
+                    .draw(|frame| draw_editor(frame, &mut app, area))
+                    .unwrap();
                 let ordinary = terminal.backend().buffer().clone();
                 app.sticky_scroll = true;
-                terminal.draw(|frame| draw_editor(frame, &mut app, area)).unwrap();
+                terminal
+                    .draw(|frame| draw_editor(frame, &mut app, area))
+                    .unwrap();
                 let buffer = terminal.backend().buffer();
                 let code = app.code_area.unwrap();
                 let gutter = app.gutter_area.unwrap();
@@ -4546,7 +5321,10 @@ mod tests {
                     }
                 }
                 let cursor_y = code.y + (scope_count + cursor_after_headers) as u16;
-                assert_eq!(buffer[(code.right() - 1, cursor_y)].bg, app.colors.bg_line_highlight);
+                assert_eq!(
+                    buffer[(code.right() - 1, cursor_y)].bg,
+                    app.colors.bg_line_highlight
+                );
             }
         }
     }
@@ -4568,7 +5346,8 @@ mod tests {
         app.cached_sticky_scopes = vec![crate::background::StickyScopeLine {
             line: 0,
             parent: None,
-        }].into();
+        }]
+        .into();
 
         let area = Rect::new(0, 0, 50, 6);
         let mut terminal =
@@ -4696,7 +5475,9 @@ mod tests {
 
         for wrap in [false, true] {
             let mut app = App::test_new();
-            app.colors = crate::app_theme_loader::builtin_theme("monokai").unwrap().to_theme_colors();
+            app.colors = crate::app_theme_loader::builtin_theme("monokai")
+                .unwrap()
+                .to_theme_colors();
             let mut editor = Editor::test_with_text(
                 "added\nanchor\nreplaced\nstaged addition\nstaged anchor\nstaged replacement\noverlap\nmodified\nkept\n",
             );
@@ -4714,7 +5495,9 @@ mod tests {
             app.show_line_numbers = true;
             app.relative_line_numbers = false;
             let mut terminal = Terminal::new(TestBackend::new(100, 14)).unwrap();
-            terminal.draw(|frame| draw_editor(frame, &mut app, frame.area())).unwrap();
+            terminal
+                .draw(|frame| draw_editor(frame, &mut app, frame.area()))
+                .unwrap();
             let gutter = app.gutter_area.unwrap();
             let number_width = line_number_width(app.editor().unwrap().line_count()) as u16;
             assert_eq!(gutter.width, number_width + 2);
@@ -4743,9 +5526,16 @@ mod tests {
                 assert_eq!(cell.symbol(), symbol, "row {offset}, wrap={wrap}");
                 assert_eq!(cell.fg, color);
                 assert_eq!(cell.bg, buffer[(marker_col - 1, y)].bg);
-                assert_eq!(buffer[(marker_col - 1, y)].symbol(), (offset + 1).to_string());
+                assert_eq!(
+                    buffer[(marker_col - 1, y)].symbol(),
+                    (offset + 1).to_string()
+                );
                 let cell = &buffer[(minimap_col, minimap.y + offset)];
-                let symbol = if (3..=5).contains(&offset) { "•" } else { " " };
+                let symbol = if (3..=5).contains(&offset) {
+                    "•"
+                } else {
+                    " "
+                };
                 assert_eq!((cell.bg, cell.symbol()), (color, symbol));
             }
             let overlap = &buffer[(marker_col, gutter.y + 6)];
@@ -4761,9 +5551,13 @@ mod tests {
             app.hovered_gutter_line = Some(6);
             app.mouse_col = marker_col;
             app.mouse_row = gutter.y + 6;
-            terminal.draw(|frame| draw_editor(frame, &mut app, frame.area())).unwrap();
+            terminal
+                .draw(|frame| draw_editor(frame, &mut app, frame.area()))
+                .unwrap();
             let buffer = terminal.backend().buffer();
-            let row: String = (gutter.right()..100).map(|x| buffer[(x, app.mouse_row)].symbol()).collect();
+            let row: String = (gutter.right()..100)
+                .map(|x| buffer[(x, app.mouse_row)].symbol())
+                .collect();
             assert!(row.contains("Staged removed lines"), "{row}");
             assert!(row.contains("Unstaged added lines"), "{row}");
         }
@@ -4804,9 +5598,10 @@ mod tests {
                 editor.cursor_line = 70;
                 editor.insert_char('X');
                 let diff = crate::editor::compute_unsaved_diff_markers(
-                    editor.saved_rope.as_ref().unwrap(), &editor.rope);
-                editor.apply_unsaved_diff_cache(
-                    editor.content_version, diff);
+                    editor.saved_rope.as_ref().unwrap(),
+                    &editor.rope,
+                );
+                editor.apply_unsaved_diff_cache(editor.content_version, diff);
                 editor.cursor_line = 0;
                 editor.cursor_col = 0;
             }
@@ -4853,7 +5648,9 @@ mod tests {
                 "layout={}, unsaved={unsaved}, minimap={show_minimap}",
                 mode as u8
             );
-            if !show_minimap { assert!(app.minimap_area.is_none()); }
+            if !show_minimap {
+                assert!(app.minimap_area.is_none());
+            }
         }
     }
 
@@ -4901,9 +5698,8 @@ mod tests {
             cell.bg == app.colors.ui.fg_gutter_modified && cell.symbol() == " "
         }));
         assert!((scrollbar_area.top()..scrollbar_area.bottom()).any(|y| {
-            (scrollbar_area.left()..scrollbar_area.right()).any(|x| {
-                buffer[(x, y)].fg == app.colors.ui.fg_overview_modified
-            })
+            (scrollbar_area.left()..scrollbar_area.right())
+                .any(|x| buffer[(x, y)].fg == app.colors.ui.fg_overview_modified)
         }));
     }
 
@@ -5029,12 +5825,19 @@ mod tests {
         let text = format!("{}line", "line\n".repeat(49_999));
         let mut editor = Editor::test_with_text(&text);
         editor.file_path = Some(std::path::PathBuf::from("dense-changes.txt"));
-        editor.saved_rope = Some(ropey::Rope::from_str(&format!("{}old", "old\n".repeat(49_999))));
+        editor.saved_rope = Some(ropey::Rope::from_str(&format!(
+            "{}old",
+            "old\n".repeat(49_999)
+        )));
         editor.modified = true;
         let line_count = editor.line_count();
         editor.apply_unsaved_diff_cache(
             editor.content_version,
-            crate::editor::UnsavedDiff { line_count, changed_ranges: vec![0..line_count], ..Default::default() },
+            crate::editor::UnsavedDiff {
+                line_count,
+                changed_ranges: vec![0..line_count],
+                ..Default::default()
+            },
         );
         app.tabs.push(Tab::new_file(editor));
         app.active_tab = 0;
@@ -5126,8 +5929,8 @@ mod tests {
     #[test]
     #[ignore = "manual large-file performance probe"]
     fn profile_50k_line_editor_hot_paths() {
-        let source = "def calculate(value): return value * 2  # representative source line\n"
-            .repeat(50_000);
+        let source =
+            "def calculate(value): return value * 2  # representative source line\n".repeat(50_000);
         let mut app = App::test_new();
         let mut editor = Editor::test_with_text(&source);
         editor.file_path = Some(std::path::PathBuf::from("profile.py"));

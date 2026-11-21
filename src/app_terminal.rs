@@ -1,10 +1,8 @@
-use crate::app::{
-    ActivePane, App, Tab, TabKind, TerminalDock, TerminalTab,
-};
+use crate::app::{ActivePane, App, Tab, TabKind, TerminalDock, TerminalTab};
 use crate::editor::Editor;
-use std::time::Instant;
 #[cfg(test)]
 use std::time::Duration;
+use std::time::Instant;
 
 #[derive(Default)]
 pub(crate) struct RenameTerminal {
@@ -51,11 +49,15 @@ mod close_tests;
 
 impl App {
     pub(crate) fn begin_terminal_rename(&mut self, index: usize) {
-        if !self.terminal_is_open(index) { return; }
+        if !self.terminal_is_open(index) {
+            return;
+        }
         let query = self.terminals[index].name.clone();
         self.terminal_rename = RenameTerminal {
-            target: Some(index), cursor: query.len(),
-            anchor: (!query.is_empty()).then_some(0), query,
+            target: Some(index),
+            cursor: query.len(),
+            anchor: (!query.is_empty()).then_some(0),
+            query,
             previous_focus: Some((self.active_pane, self.terminal_panel_focused)),
             ..Default::default()
         };
@@ -70,7 +72,9 @@ impl App {
     }
 
     pub(crate) fn confirm_terminal_rename(&mut self) {
-        let Some(index) = self.terminal_rename.target else { return; };
+        let Some(index) = self.terminal_rename.target else {
+            return;
+        };
         let name = self.terminal_rename.query.trim();
         if name.is_empty() || name.chars().any(char::is_control) {
             self.modal.error = Some("Enter a terminal name without control characters.".into());
@@ -89,21 +93,31 @@ impl App {
         self.terminal_rename.target = None;
         if let Some((pane, terminal_focused)) = self.terminal_rename.previous_focus.take() {
             self.active_pane = pane;
-            self.terminal_panel_focused = terminal_focused && self.show_terminal_sidebar
+            self.terminal_panel_focused = terminal_focused
+                && self.show_terminal_sidebar
                 && self.terminal_is_open(self.active_terminal);
         }
     }
 
     pub(crate) fn open_terminal_context_menu(&mut self, index: usize, col: u16, row: u16) {
-        if !self.terminal_is_open(index) { return; }
+        if !self.terminal_is_open(index) {
+            return;
+        }
         self.terminal_rename.context_target = Some(index);
-        self.context_menu_items = vec![crate::app::ContextMenuItem {
-            label: "Rename Terminal…".into(), shortcut: String::new(),
-            id: "rename_context_terminal", separator_after: false,
-        }, crate::app::ContextMenuItem {
-            label: "Find in Terminal…".into(), shortcut: String::new(),
-            id: "find_context_terminal", separator_after: false,
-        }];
+        self.context_menu_items = vec![
+            crate::app::ContextMenuItem {
+                label: "Rename Terminal…".into(),
+                shortcut: String::new(),
+                id: "rename_context_terminal",
+                separator_after: false,
+            },
+            crate::app::ContextMenuItem {
+                label: "Find in Terminal…".into(),
+                shortcut: String::new(),
+                id: "find_context_terminal",
+                separator_after: false,
+            },
+        ];
         self.context_menu_pos = (col, row);
         self.context_menu_inner = None;
         self.context_menu_selected = 0;
@@ -115,8 +129,9 @@ impl App {
         self.new_terminal_tab_in(TerminalDock::Right);
     }
     pub(crate) fn new_terminal_tab_at(&mut self, cwd: &std::path::Path) {
-        self.insert_terminal(TerminalTab::new(String::new(),cwd.to_owned()));
-        self.terminals[self.active_terminal].name = format!("{}: Terminal", self.active_terminal + 1);
+        self.insert_terminal(TerminalTab::new(String::new(), cwd.to_owned()));
+        self.terminals[self.active_terminal].name =
+            format!("{}: Terminal", self.active_terminal + 1);
         self.show_terminal_sidebar = true;
         self.terminal_sidebar_revealed = true;
         self.terminal_panel_focused = true;
@@ -125,7 +140,8 @@ impl App {
     pub(crate) fn new_terminal_tab_in(&mut self, dock: TerminalDock) {
         let cwd = self.explorer.root.clone();
         self.insert_terminal(TerminalTab::new_in(String::new(), cwd, dock));
-        self.terminals[self.active_terminal].name = format!("{}: Terminal", self.active_terminal + 1);
+        self.terminals[self.active_terminal].name =
+            format!("{}: Terminal", self.active_terminal + 1);
     }
 
     fn insert_terminal(&mut self, terminal: TerminalTab) {
@@ -165,14 +181,17 @@ impl App {
     /// Hidden and not-yet-launched sessions still count as open.
     pub(crate) fn terminal_is_open(&self, index: usize) -> bool {
         self.terminals.get(index).is_some_and(|terminal| {
-            !terminal.is_placeholder || terminal.terminal_pty.is_some()
+            !terminal.is_placeholder
+                || terminal.terminal_pty.is_some()
                 || terminal.terminal_launch_error.is_some()
-                || self.terminal_is_in_editor(index) || self.show_terminal_sidebar
+                || self.terminal_is_in_editor(index)
+                || self.show_terminal_sidebar
         })
     }
 
     pub(crate) fn docked_terminal_has_focus(&self) -> bool {
-        self.terminal_panel_focused && self.show_terminal_sidebar
+        self.terminal_panel_focused
+            && self.show_terminal_sidebar
             && self.active_terminal < self.terminals.len()
             && !self.terminal_is_in_editor(self.active_terminal)
     }
@@ -186,10 +205,12 @@ impl App {
             return;
         }
 
-        let index = self.active_terminal_in_dock(TerminalDock::Right).unwrap_or_else(|| {
-            self.new_terminal_tab_in(TerminalDock::Right);
-            self.active_terminal
-        });
+        let index = self
+            .active_terminal_in_dock(TerminalDock::Right)
+            .unwrap_or_else(|| {
+                self.new_terminal_tab_in(TerminalDock::Right);
+                self.active_terminal
+            });
         self.active_terminal = index;
         self.terminals[index].is_placeholder = false;
         self.terminal_sidebar_revealed = true;
@@ -217,24 +238,36 @@ impl App {
     /// A live shell can own foreground or background work, even when it is
     /// quiet or does not support shell integration. Only a confirmed exit is
     /// safe to close without asking.
-    pub(crate) fn live_terminal_names(&mut self, indices: impl IntoIterator<Item = usize>) -> Vec<String> {
+    pub(crate) fn live_terminal_names(
+        &mut self,
+        indices: impl IntoIterator<Item = usize>,
+    ) -> Vec<String> {
         let mut indices: Vec<_> = indices.into_iter().collect();
         indices.sort_unstable();
         indices.dedup();
-        indices.into_iter().filter_map(|index| {
-            let terminal = self.terminals.get_mut(index)?;
-            let pty = terminal.terminal_pty.as_mut()?;
-            (!pty.take_exit_event()).then(|| terminal.name.clone())
-        }).collect()
+        indices
+            .into_iter()
+            .filter_map(|index| {
+                let terminal = self.terminals.get_mut(index)?;
+                let pty = terminal.terminal_pty.as_mut()?;
+                (!pty.take_exit_event()).then(|| terminal.name.clone())
+            })
+            .collect()
     }
 
-    pub(crate) fn request_terminal_close(&mut self, names: Vec<String>, action: TerminalCloseAction) {
+    pub(crate) fn request_terminal_close(
+        &mut self,
+        names: Vec<String>,
+        action: TerminalCloseAction,
+    ) {
         self.terminal_close = Some(CloseTerminal { names, action });
         self.modal = Default::default();
     }
 
     pub(crate) fn confirm_terminal_close(&mut self) {
-        let Some(request) = self.terminal_close.take() else { return; };
+        let Some(request) = self.terminal_close.take() else {
+            return;
+        };
         self.modal = Default::default();
         match request.action {
             TerminalCloseAction::Session(index) => self.force_close_terminal_tab_at(index),
@@ -251,7 +284,9 @@ impl App {
         // original session through compaction, and cancel if that session exits.
         let cancel_close = self.terminal_close.as_mut().is_some_and(|request| {
             if let TerminalCloseAction::Session(target) = &mut request.action {
-                if *target == index { return true; }
+                if *target == index {
+                    return true;
+                }
                 *target -= usize::from(*target > index);
             }
             false
@@ -265,12 +300,21 @@ impl App {
         // Terminal processes can exit while a menu or rename form is open.
         // Rebase both targets so a different session is never renamed.
         let closing_rename_target = self.terminal_rename.target == Some(index);
-        for target in [&mut self.terminal_rename.target, &mut self.terminal_rename.context_target] {
+        for target in [
+            &mut self.terminal_rename.target,
+            &mut self.terminal_rename.context_target,
+        ] {
             if let Some(old) = *target {
-                *target = if old == index { None } else { Some(old - usize::from(old > index)) };
+                *target = if old == index {
+                    None
+                } else {
+                    Some(old - usize::from(old > index))
+                };
             }
         }
-        if closing_rename_target { self.cancel_terminal_rename(); }
+        if closing_rename_target {
+            self.cancel_terminal_rename();
+        }
         self.terminal_selection_drag = None;
         self.terminal_mouse_capture = None;
         self.terminal_clicks = Default::default();
@@ -296,9 +340,11 @@ impl App {
         self.remove_terminal_editor_tabs(index);
         self.terminals.remove(index);
         for desk in &mut self.desks.items {
-            if let Some(layout)=&mut desk.layout {
-                if layout.terminal>index {layout.terminal-=1;}
-                layout.terminal=layout.terminal.min(self.terminals.len().saturating_sub(1));
+            if let Some(layout) = &mut desk.layout {
+                if layout.terminal > index {
+                    layout.terminal -= 1;
+                }
+                layout.terminal = layout.terminal.min(self.terminals.len().saturating_sub(1));
             }
         }
         for tab in &mut self.tabs {
@@ -350,7 +396,11 @@ impl App {
         self.process_terminals_until(deadline, || true)
     }
 
-    pub(crate) fn process_terminals_until(&mut self, deadline: Instant, mut continue_processing: impl FnMut() -> bool) -> bool {
+    pub(crate) fn process_terminals_until(
+        &mut self,
+        deadline: Instant,
+        mut continue_processing: impl FnMut() -> bool,
+    ) -> bool {
         let mut needs_redraw = false;
         let focused = self.completion_focused_terminal_index();
         let mut processed_output = false;
@@ -358,7 +408,9 @@ impl App {
         let mut completions = Vec::new();
         let count = self.terminals.len();
         let detached_terminals: Vec<_> = if self.has_detached_windows() {
-            self.groups.iter().enumerate()
+            self.groups
+                .iter()
+                .enumerate()
                 .filter(|(index, _)| self.group_in_detached_window(*index))
                 .filter_map(|(_, pane)| pane.tabs.get(pane.active_tab)?.terminal_idx)
                 .collect()
@@ -375,14 +427,19 @@ impl App {
                 // between parser quanta, not only when moving to another PTY.
                 if pty.process_while(|| Instant::now() < deadline && continue_processing()) {
                     processed_output = true;
-                    needs_redraw |= self.terminal_surfaces.iter().chain(&self.background_main_terminal_surfaces).any(|surface| {
-                        surface.index == index && !surface.area.is_empty()
-                    }) || detached_terminals.contains(&index) || terminal.input_activity.visible();
+                    needs_redraw |= self
+                        .terminal_surfaces
+                        .iter()
+                        .chain(&self.background_main_terminal_surfaces)
+                        .any(|surface| surface.index == index && !surface.area.is_empty())
+                        || detached_terminals.contains(&index)
+                        || terminal.input_activity.visible();
                 }
                 // The acknowledgement may arrive before this processing turn
                 // ever sampled the pending state. Clear a rendered spinner in
                 // that case too, even for an inactive terminal with no output.
-                needs_redraw |= terminal.input_activity.visible() && !pty.remote_input_progress().pending;
+                needs_redraw |=
+                    terminal.input_activity.visible() && !pty.remote_input_progress().pending;
                 if pty.take_exit_event() {
                     processed_output = true;
                     exited.push(index);
@@ -390,10 +447,20 @@ impl App {
                 clipboard_update = pty.grid.clipboard_update.take();
                 let previous = terminal.completion.finished_count();
                 let previous_failed = terminal.completion.failed_count();
-                needs_redraw |= terminal.completion.update(pty.grid.commands, focused == Some(index), Instant::now());
+                needs_redraw |= terminal.completion.update(
+                    pty.grid.commands,
+                    focused == Some(index),
+                    Instant::now(),
+                );
                 if terminal.completion.finished_count() != previous {
-                    completions.push((terminal.name.clone(), terminal.completion.finished_count().wrapping_sub(previous),
-                        terminal.completion.failed_count().wrapping_sub(previous_failed)));
+                    completions.push((
+                        terminal.name.clone(),
+                        terminal.completion.finished_count().wrapping_sub(previous),
+                        terminal
+                            .completion
+                            .failed_count()
+                            .wrapping_sub(previous_failed),
+                    ));
                 }
             }
             if let Some(text) = clipboard_update {
@@ -402,7 +469,9 @@ impl App {
                     needs_redraw = true;
                 }
             }
-            if visited + 1 < count && ((processed_output && Instant::now() >= deadline) || !continue_processing()) {
+            if visited + 1 < count
+                && ((processed_output && Instant::now() >= deadline) || !continue_processing())
+            {
                 // Resume at the next terminal, including quiet terminals whose
                 // one-shot exit event still needs handling. Do not lose that
                 // work if all producers finished before this processing turn.
@@ -415,14 +484,29 @@ impl App {
         }
         exited.sort_unstable();
         for (name, count, failed) in completions {
-            let message = if count == 1 { format!("{name}: command {}", if failed > 0 { "failed" } else { "finished" }) }
-                else { format!("{name}: {count} commands finished ({failed} failed)") };
-            self.record_workspace_events(message,
-                if failed > 0 { crate::app_workspaces::Level::Attention } else { crate::app_workspaces::Level::Done },
-                usize::try_from(count).unwrap_or(usize::MAX));
+            let message = if count == 1 {
+                format!(
+                    "{name}: command {}",
+                    if failed > 0 { "failed" } else { "finished" }
+                )
+            } else {
+                format!("{name}: {count} commands finished ({failed} failed)")
+            };
+            self.record_workspace_events(
+                message,
+                if failed > 0 {
+                    crate::app_workspaces::Level::Attention
+                } else {
+                    crate::app_workspaces::Level::Done
+                },
+                usize::try_from(count).unwrap_or(usize::MAX),
+            );
         }
         for index in exited.into_iter().rev() {
-            self.record_workspace_event(format!("{}: terminal exited", self.terminals[index].name), crate::app_workspaces::Level::Done);
+            self.record_workspace_event(
+                format!("{}: terminal exited", self.terminals[index].name),
+                crate::app_workspaces::Level::Done,
+            );
             self.force_close_terminal_tab_at(index);
         }
         needs_redraw
@@ -437,7 +521,8 @@ impl App {
 
     fn completion_focused_terminal_index(&self) -> Option<usize> {
         (self.terminal_has_focus && self.focused_text_input_id().is_none())
-            .then(|| self.focused_terminal_index()).flatten()
+            .then(|| self.focused_terminal_index())
+            .flatten()
     }
 
     pub(crate) fn advance_terminal_completions(&mut self, now: Instant) -> bool {
@@ -449,35 +534,57 @@ impl App {
         changed
     }
 
-    pub(crate) fn next_terminal_completion_wait(&self, now: Instant) -> Option<std::time::Duration> {
-        self.terminals.iter().filter_map(|terminal|
-            terminal.completion.next_wait(now, self.animation_settings.any_enabled())).min()
+    pub(crate) fn next_terminal_completion_wait(
+        &self,
+        now: Instant,
+    ) -> Option<std::time::Duration> {
+        self.terminals
+            .iter()
+            .filter_map(|terminal| {
+                terminal
+                    .completion
+                    .next_wait(now, self.animation_settings.any_enabled())
+            })
+            .min()
     }
 
     pub(crate) fn next_terminal_input_wait(&self, now: Instant) -> Option<std::time::Duration> {
-        if !self.terminal_has_focus { return None; }
-        self.terminals.iter().filter_map(|terminal| {
-            let progress = terminal.terminal_pty.as_ref()?.remote_input_progress();
-            terminal.input_activity.next_wait(progress, now)
-        }).min()
+        if !self.terminal_has_focus {
+            return None;
+        }
+        self.terminals
+            .iter()
+            .filter_map(|terminal| {
+                let progress = terminal.terminal_pty.as_ref()?.remote_input_progress();
+                terminal.input_activity.next_wait(progress, now)
+            })
+            .min()
     }
 
     /// Remove any editor-tab view attached to `index`. This is intentionally
     /// done before the terminal vector is compacted so no tab can silently
     /// start pointing at the next terminal or at an out-of-bounds slot.
     fn remove_terminal_editor_tabs(&mut self, index: usize) {
-        let is_match = |tab: &Tab| {
-            tab.kind == TabKind::Terminal && tab.terminal_idx == Some(index)
-        };
+        let is_match = |tab: &Tab| tab.kind == TabKind::Terminal && tab.terminal_idx == Some(index);
         let mut removed = false;
         let mut keep = |_: usize, tab: &mut Tab| {
             let remove = is_match(tab);
             removed |= remove;
             !remove
         };
-        crate::tab_collection::retain(&mut self.tabs, &mut self.active_tab, &mut self.tab_mru_order, &mut keep);
+        crate::tab_collection::retain(
+            &mut self.tabs,
+            &mut self.active_tab,
+            &mut self.tab_mru_order,
+            &mut keep,
+        );
         for group in &mut self.groups {
-            crate::tab_collection::retain(&mut group.tabs, &mut group.active_tab, &mut group.tab_mru_order, &mut keep);
+            crate::tab_collection::retain(
+                &mut group.tabs,
+                &mut group.active_tab,
+                &mut group.tab_mru_order,
+                &mut keep,
+            );
         }
         if removed && self.split_active() {
             self.close_empty_groups();
@@ -485,11 +592,12 @@ impl App {
     }
 
     pub(crate) fn terminal_is_in_editor(&self, index: usize) -> bool {
-        let has_terminal = |tab: &Tab| {
-            tab.kind == TabKind::Terminal && tab.terminal_idx == Some(index)
-        };
+        let has_terminal =
+            |tab: &Tab| tab.kind == TabKind::Terminal && tab.terminal_idx == Some(index);
         self.tabs.iter().any(has_terminal)
-            || self.groups.iter().enumerate().any(|(i,group)| self.group_in_current_desk(i) && group.tabs.iter().any(has_terminal))
+            || self.groups.iter().enumerate().any(|(i, group)| {
+                self.group_in_current_desk(i) && group.tabs.iter().any(has_terminal)
+            })
     }
 
     /// Move a panel terminal into an editor group, where it behaves like any
@@ -539,11 +647,7 @@ impl App {
     }
 
     /// Move a terminal out of any editor group and into a workbench dock.
-    pub(crate) fn move_terminal_to_dock(
-        &mut self,
-        index: usize,
-        dock: TerminalDock,
-    ) -> bool {
+    pub(crate) fn move_terminal_to_dock(&mut self, index: usize, dock: TerminalDock) -> bool {
         if index >= self.terminals.len() {
             return false;
         }
@@ -560,12 +664,7 @@ impl App {
         true
     }
 
-    pub(crate) fn ensure_terminal_pty_at(
-        &mut self,
-        index: usize,
-        width: usize,
-        height: usize,
-    ) {
+    pub(crate) fn ensure_terminal_pty_at(&mut self, index: usize, width: usize, height: usize) {
         let Some(tab) = self.terminals.get(index) else {
             return;
         };
@@ -575,21 +674,41 @@ impl App {
 
         let cwd = if tab.terminal_cwd.as_os_str().is_empty() {
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-        } else { tab.terminal_cwd.clone() };
+        } else {
+            tab.terminal_cwd.clone()
+        };
         self.terminals[index].terminal_cwd = cwd.clone();
         self.terminals[index].is_placeholder = false;
         let wake = self.background.wake_handle();
         let result = if let Some(remote) = &self.remote_workspace {
-            remote.remote_path(&cwd)
-                .and_then(|cwd| remote.client.spawn_async(String::new(), Vec::new(), cwd, Some((width.max(2) as u16, height.max(2) as u16)), wake.clone()))
-                .and_then(|process| crate::terminal::TerminalEmulator::from_remote(process, width.max(2), height.max(2), wake))
+            remote
+                .remote_path(&cwd)
+                .and_then(|cwd| {
+                    remote.client.spawn_async(
+                        String::new(),
+                        Vec::new(),
+                        cwd,
+                        Some((width.max(2) as u16, height.max(2) as u16)),
+                        wake.clone(),
+                    )
+                })
+                .and_then(|process| {
+                    crate::terminal::TerminalEmulator::from_remote(
+                        process,
+                        width.max(2),
+                        height.max(2),
+                        wake,
+                    )
+                })
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
-        } else { crate::terminal::TerminalEmulator::spawn_in_dir_with_wake(
-            width.max(2),
-            height.max(2),
-            &cwd,
-            wake,
-        ) };
+        } else {
+            crate::terminal::TerminalEmulator::spawn_in_dir_with_wake(
+                width.max(2),
+                height.max(2),
+                &cwd,
+                wake,
+            )
+        };
 
         match result {
             Ok(emu) => {
@@ -608,12 +727,7 @@ impl App {
         }
     }
 
-    pub(crate) fn retry_terminal_pty_at(
-        &mut self,
-        index: usize,
-        width: usize,
-        height: usize,
-    ) {
+    pub(crate) fn retry_terminal_pty_at(&mut self, index: usize, width: usize, height: usize) {
         if let Some(tab) = self.terminals.get_mut(index) {
             tab.terminal_launch_error = None;
             tab.terminal_pty = None;
@@ -660,8 +774,13 @@ mod tests {
                     app.toggle_terminal_sidebar();
                     app.toggle_terminal_sidebar();
                 }
-                "running" => app.terminals[0].terminal_pty = Some(
-                    TerminalEmulator::test_with_output(40, 10, "original output")),
+                "running" => {
+                    app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(
+                        40,
+                        10,
+                        "original output",
+                    ))
+                }
                 "error" => app.terminals[0].terminal_launch_error = Some("original error".into()),
                 _ => unreachable!(),
             }
@@ -672,7 +791,10 @@ mod tests {
             assert_eq!(app.active_terminal, 1);
             match state {
                 "running" => assert!(app.terminals[0].terminal_pty.is_some()),
-                "error" => assert_eq!(app.terminals[0].terminal_launch_error.as_deref(), Some("original error")),
+                "error" => assert_eq!(
+                    app.terminals[0].terminal_launch_error.as_deref(),
+                    Some("original error")
+                ),
                 _ => assert!(app.terminal_is_open(0)),
             }
         }
@@ -700,7 +822,10 @@ mod tests {
         assert!(app.detach_terminal_to_group(0, app.active_group));
         assert!(!app.detach_terminal_to_group(0, app.active_group));
         assert_eq!(
-            app.tabs.iter().filter(|tab| tab.kind == TabKind::Terminal).count(),
+            app.tabs
+                .iter()
+                .filter(|tab| tab.kind == TabKind::Terminal)
+                .count(),
             1
         );
     }
@@ -763,16 +888,17 @@ mod tests {
         let mut closed = false;
         for _ in 0..100 {
             app.process_terminals();
-            if app.terminals[0].name == "1: Terminal"
-                && app.terminals[0].terminal_pty.is_none()
-            {
+            if app.terminals[0].name == "1: Terminal" && app.terminals[0].terminal_pty.is_none() {
                 closed = true;
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        assert!(closed, "exited terminal should be replaced by the hidden placeholder");
+        assert!(
+            closed,
+            "exited terminal should be replaced by the hidden placeholder"
+        );
         assert!(!app.show_terminal_sidebar);
         assert!(!app.terminal_sidebar_revealed);
         assert!(!app.terminal_panel_focused);
@@ -816,10 +942,6 @@ mod tests {
         app.close_terminal_tab_at(0);
 
         assert_eq!(app.terminals.len(), 1);
-        assert!(app
-            .tabs
-            .iter()
-            .all(|tab| tab.kind != TabKind::Terminal));
+        assert!(app.tabs.iter().all(|tab| tab.kind != TabKind::Terminal));
     }
-
 }

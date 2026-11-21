@@ -129,7 +129,11 @@ pub(super) const BUILTINS: &[(&str, &str, &str)] = &[
     ("acp_chat", "Agent: Toggle Chat", "Ctrl+Shift+I"),
     ("settings", "Preferences: Open Settings", "Ctrl+,"),
     ("toggle_word_wrap", "View: Toggle Word Wrap", "Alt+Z"),
-    ("vtcomplete_inline_request", "GPTComplete: Predict Here", "Alt+I"),
+    (
+        "vtcomplete_inline_request",
+        "GPTComplete: Predict Here",
+        "Alt+I",
+    ),
     ("fold", "View: Fold", "Ctrl+Shift+["),
     ("unfold", "View: Unfold", "Ctrl+Shift+]"),
     (
@@ -178,7 +182,11 @@ pub(super) const BUILTINS: &[(&str, &str, &str)] = &[
     ("next_change", "Go to Next Change", "Alt+F5"),
     ("prev_change", "Go to Previous Change", "Alt+Shift+F5"),
     ("markdown_preview", "Markdown: Toggle Preview", "Alt+V"),
-    ("split_editor", "View: Split Editor Right", "Ctrl+K, Ctrl+\\"),
+    (
+        "split_editor",
+        "View: Split Editor Right",
+        "Ctrl+K, Ctrl+\\",
+    ),
     ("show_explorer", "View: Focus Explorer", "Ctrl+Shift+E"),
     ("quit", "File: Quit", "Ctrl+Q"),
     ("desk_switch", "Desks: Switch Desk", "Ctrl+K, D"),
@@ -225,7 +233,11 @@ pub(super) const BUILTINS: &[(&str, &str, &str)] = &[
     ("outdent_line", "Edit: Outdent Line", "Ctrl+["),
     ("duplicate_line", "Edit: Duplicate Line", "Ctrl+Shift+D"),
     ("delete_line", "Edit: Delete Line", "Alt+D"),
-    ("insert_line_above", "Edit: Insert Line Above", "Ctrl+Shift+Enter"),
+    (
+        "insert_line_above",
+        "Edit: Insert Line Above",
+        "Ctrl+Shift+Enter",
+    ),
     ("goto_bracket", "Edit: Go to Matching Bracket", "Alt+\\"),
     (
         "toggle_block_comment",

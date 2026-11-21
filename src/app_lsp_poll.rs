@@ -8,8 +8,7 @@ mod hover_tests;
 #[path = "app_lsp_selection_tests.rs"]
 mod selection_tests;
 
-pub(crate) const LSP_EDIT_QUIET_PERIOD: std::time::Duration =
-    std::time::Duration::from_millis(750);
+pub(crate) const LSP_EDIT_QUIET_PERIOD: std::time::Duration = std::time::Duration::from_millis(750);
 
 fn inlay_range(
     editor: &crate::editor::Editor,
@@ -81,7 +80,9 @@ fn request_passive_document_feedback(app: &mut App, historical: bool) {
     let folding_supported = client.supports_request("textDocument/foldingRange");
     let lenses_supported = client.supports_request("textDocument/codeLens");
     let links_supported = client.supports_request("textDocument/documentLink");
-    let new_document = app.lsp_manager.track_passive_document(path, version, client_idx);
+    let new_document = app
+        .lsp_manager
+        .track_passive_document(path, version, client_idx);
     if (new_document || app.lsp_folding_last_version != version)
         && (!folding_supported || app.lsp_manager.request_folding_range(path))
     {
@@ -113,7 +114,10 @@ fn inlay_response_is_current(
                     target.matches(
                         path,
                         editor.content_version,
-                        Some(inlay_range(editor, app.lsp_manager.inlay_hint_request.as_ref())),
+                        Some(inlay_range(
+                            editor,
+                            app.lsp_manager.inlay_hint_request.as_ref(),
+                        )),
                     )
                 })
         })
@@ -126,15 +130,26 @@ pub(crate) fn apply_lsp_text_edits(
     path: &std::path::Path,
     edits: Vec<lsp_types::TextEdit>,
 ) -> usize {
-    if edits.is_empty() { return 0; }
+    if edits.is_empty() {
+        return 0;
+    }
     app.open_file(path);
-    let Some(editor) = app.editor_mut().filter(|editor| editor.file_path.as_deref() == Some(path)) else { return 0; };
+    let Some(editor) = app
+        .editor_mut()
+        .filter(|editor| editor.file_path.as_deref() == Some(path))
+    else {
+        return 0;
+    };
     crate::app_lsp_edits::apply(editor, &edits).unwrap_or(0)
 }
 
 #[cfg(test)]
 pub(crate) fn poll_lsp(app: &mut App, needs_redraw: &mut bool) {
-    poll_lsp_until(app, needs_redraw, std::time::Instant::now() + crate::ui_work::TURN_BUDGET);
+    poll_lsp_until(
+        app,
+        needs_redraw,
+        std::time::Instant::now() + crate::ui_work::TURN_BUDGET,
+    );
 }
 
 pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: std::time::Instant) {
@@ -171,20 +186,35 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
             .as_deref()
             .map(|path| (path, editor.content_version))
     });
-    let range = editor.filter(|_| app.show_inlay_hints && app.lsp_manager.inlay_hint_request.is_some())
+    let range = editor
+        .filter(|_| app.show_inlay_hints && app.lsp_manager.inlay_hint_request.is_some())
         .map(|editor| inlay_range(editor, app.lsp_manager.inlay_hint_request.as_ref()));
-    let highlight_target = editor.filter(|editor| app.lsp_highlight_last_cursor == (editor.cursor_line, editor.cursor_col)).and_then(|editor| {
-        let (_, (line, col)) = app.lsp_manager.highlight_request.as_ref()?;
-        Some((editor.file_path.as_deref()?, editor.content_version, *line, *col))
-    });
+    let highlight_target = editor
+        .filter(|editor| app.lsp_highlight_last_cursor == (editor.cursor_line, editor.cursor_col))
+        .and_then(|editor| {
+            let (_, (line, col)) = app.lsp_manager.highlight_request.as_ref()?;
+            Some((
+                editor.file_path.as_deref()?,
+                editor.content_version,
+                *line,
+                *col,
+            ))
+        });
     app.lsp_manager.retain_document_highlight(highlight_target);
     if app.lsp_inlay_hint_last_scroll == usize::MAX {
         app.lsp_manager.cancel_inlay_hint_request();
     }
     app.lsp_manager.retain_document_feedback(document, range);
     // Poll LSP servers for events (diagnostics, completions, hover, etc.)
-    let connection_state = (app.lsp_manager.clients.len(), app.lsp_manager.startup_errors.len(),
-        app.lsp_manager.clients.iter().filter(|client| client.initialized).count());
+    let connection_state = (
+        app.lsp_manager.clients.len(),
+        app.lsp_manager.startup_errors.len(),
+        app.lsp_manager
+            .clients
+            .iter()
+            .filter(|client| client.initialized)
+            .count(),
+    );
     let link_available = app.lsp_manager.definition_link_available;
     let diagnostic_version = app.lsp_manager.diagnostics_version;
     let had_hover_content = app.lsp_manager.hover_content.is_some();
@@ -192,11 +222,19 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
     *needs_redraw |= app.poll_lsp_format_request();
     *needs_redraw |= link_available != app.lsp_manager.definition_link_available;
     *needs_redraw |= diagnostic_version != app.lsp_manager.diagnostics_version;
-    *needs_redraw |= app.lsp_hover_active
-        && had_hover_content != app.lsp_manager.hover_content.is_some();
+    *needs_redraw |=
+        app.lsp_hover_active && had_hover_content != app.lsp_manager.hover_content.is_some();
     app.dispatch_lsp_suggestions();
-    *needs_redraw |= connection_state != (app.lsp_manager.clients.len(), app.lsp_manager.startup_errors.len(),
-        app.lsp_manager.clients.iter().filter(|client| client.initialized).count());
+    *needs_redraw |= connection_state
+        != (
+            app.lsp_manager.clients.len(),
+            app.lsp_manager.startup_errors.len(),
+            app.lsp_manager
+                .clients
+                .iter()
+                .filter(|client| client.initialized)
+                .count(),
+        );
     if std::mem::take(&mut app.lsp_manager.completion_response_ready) {
         app.finish_lsp_completion_response();
         *needs_redraw |= app.lsp_completion_active;
@@ -212,7 +250,9 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
             "textDocument/prepareRename" => app.lsp_prepare_rename_pending = false,
             "textDocument/completion" => {
                 app.completion_ui.status = Some("Unavailable — Ctrl+Space to retry");
-                if !app.completion_ui.explicit { app.lsp_completion_active = false; }
+                if !app.completion_ui.explicit {
+                    app.lsp_completion_active = false;
+                }
                 *needs_redraw = true;
             }
             "textDocument/hover" => app.lsp_hover_active = false,
@@ -220,21 +260,30 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
             "textDocument/codeAction" => app.lsp_code_action_active = false,
             "textDocument/onTypeFormatting" => app.lsp_on_type_format_target = None,
             "textDocument/semanticTokens/full" => app.lsp_semantic_tokens_request_target = None,
-            "workspace/executeCommand" => app.notify_error("The language server could not execute the code action"),
+            "workspace/executeCommand" => {
+                app.notify_error("The language server could not execute the code action")
+            }
             _ => {}
         }
     }
     let resolved = std::mem::take(&mut app.lsp_manager.completion_resolve_dirty);
     *needs_redraw |= app.lsp_completion_active && resolved;
     if app.lsp_completion_active {
-        if let Some(path) = app.tabs.get(app.active_tab).and_then(|tab| tab.editor.file_path.as_deref()) {
-            app.lsp_manager.request_completion_resolve(path, app.lsp_completion_selected);
+        if let Some(path) = app
+            .tabs
+            .get(app.active_tab)
+            .and_then(|tab| tab.editor.file_path.as_deref())
+        {
+            app.lsp_manager
+                .request_completion_resolve(path, app.lsp_completion_selected);
         }
     } else {
         app.lsp_manager.cancel_completion_resolve();
     }
     // Notify LSP of content changes in the active editor (skip large files)
-    if !historical && !app.lsp_manager.configs.is_empty() && app.last_edit_time.elapsed() >= LSP_EDIT_QUIET_PERIOD
+    if !historical
+        && !app.lsp_manager.configs.is_empty()
+        && app.last_edit_time.elapsed() >= LSP_EDIT_QUIET_PERIOD
     {
         let pending_sync = app.editor().and_then(|editor| {
             if editor.large_file_mode {
@@ -257,22 +306,32 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
     // Arm the delay only when this file's hover provider is ready. Initialization
     // wakes the event loop, so a stationary pointer can start its delay then;
     // an early failed request must not consume the hover for that position.
-    let hover_pos = (app.hover_enabled && !app.lsp_hover_suppressed && !historical
-        && app.editor().is_some_and(|editor| !editor.large_file_mode && !editor.bg_loading
-            && editor.file_path.as_deref().is_some_and(|path| {
-                app.lsp_manager.clients.iter().any(|client| client.initialized
-                    && !client.server_dead && client.handles_file(path)
-                    && client.supports_request("textDocument/hover"))
-            })))
-        .then_some(app.hovered_editor_pos).flatten();
+    let hover_pos = (app.hover_enabled
+        && !app.lsp_hover_suppressed
+        && !historical
+        && app.editor().is_some_and(|editor| {
+            !editor.large_file_mode
+                && !editor.bg_loading
+                && editor.file_path.as_deref().is_some_and(|path| {
+                    app.lsp_manager.clients.iter().any(|client| {
+                        client.initialized
+                            && !client.server_dead
+                            && client.handles_file(path)
+                            && client.supports_request("textDocument/hover")
+                    })
+                })
+        }))
+    .then_some(app.hovered_editor_pos)
+    .flatten();
     if let Some((line, col)) = hover_pos {
         if app.lsp_hover_pending_pos != Some((line, col)) {
             *needs_redraw |= app.clear_lsp_hover();
             app.lsp_hover_pending_pos = Some((line, col));
             app.lsp_hover_request_time = Some(std::time::Instant::now());
-        } else if app.lsp_hover_request_time.is_some_and(|time| {
-            time.elapsed() >= std::time::Duration::from_millis(500)
-        }) {
+        } else if app
+            .lsp_hover_request_time
+            .is_some_and(|time| time.elapsed() >= std::time::Duration::from_millis(500))
+        {
             app.lsp_hover_request_time = None;
             app.lsp_hover_line = line;
             app.lsp_hover_col = col;
@@ -317,7 +376,13 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
                     };
                     (!label.is_empty()).then_some(crate::app::InlayHintDisplay::new(
                         hint.position.line,
-                        app.editor().map_or(0, |ed| crate::lsp_positions::from_utf16(&ed.rope, hint.position.line as usize, hint.position.character) as u32),
+                        app.editor().map_or(0, |ed| {
+                            crate::lsp_positions::from_utf16(
+                                &ed.rope,
+                                hint.position.line as usize,
+                                hint.position.character,
+                            ) as u32
+                        }),
                         label,
                         hint.kind,
                     ))
@@ -339,7 +404,10 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
     }
     // Request semantic tokens when content changes
     if app.show_semantic_tokens && !app.lsp_manager.clients.is_empty() {
-        let is_large = historical || app.editor().is_some_and(|e| e.large_file_mode || e.bg_loading);
+        let is_large = historical
+            || app
+                .editor()
+                .is_some_and(|e| e.large_file_mode || e.bg_loading);
         if !is_large {
             if let Some(ed) = app.editor() {
                 let cv = ed.content_version;
@@ -352,8 +420,11 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
                     if cv != app.lsp_semantic_tokens_last_version
                         && document_is_synced
                         && app.last_edit_time.elapsed() >= LSP_EDIT_QUIET_PERIOD
-                        && app.lsp_manager.clients.iter().any(|client| client.initialized
-                            && client.handles_file(fp) && client.supports_request("textDocument/semanticTokens/full"))
+                        && app.lsp_manager.clients.iter().any(|client| {
+                            client.initialized
+                                && client.handles_file(fp)
+                                && client.supports_request("textDocument/semanticTokens/full")
+                        })
                     {
                         let fp = fp.clone();
                         let request_target = app.editor_content_target();
@@ -379,7 +450,10 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
     }
     // Request document highlights when cursor position changes
     if !app.lsp_manager.clients.is_empty() {
-        let is_large = historical || app.editor().is_some_and(|e| e.large_file_mode || e.bg_loading);
+        let is_large = historical
+            || app
+                .editor()
+                .is_some_and(|e| e.large_file_mode || e.bg_loading);
         if !is_large {
             if let Some(ed) = app.editor() {
                 let cl = ed.cursor_line;
@@ -397,7 +471,10 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
                     {
                         let fp = fp.clone();
                         let col = crate::lsp_positions::to_utf16(&ed.rope, cl, cc);
-                        if app.lsp_manager.request_document_highlight(&fp, cl as u32, col) {
+                        if app
+                            .lsp_manager
+                            .request_document_highlight(&fp, cl as u32, col)
+                        {
                             app.lsp_highlight_last_cursor = (cl, cc);
                         }
                     }
@@ -414,9 +491,21 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
             .map(|highlight| {
                 (
                     highlight.range.start.line,
-                    app.editor().map_or(0, |ed| crate::lsp_positions::from_utf16(&ed.rope, highlight.range.start.line as usize, highlight.range.start.character) as u32),
+                    app.editor().map_or(0, |ed| {
+                        crate::lsp_positions::from_utf16(
+                            &ed.rope,
+                            highlight.range.start.line as usize,
+                            highlight.range.start.character,
+                        ) as u32
+                    }),
                     highlight.range.end.line,
-                    app.editor().map_or(0, |ed| crate::lsp_positions::from_utf16(&ed.rope, highlight.range.end.line as usize, highlight.range.end.character) as u32),
+                    app.editor().map_or(0, |ed| {
+                        crate::lsp_positions::from_utf16(
+                            &ed.rope,
+                            highlight.range.end.line as usize,
+                            highlight.range.end.character,
+                        ) as u32
+                    }),
                 )
             })
             .collect();
@@ -573,21 +662,39 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
     if app.lsp_manager.selection_ranges_dirty {
         app.lsp_manager.selection_ranges_dirty = false;
         let ranges = std::mem::take(&mut app.lsp_manager.selection_ranges);
-        if let Some(sr) = ranges.into_iter().next().filter(|_| app.lsp_selection_context_current()) {
+        if let Some(sr) = ranges
+            .into_iter()
+            .next()
+            .filter(|_| app.lsp_selection_context_current())
+        {
             // Flatten the linked list: innermost first, outermost last
             let mut flat: Vec<(usize, usize, usize, usize)> = Vec::new();
             let mut current = &sr;
             loop {
                 let r = &current.range;
-                let valid = app.editor().is_some_and(|ed| {
-                    r.start <= r.end && (r.end.line as usize) < ed.line_count()
-                });
-                if !valid { break; }
+                let valid = app
+                    .editor()
+                    .is_some_and(|ed| r.start <= r.end && (r.end.line as usize) < ed.line_count());
+                if !valid {
+                    break;
+                }
                 flat.push((
                     r.start.line as usize,
-                    app.editor().map_or(0, |ed| crate::lsp_positions::from_utf16(&ed.rope, r.start.line as usize, r.start.character)),
+                    app.editor().map_or(0, |ed| {
+                        crate::lsp_positions::from_utf16(
+                            &ed.rope,
+                            r.start.line as usize,
+                            r.start.character,
+                        )
+                    }),
                     r.end.line as usize,
-                    app.editor().map_or(0, |ed| crate::lsp_positions::from_utf16(&ed.rope, r.end.line as usize, r.end.character)),
+                    app.editor().map_or(0, |ed| {
+                        crate::lsp_positions::from_utf16(
+                            &ed.rope,
+                            r.end.line as usize,
+                            r.end.character,
+                        )
+                    }),
                 ));
                 if let Some(ref parent) = current.parent {
                     current = parent;
@@ -726,8 +833,12 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
         app.lsp_document_links.clear();
         for link in &links {
             let line = link.range.start.line as usize;
-            let start_col = app.editor().map_or(0, |ed| crate::lsp_positions::from_utf16(&ed.rope, line, link.range.start.character));
-            let end_col = app.editor().map_or(0, |ed| crate::lsp_positions::from_utf16(&ed.rope, line, link.range.end.character));
+            let start_col = app.editor().map_or(0, |ed| {
+                crate::lsp_positions::from_utf16(&ed.rope, line, link.range.start.character)
+            });
+            let end_col = app.editor().map_or(0, |ed| {
+                crate::lsp_positions::from_utf16(&ed.rope, line, link.range.end.character)
+            });
             let target = link
                 .target
                 .as_ref()
@@ -743,11 +854,17 @@ pub(crate) fn poll_lsp_until(app: &mut App, needs_redraw: &mut bool, deadline: s
             .sort_by_key(|&(line, col, _, _)| (line, col));
         *needs_redraw = true;
     }
-    if app.lsp_goto_pending && app.lsp_manager.definition_dirty && app.lsp_manager.definition_locations.is_empty() {
+    if app.lsp_goto_pending
+        && app.lsp_manager.definition_dirty
+        && app.lsp_manager.definition_locations.is_empty()
+    {
         app.lsp_goto_pending = false;
         app.notify("No definition found");
     }
-    if app.lsp_references_pending && app.lsp_manager.references_dirty && app.lsp_manager.reference_locations.is_empty() {
+    if app.lsp_references_pending
+        && app.lsp_manager.references_dirty
+        && app.lsp_manager.reference_locations.is_empty()
+    {
         app.lsp_references_pending = false;
         app.notify("No references found");
     }
@@ -818,9 +935,12 @@ fn apply_pending_document_edits(app: &mut App, needs_redraw: &mut bool) {
         app.lsp_manager.on_type_format_dirty = false;
         let edits = std::mem::take(&mut app.lsp_manager.on_type_format_edits);
         let target = app.lsp_on_type_format_target.take();
-        let response_is_current = target.is_some_and(|target| app.editor().is_some_and(|editor| {
-            editor.file_path.as_ref() == Some(&target.path) && editor.content_version == target.content_version
-        }));
+        let response_is_current = target.is_some_and(|target| {
+            app.editor().is_some_and(|editor| {
+                editor.file_path.as_ref() == Some(&target.path)
+                    && editor.content_version == target.content_version
+            })
+        });
         if response_is_current && !edits.is_empty() {
             if let Some(editor) = app.editor_mut() {
                 let _ = crate::app_lsp_edits::apply(editor, &edits);
@@ -841,13 +961,16 @@ fn apply_pending_document_edits(app: &mut App, needs_redraw: &mut bool) {
     // Apply pre-rename edits from workspace/willRenameFiles
     if let Some(edit) = app.lsp_manager.will_rename_edit.take() {
         app.queue_lsp_workspace_edit(edit, "Applied pre-rename edits".into(), None, None);
-
     }
     for (process, id, edit) in std::mem::take(&mut app.lsp_manager.workspace_edit_requests) {
-        app.queue_lsp_workspace_edit(edit, "Applied language server edit".into(), Some((process, id)), None);
+        app.queue_lsp_workspace_edit(
+            edit,
+            "Applied language server edit".into(),
+            Some((process, id)),
+            None,
+        );
     }
     *needs_redraw |= app.poll_lsp_workspace_edits();
-
 }
 
 #[cfg(test)]
@@ -884,7 +1007,10 @@ mod tests {
             assert_eq!(needs_redraw, expected_redraw);
             assert_eq!(app.lsp_inlay_hints.len(), 1);
             let hint = &app.lsp_inlay_hints[0];
-            assert_eq!((hint.line, hint.column, hint.label.as_str()), (2, 3, "typehint"));
+            assert_eq!(
+                (hint.line, hint.column, hint.label.as_str()),
+                (2, 3, "typehint")
+            );
             assert_eq!(hint.color_kind_index(), kind);
         }
     }

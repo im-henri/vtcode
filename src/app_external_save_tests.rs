@@ -123,7 +123,10 @@ fn external_save_conflict_is_visible_and_never_overwrites_in_all_save_paths() {
             Some(crate::ui_modal::Kind::SaveError),
             "{mode}"
         );
-        assert!(app.save_conflict.is_some(), "{mode} must offer Overwrite and View Diff");
+        assert!(
+            app.save_conflict.is_some(),
+            "{mode} must offer Overwrite and View Diff"
+        );
         assert!(
             app.save_error.as_ref().unwrap().contains("changed on disk"),
             "{mode}"
@@ -177,9 +180,22 @@ fn external_save_resolution_popup_has_two_actions_and_enter_safely_opens_the_dif
     finish_saves(&mut app);
     assert!(app.save_conflict.is_some());
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 28)).unwrap();
-    terminal.draw(|frame| crate::ui_modal::draw_active(frame, &mut app)).unwrap();
-    let text: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
-    for label in ["File changed outside VTCode", "Overwrite", "View Diff", "lose the external changes"] {
+    terminal
+        .draw(|frame| crate::ui_modal::draw_active(frame, &mut app))
+        .unwrap();
+    let text: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
+    for label in [
+        "File changed outside VTCode",
+        "Overwrite",
+        "View Diff",
+        "lose the external changes",
+    ] {
         assert!(text.contains(label), "missing {label}: {text}");
     }
     assert_eq!(app.modal.buttons.len(), 2);
@@ -187,7 +203,10 @@ fn external_save_resolution_popup_has_two_actions_and_enter_safely_opens_the_dif
     crate::ui_modal::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(app.pending_file_saves.is_empty());
     app.wait_for_background(Duration::from_secs(10), |app| app.save_error.is_none());
-    assert!(matches!(app.tabs[app.active_tab].kind, crate::app::TabKind::Diff(_)));
+    assert!(matches!(
+        app.tabs[app.active_tab].kind,
+        crate::app::TabKind::Diff(_)
+    ));
     assert_eq!(app.compare_base_content.as_deref(), Some("external\n"));
     assert_eq!(app.editor().unwrap().rope, "Xoriginal\n");
     assert_eq!(fs::read_to_string(&path).unwrap(), "external\n");
@@ -196,7 +215,10 @@ fn external_save_resolution_popup_has_two_actions_and_enter_safely_opens_the_dif
 
 #[test]
 fn external_save_resolution_diff_uses_latest_disk_and_live_edits_without_focus_autosave() {
-    for mode in [crate::app::DiffMode::Inline, crate::app::DiffMode::SideBySide] {
+    for mode in [
+        crate::app::DiffMode::Inline,
+        crate::app::DiffMode::SideBySide,
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("extensionless");
         let mut app = app(&path);
@@ -216,7 +238,10 @@ fn external_save_resolution_diff_uses_latest_disk_and_live_edits_without_focus_a
         app.view_save_conflict();
         app.wait_for_background(Duration::from_secs(10), |app| app.save_error.is_none());
         assert!(app.diff_mode == mode);
-        assert_eq!(app.compare_base_content.as_deref(), Some("latest outside version\n"));
+        assert_eq!(
+            app.compare_base_content.as_deref(),
+            Some("latest outside version\n")
+        );
         assert_eq!(app.editor().unwrap().rope, source);
         assert!(app.editor().unwrap().read_only);
         assert_eq!(app.editor().unwrap().language_name(), "Python");
@@ -224,7 +249,10 @@ fn external_save_resolution_diff_uses_latest_disk_and_live_edits_without_focus_a
         assert!(!app.confirm_close_active);
         assert_eq!(app.tabs[0].editor.rope, source);
         assert!(app.tabs[0].editor.modified);
-        assert_eq!(fs::read_to_string(&path).unwrap(), "latest outside version\n");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "latest outside version\n"
+        );
         app.active_tab = 0;
         app.sync_diff_tab();
         app.editor_mut().unwrap().undo();
@@ -278,7 +306,9 @@ fn external_save_resolution_targets_original_document_and_rejects_closed_or_read
             let mut replacement = Editor::new();
             replacement.open_file(&path).unwrap();
             app.tabs.push(Tab::new_file(replacement));
-        } else if action == "read_only" { app.editor_mut().unwrap().set_read_only(true); }
+        } else if action == "read_only" {
+            app.editor_mut().unwrap().set_read_only(true);
+        }
         let other = dir.path().join("other.txt");
         fs::write(&other, "other\n").unwrap();
         let mut editor = Editor::new();
@@ -296,7 +326,14 @@ fn external_save_resolution_targets_original_document_and_rejects_closed_or_read
         }
         assert_eq!(fs::read_to_string(&other).unwrap(), "other\n");
         assert!(app.tabs[1].editor.modified);
-        assert_eq!(fs::read_to_string(&path).unwrap(), if action == "overwrite" { "Xoriginal\n" } else { "external\n" });
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            if action == "overwrite" {
+                "Xoriginal\n"
+            } else {
+                "external\n"
+            }
+        );
         if matches!(action, "closed" | "read_only") {
             assert!(app.save_conflict.is_some() && app.modal.error.is_some());
         }
@@ -304,26 +341,43 @@ fn external_save_resolution_targets_original_document_and_rejects_closed_or_read
 }
 
 #[test]
-fn external_save_resolution_revalidates_disk_after_overwrite_preparation_and_supports_deleted_files() {
+fn external_save_resolution_revalidates_disk_after_overwrite_preparation_and_supports_deleted_files()
+ {
     for deleted in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("file.txt");
         let mut app = app(&path);
         app.editor_mut().unwrap().insert_char('X');
-        let mut request = app.editor().unwrap().background_save_request(false, false, false).unwrap();
-        if deleted { fs::remove_file(&path).unwrap(); } else { fs::write(&path, "external\n").unwrap(); }
+        let mut request = app
+            .editor()
+            .unwrap()
+            .background_save_request(false, false, false)
+            .unwrap();
+        if deleted {
+            fs::remove_file(&path).unwrap();
+        } else {
+            fs::write(&path, "external\n").unwrap();
+        }
         crate::app_save_conflict::prepare_overwrite(&mut request, None).unwrap();
         assert_eq!(request.fail_if_exists, deleted);
         fs::write(&path, "new external version\n").unwrap();
-        let error = crate::editor::write_background_save(&request).err().unwrap();
-        assert!(crate::editor::save::is_conflict(&error) || error.kind() == std::io::ErrorKind::AlreadyExists);
+        let error = crate::editor::write_background_save(&request)
+            .err()
+            .unwrap();
+        assert!(
+            crate::editor::save::is_conflict(&error)
+                || error.kind() == std::io::ErrorKind::AlreadyExists
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "new external version\n");
     }
 }
 
 #[test]
 fn external_save_resolution_overwrite_checks_external_encoding() {
-    for external in [b"\xEF\xBB\xBFexternal\n".as_slice(), b"\xFF\xFEe\0x\0t\0\n\0"] {
+    for external in [
+        b"\xEF\xBB\xBFexternal\n".as_slice(),
+        b"\xFF\xFEe\0x\0t\0\n\0",
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("file.txt");
         let mut app = app(&path);
@@ -334,7 +388,12 @@ fn external_save_resolution_overwrite_checks_external_encoding() {
         assert!(app.save_conflict.is_some());
         app.overwrite_save_conflict();
         finish_saves(&mut app);
-        assert!(app.save_error.is_none(), "external={external:?}, save_error={:?}, modal_error={:?}", app.save_error, app.modal.error);
+        assert!(
+            app.save_error.is_none(),
+            "external={external:?}, save_error={:?}, modal_error={:?}",
+            app.save_error,
+            app.modal.error
+        );
         assert_eq!(fs::read(&path).unwrap(), b"Xoriginal\n");
         assert!(!app.editor().unwrap().modified);
     }
@@ -351,9 +410,17 @@ fn external_save_resolution_cannot_recreate_a_file_recovered_to_untitled_after_d
     finish_saves(&mut app);
     assert!(app.save_conflict.is_some());
     fs::remove_file(&path).unwrap();
-    send(&mut app, BackgroundResult::FileDiskState(WorkspacePathChange { is_dir: false,
-        path: path.clone(), observed_at: Instant::now(), exists: false, modified: None, len: None,
-    }));
+    send(
+        &mut app,
+        BackgroundResult::FileDiskState(WorkspacePathChange {
+            is_dir: false,
+            path: path.clone(),
+            observed_at: Instant::now(),
+            exists: false,
+            modified: None,
+            len: None,
+        }),
+    );
     assert!(app.editor().unwrap().file_path.is_none());
     app.overwrite_save_conflict();
     assert!(app.modal.error.is_some());
@@ -377,25 +444,55 @@ fn external_save_resolution_mouse_actions_and_small_popups_keep_cancel_available
         app.save_current_file();
         finish_saves(&mut app);
         for (width, height) in [(1, 1), (16, 7), (42, 14), (100, 28)] {
-            let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
-            terminal.draw(|frame| crate::ui_modal::draw_active(frame, &mut app)).unwrap();
-            if width >= 42 { assert!(!app.modal.close.is_empty()); }
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| crate::ui_modal::draw_active(frame, &mut app))
+                .unwrap();
+            if width >= 42 {
+                assert!(!app.modal.close.is_empty());
+            }
             crate::ui_modal::handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
             assert!(app.save_error.is_none());
             assert_eq!(fs::read_to_string(&path).unwrap(), "external\n");
             app.save_current_file();
             finish_saves(&mut app);
         }
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 28)).unwrap();
-        terminal.draw(|frame| crate::ui_modal::draw_active(frame, &mut app)).unwrap();
-        let button = app.modal.buttons.iter().find(|(_, id)| *id == usize::from(!overwrite)).unwrap().0;
-        crate::ui_modal::handle_mouse(&mut app, MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left), column: button.x, row: button.y, modifiers: KeyModifiers::NONE,
-        });
-        if overwrite { finish_saves(&mut app); }
-        else { app.wait_for_background(Duration::from_secs(10), |app| app.save_error.is_none()); }
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 28)).unwrap();
+        terminal
+            .draw(|frame| crate::ui_modal::draw_active(frame, &mut app))
+            .unwrap();
+        let button = app
+            .modal
+            .buttons
+            .iter()
+            .find(|(_, id)| *id == usize::from(!overwrite))
+            .unwrap()
+            .0;
+        crate::ui_modal::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: button.x,
+                row: button.y,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        if overwrite {
+            finish_saves(&mut app);
+        } else {
+            app.wait_for_background(Duration::from_secs(10), |app| app.save_error.is_none());
+        }
         assert!(app.save_error.is_none());
-        assert_eq!(fs::read_to_string(&path).unwrap(), if overwrite { "Xoriginal\n" } else { "external\n" });
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            if overwrite {
+                "Xoriginal\n"
+            } else {
+                "external\n"
+            }
+        );
     }
 }
 
@@ -416,7 +513,11 @@ fn external_save_resolution_overwrite_uses_shared_document_edits_from_another_sp
     finish_saves(&mut app);
     assert!(app.save_error.is_none());
     assert_eq!(fs::read_to_string(&path).unwrap(), expected.to_string());
-    for tab in app.tabs.iter_mut().chain(app.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
+    for tab in app
+        .tabs
+        .iter_mut()
+        .chain(app.groups.iter_mut().flat_map(|group| &mut group.tabs))
+    {
         if tab.editor.file_path.as_ref() == Some(&path) {
             tab.editor.refresh_document();
             assert_eq!(tab.editor.rope, expected);
@@ -444,7 +545,10 @@ fn external_save_deferred_write_rebases_only_our_successful_disk_checkpoint() {
             .unwrap();
         app.pending_file_saves.insert(
             path.clone(),
-            (app.workspace_generation, first.source_content_version.into()),
+            (
+                app.workspace_generation,
+                first.source_content_version.into(),
+            ),
         );
         app.editor_mut().unwrap().break_undo_group();
         app.editor_mut().unwrap().insert_char('Y');
@@ -496,7 +600,10 @@ fn external_save_two_new_documents_cannot_inherit_each_others_overwrite_permissi
             .unwrap();
         app.pending_file_saves.insert(
             path.clone(),
-            (app.workspace_generation, first.source_content_version.into()),
+            (
+                app.workspace_generation,
+                first.source_content_version.into(),
+            ),
         );
         if !same_document {
             let mut other = Editor::test_with_text("second draft");
@@ -597,9 +704,14 @@ fn external_save_watcher_preserves_unsaved_edits_and_warns_once_for_backward_tim
         // Native checks may run between injected events. Keep their observed
         // metadata consistent with the backward timestamp under test.
         let modified = UNIX_EPOCH + Duration::from_secs(1);
-        fs::OpenOptions::new().write(true).open(&path).unwrap()
-            .set_times(fs::FileTimes::new().set_modified(modified)).unwrap();
-        let change = WorkspacePathChange { is_dir: false,
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        let change = WorkspacePathChange {
+            is_dir: false,
             path: path.clone(),
             observed_at: Instant::now(),
             exists: true,
@@ -660,7 +772,8 @@ fn stale_byte_validation_does_not_clear_a_newer_disk_conflict_warning() {
     let editor = app.editor().unwrap();
     let document = editor.save_identity;
     let baseline = crate::editor::DiskSaveBaseline {
-        rope: editor.saved_rope.as_ref().unwrap().clone(), encoding: editor.saved_encoding,
+        rope: editor.saved_rope.as_ref().unwrap().clone(),
+        encoding: editor.saved_encoding,
     };
     let old_size = editor.file_size;
     let old_modified = editor.last_disk_modified;
@@ -671,19 +784,32 @@ fn stale_byte_validation_does_not_clear_a_newer_disk_conflict_warning() {
     fs::write(&path, "external replacement\n").unwrap();
     let change = crate::background::inspect_workspace_path(path.clone());
     send(&mut app, BackgroundResult::FileDiskState(change.clone()));
-    send(&mut app, BackgroundResult::NativeFileValidated {
-        generation, path: path.clone(), document, baseline,
-        cancel: crate::background::CancellationToken::new(),
-        result: Ok(crate::remote::workspace::Validation {
-            changed: false, size: old_size, modified: old_modified,
-        }),
-    });
+    send(
+        &mut app,
+        BackgroundResult::NativeFileValidated {
+            generation,
+            path: path.clone(),
+            document,
+            baseline,
+            cancel: crate::background::CancellationToken::new(),
+            result: Ok(crate::remote::workspace::Validation {
+                changed: false,
+                size: old_size,
+                modified: old_modified,
+            }),
+        },
+    );
     app.wait_for_background(Duration::from_secs(10), |app| {
         !app.background.has_active_jobs() && !app.background.has_pending_results()
     });
     send(&mut app, BackgroundResult::FileDiskState(change));
-    assert_eq!(app.notification_history.iter()
-        .filter(|entry| entry.0.contains("changed on disk")).count(), 1);
+    assert_eq!(
+        app.notification_history
+            .iter()
+            .filter(|entry| entry.0.contains("changed on disk"))
+            .count(),
+        1
+    );
     assert_eq!(app.editor().unwrap().rope, "Xoriginal\n");
     assert!(app.editor().unwrap().modified && app.editor().unwrap().can_undo());
     assert_eq!(fs::read_to_string(&path).unwrap(), "external replacement\n");
@@ -773,7 +899,8 @@ fn external_save_clean_editor_still_reloads_external_changes() {
     let metadata = fs::metadata(&path).unwrap();
     send(
         &mut app,
-        BackgroundResult::FileDiskState(WorkspacePathChange { is_dir: false,
+        BackgroundResult::FileDiskState(WorkspacePathChange {
+            is_dir: false,
             path: path.clone(),
             observed_at: Instant::now(),
             exists: true,

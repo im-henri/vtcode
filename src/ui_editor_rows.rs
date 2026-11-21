@@ -133,16 +133,26 @@ mod tests {
 
     #[test]
     fn blank_tail_matches_span_rendering_over_styled_cells_and_clipped_views() {
-        for area in [Rect::default(), Rect::new(0, 0, 18, 8), Rect::new(5, 3, 12, 5),
-            Rect::new(14, 6, 20, 12), Rect::new(30, 20, 8, 5)]
-        {
+        for area in [
+            Rect::default(),
+            Rect::new(0, 0, 18, 8),
+            Rect::new(5, 3, 12, 5),
+            Rect::new(14, 6, 20, 12),
+            Rect::new(30, 20, 8, 5),
+        ] {
             for count in [0, 1, 3, 12] {
                 let mut before = Buffer::empty(Rect::new(3, 2, 20, 10));
                 for cell in &mut before.content {
-                    cell.set_symbol("界").set_style(Style::default().fg(Color::Yellow)
-                        .bg(Color::Red).add_modifier(Modifier::ITALIC | Modifier::DIM));
+                    cell.set_symbol("界").set_style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .bg(Color::Red)
+                            .add_modifier(Modifier::ITALIC | Modifier::DIM),
+                    );
                 }
-                let style = Style::default().fg(Color::Cyan).bg(Color::Blue)
+                let style = Style::default()
+                    .fg(Color::Cyan)
+                    .bg(Color::Blue)
                     .remove_modifier(Modifier::DIM);
                 let mut expected = before.clone();
                 let mut actual = before;
@@ -151,7 +161,10 @@ mod tests {
                     let mut rows = Rows::new(area, style);
                     rows.count = count;
                     rows.finish(buffer);
-                    assert_eq!(rows.count, count.max(usize::from(area.intersection(buffer.area).height)));
+                    assert_eq!(
+                        rows.count,
+                        count.max(usize::from(area.intersection(buffer.area).height))
+                    );
                 }
                 REFERENCE.set(false);
                 assert_eq!(actual, expected, "area={area:?}, count={count}");

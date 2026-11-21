@@ -163,10 +163,16 @@ fn duplicate_line_copies_selected_lines_and_clamps_virtual_columns_with_undo_red
                 editor.record_saved_snapshot(editor.rope.clone());
                 editor.selection_anchor = Some(anchor);
                 (editor.cursor_line, editor.cursor_col) = cursor;
-                if duplicate_up { editor.duplicate_line_up(); }
-                else { editor.duplicate_line(); }
+                if duplicate_up {
+                    editor.duplicate_line_up();
+                } else {
+                    editor.duplicate_line();
+                }
                 assert_eq!(editor.rope.to_string(), duplicated);
-                assert_eq!(editor.cursor_line, cursor.0 + 2 * usize::from(!duplicate_up));
+                assert_eq!(
+                    editor.cursor_line,
+                    cursor.0 + 2 * usize::from(!duplicate_up)
+                );
                 assert_eq!(editor.cursor_col, 1);
                 editor.undo();
                 assert_eq!(editor.rope.to_string(), source);

@@ -39,7 +39,9 @@ fn hidden_agent_reads_use_current_disk_text_and_preserve_unsaved_buffers() {
     let workspace = vtcode::acp::Workspace::new(root.path()).unwrap();
     let request = p::ReadTextFileRequest::new("chat", &path);
     let read = |app: &App| {
-        let buffer = app.acp_read_buffer(&app.acp_file_editors(&path)).map(|rope| rope.to_string());
+        let buffer = app
+            .acp_read_buffer(&app.acp_file_editors(&path))
+            .map(|rope| rope.to_string());
         workspace.read(&request, buffer.as_deref()).unwrap().content
     };
     assert_eq!(read(&app), "external change");
@@ -63,7 +65,8 @@ fn hidden_stale_large_buffers_do_not_reject_small_agent_reads() {
     std::fs::write(&path, "current small file").unwrap();
     let mut app = App::test_new();
     app.explorer.root = root.path().into();
-    let mut editor = crate::editor::Editor::test_with_text(&"x".repeat(vtcode::acp::MAX_FILE_BYTES + 1));
+    let mut editor =
+        crate::editor::Editor::test_with_text(&"x".repeat(vtcode::acp::MAX_FILE_BYTES + 1));
     editor.file_path = Some(path.clone());
     app.tabs = vec![Tab::new_file(editor)];
     let (commands, responses) = std::sync::mpsc::channel();
@@ -77,14 +80,21 @@ fn hidden_stale_large_buffers_do_not_reject_small_agent_reads() {
         app.workspace_visible = visible;
         app.editor_mut().unwrap().modified = dirty;
         app.acp_file_request_ready(
-            p::RequestId::Number(1), 0,
-            FileRequest::Read(p::ReadTextFileRequest::new("chat", &path)), None,
+            p::RequestId::Number(1),
+            0,
+            FileRequest::Read(p::ReadTextFileRequest::new("chat", &path)),
+            None,
         );
-        let Command::FileResponse { result, .. } = responses.recv_timeout(Duration::from_secs(10)).unwrap() else {
+        let Command::FileResponse { result, .. } =
+            responses.recv_timeout(Duration::from_secs(10)).unwrap()
+        else {
             panic!("expected the agent's file response");
         };
         if visible || dirty {
-            assert!(result.is_err(), "an authoritative oversized buffer must still be rejected");
+            assert!(
+                result.is_err(),
+                "an authoritative oversized buffer must still be rejected"
+            );
         } else {
             assert_eq!(result.unwrap()["content"], "current small file");
         }
@@ -122,7 +132,10 @@ fn exhausted_shared_budget_does_not_reschedule_idle_agents_forever() {
     app.chat.agent_order.remove(1);
     app.chat.connections.remove(&1);
     app.poll_acp_until(expired);
-    assert_eq!(app.chat.next_poll_agent, 0, "removing an agent keeps rotation valid");
+    assert_eq!(
+        app.chat.next_poll_agent, 0,
+        "removing an agent keeps rotation valid"
+    );
 }
 
 fn paint(app: &mut App, terminal: &mut Terminal<TestBackend>) {
@@ -255,13 +268,18 @@ fn agent_tabs_keep_conversations_drafts_and_activity_separate() {
 fn agent_tabs_mark_background_completion_for_the_right_agent_with_colliding_session_ids() {
     let mut app = app();
     let id = app.chat.selected.clone().unwrap();
-    app.chat.session_mut().unwrap().begin_prompt("OpenCode work".into());
+    app.chat
+        .session_mut()
+        .unwrap()
+        .begin_prompt("OpenCode work".into());
     app.select_chat_agent(1);
     let mut terminal = Terminal::new(TestBackend::new(150, 35)).unwrap();
     paint(&mut app, &mut terminal);
     let icon = |app: &App, terminal: &Terminal<TestBackend>, action| {
         let hit = app.chat.hits.iter().find(|h| h.action == action).unwrap();
-        terminal.backend().buffer()[(hit.area.x + 1, hit.area.y)].symbol().to_owned()
+        terminal.backend().buffer()[(hit.area.x + 1, hit.area.y)]
+            .symbol()
+            .to_owned()
     };
     assert_eq!(icon(&app, &terminal, ChatAction::SwitchAgent(0)), "⠋");
     assert_eq!(icon(&app, &terminal, ChatAction::Switch(id.clone())), "◇");
@@ -310,11 +328,28 @@ fn agent_tabs_render_and_switch_their_conversation_row() {
             .y;
         let conversation_y = app.chat.tab_area.unwrap().y;
         assert!(agent_y < conversation_y);
-        let last_tab_end = app.chat.hits.iter().filter(|hit| matches!(hit.action, ChatAction::SwitchAgent(_)))
-            .map(|hit| hit.area.right()).max().unwrap();
-        let add_agent = app.chat.hits.iter().find(|hit| hit.action == ChatAction::Picker(Picker::Agents)).unwrap().area;
+        let last_tab_end = app
+            .chat
+            .hits
+            .iter()
+            .filter(|hit| matches!(hit.action, ChatAction::SwitchAgent(_)))
+            .map(|hit| hit.area.right())
+            .max()
+            .unwrap();
+        let add_agent = app
+            .chat
+            .hits
+            .iter()
+            .find(|hit| hit.action == ChatAction::Picker(Picker::Agents))
+            .unwrap()
+            .area;
         assert_eq!(add_agent.x, last_tab_end, "add agent follows the tabs");
-        assert!(app.chat.hits.iter().any(|hit| hit.action == ChatAction::Picker(Picker::Sessions)));
+        assert!(
+            app.chat
+                .hits
+                .iter()
+                .any(|hit| hit.action == ChatAction::Picker(Picker::Sessions))
+        );
 
         capture(&terminal, theme);
         click(&mut app, ChatAction::SwitchAgent(1));
@@ -355,12 +390,32 @@ fn agent_tab_overflow_keeps_the_picker_and_selected_agent_reachable() {
     );
     assert!(app.chat.agent_tab_offset > 0);
     let area = app.chat.agent_tab_area.unwrap();
-    let last_tab_end = app.chat.hits.iter().filter(|hit| matches!(hit.action, ChatAction::SwitchAgent(_)))
-        .map(|hit| hit.area.right()).max().unwrap();
-    let add_agent = app.chat.hits.iter().find(|hit| hit.action == ChatAction::Picker(Picker::Agents)).unwrap().area;
-    assert_eq!(add_agent.x, last_tab_end, "overflow keeps add agent beside the visible tabs");
-    assert!(app.chat.hits.iter().filter(|hit| matches!(hit.action, ChatAction::AgentPage(_)))
-        .all(|hit| !hit.area.intersects(add_agent)));
+    let last_tab_end = app
+        .chat
+        .hits
+        .iter()
+        .filter(|hit| matches!(hit.action, ChatAction::SwitchAgent(_)))
+        .map(|hit| hit.area.right())
+        .max()
+        .unwrap();
+    let add_agent = app
+        .chat
+        .hits
+        .iter()
+        .find(|hit| hit.action == ChatAction::Picker(Picker::Agents))
+        .unwrap()
+        .area;
+    assert_eq!(
+        add_agent.x, last_tab_end,
+        "overflow keeps add agent beside the visible tabs"
+    );
+    assert!(
+        app.chat
+            .hits
+            .iter()
+            .filter(|hit| matches!(hit.action, ChatAction::AgentPage(_)))
+            .all(|hit| !hit.area.intersects(add_agent))
+    );
     crate::mouse::handle_mouse(
         &mut app,
         MouseEvent {
@@ -699,7 +754,8 @@ fn wait(app: &mut App, done: impl Fn(&App) -> bool) {
 fn sdk_config(name: &str) -> AgentConfig {
     let mut config = AgentConfig::new(
         name,
-        std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
+        std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
     );
     config.args = vec![
         "-u".into(),
@@ -768,7 +824,11 @@ fn acp_chat_sdk_round_trip_multiple_agents_keep_permissions_terminals_and_cancel
     let allow = app.chat.permission().unwrap().request.options[0]
         .option_id
         .clone();
-    app.chat_action(ChatAction::Permission(a_request, app.chat.permission().unwrap().ticket, Some(allow)));
+    app.chat_action(ChatAction::Permission(
+        a_request,
+        app.chat.permission().unwrap().ticket,
+        Some(allow),
+    ));
     wait(&mut app, |a| {
         !a.chat.busy() && a.chat.permissions.is_empty()
     });
@@ -785,7 +845,11 @@ fn acp_chat_sdk_round_trip_multiple_agents_keep_permissions_terminals_and_cancel
     let reject = app.chat.permission().unwrap().request.options[1]
         .option_id
         .clone();
-    app.chat_action(ChatAction::Permission(b_request, app.chat.permission().unwrap().ticket, Some(reject)));
+    app.chat_action(ChatAction::Permission(
+        b_request,
+        app.chat.permission().unwrap().ticket,
+        Some(reject),
+    ));
     wait(&mut app, |a| !a.chat.busy());
     send(&mut app, "terminal-input");
     wait(&mut app, |a| {

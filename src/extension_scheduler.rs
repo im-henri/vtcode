@@ -11,10 +11,17 @@ fn handlers(app: &App) -> impl Iterator<Item = (&str, &crate::extensions::Extens
     let open = std::cell::OnceCell::<rustc_hash::FxHashSet<&str>>::new();
     app.extension_manager.tick_handlers(move |id| {
         open.get_or_init(|| {
-            app.tabs.iter().chain(app.groups.iter().flat_map(|group| group.tabs.iter()))
-                .filter_map(|tab| tab.extension_view.as_ref().map(|view| view.extension_id.as_str()))
+            app.tabs
+                .iter()
+                .chain(app.groups.iter().flat_map(|group| group.tabs.iter()))
+                .filter_map(|tab| {
+                    tab.extension_view
+                        .as_ref()
+                        .map(|view| view.extension_id.as_str())
+                })
                 .collect()
-        }).contains(id)
+        })
+        .contains(id)
     })
 }
 
@@ -31,7 +38,8 @@ fn next_wait_at(app: &App, now: Instant) -> Option<Duration> {
         .map(|(id, handler)| {
             let interval = Duration::from_millis(u64::from(handler.interval_ms));
             app.extension_overlay_last_tick
-                .get(id).and_then(|ticks| ticks.get(handler.export_name.as_str()))
+                .get(id)
+                .and_then(|ticks| ticks.get(handler.export_name.as_str()))
                 .map_or(Duration::ZERO, |last| {
                     interval.saturating_sub(now.saturating_duration_since(*last))
                 })
@@ -63,7 +71,8 @@ pub(crate) fn dispatch(app: &mut App) {
         let interval = Duration::from_millis(u64::from(handler.interval_ms));
         if app
             .extension_overlay_last_tick
-            .get(id).and_then(|ticks| ticks.get(handler.export_name.as_str()))
+            .get(id)
+            .and_then(|ticks| ticks.get(handler.export_name.as_str()))
             .is_none_or(|last| now.duration_since(*last) >= interval)
         {
             due.entry(id.to_owned())

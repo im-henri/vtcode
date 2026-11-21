@@ -125,9 +125,13 @@ struct GlobBuilder {
 
 impl GlobBuilder {
     fn add(&mut self, source: String, ascii: bool) -> bool {
-        let Ok(regex) = regress::Regex::with_flags(&source, regress::Flags {
-            icase: self.ignore_case, ..Default::default()
-        }) else {
+        let Ok(regex) = regress::Regex::with_flags(
+            &source,
+            regress::Flags {
+                icase: self.ignore_case,
+                ..Default::default()
+            },
+        ) else {
             return false;
         };
         self.original.push(regex);
@@ -642,13 +646,15 @@ impl SearchPaths {
                     glob.to_owned(),
                 )
             };
-            let index =
-                if let Some(index) = folders.iter().position(|(existing, _, _)| *existing == folder) {
-                    index
-                } else {
-                    folders.push((folder, Vec::new(), false));
-                    folders.len() - 1
-                };
+            let index = if let Some(index) = folders
+                .iter()
+                .position(|(existing, _, _)| *existing == folder)
+            {
+                index
+            } else {
+                folders.push((folder, Vec::new(), false));
+                folders.len() - 1
+            };
             let (_, patterns, whole_folder) = &mut folders[index];
             if local.is_empty() {
                 *whole_folder = true;
@@ -717,7 +723,10 @@ impl SearchPaths {
                                 .as_ref()
                                 .is_none_or(|glob| candidate.matches(glob, relative))
                     }
-                    None => crate::native_paths::strip_spelling_prefix(&folder.root, candidate.path).is_some(),
+                    None => {
+                        crate::native_paths::strip_spelling_prefix(&folder.root, candidate.path)
+                            .is_some()
+                    }
                 }
             })
     }
@@ -735,7 +744,8 @@ impl SearchPaths {
             strip_prefix(candidate.path, &folder.root).is_some_and(|relative| {
                 (!self.has_global && folder.whole_folder)
                     || candidate.matches(&self.global, relative)
-                    || folder.pattern
+                    || folder
+                        .pattern
                         .as_ref()
                         .is_some_and(|pattern| candidate.matches(pattern, relative))
             })
@@ -786,18 +796,21 @@ impl SearchPaths {
         self.has_global
             && candidate.matches(
                 &self.global,
-                aliases.strip_prefix(candidate.path, workspace).unwrap_or(candidate.path),
+                aliases
+                    .strip_prefix(candidate.path, workspace)
+                    .unwrap_or(candidate.path),
             )
             || self.using_paths
                 && self.folders.iter().any(|folder| {
-                    aliases.strip_prefix(candidate.path, &folder.root).is_some_and(
-                        |relative| {
+                    aliases
+                        .strip_prefix(candidate.path, &folder.root)
+                        .is_some_and(|relative| {
                             folder.whole_folder
-                                || folder.pattern
+                                || folder
+                                    .pattern
                                     .as_ref()
                                     .is_some_and(|pattern| candidate.matches(pattern, relative))
-                        },
-                    )
+                        })
                 })
     }
 }
@@ -822,7 +835,10 @@ impl ExcludeRules {
                 .chain(search)
                 .map(|(key, value)| (key.clone(), value.clone())),
         );
-        let builder = || GlobBuilder { ignore_case: cfg!(any(windows, target_os = "macos")), ..Default::default() };
+        let builder = || GlobBuilder {
+            ignore_case: cfg!(any(windows, target_os = "macos")),
+            ..Default::default()
+        };
         let mut unconditional = builder();
         let mut rules = merged
             .into_iter()
@@ -857,18 +873,28 @@ impl ExcludeRules {
     /// A pruned directory also excludes open models and explicitly included
     /// roots beneath it. Walking ancestors keeps settings globs root-relative.
     pub(crate) fn excludes_tree(&self, path: &Path, root: &Path) -> bool {
-        if self.0.is_empty() { return false; }
+        if self.0.is_empty() {
+            return false;
+        }
         for ancestor in path.ancestors() {
-            if crate::native_paths::same(ancestor, root) { break; }
-            if self.excludes(&Candidate::new(ancestor), root) { return true; }
+            if crate::native_paths::same(ancestor, root) {
+                break;
+            }
+            if self.excludes(&Candidate::new(ancestor), root) {
+                return true;
+            }
         }
         false
     }
 
     /// Recent-file history is matched against the full absolute path, as in
     /// VS Code. Explorer supplies cached sibling names instead of filesystem IO.
-    pub(crate) fn excludes_with(&self, candidate: &Candidate<'_>, root: &Path,
-        sibling_exists: impl Fn(&Path) -> bool) -> bool {
+    pub(crate) fn excludes_with(
+        &self,
+        candidate: &Candidate<'_>,
+        root: &Path,
+        sibling_exists: impl Fn(&Path) -> bool,
+    ) -> bool {
         if self.0.is_empty() {
             return false;
         }
@@ -885,7 +911,8 @@ impl ExcludeRules {
                                 let name = Path::new(&sibling);
                                 // VS Code checks a sibling's name, never an
                                 // empty name or a path into another directory.
-                                name.file_name().is_some_and(|file| file == name.as_os_str())
+                                name.file_name()
+                                    .is_some_and(|file| file == name.as_os_str())
                                     && sibling_exists(&path.with_file_name(sibling))
                             })
                     })

@@ -55,7 +55,9 @@ impl Target {
             }
         }
         let (root, file) = match path {
-            Some(path) if metadata.is_some_and(|meta| meta.is_dir()) => (crate::folder_browser::normalized_path(&path), None),
+            Some(path) if metadata.is_some_and(|meta| meta.is_dir()) => {
+                (crate::folder_browser::normalized_path(&path), None)
+            }
             Some(path) => (crate::startup_file_directory(&path), Some(path)),
             None => (PathBuf::new(), None),
         };
@@ -89,19 +91,31 @@ impl LocalFolder {
         let requested = crate::folder_browser::normalized_path(path);
         let canonical = requested.canonicalize()?;
         if !canonical.is_dir() {
-            return Err(io::Error::new(io::ErrorKind::NotADirectory, "Choose a folder"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "Choose a folder",
+            ));
         }
         let root = if cfg!(windows) {
             crate::portable::filesystem_spelling(&canonical)
         } else {
             requested.clone()
         };
-        Ok(Self { root, canonical, requested })
+        Ok(Self {
+            root,
+            canonical,
+            requested,
+        })
     }
 
     pub(crate) fn prepare(self) -> io::Result<Prepared> {
         Prepared::load_resolved(
-            Target { root: self.root, file: None, line: None, column: None },
+            Target {
+                root: self.root,
+                file: None,
+                line: None,
+                column: None,
+            },
             &self.requested,
         )
     }
@@ -109,12 +123,21 @@ impl LocalFolder {
 
 /// Used on the launch worker before a remote workspace is available. Resolve
 /// just the saved global palette, including installed themes and overrides.
-pub(crate) fn connection_colors(settings: &Settings, portable_base: &std::path::Path) -> crate::app_theme::ThemeColors {
+pub(crate) fn connection_colors(
+    settings: &Settings,
+    portable_base: &std::path::Path,
+) -> crate::app_theme::ThemeColors {
     let key = settings.theme.as_deref().unwrap_or("dark");
-    let theme = crate::app_theme_loader::builtin_theme(key).cloned()
+    let theme = crate::app_theme_loader::builtin_theme(key)
+        .cloned()
         .or_else(|| crate::app_theme_loader::load_installed_theme(portable_base, key))
-        .unwrap_or_else(|| crate::app_theme_loader::builtin_theme("dark").unwrap().clone());
-    crate::vscode_theme::customized_theme(&theme, &settings.workbench_color_customizations).to_theme_colors()
+        .unwrap_or_else(|| {
+            crate::app_theme_loader::builtin_theme("dark")
+                .unwrap()
+                .clone()
+        });
+    crate::vscode_theme::customized_theme(&theme, &settings.workbench_color_customizations)
+        .to_theme_colors()
 }
 
 impl Prepared {
@@ -122,12 +145,18 @@ impl Prepared {
         let mut global = crate::settings::load_from_file(&crate::settings::global_settings_path());
         global.validate();
         let _ = crate::highlight::Highlighter::startup_theme_set();
-        let workspace = crate::settings::load_from_file(&crate::settings::project_settings_path(&root));
+        let workspace =
+            crate::settings::load_from_file(&crate::settings::project_settings_path(&root));
         let completion_preferences = crate::app_vtcomplete_settings::Preferences::load(&root);
         let (session, incomplete_session_recovery) =
             crate::session::load_session_with_recovery_status(&root);
         Self {
-            target: Target { root, file: None, line: None, column: None },
+            target: Target {
+                root,
+                file: None,
+                line: None,
+                column: None,
+            },
             global,
             workspace,
             completion_preferences,
@@ -148,7 +177,9 @@ impl Prepared {
             Err(error) => return Err(error),
         };
         if let Some(file) = &mut target.file
-            && file.symlink_metadata().is_ok_and(|metadata| metadata.is_file())
+            && file
+                .symlink_metadata()
+                .is_ok_and(|metadata| metadata.is_file())
             && let Ok(canonical_file) = file.canonicalize()
             && canonical_file.parent() == Some(folder.canonical.as_path())
             && let Some(name) = canonical_file.file_name()
@@ -185,7 +216,8 @@ impl Prepared {
             .as_ref()
             .or(global.theme.as_ref())
             .or_else(|| {
-                session.as_ref()
+                session
+                    .as_ref()
                     .filter(|session| target.restores_session(session))
                     .and_then(|session| session.theme.as_ref())
             });
@@ -207,15 +239,27 @@ impl Prepared {
         self.into_app_with_remote(wake, None)
     }
 
-    pub(crate) fn into_app_with_remote(self, wake: UiWake, remote: Option<crate::remote::workspace::Workspace>) -> App {
-        let restore_session = self.session.as_ref()
+    pub(crate) fn into_app_with_remote(
+        self,
+        wake: UiWake,
+        remote: Option<crate::remote::workspace::Workspace>,
+    ) -> App {
+        let restore_session = self
+            .session
+            .as_ref()
             .is_some_and(|session| self.target.restores_session(session));
         let mut app = App::new_startup(self.target.root, wake);
         app.remote_workspace = remote;
-        if app.has_open_folder() { app.git_output(); }
-        if app.remote_workspace.is_some() { app.refresh_palette_commands(); }
+        if app.has_open_folder() {
+            app.git_output();
+        }
+        if app.remote_workspace.is_some() {
+            app.refresh_palette_commands();
+        }
         app.lsp_manager.remote_workspace = app.remote_workspace.clone();
-        if let Some(remote) = &app.remote_workspace { remote.client.set_wake(app.background.wake_handle()); }
+        if let Some(remote) = &app.remote_workspace {
+            remote.client.set_wake(app.background.wake_handle());
+        }
         let selected = self
             .workspace
             .theme
@@ -334,9 +378,11 @@ impl<T: Send + 'static> Loader<T> {
                     break;
                 };
                 if crate::terminal_output::apply_resize(terminal, &event)
-                    .map_err(|error| io::Error::other(error.to_string()))?.is_some()
+                    .map_err(|error| io::Error::other(error.to_string()))?
+                    .is_some()
                 {
-                    terminal.draw(crate::ui_welcome::draw_bootstrap_screen)
+                    terminal
+                        .draw(crate::ui_welcome::draw_bootstrap_screen)
                         .map_err(|error| io::Error::other(error.to_string()))?;
                 }
                 match event {

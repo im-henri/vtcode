@@ -46,7 +46,8 @@ pub(crate) fn editor_position_at(app: &mut App, col: u16, row: u16) -> Option<(u
     }
     let screen_row = usize::from(row - area.y);
     let screen_col = usize::from(col - area.x);
-    let (line, start, end) = if editor.word_wrap && !editor.large_file_mode && !h_scrollbar_visible {
+    let (line, start, end) = if editor.word_wrap && !editor.large_file_mode && !h_scrollbar_visible
+    {
         let row = editor.wrapped_row_at(
             editor.wrap_scroll_offset + screen_row,
             editor.effective_wrap_width(),
@@ -61,10 +62,14 @@ pub(crate) fn editor_position_at(app: &mut App, col: u16, row: u16) -> Option<(u
 }
 
 impl App {
-    pub(crate) fn lsp_document_link_at(&self, line: usize, col: usize) -> Option<&(usize, usize, usize, String)> {
-        self.lsp_document_links.iter().find(|(row, start, end, _)| {
-            *row == line && (*start..*end).contains(&col)
-        })
+    pub(crate) fn lsp_document_link_at(
+        &self,
+        line: usize,
+        col: usize,
+    ) -> Option<&(usize, usize, usize, String)> {
+        self.lsp_document_links
+            .iter()
+            .find(|(row, start, end, _)| *row == line && (*start..*end).contains(&col))
     }
 
     pub(crate) fn update_link_hover_modifiers(&mut self, modifiers: KeyModifiers) -> bool {
@@ -124,10 +129,17 @@ impl App {
             return None;
         }
         let (line, col) = editor_position_at(self, self.mouse_col, self.mouse_row)?;
-        let lsp_allowed = self.editor().is_some_and(|editor| !editor.large_file_mode && editor.file_path.is_some());
-        let direct = lsp_allowed.then(|| self.lsp_document_link_at(line, col))
-            .flatten().map(|(_, start, end, _)| (*start, *end))
-            .or_else(|| self.editor_path_link_at(line, col).map(|link| (link.columns.start, link.columns.end)));
+        let lsp_allowed = self
+            .editor()
+            .is_some_and(|editor| !editor.large_file_mode && editor.file_path.is_some());
+        let direct = lsp_allowed
+            .then(|| self.lsp_document_link_at(line, col))
+            .flatten()
+            .map(|(_, start, end, _)| (*start, *end))
+            .or_else(|| {
+                self.editor_path_link_at(line, col)
+                    .map(|link| (link.columns.start, link.columns.end))
+            });
         let editor = self.editor()?;
         if direct.is_none() {
             let path = editor.file_path.as_ref().filter(|_| lsp_allowed)?;
@@ -170,7 +182,9 @@ impl App {
         if target.direct_link || self.lsp_link_hover.sent {
             return changed;
         }
-        let Some(path) = target.path.as_ref() else { return changed; };
+        let Some(path) = target.path.as_ref() else {
+            return changed;
+        };
         if self.lsp_manager.last_notified_version.get(path) != Some(&target.version) {
             let rope = self.editor().unwrap().rope.clone();
             self.queue_lsp_document_sync(path.clone(), target.version, rope);

@@ -5,13 +5,19 @@ use std::path::Path;
 
 /// Bundled VS Code themes use the same importer as installed themes.
 pub(crate) fn load_builtin_themes() -> Vec<ThemeFile> {
-    crate::builtin_themes::THEMES.iter().map(|entry| entry.theme().clone()).collect()
+    crate::builtin_themes::THEMES
+        .iter()
+        .map(|entry| entry.theme().clone())
+        .collect()
 }
 
 /// Resolve only the requested built-in. Starting with Dark+ must not parse
 /// every other workbench and syntax palette or clone the whole catalog.
 pub(crate) fn builtin_theme(key: &str) -> Option<&'static ThemeFile> {
-    crate::builtin_themes::THEMES.iter().find(|entry| entry.key == key).map(|entry| entry.theme())
+    crate::builtin_themes::THEMES
+        .iter()
+        .find(|entry| entry.key == key)
+        .map(|entry| entry.theme())
 }
 
 /// Load themes explicitly installed into vtcode. Keep filesystem discovery off
@@ -24,21 +30,38 @@ fn load_external_themes_from_base(portable_base: &Path) -> Vec<ThemeFile> {
     let root = portable_base.join(".vtcode/theme-extensions");
     let removed = match crate::theme_catalog::removed(&root) {
         Ok(keys) => keys,
-        Err(error) => { log_warn!("{error}"); return Vec::new(); }
+        Err(error) => {
+            log_warn!("{error}");
+            return Vec::new();
+        }
     };
     let mut themes = crate::vscode_theme::load_extension_themes_excluding(&root, &removed);
-    merge_themes(&mut themes, load_themes_from_dir(&portable_base.join(".vtcode/themes")));
+    merge_themes(
+        &mut themes,
+        load_themes_from_dir(&portable_base.join(".vtcode/themes")),
+    );
     themes.retain(|theme| !removed.contains(&theme.config_key));
     themes
 }
 
 pub(crate) fn load_installed_theme(portable_base: &Path, key: &str) -> Option<ThemeFile> {
-    if crate::theme_catalog::removed(&portable_base.join(".vtcode/theme-extensions")).ok()?.contains(key) {
+    if crate::theme_catalog::removed(&portable_base.join(".vtcode/theme-extensions"))
+        .ok()?
+        .contains(key)
+    {
         return None;
     }
-    crate::vscode_theme::load_extension_themes_matching(&portable_base.join(".vtcode/theme-extensions"), Some(key))
-        .into_iter().next()
-        .or_else(|| load_themes_from_dir(&portable_base.join(".vtcode/themes")).into_iter().find(|t| t.config_key == key))
+    crate::vscode_theme::load_extension_themes_matching(
+        &portable_base.join(".vtcode/theme-extensions"),
+        Some(key),
+    )
+    .into_iter()
+    .next()
+    .or_else(|| {
+        load_themes_from_dir(&portable_base.join(".vtcode/themes"))
+            .into_iter()
+            .find(|t| t.config_key == key)
+    })
 }
 
 /// Load the complete theme registry for tests and explicit synchronous callers.
@@ -368,7 +391,12 @@ impl ThemeFile {
 
         let mut palette = ThemeColors {
             ui: Default::default(),
-            fg_workbench: self.colors.fg_workbench.as_deref().map(hex_to_color).unwrap_or(fg_text),
+            fg_workbench: self
+                .colors
+                .fg_workbench
+                .as_deref()
+                .map(hex_to_color)
+                .unwrap_or(fg_text),
             bg_dark,
             bg_sidebar,
             bg_editor,
@@ -669,7 +697,10 @@ impl ThemeFile {
         // Preserve the source string so opacity is applied on the final field.
         let mut workbench_colors = if self.textmate_theme.is_some() {
             std::borrow::Cow::Owned(crate::vscode_color_registry::resolve(
-                &self.workbench_colors, self.is_light, self.high_contrast))
+                &self.workbench_colors,
+                self.is_light,
+                self.high_contrast,
+            ))
         } else {
             std::borrow::Cow::Borrowed(&self.workbench_colors)
         };
@@ -677,30 +708,49 @@ impl ThemeFile {
             && !self.workbench_colors.contains_key("input.border")
             && let Some(border) = &self.colors.border_input
         {
-            workbench_colors.to_mut().insert("input.border".into(), border.clone().into());
+            workbench_colors
+                .to_mut()
+                .insert("input.border".into(), border.clone().into());
         }
         // Native palettes own these marker and sticky surfaces. Preserve their
         // source alpha while allowing the actual header roles to override them.
         if self.textmate_theme.is_none() {
             for (header, legacy) in [
-                ("merge.currentHeaderBackground", &self.colors.bg_merge_current),
-                ("merge.incomingHeaderBackground", &self.colors.bg_merge_incoming),
-                ("editorStickyScroll.background", &self.colors.bg_sticky_header),
+                (
+                    "merge.currentHeaderBackground",
+                    &self.colors.bg_merge_current,
+                ),
+                (
+                    "merge.incomingHeaderBackground",
+                    &self.colors.bg_merge_incoming,
+                ),
+                (
+                    "editorStickyScroll.background",
+                    &self.colors.bg_sticky_header,
+                ),
             ] {
-                if !workbench_colors.contains_key(header) && let Some(color) = legacy {
-                    workbench_colors.to_mut().insert(header.into(), color.clone().into());
+                if !workbench_colors.contains_key(header)
+                    && let Some(color) = legacy
+                {
+                    workbench_colors
+                        .to_mut()
+                        .insert(header.into(), color.clone().into());
                 }
             }
         }
         palette.ui = crate::theme_workbench::WorkbenchColors::resolve(
-            workbench_colors.as_ref(), &palette, self.is_light, self.high_contrast,
+            workbench_colors.as_ref(),
+            &palette,
+            self.is_light,
+            self.high_contrast,
         );
         palette.ui.preserve_theme_colors = self.textmate_theme.is_some();
         if let Some(theme) = &self.textmate_theme {
             // Resolve the comment token once per theme, not while painting
             // Output. No parser or syntax worker is needed for log timestamps.
             let color = theme.scope_foreground(&["comment"]);
-            palette.ui.output_timestamp = crate::theme_workbench::ColorLayer::rgba(color.r, color.g, color.b, color.a);
+            palette.ui.output_timestamp =
+                crate::theme_workbench::ColorLayer::rgba(color.r, color.g, color.b, color.a);
         }
         // Native vtcode palettes own a legacy separator color. Imported VS Code
         // themes can omit this border, and explicit transparent overrides win.
@@ -714,7 +764,8 @@ impl ThemeFile {
             && !self.workbench_colors.contains_key("activityBar.border")
             && !self.workbench_colors.contains_key("contrastBorder")
         {
-            palette.ui.activity_border = crate::theme_workbench::ColorLayer::opaque(palette.border_color);
+            palette.ui.activity_border =
+                crate::theme_workbench::ColorLayer::opaque(palette.border_color);
         }
         palette
     }
@@ -761,13 +812,23 @@ mod tests {
                 .env(CHILD, "1")
                 .output()
                 .unwrap();
-            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-            assert!(output.stderr.is_empty(), "{}", String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(
+                output.stderr.is_empty(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             return;
         }
 
         let portable_base = tempfile::tempdir().unwrap();
-        let extension = portable_base.path().join(".vtcode/theme-extensions/publisher.theme");
+        let extension = portable_base
+            .path()
+            .join(".vtcode/theme-extensions/publisher.theme");
         std::fs::create_dir_all(&extension).unwrap();
         let valid_theme = r##"{"colors":{"editor.background":"#123456"}}"##;
         let mut contributions = Vec::new();
@@ -791,20 +852,46 @@ mod tests {
         let manifest = serde_json::json!({
             "publisher":"publisher", "name":"theme",
             "contributes":{"themes":contributions}
-        }).to_string();
+        })
+        .to_string();
         std::fs::write(extension.join("package.json"), &manifest).unwrap();
         let standalone = portable_base.path().join(".vtcode/themes");
         std::fs::create_dir_all(&standalone).unwrap();
         std::fs::write(standalone.join("Broken.json"), "not json").unwrap();
-        std::fs::write(standalone.join("Missing Include.json"), r#"{"include":"removed.json"}"#).unwrap();
+        std::fs::write(
+            standalone.join("Missing Include.json"),
+            r#"{"include":"removed.json"}"#,
+        )
+        .unwrap();
         std::fs::write(standalone.join("Standalone.json"), valid_theme).unwrap();
 
         let themes = load_external_themes_from_base(portable_base.path());
-        assert_eq!(themes.iter().map(|theme| theme.name.as_str()).collect::<Vec<_>>(), ["Remaining", "Standalone"]);
-        assert!(load_installed_theme(portable_base.path(), "vscode-publisher-theme-removed-0-json").is_none());
-        assert!(load_installed_theme(portable_base.path(), "vscode-publisher-theme-remaining").is_some());
-        assert!(crate::vscode_theme::load_theme_file(&extension.join("Broken.json"), None, None).is_err());
-        assert_eq!(std::fs::read_to_string(extension.join("package.json")).unwrap(), manifest);
+        assert_eq!(
+            themes
+                .iter()
+                .map(|theme| theme.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Remaining", "Standalone"]
+        );
+        assert!(
+            load_installed_theme(
+                portable_base.path(),
+                "vscode-publisher-theme-removed-0-json"
+            )
+            .is_none()
+        );
+        assert!(
+            load_installed_theme(portable_base.path(), "vscode-publisher-theme-remaining")
+                .is_some()
+        );
+        assert!(
+            crate::vscode_theme::load_theme_file(&extension.join("Broken.json"), None, None)
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(extension.join("package.json")).unwrap(),
+            manifest
+        );
     }
 
     #[test]
@@ -816,7 +903,10 @@ mod tests {
             (".vscode-insiders/extensions", "Insiders"),
             (".vscode-oss/extensions", "Code OSS"),
             (".vscodium/extensions", "VSCodium"),
-            ("Applications/Visual Studio Code.app/Contents/resources/app/extensions", "VS Code bundled"),
+            (
+                "Applications/Visual Studio Code.app/Contents/resources/app/extensions",
+                "VS Code bundled",
+            ),
         ] {
             let extension = portable_base.path().join(folder).join("publisher.theme");
             std::fs::create_dir_all(&extension).unwrap();
@@ -824,13 +914,27 @@ mod tests {
                 "publisher":"publisher", "name":"theme",
                 "contributes":{"themes":[{"label":label,"path":"theme.json","uiTheme":"vs-dark"}]}
             }).to_string()).unwrap();
-            std::fs::write(extension.join("theme.json"), r##"{"colors":{"editor.background":"#123456"}}"##).unwrap();
+            std::fs::write(
+                extension.join("theme.json"),
+                r##"{"colors":{"editor.background":"#123456"}}"##,
+            )
+            .unwrap();
         }
         let standalone = portable_base.path().join(".vtcode/themes");
         std::fs::create_dir_all(&standalone).unwrap();
-        std::fs::write(standalone.join("custom.json"), r##"{"name":"Standalone","colors":{"editor.background":"#654321"}}"##).unwrap();
+        std::fs::write(
+            standalone.join("custom.json"),
+            r##"{"name":"Standalone","colors":{"editor.background":"#654321"}}"##,
+        )
+        .unwrap();
         let themes = load_external_themes_from_base(portable_base.path());
-        assert_eq!(themes.iter().map(|theme| theme.name.as_str()).collect::<Vec<_>>(), ["Explicitly installed", "Standalone"]);
+        assert_eq!(
+            themes
+                .iter()
+                .map(|theme| theme.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Explicitly installed", "Standalone"]
+        );
     }
 
     #[test]
@@ -840,7 +944,10 @@ mod tests {
         let mut serialized = serde_json::to_value(&themes[0]).unwrap();
         serialized["builtin"] = true.into();
         let imported: ThemeFile = serde_json::from_value(serialized).unwrap();
-        assert!(!imported.builtin, "theme files cannot claim bundled provenance");
+        assert!(
+            !imported.builtin,
+            "theme files cannot claim bundled provenance"
+        );
         assert_eq!(themes.len(), crate::builtin_themes::THEMES.len());
         assert_eq!(themes.len(), 39);
         assert!(themes.iter().skip(4).all(|theme| !theme.is_light));

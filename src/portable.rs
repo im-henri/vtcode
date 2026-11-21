@@ -129,14 +129,22 @@ fn workspace_dir_in(base: &Path, project_root: &Path) -> PathBuf {
     // Do not depend on existence: recovery for a deleted/offline workspace
     // must retain the same key. Lexical normalization also handles '.'/'..'.
     let remote = crate::remote::workspace::is_view_key(project_root);
-    let workspace = if remote { project_root.to_path_buf() } else { normalized_path(project_root) };
+    let workspace = if remote {
+        project_root.to_path_buf()
+    } else {
+        normalized_path(project_root)
+    };
     let base = normalized_path(base);
     // Workspaces carried inside the portable directory keep their identity
     // when the whole directory is moved to another drive or machine.
-    let (scope, identity) = if remote { (b"remote".as_slice(), workspace.as_path()) } else { match workspace.strip_prefix(&base) {
-        Ok(relative) => (b"relative".as_slice(), relative),
-        Err(_) => (b"absolute".as_slice(), workspace.as_path()),
-    }};
+    let (scope, identity) = if remote {
+        (b"remote".as_slice(), workspace.as_path())
+    } else {
+        match workspace.strip_prefix(&base) {
+            Ok(relative) => (b"relative".as_slice(), relative),
+            Err(_) => (b"absolute".as_slice(), workspace.as_path()),
+        }
+    };
     // Fixed FNV-1a 128-bit hash: unlike DefaultHasher, this persisted key is
     // stable across Rust releases, with no unsafe path components from input.
     let mut hash = 0x6c62272e07bb014262b821756295c58du128;
@@ -175,7 +183,10 @@ fn recover_alias_storage(legacy: &Path, destination: &Path) -> io::Result<()> {
         Err(_) if destination.is_dir() => Ok(()),
         Err(error) => Err(io::Error::new(
             error.kind(),
-            format!("Cannot recover workspace state from {}: {error}", legacy.display()),
+            format!(
+                "Cannot recover workspace state from {}: {error}",
+                legacy.display()
+            ),
         )),
     }
 }
@@ -187,13 +198,22 @@ mod tests {
     #[test]
     fn storage_is_beside_executable() {
         let executable = std::env::current_exe().unwrap();
-        assert_eq!(base_dir().canonicalize().unwrap(), executable.parent().unwrap().canonicalize().unwrap());
+        assert_eq!(
+            base_dir().canonicalize().unwrap(),
+            executable.parent().unwrap().canonicalize().unwrap()
+        );
         assert!(workspace_dir(Path::new(".")).starts_with(data_dir()));
         assert_eq!(theme_extensions_dir(), data_dir().join("theme-extensions"));
         // Test builds give each thread its own no-folder store; check the
         // mapping a real window uses.
-        assert_eq!(workspace_dir_in(&base_dir(), Path::new("")), data_dir().join("empty-window"));
-        assert_ne!(workspace_dir_in(&base_dir(), Path::new("")), workspace_dir(Path::new(".")));
+        assert_eq!(
+            workspace_dir_in(&base_dir(), Path::new("")),
+            data_dir().join("empty-window")
+        );
+        assert_ne!(
+            workspace_dir_in(&base_dir(), Path::new("")),
+            workspace_dir(Path::new("."))
+        );
         assert!(workspace_dir(Path::new("")).starts_with(data_dir().join("empty-window-tests")));
     }
 
@@ -249,14 +269,23 @@ mod tests {
         std::fs::create_dir_all(old.join("unsaved")).unwrap();
         std::fs::write(old.join("unsaved/draft"), "recovery data").unwrap();
         recover_alias_storage(&old, &resolved).unwrap();
-        assert_eq!(std::fs::read_to_string(resolved.join("unsaved/draft")).unwrap(), "recovery data");
+        assert_eq!(
+            std::fs::read_to_string(resolved.join("unsaved/draft")).unwrap(),
+            "recovery data"
+        );
         assert!(!old.exists());
 
         std::fs::create_dir(&old).unwrap();
         std::fs::write(old.join("session.json"), "other session").unwrap();
         recover_alias_storage(&old, &resolved).unwrap();
-        assert_eq!(std::fs::read_to_string(old.join("session.json")).unwrap(), "other session");
-        assert_eq!(std::fs::read_to_string(resolved.join("unsaved/draft")).unwrap(), "recovery data");
+        assert_eq!(
+            std::fs::read_to_string(old.join("session.json")).unwrap(),
+            "other session"
+        );
+        assert_eq!(
+            std::fs::read_to_string(resolved.join("unsaved/draft")).unwrap(),
+            "recovery data"
+        );
     }
 
     #[test]

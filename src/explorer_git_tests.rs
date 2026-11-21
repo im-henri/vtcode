@@ -48,8 +48,13 @@ fn disabled_source_control_does_no_git_io_and_clears_cached_decorations() {
     write(temp.path(), "build.log", "ignored");
     write(temp.path(), "source.rs", "source");
     explorer.set_source_control_enabled(false);
-    for _ in 0..3 { refresh(&mut explorer); }
-    assert_eq!(explorer.ignore_cache.metrics(), super::git_cache::Metrics::default());
+    for _ in 0..3 {
+        refresh(&mut explorer);
+    }
+    assert_eq!(
+        explorer.ignore_cache.metrics(),
+        super::git_cache::Metrics::default()
+    );
     assert_ignored(&explorer, "build.log", false);
     explorer.set_source_control_enabled(true);
     refresh(&mut explorer);
@@ -60,10 +65,17 @@ fn disabled_source_control_does_no_git_io_and_clears_cached_decorations() {
     explorer.set_source_control_enabled(false);
     explorer.apply_refresh_entries(late.0, late.1, late.2);
     explorer.apply_git_status_changes(Some(temp.path()), [("source.rs", 'M')]);
-    for _ in 0..3 { refresh(&mut explorer); }
+    for _ in 0..3 {
+        refresh(&mut explorer);
+    }
     assert_eq!(explorer.ignore_cache.metrics(), before);
     assert_ignored(&explorer, "build.log", false);
-    assert!(explorer.entries.iter().all(|entry| entry.git_status_summary == Default::default()));
+    assert!(
+        explorer
+            .entries
+            .iter()
+            .all(|entry| entry.git_status_summary == Default::default())
+    );
 }
 
 #[test]
@@ -275,7 +287,11 @@ fn nested_repositories_use_their_own_rules_and_indices_with_or_without_a_parent_
         write(root, "project/.gitignore", "*.log\n*.tmp\n");
         write(root, "project/ignored.log", "ignored");
         write(root, "project/tracked.tmp", "tracked");
-        write(root, "project/visible.outer", "parent rules must not cross repository boundary");
+        write(
+            root,
+            "project/visible.outer",
+            "parent rules must not cross repository boundary",
+        );
         let mut index = repository.index().unwrap();
         index.add_path(Path::new("tracked.tmp")).unwrap();
         index.write().unwrap();
@@ -287,12 +303,17 @@ fn nested_repositories_use_their_own_rules_and_indices_with_or_without_a_parent_
         assert_ignored(&explorer, "project/tracked.tmp", false);
         assert_ignored(&explorer, "project/visible.outer", false);
         let before = explorer.ignore_cache.metrics();
-        for _ in 0..16 { refresh(&mut explorer); }
+        for _ in 0..16 {
+            refresh(&mut explorer);
+        }
         let after = explorer.ignore_cache.metrics();
         assert_eq!(after.repository_loads, before.repository_loads);
         assert_eq!(after.rule_loads, before.rule_loads);
         assert_eq!(after.index_loads, before.index_loads);
-        assert_eq!(after.boundary_checks, before.boundary_checks, "warm redraw/refresh does no filesystem boundary probes");
+        assert_eq!(
+            after.boundary_checks, before.boundary_checks,
+            "warm redraw/refresh does no filesystem boundary probes"
+        );
     }
 }
 
@@ -344,7 +365,10 @@ fn benchmark_ignore_decorations() {
 }
 
 fn assert_no_ignore_work(before: git_cache::Metrics, after: git_cache::Metrics) {
-    assert_eq!(after.boundary_checks, before.boundary_checks, "cached directories reprobed");
+    assert_eq!(
+        after.boundary_checks, before.boundary_checks,
+        "cached directories reprobed"
+    );
     assert_eq!(
         after.repository_loads, before.repository_loads,
         "repository reopened"

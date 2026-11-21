@@ -1,27 +1,48 @@
 //! Diff fragments share document/theme/language keys. A warm row lookup uses
 //! borrowed keys and never constructs PathBufs or Strings on the paint thread.
-use super::{HighlightSpans, MAX_CACHED_LINES_PER_DOCUMENT, select_syntax, select_theme, span_bytes};
+use super::{
+    HighlightSpans, MAX_CACHED_LINES_PER_DOCUMENT, select_syntax, select_theme, span_bytes,
+};
+use crate::textmate::{Style, SyntaxRegistry, ThemeSet};
 use rustc_hash::FxHashMap;
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
 };
-use crate::textmate::{Style, ThemeSet, SyntaxRegistry};
 
 /// Resolve the document's grammar once per batch, using its real first line.
 /// Each diff row still starts a fresh parser because adjacent rows may belong
 /// to different revisions or omit context.
-pub(crate) struct FragmentHighlighter { state: Option<crate::textmate_backend::State> }
+pub(crate) struct FragmentHighlighter {
+    state: Option<crate::textmate_backend::State>,
+}
 impl FragmentHighlighter {
-    pub(crate) fn new(first_line: &str, file_path: Option<&Path>, language: Option<&str>, theme_key: &str,
-        syntax_set: &SyntaxRegistry, theme_set: &ThemeSet) -> Self {
-        let syntax = select_syntax(syntax_set,file_path,language,first_line);
-        Self { state:select_theme(theme_set,theme_key).map(|theme|crate::textmate_backend::State::new(syntax,theme)) }
+    pub(crate) fn new(
+        first_line: &str,
+        file_path: Option<&Path>,
+        language: Option<&str>,
+        theme_key: &str,
+        syntax_set: &SyntaxRegistry,
+        theme_set: &ThemeSet,
+    ) -> Self {
+        let syntax = select_syntax(syntax_set, file_path, language, first_line);
+        Self {
+            state: select_theme(theme_set, theme_key)
+                .map(|theme| crate::textmate_backend::State::new(syntax, theme)),
+        }
     }
     pub(crate) fn highlight_line(&self, line: &str) -> HighlightSpans {
-        self.state.as_ref().map_or_else(||vec![(Style::default(),line.to_owned())], |state| {
-            state.initial().line(line,true,&mut Vec::new()).into_iter().map(|(s,t)|(s,t.to_owned())).collect()
-        })
+        self.state.as_ref().map_or_else(
+            || vec![(Style::default(), line.to_owned())],
+            |state| {
+                state
+                    .initial()
+                    .line(line, true, &mut Vec::new())
+                    .into_iter()
+                    .map(|(s, t)| (s, t.to_owned()))
+                    .collect()
+            },
+        )
     }
 }
 
@@ -40,8 +61,11 @@ impl Languages {
     }
 
     fn bytes(&self) -> usize {
-        std::iter::once(&self.inferred).chain(self.explicit.values())
-            .flat_map(|lines| lines.values()).map(|spans| span_bytes(spans)).sum()
+        std::iter::once(&self.inferred)
+            .chain(self.explicit.values())
+            .flat_map(|lines| lines.values())
+            .map(|spans| span_bytes(spans))
+            .sum()
     }
 }
 
@@ -111,7 +135,9 @@ impl FragmentCache {
         };
         if let Some(previous) = lines.insert((line, hash), Rc::new(spans)) {
             self.bytes -= span_bytes(&previous);
-        } else { self.len += 1; }
+        } else {
+            self.len += 1;
+        }
         self.bytes += bytes;
         // A single unusually large result remains usable, even if it exceeds
         // the budget. Later rows evict it instead of accumulating beside it.
@@ -145,14 +171,24 @@ mod tests {
         let mut cache = FragmentCache::default();
         let started = Instant::now();
         for line in 0..5000 {
-            let spans = (0..64).map(|_| (Style::default(), "a".repeat(64))).collect();
-            cache.insert(Path::new("diff.cpp"), "dark", Some("C++"), line, line as u64, spans);
+            let spans = (0..64)
+                .map(|_| (Style::default(), "a".repeat(64)))
+                .collect();
+            cache.insert(
+                Path::new("diff.cpp"),
+                "dark",
+                Some("C++"),
+                line,
+                line as u64,
+                spans,
+            );
         }
         let elapsed = started.elapsed();
         let mut retained = 0;
         for themes in cache.documents.values() {
             for languages in themes.values() {
-                for lines in std::iter::once(&languages.inferred).chain(languages.explicit.values()) {
+                for lines in std::iter::once(&languages.inferred).chain(languages.explicit.values())
+                {
                     for spans in lines.values() {
                         retained += spans.capacity() * std::mem::size_of::<(Style, String)>()
                             + spans.iter().map(|(_, text)| text.capacity()).sum::<usize>();
@@ -160,7 +196,10 @@ mod tests {
                 }
             }
         }
-        println!("5000 tokenized diff rows: {elapsed:?}; {} retained rows; {retained} retained span bytes", cache.len);
+        println!(
+            "5000 tokenized diff rows: {elapsed:?}; {} retained rows; {retained} retained span bytes",
+            cache.len
+        );
     }
 
     #[test]
@@ -230,13 +269,18 @@ mod tests {
         cache.insert(path, "dark", None, 0, 1, spans(4096));
         cache.insert(path, "light", Some("C++"), 0, 1, spans(8192));
         let old = cache.get(path, "dark", None, 0, 1).unwrap();
-        assert_eq!(cache.bytes, span_bytes(&old)
-            + span_bytes(&cache.get(path, "light", Some("C++"), 0, 1).unwrap()));
+        assert_eq!(
+            cache.bytes,
+            span_bytes(&old) + span_bytes(&cache.get(path, "light", Some("C++"), 0, 1).unwrap())
+        );
         cache.insert(path, "dark", None, 0, 1, spans(32));
         assert_eq!(cache.len, 2);
         cache.remove_theme("light");
         assert_eq!(cache.len, 1);
-        assert_eq!(cache.bytes, span_bytes(&cache.get(path, "dark", None, 0, 1).unwrap()));
+        assert_eq!(
+            cache.bytes,
+            span_bytes(&cache.get(path, "dark", None, 0, 1).unwrap())
+        );
         // Published rows stay valid even when the cache evicts/replaces them.
         assert_eq!(old[0].1, "x");
         assert!(old[0].1.capacity() >= 4096);
@@ -249,14 +293,27 @@ mod tests {
         let path = Path::new("wide.cpp");
         let mut cache = FragmentCache::default();
         for line in 0..1000 {
-            cache.insert(path, "dark", None, line, line as u64,
-                vec![(Style::default(), "a".repeat(16 * 1024))]);
+            cache.insert(
+                path,
+                "dark",
+                None,
+                line,
+                line as u64,
+                vec![(Style::default(), "a".repeat(16 * 1024))],
+            );
             assert!(cache.bytes <= MAX_CACHED_FRAGMENT_BYTES);
             assert!(cache.get(path, "dark", None, line, line as u64).is_some());
         }
         assert!(cache.len < 1000);
-        assert_eq!(cache.bytes, cache.documents.values()
-            .flat_map(|themes| themes.values()).map(Languages::bytes).sum::<usize>());
+        assert_eq!(
+            cache.bytes,
+            cache
+                .documents
+                .values()
+                .flat_map(|themes| themes.values())
+                .map(Languages::bytes)
+                .sum::<usize>()
+        );
     }
 
     #[test]
@@ -266,7 +323,14 @@ mod tests {
         for line in 0..MAX_CACHED_LINES_PER_DOCUMENT {
             cache.insert(path, "dark", None, line, line as u64, Vec::new());
         }
-        cache.insert(path, "dark", None, 0, 0, vec![(Style::default(), "changed".into())]);
+        cache.insert(
+            path,
+            "dark",
+            None,
+            0,
+            0,
+            vec![(Style::default(), "changed".into())],
+        );
         assert_eq!(cache.len, MAX_CACHED_LINES_PER_DOCUMENT);
         assert!(cache.get(path, "dark", None, 1, 1).is_some());
     }

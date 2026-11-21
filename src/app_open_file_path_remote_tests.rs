@@ -165,23 +165,43 @@ fn the_remote_picker_browses_a_typed_external_directory_and_opens_a_listed_file(
     std::fs::write(&path, "from the file list\n").unwrap();
     let root = fixture.app.explorer.root.clone();
     fixture.app.begin_open_file_browser();
-    type_path(&mut fixture.app, url::Url::from_directory_path(outside.path()).unwrap().as_str());
+    type_path(
+        &mut fixture.app,
+        url::Url::from_directory_path(outside.path())
+            .unwrap()
+            .as_str(),
+    );
     enter(&mut fixture.app);
-    fixture.app.wait_for_background(Duration::from_secs(10), |app| {
-        !app.folder_browser_loading && !app.file_browser_open_pending()
-    });
+    fixture
+        .app
+        .wait_for_background(Duration::from_secs(10), |app| {
+            !app.folder_browser_loading && !app.file_browser_open_pending()
+        });
     assert!(fixture.app.file_browser_active());
-    assert!(fixture.app.folder_browser.error.is_none(), "{:?}", fixture.app.folder_browser.error);
+    assert!(
+        fixture.app.folder_browser.error.is_none(),
+        "{:?}",
+        fixture.app.folder_browser.error
+    );
     let entries = &fixture.app.folder_browser_entries;
     assert_eq!(entries.len(), 1);
-    assert_eq!(fixture.app.folder_browser_entry_name(&entries[0]), "listed.log");
+    assert_eq!(
+        fixture.app.folder_browser_entry_name(&entries[0]),
+        "listed.log"
+    );
     assert!(fixture.app.folder_browser_entry_is_file(0));
 
-    crate::input_keyboard::handle_keyboard_event(&mut fixture.app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    crate::input_keyboard::handle_keyboard_event(
+        &mut fixture.app,
+        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+    );
     enter(&mut fixture.app);
     drain(&mut fixture);
     assert!(!fixture.app.file_browser_active());
-    assert_eq!(fixture.app.editor().unwrap().rope.to_string(), "from the file list\n");
+    assert_eq!(
+        fixture.app.editor().unwrap().rope.to_string(),
+        "from the file list\n"
+    );
     assert_eq!(fixture.app.explorer.root, root);
 }
 

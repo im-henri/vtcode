@@ -3,7 +3,11 @@ use crate::app::{App, Tab, TabKind};
 use crate::background::{BackgroundResult, BlameCacheKey};
 use ropey::Rope;
 use rustc_hash::FxHashMap;
-use std::{path::PathBuf, sync::Arc, time::{Duration, Instant}};
+use std::{
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 #[derive(Debug)]
 pub(crate) struct Commit {
@@ -76,11 +80,7 @@ impl Revision {
         let name = crate::remote::workspace::display_name(&path)
             .map(std::borrow::Cow::Owned)
             .unwrap_or_else(|| self.path.file_name().unwrap_or_default().to_string_lossy());
-        format!(
-            "{} @ {}",
-            name,
-            self.short_hash()
-        )
+        format!("{} @ {}", name, self.short_hash())
     }
 }
 
@@ -127,8 +127,11 @@ pub(crate) fn prepare_cancellable(
     cancel: Option<&crate::background::CancellationToken>,
 ) -> Document {
     let check_cancelled = || {
-        if cancel.is_some_and(|cancel| cancel.is_cancelled()) { Err("Git blame cancelled".to_owned()) }
-        else { Ok(()) }
+        if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+            Err("Git blame cancelled".to_owned())
+        } else {
+            Ok(())
+        }
     };
     let result = (|| -> Result<Document, String> {
         check_cancelled()?;
@@ -305,12 +308,34 @@ pub(crate) fn prepare_cancellable(
     })
 }
 
-pub(crate) fn prepare_head(path: PathBuf, revision: Option<Arc<Revision>>, limit: u64) -> Result<Document, String> {
-    let repo = git2::Repository::discover(revision.as_ref().map_or_else(|| path.parent().unwrap_or(&path), |revision| revision.workdir.as_path())).map_err(|error| error.to_string())?;
-    let head = if let Some(revision) = &revision { repo.find_commit(git2::Oid::from_str(&revision.hash).map_err(|error| error.to_string())?) }
-        else { repo.head().and_then(|head| head.peel_to_commit()) }.map_err(|error| error.to_string())?;
-    let relative = revision.as_ref().map(|revision| revision.path.clone()).or_else(|| crate::app_git::repository_relative_path(repo.workdir()?, &path)).ok_or("File is outside the repository")?;
-    let text = tree_text(&repo, &head.tree().map_err(|error| error.to_string())?, &relative, limit)?.ok_or("This file has no committed history yet")?;
+pub(crate) fn prepare_head(
+    path: PathBuf,
+    revision: Option<Arc<Revision>>,
+    limit: u64,
+) -> Result<Document, String> {
+    let repo = git2::Repository::discover(revision.as_ref().map_or_else(
+        || path.parent().unwrap_or(&path),
+        |revision| revision.workdir.as_path(),
+    ))
+    .map_err(|error| error.to_string())?;
+    let head = if let Some(revision) = &revision {
+        repo.find_commit(git2::Oid::from_str(&revision.hash).map_err(|error| error.to_string())?)
+    } else {
+        repo.head().and_then(|head| head.peel_to_commit())
+    }
+    .map_err(|error| error.to_string())?;
+    let relative = revision
+        .as_ref()
+        .map(|revision| revision.path.clone())
+        .or_else(|| crate::app_git::repository_relative_path(repo.workdir()?, &path))
+        .ok_or("File is outside the repository")?;
+    let text = tree_text(
+        &repo,
+        &head.tree().map_err(|error| error.to_string())?,
+        &relative,
+        limit,
+    )?
+    .ok_or("This file has no committed history yet")?;
     Ok(prepare_at(path, Rope::from_str(&text), None, revision))
 }
 
@@ -318,7 +343,9 @@ pub(crate) fn cached<'a>(
     app: &'a App,
     editor: &crate::editor::Editor,
 ) -> Option<&'a Arc<Document>> {
-    if !app.source_control_enabled { return None; }
+    if !app.source_control_enabled {
+        return None;
+    }
     let document = app.blame_documents.get(&editor.navigation_id)?;
     (!editor.bg_loading
         && document.path.as_path() == editor.file_path.as_deref()?
@@ -427,10 +454,15 @@ fn previous_file_revision(
     drop(entry);
     let mut earlier = false;
     loop {
-        if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err("Git blame cancelled".into()); }
+        if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+            return Err("Git blame cancelled".into());
+        }
         if commit.parent_count() == 0 {
-            return if earlier { revision_for(repo, &commit, path, revision.working_file.clone()).map(Some) }
-                else { Ok(None) };
+            return if earlier {
+                revision_for(repo, &commit, path, revision.working_file.clone()).map(Some)
+            } else {
+                Ok(None)
+            };
         }
         let mut matching_parent = None;
         let mut file_parent = None;
@@ -462,7 +494,9 @@ fn previous_file_revision(
         }
         if let Some((parent, parent_tree)) = matching_parent {
             commit = parent;
-            if let Some(parent_tree) = parent_tree { tree = parent_tree; }
+            if let Some(parent_tree) = parent_tree {
+                tree = parent_tree;
+            }
             earlier = true;
             continue;
         }
@@ -471,20 +505,28 @@ fn previous_file_revision(
         if earlier {
             return revision_for(repo, &commit, path, revision.working_file.clone()).map(Some);
         }
-        let (parent, parent_tree, parent_state) = file_parent.ok_or("The previous file revision is unavailable.")?;
+        let (parent, parent_tree, parent_state) =
+            file_parent.ok_or("The previous file revision is unavailable.")?;
         if let Some(parent_state) = parent_state {
             state = parent_state;
         } else {
             // Only a missing parent path needs rename detection. Ordinary
             // unrelated changes need just one tree-entry lookup per commit.
-            let mut changes = repo.diff_tree_to_tree(Some(&parent_tree), Some(&tree), None)
+            let mut changes = repo
+                .diff_tree_to_tree(Some(&parent_tree), Some(&tree), None)
                 .map_err(|e| e.to_string())?;
-            changes.find_similar(Some(git2::DiffFindOptions::new().renames(true)))
+            changes
+                .find_similar(Some(git2::DiffFindOptions::new().renames(true)))
                 .map_err(|e| e.to_string())?;
-            let old = changes.deltas().find(|delta| delta.new_file().path() == Some(&path)
-                && delta.status() == git2::Delta::Renamed)
+            let old = changes
+                .deltas()
+                .find(|delta| {
+                    delta.new_file().path() == Some(&path) && delta.status() == git2::Delta::Renamed
+                })
                 .and_then(|delta| delta.old_file().path().map(std::path::Path::to_path_buf));
-            let Some(old) = old else { return Ok(None); };
+            let Some(old) = old else {
+                return Ok(None);
+            };
             let entry = parent_tree.get_path(&old).map_err(|e| e.to_string())?;
             state = (entry.id(), entry.filemode_raw());
             path = old;
@@ -509,7 +551,9 @@ fn prepare_snapshot_cancellable(
     limit: u64,
     cancel: Option<&crate::background::CancellationToken>,
 ) -> Result<Snapshot, String> {
-    if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err("Git blame cancelled".into()); }
+    if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+        return Err("Git blame cancelled".into());
+    }
     let repo = git2::Repository::discover(&revision.workdir).map_err(|e| e.to_string())?;
     let commit = repo
         .find_commit(git2::Oid::from_str(&revision.hash).map_err(|e| e.to_string())?)
@@ -526,11 +570,14 @@ fn prepare_snapshot_cancellable(
         Some(revision.clone()),
         cancel,
     ));
-    let (previous_revision, previous_notice) = match previous_file_revision(&repo, &revision, cancel) {
-        Ok(previous) => (previous, None),
-        Err(notice) => (None, Some(notice)),
-    };
-    if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err("Git blame cancelled".into()); }
+    let (previous_revision, previous_notice) =
+        match previous_file_revision(&repo, &revision, cancel) {
+            Ok(previous) => (previous, None),
+            Err(notice) => (None, Some(notice)),
+        };
+    if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+        return Err("Git blame cancelled".into());
+    }
     Ok(Snapshot {
         revision,
         previous_revision,
@@ -541,10 +588,16 @@ fn prepare_snapshot_cancellable(
 }
 
 pub(crate) struct HistoryContents {
-    pub file_path: PathBuf, pub hash: String, pub summary: String,
-    pub before_label: String, pub after_label: String,
-    pub before: String, pub after: String, pub line: usize,
-    pub revision: Arc<Revision>, pub previous_revision: Option<Arc<Revision>>,
+    pub file_path: PathBuf,
+    pub hash: String,
+    pub summary: String,
+    pub before_label: String,
+    pub after_label: String,
+    pub before: String,
+    pub after: String,
+    pub line: usize,
+    pub revision: Arc<Revision>,
+    pub previous_revision: Option<Arc<Revision>>,
 }
 
 fn prepare_history_at(
@@ -616,7 +669,9 @@ pub(crate) fn read_history_at(
             info.date,
             info.summary
         ),
-        line, before, after,
+        line,
+        before,
+        after,
         revision,
         previous_revision,
     })
@@ -626,13 +681,36 @@ pub(crate) fn prepare_history_contents(
     source: HistoryContents,
     algorithm: crate::diff_algorithm::DiffAlgorithm,
 ) -> History {
-    let HistoryContents { file_path, hash, summary, before_label, after_label, before, after, line, revision, previous_revision } = source;
+    let HistoryContents {
+        file_path,
+        hash,
+        summary,
+        before_label,
+        after_label,
+        before,
+        after,
+        line,
+        revision,
+        previous_revision,
+    } = source;
     let contents = Rope::from_str(&after);
-    let line = git_row_to_line(&contents,line).min(contents.len_lines().saturating_sub(1));
+    let line = git_row_to_line(&contents, line).min(contents.len_lines().saturating_sub(1));
     let diff = crate::background::PreparedDiffRefresh::new(
-        before.into(), &after, contents.len_lines(), algorithm,
+        before.into(),
+        &after,
+        contents.len_lines(),
+        algorithm,
     );
-    History { file_path, hash, summary, before_label, after_label, contents, line, revision, previous_revision,
+    History {
+        file_path,
+        hash,
+        summary,
+        before_label,
+        after_label,
+        contents,
+        line,
+        revision,
+        previous_revision,
         diff,
     }
 }
@@ -668,11 +746,29 @@ pub(crate) fn open_previous(app: &mut App, line: usize) {
     let remote = app.remote_workspace.clone();
     let algorithm = app.diff_algorithm;
     app.background.spawn("blame-history", move || {
-        if sender.is_cancelled() { return; }
+        if sender.is_cancelled() {
+            return;
+        }
         let result = if let Some(remote) = remote {
-            remote.blame_history(&path, &commit, original_line, limit, revision.as_deref(), algorithm).map_err(|error| error.to_string())
+            remote
+                .blame_history(
+                    &path,
+                    &commit,
+                    original_line,
+                    limit,
+                    revision.as_deref(),
+                    algorithm,
+                )
+                .map_err(|error| error.to_string())
         } else {
-            prepare_history_at(path, &commit, original_line, limit, revision.as_deref(), algorithm)
+            prepare_history_at(
+                path,
+                &commit,
+                original_line,
+                limit,
+                revision.as_deref(),
+                algorithm,
+            )
         }
         .map(|mut history| {
             history.line = (history.line + git_subrow(&source, line))
@@ -697,7 +793,11 @@ pub(crate) fn open_line_file(app: &mut App, line: usize) {
     let Some(Line::Committed(commit)) = document.lines.get(line) else {
         return;
     };
-    if document.revision.as_ref().is_some_and(|revision| revision.matches_commit_file(commit)) {
+    if document
+        .revision
+        .as_ref()
+        .is_some_and(|revision| revision.matches_commit_file(commit))
+    {
         return;
     }
     let commit = commit.clone();
@@ -721,13 +821,20 @@ pub(crate) fn open_line_file(app: &mut App, line: usize) {
     app.notify("Opening file at commit…");
     let remote = app.remote_workspace.clone();
     app.background.spawn("blame-file", move || {
-        if sender.is_cancelled() { return; }
+        if sender.is_cancelled() {
+            return;
+        }
         let result = (|| {
             if let Some(remote) = remote {
-                return remote.blame_line_snapshot(&path, &commit, source.as_deref(), line, limit).map_err(|error| error.to_string()).map(|mut snapshot| {
-                    snapshot.line = (git_row_to_line(&snapshot.document.rope, line) + git_subrow(&source_rope,source_line)).min(snapshot.document.rope.len_lines().saturating_sub(1));
-                    snapshot
-                });
+                return remote
+                    .blame_line_snapshot(&path, &commit, source.as_deref(), line, limit)
+                    .map_err(|error| error.to_string())
+                    .map(|mut snapshot| {
+                        snapshot.line = (git_row_to_line(&snapshot.document.rope, line)
+                            + git_subrow(&source_rope, source_line))
+                        .min(snapshot.document.rope.len_lines().saturating_sub(1));
+                        snapshot
+                    });
             }
             let repo = git2::Repository::discover(source.as_ref().map_or_else(
                 || path.parent().unwrap_or(&path),
@@ -741,12 +848,14 @@ pub(crate) fn open_line_file(app: &mut App, line: usize) {
                 .as_ref()
                 .map_or(path, |revision| revision.working_file.clone());
             let revision = revision_for(&repo, &info, commit.path.clone(), working_file)?;
-            prepare_snapshot_cancellable(revision, line, limit, Some(sender.cancellation())).map(|mut snapshot| {
-                snapshot.line = (git_row_to_line(&snapshot.document.rope, line)
-                    + git_subrow(&source_rope, source_line))
-                .min(snapshot.document.rope.len_lines().saturating_sub(1));
-                snapshot
-            })
+            prepare_snapshot_cancellable(revision, line, limit, Some(sender.cancellation())).map(
+                |mut snapshot| {
+                    snapshot.line = (git_row_to_line(&snapshot.document.rope, line)
+                        + git_subrow(&source_rope, source_line))
+                    .min(snapshot.document.rope.len_lines().saturating_sub(1));
+                    snapshot
+                },
+            )
         })();
         let _ = sender.send(BackgroundResult::BlameSnapshot {
             navigation_id,
@@ -757,7 +866,9 @@ pub(crate) fn open_line_file(app: &mut App, line: usize) {
 }
 
 pub(crate) fn open_revision(app: &mut App, revision: Arc<Revision>, map_source: bool) {
-    if !app.source_control_enabled { return; }
+    if !app.source_control_enabled {
+        return;
+    }
     let Some(editor) = app.editor() else {
         return;
     };
@@ -773,11 +884,18 @@ pub(crate) fn open_revision(app: &mut App, revision: Arc<Revision>, map_source: 
     app.notify("Opening historical file…");
     let remote = app.remote_workspace.clone();
     app.background.spawn("blame-file", move || {
-        if sender.is_cancelled() { return; }
+        if sender.is_cancelled() {
+            return;
+        }
         let result = match remote {
-            Some(remote) => remote.blame_snapshot(&revision,line,limit).map_err(|error| error.to_string()),
-            None => prepare_snapshot_cancellable(revision,line,limit,Some(sender.cancellation())),
-        }.map(|mut snapshot| {
+            Some(remote) => remote
+                .blame_snapshot(&revision, line, limit)
+                .map_err(|error| error.to_string()),
+            None => {
+                prepare_snapshot_cancellable(revision, line, limit, Some(sender.cancellation()))
+            }
+        }
+        .map(|mut snapshot| {
             if map_source {
                 snapshot.line = map_line(&source, &snapshot.document.rope, line);
             }
@@ -920,7 +1038,8 @@ impl App {
             self.suspend_diff_tab();
             self.clear_diff_state();
             let mut editor = self.new_editor();
-            editor.language_override = self.language_override_for_path(&snapshot.revision.file_path())
+            editor.language_override = self
+                .language_override_for_path(&snapshot.revision.file_path())
                 .or_else(|| self.language_override_for_path(&snapshot.revision.working_file));
             editor.file_path = Some(snapshot.revision.file_path());
             editor.file_size = snapshot.document.rope.len_bytes() as u64;

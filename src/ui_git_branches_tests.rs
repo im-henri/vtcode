@@ -90,16 +90,28 @@ fn contents(buffer: &Buffer) -> String {
 }
 
 fn action_area(app: &App, action: Action) -> Rect {
-    app.git_branch_dialog.buttons.iter().find(|(_, candidate, _, _)|
-        std::mem::discriminant(candidate) == std::mem::discriminant(&action)).unwrap().0
+    app.git_branch_dialog
+        .buttons
+        .iter()
+        .find(|(_, candidate, _, _)| {
+            std::mem::discriminant(candidate) == std::mem::discriminant(&action)
+        })
+        .unwrap()
+        .0
 }
 
 #[test]
 fn branch_rows_hover_and_clear_without_changing_selection_or_keyboard_focus() {
     let themes = crate::app_theme::load_builtin_themes();
     for theme in [
-        themes.iter().find(|theme| !theme.is_light && !theme.high_contrast).unwrap(),
-        themes.iter().find(|theme| theme.is_light && !theme.high_contrast).unwrap(),
+        themes
+            .iter()
+            .find(|theme| !theme.is_light && !theme.high_contrast)
+            .unwrap(),
+        themes
+            .iter()
+            .find(|theme| theme.is_light && !theme.high_contrast)
+            .unwrap(),
         themes.iter().find(|theme| theme.high_contrast).unwrap(),
     ] {
         let (_directory, repo, mut app) = fixture(false);
@@ -114,16 +126,30 @@ fn branch_rows_hover_and_clear_without_changing_selection_or_keyboard_focus() {
         mouse(&mut app, MouseEventKind::Moved, row.x + 4, row.y);
         assert!(app.mouse_hover_changed);
         let over = paint(&mut app, 100, 30);
-        assert_ne!(over[(row.x, row.y)].bg, before[(row.x, row.y)].bg, "{}", theme.config_key);
+        assert_ne!(
+            over[(row.x, row.y)].bg,
+            before[(row.x, row.y)].bg,
+            "{}",
+            theme.config_key
+        );
         for x in row.x..row.right() {
-            assert_eq!(over[(x, row.y)].bg, over[(row.x, row.y)].bg, "the entire row, including its badge, responds to hover");
+            assert_eq!(
+                over[(x, row.y)].bg,
+                over[(row.x, row.y)].bg,
+                "the entire row, including its badge, responds to hover"
+            );
         }
-        assert_eq!(over[(selected_row.x, selected_row.y)], before[(selected_row.x, selected_row.y)]);
+        assert_eq!(
+            over[(selected_row.x, selected_row.y)],
+            before[(selected_row.x, selected_row.y)]
+        );
         assert_eq!(app.git_branch_picker_selected, selection);
         assert_eq!(app.git_branch_dialog.focus, focus);
         mouse(&mut app, MouseEventKind::Moved, 0, 0);
         let left = paint(&mut app, 100, 30);
-        for x in row.x..row.right() { assert_eq!(left[(x, row.y)], before[(x, row.y)]); }
+        for x in row.x..row.right() {
+            assert_eq!(left[(x, row.y)], before[(x, row.y)]);
+        }
         assert_eq!(repo.head().unwrap().shorthand(), Some("main"));
         assert!(!app.bg_git_action_running);
     }
@@ -133,15 +159,25 @@ fn branch_rows_hover_and_clear_without_changing_selection_or_keyboard_focus() {
 fn branch_row_hover_uses_the_theme_hover_background_and_foreground() {
     let (_directory, _repo, mut app) = fixture(false);
     let mut theme = crate::ui_control_visibility_tests::theme_with_popup_and_control_roles();
-    theme.workbench_colors.insert("list.hoverBackground".into(), "#123456".into());
-    theme.workbench_colors.insert("list.hoverForeground".into(), "#ffffff".into());
+    theme
+        .workbench_colors
+        .insert("list.hoverBackground".into(), "#123456".into());
+    theme
+        .workbench_colors
+        .insert("list.hoverForeground".into(), "#ffffff".into());
     app.colors = theme.to_theme_colors();
     paint(&mut app, 100, 30);
     let row = app.quick_picker.rows[1].0;
     mouse(&mut app, MouseEventKind::Moved, row.x + 3, row.y);
     let buffer = paint(&mut app, 100, 30);
-    assert_eq!(buffer[(row.x + 3, row.y)].bg, ratatui::style::Color::Rgb(18, 52, 86));
-    assert_eq!(buffer[(row.x + 3, row.y)].fg, ratatui::style::Color::Rgb(255, 255, 255));
+    assert_eq!(
+        buffer[(row.x + 3, row.y)].bg,
+        ratatui::style::Color::Rgb(18, 52, 86)
+    );
+    assert_eq!(
+        buffer[(row.x + 3, row.y)].fg,
+        ratatui::style::Color::Rgb(255, 255, 255)
+    );
 }
 
 #[test]
@@ -149,19 +185,37 @@ fn branch_buttons_hover_in_browse_create_and_confirmation_without_stealing_focus
     for mode in 0..3 {
         let (_directory, repo, mut app) = fixture(false);
         let mut theme = crate::ui_control_visibility_tests::theme_with_popup_and_control_roles();
-        theme.workbench_colors.insert("button.hoverBackground".into(), "#225588".into());
-        theme.workbench_colors.insert("button.secondaryHoverBackground".into(), "#556622".into());
+        theme
+            .workbench_colors
+            .insert("button.hoverBackground".into(), "#225588".into());
+        theme
+            .workbench_colors
+            .insert("button.secondaryHoverBackground".into(), "#556622".into());
         app.colors = theme.to_theme_colors();
         replace_input(&mut app, "feature/existing".into());
-        if mode == 1 { activate(&mut app, Action::New); replace_input(&mut app, "feature/new".into()); }
-        if mode == 2 { activate(&mut app, Action::Review); }
-        let actions = if mode == 0 { vec![Action::New, Action::Review, Action::Close] }
-            else { vec![Action::Back, Action::Submit] };
+        if mode == 1 {
+            activate(&mut app, Action::New);
+            replace_input(&mut app, "feature/new".into());
+        }
+        if mode == 2 {
+            activate(&mut app, Action::Review);
+        }
+        let actions = if mode == 0 {
+            vec![Action::New, Action::Review, Action::Close]
+        } else {
+            vec![Action::Back, Action::Submit]
+        };
         for action in actions {
             mouse(&mut app, MouseEventKind::Moved, 0, 0);
             paint(&mut app, 100, 30);
-            let (_, _, target, enabled) = *app.git_branch_dialog.buttons.iter().find(|(_, candidate, _, _)|
-                std::mem::discriminant(candidate) == std::mem::discriminant(&action)).unwrap();
+            let (_, _, target, enabled) = *app
+                .git_branch_dialog
+                .buttons
+                .iter()
+                .find(|(_, candidate, _, _)| {
+                    std::mem::discriminant(candidate) == std::mem::discriminant(&action)
+                })
+                .unwrap();
             assert!(enabled);
             // Confirmation starts on Back. Use the other keyboard target so
             // this action's pointer feedback can be tested independently.
@@ -172,14 +226,21 @@ fn branch_buttons_hover_in_browse_create_and_confirmation_without_stealing_focus
             mouse(&mut app, MouseEventKind::Moved, area.x + 1, area.y);
             let over = paint(&mut app, 100, 30);
             let primary = matches!(action, Action::Review | Action::Submit);
-            assert_eq!(over[(area.x, area.y)].bg, if primary {
-                ratatui::style::Color::Rgb(34, 85, 136)
-            } else { ratatui::style::Color::Rgb(85, 102, 34) });
+            assert_eq!(
+                over[(area.x, area.y)].bg,
+                if primary {
+                    ratatui::style::Color::Rgb(34, 85, 136)
+                } else {
+                    ratatui::style::Color::Rgb(85, 102, 34)
+                }
+            );
             assert_ne!(over[(area.x, area.y)].bg, before[(area.x, area.y)].bg);
             assert_eq!(app.git_branch_dialog.focus, focus);
             mouse(&mut app, MouseEventKind::Moved, 0, 0);
             let left = paint(&mut app, 100, 30);
-            for x in area.x..area.right() { assert_eq!(left[(x, area.y)], before[(x, area.y)]); }
+            for x in area.x..area.right() {
+                assert_eq!(left[(x, area.y)], before[(x, area.y)]);
+            }
             assert_eq!(repo.head().unwrap().shorthand(), Some("main"));
             assert!(!app.bg_git_action_running);
         }
@@ -197,7 +258,10 @@ fn hovering_switch_does_not_arm_confirmation_or_change_enter_target() {
     mouse(&mut app, MouseEventKind::Moved, submit.x, submit.y);
     paint(&mut app, 100, 30);
     key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
-    assert!(matches!(app.git_branch_dialog.mode, Mode::Browse), "Enter still activates Back after a pointer-only hover");
+    assert!(
+        matches!(app.git_branch_dialog.mode, Mode::Browse),
+        "Enter still activates Back after a pointer-only hover"
+    );
     assert_eq!(repo.head().unwrap().shorthand(), Some("main"));
     assert!(!app.bg_git_action_running);
 }
@@ -206,18 +270,29 @@ fn hovering_switch_does_not_arm_confirmation_or_change_enter_target() {
 fn branch_disabled_and_busy_buttons_do_not_gain_hover_styles() {
     for mode in 0..3 {
         let (_directory, _repo, mut app) = fixture(false);
-        if mode == 1 { activate(&mut app, Action::New); }
+        if mode == 1 {
+            activate(&mut app, Action::New);
+        }
         if mode == 2 {
             replace_input(&mut app, "feature/existing".into());
             activate(&mut app, Action::Review);
             app.git_branch_dialog.pending = true;
         }
         let before = paint(&mut app, 100, 30);
-        let area = action_area(&app, if mode == 0 { Action::Review } else { Action::Submit });
+        let area = action_area(
+            &app,
+            if mode == 0 {
+                Action::Review
+            } else {
+                Action::Submit
+            },
+        );
         let focus = app.git_branch_dialog.focus;
         mouse(&mut app, MouseEventKind::Moved, area.x + 1, area.y);
         let over = paint(&mut app, 100, 30);
-        for x in area.x..area.right() { assert_eq!(over[(x, area.y)], before[(x, area.y)]); }
+        for x in area.x..area.right() {
+            assert_eq!(over[(x, area.y)], before[(x, area.y)]);
+        }
         assert_eq!(app.git_branch_dialog.focus, focus);
         assert!(!app.bg_git_action_running);
     }

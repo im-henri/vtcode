@@ -500,7 +500,9 @@ impl Journal {
                         .ok_or("Missing cached checkpoint preview")?;
                     Ok(native::FileReview {
                         path,
-                        has_text: review.has_text.unwrap_or_else(|| !text.is_empty() && !text.contains('\0')),
+                        has_text: review
+                            .has_text
+                            .unwrap_or_else(|| !text.is_empty() && !text.contains('\0')),
                         text,
                         chunks: review.chunks,
                     })

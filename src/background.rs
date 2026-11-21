@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread;
 use std::time::SystemTime;
 
@@ -29,17 +29,26 @@ pub(crate) struct ResultBudget {
 
 impl ResultBudget {
     pub(crate) fn until(deadline: std::time::Instant) -> Self {
-        Self { deadline: Some(deadline), ..Self::default() }
+        Self {
+            deadline: Some(deadline),
+            ..Self::default()
+        }
     }
 
     pub(crate) fn next(&mut self, workers: &mut BackgroundWorkers) -> Option<BackgroundResult> {
         self.next_at(workers, std::time::Instant::now())
     }
 
-    fn next_at(&mut self, workers: &mut BackgroundWorkers, now: std::time::Instant) -> Option<BackgroundResult> {
+    fn next_at(
+        &mut self,
+        workers: &mut BackgroundWorkers,
+        now: std::time::Instant,
+    ) -> Option<BackgroundResult> {
         if self.count >= MAX_BACKGROUND_RESULTS_PER_POLL
             || (self.count > 0 && self.deadline.is_some_and(|deadline| now >= deadline))
-            || self.started.is_some_and(|start| now.saturating_duration_since(start) >= BACKGROUND_RESULT_BUDGET)
+            || self.started.is_some_and(|start| {
+                now.saturating_duration_since(start) >= BACKGROUND_RESULT_BUDGET
+            })
         {
             return None;
         }
@@ -71,26 +80,31 @@ impl UiWake {
         // The predicate and transition into Condvar::wait must share this
         // mutex with producers. An atomic generation alone does not prevent a
         // notification between the waiter's last check and actually sleeping.
-        let guard = self.wait.0.lock().unwrap_or_else(|error| error.into_inner());
+        let guard = self
+            .wait
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         self.generation.fetch_add(1, Ordering::Release);
         drop(guard);
         self.wait.1.notify_all();
     }
 
-    pub(crate) fn wait_for_change(
-        &self,
-        observed: u64,
-        timeout: Option<std::time::Duration>,
-    ) {
+    pub(crate) fn wait_for_change(&self, observed: u64, timeout: Option<std::time::Duration>) {
         if self.generation() != observed || timeout.is_some_and(|timeout| timeout.is_zero()) {
             return;
         }
-        let guard = self.wait.0.lock().unwrap_or_else(|error| error.into_inner());
+        let guard = self
+            .wait
+            .0
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if self.generation() == observed {
             if let Some(timeout) = timeout {
-                let _ = self.wait.1.wait_timeout_while(guard, timeout, |_| {
-                    self.generation() == observed
-                });
+                let _ = self
+                    .wait
+                    .1
+                    .wait_timeout_while(guard, timeout, |_| self.generation() == observed);
             } else {
                 drop(
                     self.wait
@@ -328,7 +342,12 @@ impl PreparedDiffRefresh {
             crate::diff_algorithm::missing_final_newline(&base_content, target);
         let target_line_markers =
             crate::app_git_display::target_line_markers_from_compare_diff(&diff_lines, line_count);
-        Self { base_content, diff_lines, render_cache, target_line_markers }
+        Self {
+            base_content,
+            diff_lines,
+            render_cache,
+            target_line_markers,
+        }
     }
 }
 
@@ -375,15 +394,46 @@ pub type FragmentHighlightEntry = (usize, u64, Vec<(crate::textmate::Style, Stri
 
 /// Messages sent from background workers to the main UI thread.
 pub enum BackgroundResult {
-    MergeConflicts { view: u64, index: Arc<crate::merge_conflicts::Index> },
+    MergeConflicts {
+        view: u64,
+        index: Arc<crate::merge_conflicts::Index>,
+    },
     MergeComparison(crate::merge_conflict_ui::Comparison),
     SaveConflictDiff(crate::app_save_conflict::DiffResult),
-    RemoteReconnectStarted { generation: u64, serial: u64, result: Result<crate::remote::launch::Setup, String> },
-    RemoteReconnected { generation: u64, serial: u64, result: Result<crate::remote::workspace::Workspace, String> },
-    SharedRemoteReconnected { generation: u64, serial: u64, result: Result<crate::remote::workspace::Workspace, String> },
-    RemoteReconnectFile { generation: u64, check: crate::app_remote_connection::FileCheck },
-    AgentFileResolved { agent: crate::app_acp::AgentId, handle: vtcode::acp::ClientHandle, id: vtcode::acp::protocol::RequestId, ticket: u64, request: vtcode::acp::FileRequest, aliases: Result<Vec<(PathBuf, Option<PathBuf>)>, vtcode::acp::protocol::Error> },
-    RemoteTransferProgress { generation: u64, path: PathBuf, saving: bool, completed: u64, total: u64 },
+    RemoteReconnectStarted {
+        generation: u64,
+        serial: u64,
+        result: Result<crate::remote::launch::Setup, String>,
+    },
+    RemoteReconnected {
+        generation: u64,
+        serial: u64,
+        result: Result<crate::remote::workspace::Workspace, String>,
+    },
+    SharedRemoteReconnected {
+        generation: u64,
+        serial: u64,
+        result: Result<crate::remote::workspace::Workspace, String>,
+    },
+    RemoteReconnectFile {
+        generation: u64,
+        check: crate::app_remote_connection::FileCheck,
+    },
+    AgentFileResolved {
+        agent: crate::app_acp::AgentId,
+        handle: vtcode::acp::ClientHandle,
+        id: vtcode::acp::protocol::RequestId,
+        ticket: u64,
+        request: vtcode::acp::FileRequest,
+        aliases: Result<Vec<(PathBuf, Option<PathBuf>)>, vtcode::acp::protocol::Error>,
+    },
+    RemoteTransferProgress {
+        generation: u64,
+        path: PathBuf,
+        saving: bool,
+        completed: u64,
+        total: u64,
+    },
     #[cfg(test)]
     RemoteWorkspaceOpened {
         request: u64,
@@ -391,15 +441,34 @@ pub enum BackgroundResult {
         result: Result<crate::remote::workspace::Workspace, String>,
     },
     HunkPeek(crate::hunk_preview::PeekResult),
-    RemoteDiskChecksFailed { paths: Vec<PathBuf> },
+    RemoteDiskChecksFailed {
+        paths: Vec<PathBuf>,
+    },
     RemoteDiskChecksDone(CancellationToken),
-    RemoteFileValidated { generation: u64, path: PathBuf, document: u64,
+    RemoteFileValidated {
+        generation: u64,
+        path: PathBuf,
+        document: u64,
         baseline: crate::remote::workspace::Baseline,
-        result: Result<crate::remote::workspace::Validation, String> },
-    RemoteLocationResolved { id: u64, result: std::io::Result<crate::remote::workspace::Location> },
-    RemoteLocationProgress { id: u64, completed: u64, total: u64 },
-    WorkspaceResult { generation: u64, result: Box<BackgroundResult> },
-    RemoteFileResult { checkpoint: Arc<crate::remote::Checkpoint>, result: Box<BackgroundResult> },
+        result: Result<crate::remote::workspace::Validation, String>,
+    },
+    RemoteLocationResolved {
+        id: u64,
+        result: std::io::Result<crate::remote::workspace::Location>,
+    },
+    RemoteLocationProgress {
+        id: u64,
+        completed: u64,
+        total: u64,
+    },
+    WorkspaceResult {
+        generation: u64,
+        result: Box<BackgroundResult>,
+    },
+    RemoteFileResult {
+        checkpoint: Arc<crate::remote::Checkpoint>,
+        result: Box<BackgroundResult>,
+    },
     DeletionProgress(CancellationToken),
     /// A read-only Git job belongs to one enabled session. Cancelling that
     /// session also invalidates results already waiting in the UI queue.
@@ -412,7 +481,11 @@ pub enum BackgroundResult {
     /// Git branch label (e.g. "main ↑2"); views add their own icon.
     GitBranch(String),
     /// A repository-specific read must not update another project's view.
-    RepositoryRead { root: PathBuf, generation: u64, result: Box<BackgroundResult> },
+    RepositoryRead {
+        root: PathBuf,
+        generation: u64,
+        result: Box<BackgroundResult>,
+    },
     GitRepositories {
         root: PathBuf,
         workspace_generation: u64,
@@ -447,9 +520,15 @@ pub enum BackgroundResult {
         generation: u64,
         snapshot: Box<crate::explorer::ExplorerRefresh>,
     },
-    ExplorerRefreshFailed { generation: u64, error: String },
+    ExplorerRefreshFailed {
+        generation: u64,
+        error: String,
+    },
     /// Metadata and optional line count requested by an Explorer hover.
-    ExplorerHoverInfo { generation: u64, info: Option<ExplorerHoverInfo> },
+    ExplorerHoverInfo {
+        generation: u64,
+        info: Option<ExplorerHoverInfo>,
+    },
     SourceControlFileStats(crate::app_source_control_hover::ChangeStats),
     /// Directory picker contents collected without blocking keyboard/mouse
     /// navigation on a slow filesystem.
@@ -501,7 +580,10 @@ pub enum BackgroundResult {
         truncated: bool,
     },
     /// Search failures obey the same query lifetime as result batches.
-    GlobalSearchFailed { generation: u64, error: String },
+    GlobalSearchFailed {
+        generation: u64,
+        error: String,
+    },
     /// Recomputed matches for an edited open model within the current query.
     GlobalSearchFileResults {
         path: PathBuf,
@@ -529,8 +611,14 @@ pub enum BackgroundResult {
         prepared: crate::formatters::Prepared,
         replacements: usize,
     },
-    PastePrepared { serial: u64, result: Result<Box<crate::editor_paste::Prepared>, String> },
-    ExitRecoverySaved { generation: u64, result: Result<(), String> },
+    PastePrepared {
+        serial: u64,
+        result: Result<Box<crate::editor_paste::Prepared>, String>,
+    },
+    ExitRecoverySaved {
+        generation: u64,
+        result: Result<(), String>,
+    },
     /// Local edits can be applied while a remote closed-file batch is pending.
     GlobalReplaceOpenPrepared {
         workspace_generation: u64,
@@ -559,9 +647,23 @@ pub enum BackgroundResult {
         root: PathBuf,
         paths: Vec<PathBuf>,
     },
-    ChatAttachmentsPrepared { agent: u64, serial: u64, result: Result<Vec<PathBuf>, String> },
-    ChatPastePrepared { agent: u64, serial: u64, result: crate::app_chat_files::hosted::paste::Batch },
-    ChatPromptPrepared { agent: u64, session: vtcode::acp::protocol::SessionId, serial: u64, result: Result<crate::app_chat_files::hosted::PreparedPrompt, String>, draft: Option<crate::app_chat_files::hosted::paste::ResolvedDraft> },
+    ChatAttachmentsPrepared {
+        agent: u64,
+        serial: u64,
+        result: Result<Vec<PathBuf>, String>,
+    },
+    ChatPastePrepared {
+        agent: u64,
+        serial: u64,
+        result: crate::app_chat_files::hosted::paste::Batch,
+    },
+    ChatPromptPrepared {
+        agent: u64,
+        session: vtcode::acp::protocol::SessionId,
+        serial: u64,
+        result: Result<crate::app_chat_files::hosted::PreparedPrompt, String>,
+        draft: Option<crate::app_chat_files::hosted::paste::ResolvedDraft>,
+    },
     /// Debounced file-watcher burst with content and structural changes.
     FilesChanged {
         root: PathBuf,
@@ -575,10 +677,16 @@ pub enum BackgroundResult {
         git_metadata_changed: bool,
     },
     /// Whether the native watcher for the current workspace started cleanly.
-    FileWatcherState { root: PathBuf, active: bool },
+    FileWatcherState {
+        root: PathBuf,
+        active: bool,
+    },
     /// Ignore replies from a subscription stopped during a workspace switch,
     /// even if a new watcher for the same root has already started.
-    FileWatcherEvent { cancelled: Arc<AtomicBool>, result: Box<BackgroundResult> },
+    FileWatcherEvent {
+        cancelled: Arc<AtomicBool>,
+        result: Box<BackgroundResult>,
+    },
     /// Metadata-only disk check requested by focus/periodic maintenance.
     FileDiskState(WorkspacePathChange),
     /// Stateful, incremental TextMate document slice from a background worker.
@@ -592,7 +700,9 @@ pub enum BackgroundResult {
         entries: Vec<FragmentHighlightEntry>,
     },
     /// Recovery content for an untitled editor, matched by its restore ID.
-    SessionUntitledLoaded { restores: Vec<crate::session::SessionRestore> },
+    SessionUntitledLoaded {
+        restores: Vec<crate::session::SessionRestore>,
+    },
     SessionFileDeferred {
         workspace_generation: u64,
         path: PathBuf,
@@ -857,15 +967,23 @@ pub enum BackgroundResult {
 
 /// Independently coalesced editor jobs sharing the CPU pool.
 #[derive(Clone, Copy)]
-pub(crate) enum EditorWorkKind { Metrics, Brackets, Cursor }
+pub(crate) enum EditorWorkKind {
+    Metrics,
+    Brackets,
+    Cursor,
+}
 
 /// Shared flag that background workers check to exit early when superseded.
 #[derive(Clone, Default)]
 pub struct CancellationToken(Arc<AtomicBool>);
 
 impl CancellationToken {
-    pub(crate) fn from_flag(flag: Arc<AtomicBool>) -> Self { Self(flag) }
-    pub(crate) fn flag(&self) -> Arc<AtomicBool> { self.0.clone() }
+    pub(crate) fn from_flag(flag: Arc<AtomicBool>) -> Self {
+        Self(flag)
+    }
+    pub(crate) fn flag(&self) -> Arc<AtomicBool> {
+        self.0.clone()
+    }
     pub(crate) fn new() -> Self {
         Self(Arc::new(AtomicBool::new(false)))
     }
@@ -949,7 +1067,9 @@ struct PoolLoad {
 struct PoolThreadGuard(Arc<PoolLoad>);
 
 impl Drop for PoolThreadGuard {
-    fn drop(&mut self) { self.0.live.fetch_sub(1, Ordering::Relaxed); }
+    fn drop(&mut self) {
+        self.0.live.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 struct PoolJobGuard {
@@ -970,8 +1090,11 @@ impl Drop for PoolJobGuard {
     fn drop(&mut self) {
         // Captured at submission, so discarded queued jobs and failed sends
         // release their counts too, even if their closure never runs.
-        if self.running { self.load.running.fetch_sub(1, Ordering::Relaxed); }
-        else { self.load.queued.fetch_sub(1, Ordering::Relaxed); }
+        if self.running {
+            self.load.running.fetch_sub(1, Ordering::Relaxed);
+        } else {
+            self.load.queued.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -1000,20 +1123,34 @@ mod io;
 impl BackgroundTaskSender {
     fn pool(name: &'static str, size: usize, active_jobs: Arc<AtomicUsize>, wake: UiWake) -> Self {
         let (sender, receiver) = queue::channel::<QueuedTask>();
-        let load = Arc::new(PoolLoad { live: AtomicUsize::new(size), ..PoolLoad::default() });
+        let load = Arc::new(PoolLoad {
+            live: AtomicUsize::new(size),
+            ..PoolLoad::default()
+        });
         for i in 0..size {
             let rx = receiver.clone();
             let load = load.clone();
-            thread::Builder::new().name(format!("{name}-{i}")).spawn(move || {
-                let _thread_guard = PoolThreadGuard(load);
-                crate::worker_priority::lower_current_thread();
-                loop {
-                    let Some(task) = rx.recv() else { break; };
-                    task.run();
-                }
-            }).expect("failed to spawn pool thread");
+            thread::Builder::new()
+                .name(format!("{name}-{i}"))
+                .spawn(move || {
+                    let _thread_guard = PoolThreadGuard(load);
+                    crate::worker_priority::lower_current_thread();
+                    loop {
+                        let Some(task) = rx.recv() else {
+                            break;
+                        };
+                        task.run();
+                    }
+                })
+                .expect("failed to spawn pool thread");
         }
-        Self { sender, priority: queue::Priority::Analysis, active_jobs, load, wake }
+        Self {
+            sender,
+            priority: queue::Priority::Analysis,
+            active_jobs,
+            load,
+            wake,
+        }
     }
 
     pub(crate) fn send(&self, task: PoolTask) -> Result<(), ()> {
@@ -1021,9 +1158,12 @@ impl BackgroundTaskSender {
         self.load.queued.fetch_add(1, Ordering::Relaxed);
         let guard = PoolJobGuard {
             _active: ActiveJobGuard(Arc::clone(&self.active_jobs), self.wake.clone()),
-            load: Arc::clone(&self.load), running: false,
+            load: Arc::clone(&self.load),
+            running: false,
         };
-        self.sender.send(QueuedTask { task, guard }, self.priority).map_err(|_| ())
+        self.sender
+            .send(QueuedTask { task, guard }, self.priority)
+            .map_err(|_| ())
     }
 }
 
@@ -1106,7 +1246,8 @@ impl BackgroundWorkers {
         let pending_results = Arc::new(AtomicUsize::new(0));
         let pool_size = thread::available_parallelism()
             .map_or(1, |parallelism| background_pool_size(parallelism.get()));
-        let pool_sender = BackgroundTaskSender::pool("worker-pool", pool_size, active_jobs.clone(), wake.clone());
+        let pool_sender =
+            BackgroundTaskSender::pool("worker-pool", pool_size, active_jobs.clone(), wake.clone());
         Self {
             activity: crate::performance::ActivityMonitor::new(wake.clone()),
             sender: BackgroundResultSender {
@@ -1142,26 +1283,50 @@ impl BackgroundWorkers {
     /// Visible syntax and navigation results bypass queued bulk
     /// analysis, with a bounded burst so analysis continues making progress.
     pub(crate) fn interactive_sender(&self) -> BackgroundTaskSender {
-        BackgroundTaskSender { priority: queue::Priority::Interactive, ..self.pool_sender.clone() }
+        BackgroundTaskSender {
+            priority: queue::Priority::Interactive,
+            ..self.pool_sender.clone()
+        }
     }
 
     pub(crate) fn completion_sender(&mut self) -> BackgroundTaskSender {
-        self.completion_pool_sender.get_or_insert_with(|| {
-            BackgroundTaskSender::pool("vtcomplete-worker", 1, self.active_jobs.clone(), self.wake.clone())
-        }).clone()
+        self.completion_pool_sender
+            .get_or_insert_with(|| {
+                BackgroundTaskSender::pool(
+                    "vtcomplete-worker",
+                    1,
+                    self.active_jobs.clone(),
+                    self.wake.clone(),
+                )
+            })
+            .clone()
     }
 
     pub(crate) fn maintenance_sender(&mut self) -> BackgroundTaskSender {
-        self.maintenance_pool_sender.get_or_insert_with(|| {
-            BackgroundTaskSender::pool("asset-worker", 1, self.active_jobs.clone(), self.wake.clone())
-        }).clone()
+        self.maintenance_pool_sender
+            .get_or_insert_with(|| {
+                BackgroundTaskSender::pool(
+                    "asset-worker",
+                    1,
+                    self.active_jobs.clone(),
+                    self.wake.clone(),
+                )
+            })
+            .clone()
     }
 
     /// Serial extension discovery, activation and runtime release.
     pub(crate) fn extension_sender(&mut self) -> BackgroundTaskSender {
-        self.extension_pool_sender.get_or_insert_with(|| {
-            BackgroundTaskSender::pool("extension-worker", 1, self.active_jobs.clone(), self.wake.clone())
-        }).clone()
+        self.extension_pool_sender
+            .get_or_insert_with(|| {
+                BackgroundTaskSender::pool(
+                    "extension-worker",
+                    1,
+                    self.active_jobs.clone(),
+                    self.wake.clone(),
+                )
+            })
+            .clone()
     }
 
     pub(crate) fn wake_handle(&self) -> UiWake {
@@ -1190,7 +1355,10 @@ impl BackgroundWorkers {
     ) -> CancellationToken {
         let token = CancellationToken::new();
         let worker_token = token.clone();
-        let sender = BackgroundTaskSender { active_jobs: Arc::clone(&self.idle_jobs), ..self.pool_sender.clone() };
+        let sender = BackgroundTaskSender {
+            active_jobs: Arc::clone(&self.idle_jobs),
+            ..self.pool_sender.clone()
+        };
         let _ = sender.send(Box::new(move || f(worker_token)));
         token
     }
@@ -1203,7 +1371,9 @@ impl BackgroundWorkers {
     ) -> CancellationToken {
         let token = CancellationToken::new();
         let worker_token = token.clone();
-        let _ = self.interactive_sender().send(Box::new(move || f(worker_token)));
+        let _ = self
+            .interactive_sender()
+            .send(Box::new(move || f(worker_token)));
         token
     }
 
@@ -1257,7 +1427,9 @@ impl BackgroundWorkers {
         self.active_jobs.fetch_add(1, Ordering::Relaxed);
         let active_jobs = Arc::clone(&self.active_jobs);
         let wake = self.wake.clone();
-        let activity = self.activity.start(crate::performance::worker_label(name), path);
+        let activity = self
+            .activity
+            .start(crate::performance::worker_label(name), path);
         let handle = thread::Builder::new()
             .name(name.to_string())
             .spawn(move || {
@@ -1270,20 +1442,35 @@ impl BackgroundWorkers {
         self.join_handles.push((name, Some(handle)));
     }
 
-    pub(crate) fn save_for_file(&mut self, path: &std::path::Path, f: impl FnOnce() + Send + 'static) {
+    pub(crate) fn save_for_file(
+        &mut self,
+        path: &std::path::Path,
+        f: impl FnOnce() + Send + 'static,
+    ) {
         let pool = self.save_pool_sender.get_or_insert_with(|| {
             let size = thread::available_parallelism().map_or(1, |n| save_pool_size(n.get()));
-            BackgroundTaskSender::pool("save-pool", size, self.active_jobs.clone(), self.wake.clone())
+            BackgroundTaskSender::pool(
+                "save-pool",
+                size,
+                self.active_jobs.clone(),
+                self.wake.clone(),
+            )
         });
-        let activity = self.activity.start(crate::performance::worker_label("bg-save"), Some(path));
+        let activity = self
+            .activity
+            .start(crate::performance::worker_label("bg-save"), Some(path));
         pool.send(Box::new(move || {
             let _activity = activity.running();
             f();
-        })).expect("save worker pool disconnected");
+        }))
+        .expect("save worker pool disconnected");
     }
 
     pub(crate) fn read_for_file(
-        &mut self, name: &'static str, path: &std::path::Path, foreground: bool,
+        &mut self,
+        name: &'static str,
+        path: &std::path::Path,
+        foreground: bool,
         f: impl FnOnce() + Send + 'static,
     ) {
         if self.prioritized_read_path.as_deref() == Some(path) {
@@ -1293,38 +1480,61 @@ impl BackgroundWorkers {
             let size = thread::available_parallelism().map_or(1, |n| save_pool_size(n.get()));
             io::ReadPool::new(size, self.active_jobs.clone(), self.wake.clone())
         });
-        let activity = self.activity.start(crate::performance::worker_label(name), Some(path));
-        pool.send_for_path(path, foreground, Box::new(move || {
-            let _activity = activity.running();
-            f();
-        }));
+        let activity = self
+            .activity
+            .start(crate::performance::worker_label(name), Some(path));
+        pool.send_for_path(
+            path,
+            foreground,
+            Box::new(move || {
+                let _activity = activity.running();
+                f();
+            }),
+        );
     }
 
     pub(crate) fn prioritize_file_read(&mut self, path: &std::path::Path) {
         // Scan the pending recovery queue once per focused loading file, not
         // once per frame while the same slow read is still running.
-        if self.prioritized_read_path.as_deref() == Some(path) { return; }
+        if self.prioritized_read_path.as_deref() == Some(path) {
+            return;
+        }
         self.prioritized_read_path = Some(path.to_path_buf());
-        if let Some(pool) = &self.read_pool { pool.prioritize(path); }
+        if let Some(pool) = &self.read_pool {
+            pool.prioritize(path);
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn use_single_read_worker(&mut self) {
         assert!(self.read_pool.is_none());
-        self.read_pool = Some(io::ReadPool::new(1, self.active_jobs.clone(), self.wake.clone()));
+        self.read_pool = Some(io::ReadPool::new(
+            1,
+            self.active_jobs.clone(),
+            self.wake.clone(),
+        ));
     }
 
     #[cfg(test)]
     pub(crate) fn use_single_save_worker(&mut self) {
         assert!(self.save_pool_sender.is_none());
-        self.save_pool_sender = Some(BackgroundTaskSender::pool("single-test-save", 1,
-            self.active_jobs.clone(), self.wake.clone()));
+        self.save_pool_sender = Some(BackgroundTaskSender::pool(
+            "single-test-save",
+            1,
+            self.active_jobs.clone(),
+            self.wake.clone(),
+        ));
     }
 
     #[cfg(test)]
     pub(crate) fn use_single_cpu_worker(&mut self) {
         assert_eq!(self.active_job_count(), 0);
-        self.pool_sender = BackgroundTaskSender::pool("single-test-worker", 1, self.active_jobs.clone(), self.wake.clone());
+        self.pool_sender = BackgroundTaskSender::pool(
+            "single-test-worker",
+            1,
+            self.active_jobs.clone(),
+            self.wake.clone(),
+        );
     }
 
     /// Spawn a named background task with a cancellation token.
@@ -1341,7 +1551,9 @@ impl BackgroundWorkers {
         self.active_jobs.fetch_add(1, Ordering::Relaxed);
         let active_jobs = Arc::clone(&self.active_jobs);
         let wake = self.wake.clone();
-        let activity = self.activity.start(crate::performance::worker_label(name), None);
+        let activity = self
+            .activity
+            .start(crate::performance::worker_label(name), None);
         let handle = thread::Builder::new()
             .name(name.to_string())
             .spawn(move || {
@@ -1357,7 +1569,11 @@ impl BackgroundWorkers {
 
     /// Start a service that sleeps between requests. Its owner supplies the
     /// shutdown signal; it does not count as a continuously active UI job.
-    pub(crate) fn spawn_untracked(&mut self, name: &'static str, f: impl FnOnce() + Send + 'static) {
+    pub(crate) fn spawn_untracked(
+        &mut self,
+        name: &'static str,
+        f: impl FnOnce() + Send + 'static,
+    ) {
         self.reap_finished();
         let handle = thread::Builder::new()
             .name(name.to_string())
@@ -1409,10 +1625,13 @@ impl BackgroundWorkers {
         let mut queued = 0;
         let mut running = 0;
         let mut live = 0;
-        for pool in std::iter::once(&self.pool_sender).chain(self.save_pool_sender.as_ref())
+        for pool in std::iter::once(&self.pool_sender)
+            .chain(self.save_pool_sender.as_ref())
             .chain(self.completion_pool_sender.as_ref())
-            .chain(self.maintenance_pool_sender.as_ref()).chain(self.extension_pool_sender.as_ref())
-            .chain(self.context_pool_sender.as_ref()) {
+            .chain(self.maintenance_pool_sender.as_ref())
+            .chain(self.extension_pool_sender.as_ref())
+            .chain(self.context_pool_sender.as_ref())
+        {
             queued += pool.load.queued.load(Ordering::Relaxed);
             running += pool.load.running.load(Ordering::Relaxed);
             live += pool.load.live.load(Ordering::Relaxed);
@@ -1422,7 +1641,12 @@ impl BackgroundWorkers {
             running += pool.load.running.load(Ordering::Relaxed);
             live += pool.load.live.load(Ordering::Relaxed);
         }
-        (queued, running, live, self.pending_results.load(Ordering::Relaxed))
+        (
+            queued,
+            running,
+            live,
+            self.pending_results.load(Ordering::Relaxed),
+        )
     }
 
     pub(crate) fn refresh_activity(&mut self, now: std::time::Instant) {
@@ -1450,14 +1674,19 @@ impl BackgroundWorkers {
     /// Reuse a live subscription. An unchanged warm workspace emits no results.
     pub(crate) fn start_file_watcher(&mut self, root: PathBuf) {
         if let Some(control) = &self.file_watcher_control
-            && control.root == root && !control.finished.load(Ordering::Acquire)
+            && control.root == root
+            && !control.finished.load(Ordering::Acquire)
             && !control.coverage_lost.load(Ordering::Acquire)
         {
             control.delivery.resume();
             let _ = control.sender.try_send(());
             return;
         }
-        if self.file_watcher_control.as_ref().is_some_and(|control| control.root != root) {
+        if self
+            .file_watcher_control
+            .as_ref()
+            .is_some_and(|control| control.root != root)
+        {
             self.file_watcher_repositories.clear();
         }
         self.stop_file_watcher();
@@ -1470,7 +1699,9 @@ impl BackgroundWorkers {
             finished: Arc::new(AtomicBool::new(false)),
             coverage_lost: Arc::new(AtomicBool::new(false)),
             delivery: Arc::new(crate::workspace_watch::Delivery::default()),
-            repositories: Arc::new(std::sync::Mutex::new(self.file_watcher_repositories.clone())),
+            repositories: Arc::new(std::sync::Mutex::new(
+                self.file_watcher_repositories.clone(),
+            )),
         };
         let stopped = Arc::clone(&control.stopped);
         let finished = control.finished.clone();
@@ -1479,22 +1710,34 @@ impl BackgroundWorkers {
         let coverage_lost = control.coverage_lost.clone();
         let worker_coverage_lost = coverage_lost.clone();
         self.spawn_untracked("file-watcher", move || {
+            use crate::workspace_watch::{Burst, GitWatches, NoiseFilter};
             use notify::{Config, Watcher};
             use std::time::Instant;
-            use crate::workspace_watch::{Burst, NoiseFilter, GitWatches};
             struct Finished(Arc<AtomicBool>);
             impl Drop for Finished {
-                fn drop(&mut self) { self.0.store(true, Ordering::Release); }
+                fn drop(&mut self) {
+                    self.0.store(true, Ordering::Release);
+                }
             }
             let _finished = Finished(finished);
-            let send = |result| sender.send(BackgroundResult::FileWatcherEvent {
-                cancelled: stopped.clone(), result: Box::new(result),
-            });
-            if stopped.load(Ordering::Acquire) { return; }
-            let catch_up = || send(BackgroundResult::FilesChanged {
-                root: root.clone(), changes: Vec::new(), structure_changed: true,
-                rescan: true, git_metadata_changed: true,
-            });
+            let send = |result| {
+                sender.send(BackgroundResult::FileWatcherEvent {
+                    cancelled: stopped.clone(),
+                    result: Box::new(result),
+                })
+            };
+            if stopped.load(Ordering::Acquire) {
+                return;
+            }
+            let catch_up = || {
+                send(BackgroundResult::FilesChanged {
+                    root: root.clone(),
+                    changes: Vec::new(),
+                    structure_changed: true,
+                    rescan: true,
+                    git_metadata_changed: true,
+                })
+            };
 
             let pending = Arc::new(std::sync::Mutex::new(Burst::default()));
             let callback_pending = pending.clone();
@@ -1508,11 +1751,19 @@ impl BackgroundWorkers {
             let callback_delivery = delivery.clone();
             let watcher = crate::workspace_watch::native_watcher(
                 move |event| {
-                    if callback_stopped.load(Ordering::Acquire) { return; }
+                    if callback_stopped.load(Ordering::Acquire) {
+                        return;
+                    }
                     let mut pending = callback_pending.lock().unwrap();
                     let was_empty = pending.event.is_empty();
-                    pending.push_with_dependencies(&callback_root, event, &callback_dependencies.lock().unwrap());
-                    if pending.event.watcher_failed { coverage_lost.store(true, Ordering::Release); }
+                    pending.push_with_dependencies(
+                        &callback_root,
+                        event,
+                        &callback_dependencies.lock().unwrap(),
+                    );
+                    if pending.event.watcher_failed {
+                        coverage_lost.store(true, Ordering::Release);
+                    }
                     if callback_delivery.visible() && was_empty && !pending.event.is_empty() {
                         let _ = watcher_tx.try_send(());
                     }
@@ -1520,8 +1771,14 @@ impl BackgroundWorkers {
                 // Preserve desktop link coverage, but never subscribe to
                 // read-only opens merely to discard them in user space.
                 Config::default().with_open_events(false),
-                move |path| !coverage_stopped.load(Ordering::Acquire)
-                    && crate::workspace_watch::directory_is_relevant(&coverage_root, path, &coverage_dependencies.lock().unwrap()),
+                move |path| {
+                    !coverage_stopped.load(Ordering::Acquire)
+                        && crate::workspace_watch::directory_is_relevant(
+                            &coverage_root,
+                            path,
+                            &coverage_dependencies.lock().unwrap(),
+                        )
+                },
             );
             let mut watcher = match watcher.and_then(|mut watcher| {
                 crate::workspace_watch::watch_root(&mut watcher, &root)?;
@@ -1530,12 +1787,18 @@ impl BackgroundWorkers {
                 Ok(watcher) => watcher,
                 Err(_) => {
                     worker_coverage_lost.store(true, Ordering::Release);
-                    let _ = send(BackgroundResult::FileWatcherState { root: root.clone(), active: false });
+                    let _ = send(BackgroundResult::FileWatcherState {
+                        root: root.clone(),
+                        active: false,
+                    });
                     let _ = catch_up();
                     return;
                 }
             };
-            let _ = send(BackgroundResult::FileWatcherState { root: root.clone(), active: true });
+            let _ = send(BackgroundResult::FileWatcherState {
+                root: root.clone(),
+                active: true,
+            });
             // Cover edits made while recursive subscriptions were being installed.
             let _ = catch_up();
             let mut noise = NoiseFilter::default();
@@ -1549,23 +1812,40 @@ impl BackgroundWorkers {
             // extend a quiet deadline without waking it or inspecting paths.
             loop {
                 let initializing = std::mem::take(&mut initial);
-                if (!initializing && watcher_rx.recv().is_err()) || stopped.load(Ordering::Acquire) { break; }
-                if !delivery.visible() { continue; }
+                if (!initializing && watcher_rx.recv().is_err()) || stopped.load(Ordering::Acquire)
+                {
+                    break;
+                }
+                if !delivery.visible() {
+                    continue;
+                }
                 let resumed = delivery.take_resume();
                 if !resumed && !initializing {
                     loop {
                         let remaining = pending.lock().unwrap().next_wait(Instant::now());
-                        if remaining.is_zero() { break; }
+                        if remaining.is_zero() {
+                            break;
+                        }
                         match watcher_rx.recv_timeout(remaining) {
-                            Ok(()) if stopped.load(Ordering::Acquire) || !delivery.visible() || delivery.take_resume() => break,
-                            Ok(()) => {},
-                            Err(mpsc::RecvTimeoutError::Timeout) => {},
+                            Ok(())
+                                if stopped.load(Ordering::Acquire)
+                                    || !delivery.visible()
+                                    || delivery.take_resume() =>
+                            {
+                                break;
+                            }
+                            Ok(()) => {}
+                            Err(mpsc::RecvTimeoutError::Timeout) => {}
                             Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         }
                     }
                 }
-                if stopped.load(Ordering::Acquire) { break; }
-                if !delivery.visible() { continue; }
+                if stopped.load(Ordering::Acquire) {
+                    break;
+                }
+                if !delivery.visible() {
+                    continue;
+                }
                 let git_invalidated = {
                     let pending = pending.lock().unwrap();
                     pending.event.git_metadata_changed || pending.event.rescan
@@ -1580,11 +1860,15 @@ impl BackgroundWorkers {
                         if let Ok(repo) = git2::Repository::open(path) {
                             for directory in [repo.path(), repo.commondir()] {
                                 if let Ok(directory) = std::fs::canonicalize(directory)
-                                    && !directory.starts_with(&canonical_root) { paths.push(directory); }
+                                    && !directory.starts_with(&canonical_root)
+                                {
+                                    paths.push(directory);
+                                }
                             }
                         }
                     }
-                    paths.sort(); paths.dedup();
+                    paths.sort();
+                    paths.dedup();
                     *dependencies.lock().unwrap() = paths.clone();
                     // Registration may synchronously call the event handler.
                     // Never hold its burst lock while issuing watcher controls.
@@ -1598,40 +1882,68 @@ impl BackgroundWorkers {
                 let burst = noise.filter(std::mem::take(&mut *pending.lock().unwrap()));
                 if burst.watcher_failed {
                     worker_coverage_lost.store(true, Ordering::Release);
-                    let _ = send(BackgroundResult::FileWatcherState { root: root.clone(), active: false });
+                    let _ = send(BackgroundResult::FileWatcherState {
+                        root: root.clone(),
+                        active: false,
+                    });
                 }
-                if burst.is_empty() { continue; }
+                if burst.is_empty() {
+                    continue;
+                }
                 let changes = coalesce_workspace_event_paths(&root, burst.paths)
-                    .into_iter().map(inspect_workspace_path).collect();
+                    .into_iter()
+                    .map(inspect_workspace_path)
+                    .collect();
                 let failed = burst.watcher_failed;
                 if send(BackgroundResult::FilesChanged {
-                    root: root.clone(), changes, structure_changed: burst.structure_changed,
-                    rescan: burst.rescan, git_metadata_changed: burst.git_metadata_changed || burst.rescan,
-                }).is_err() { break; }
-                if failed { break; }
+                    root: root.clone(),
+                    changes,
+                    structure_changed: burst.structure_changed,
+                    rescan: burst.rescan,
+                    git_metadata_changed: burst.git_metadata_changed || burst.rescan,
+                })
+                .is_err()
+                {
+                    break;
+                }
+                if failed {
+                    break;
+                }
             }
             let _ = watcher.unwatch(&root);
-            let _ = send(BackgroundResult::FileWatcherState { root, active: false });
+            let _ = send(BackgroundResult::FileWatcherState {
+                root,
+                active: false,
+            });
         });
         self.file_watcher_control = Some(control);
     }
 
     pub(crate) fn pause_file_watcher(&self) {
-        if let Some(control) = &self.file_watcher_control { control.delivery.pause(); }
+        if let Some(control) = &self.file_watcher_control {
+            control.delivery.pause();
+        }
     }
 
     pub(crate) fn update_file_watcher_repositories(&mut self, mut roots: Vec<PathBuf>) {
-        roots.sort(); roots.dedup();
-        if self.file_watcher_repositories == roots { return; }
+        roots.sort();
+        roots.dedup();
+        if self.file_watcher_repositories == roots {
+            return;
+        }
         self.file_watcher_repositories = roots.clone();
         if let Some(control) = &self.file_watcher_control {
             *control.repositories.lock().unwrap() = roots;
-            if control.delivery.visible() { let _ = control.sender.try_send(()); }
+            if control.delivery.visible() {
+                let _ = control.sender.try_send(());
+            }
         }
     }
 
     pub(crate) fn stop_file_watcher(&mut self) {
-        if let Some(control) = self.file_watcher_control.take() { control.stop(); }
+        if let Some(control) = self.file_watcher_control.take() {
+            control.stop();
+        }
     }
 }
 
@@ -1666,10 +1978,14 @@ impl WorkspaceEventBurst {
 
     /// Return this event's filename/ignore-rule impact, independently of older
     /// pending events. Content-only writes must not invalidate a filename index.
-    pub(crate) fn push_observing_git(&mut self, root: &std::path::Path, event: notify::Result<notify::Event>,
-        mut observe: impl FnMut(&std::path::Path)) -> bool {
-        use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
+    pub(crate) fn push_observing_git(
+        &mut self,
+        root: &std::path::Path,
+        event: notify::Result<notify::Event>,
+        mut observe: impl FnMut(&std::path::Path),
+    ) -> bool {
         use notify::EventKind;
+        use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
         let Ok(event) = event else {
             self.rescan = true;
             self.watcher_failed = true;
@@ -1677,14 +1993,22 @@ impl WorkspaceEventBurst {
         };
         let mut listing_changed = event.need_rescan();
         self.rescan |= listing_changed;
-        let content = matches!(event.kind, EventKind::Access(AccessKind::Close(AccessMode::Write))
-            | EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_)));
+        let content = matches!(
+            event.kind,
+            EventKind::Access(AccessKind::Close(AccessMode::Write))
+                | EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_))
+        );
         let structural = match event.kind {
             EventKind::Access(AccessKind::Close(AccessMode::Write)) => false,
-            EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)) => return listing_changed,
+            EventKind::Access(_)
+            | EventKind::Modify(ModifyKind::Metadata(MetadataKind::AccessTime)) => {
+                return listing_changed;
+            }
             // Windows reports FILE_ACTION_MODIFIED as Modify(Any). It changes
             // contents/attributes, not names; creates/removes/renames are separate.
-            EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Metadata(_)) => false,
+            EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Metadata(_)) => {
+                false
+            }
             _ => true,
         };
         self.rescan |= event.paths.is_empty();
@@ -1692,9 +2016,15 @@ impl WorkspaceEventBurst {
         for path in event.paths {
             // The Windows boundary subscription also sees ordinary directory
             // metadata after child writes. Those are covered by exact events.
-            if path == root && !structural { continue; }
-            if path == root && matches!(event.kind,
-                EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))) {
+            if path == root && !structural {
+                continue;
+            }
+            if path == root
+                && matches!(
+                    event.kind,
+                    EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))
+                )
+            {
                 // A surviving watcher object no longer guarantees coverage
                 // after its subscription root has been removed or moved.
                 self.rescan = true;
@@ -1713,7 +2043,10 @@ impl WorkspaceEventBurst {
                     self.paths.push(path);
                 }
             } else if !is_ignored_workspace_event(root, &path)
-                || (structural && path.parent().is_some_and(|parent| workspace_path_is_watched(root, parent)))
+                || (structural
+                    && path
+                        .parent()
+                        .is_some_and(|parent| workspace_path_is_watched(root, parent)))
             {
                 self.structure_changed |= structural;
                 listing_changed |= structural || content && workspace_rules_path(root, &path);
@@ -1725,12 +2058,25 @@ impl WorkspaceEventBurst {
 }
 
 fn workspace_rules_path(root: &std::path::Path, path: &std::path::Path) -> bool {
-    if path.file_name().is_some_and(|name| matches!(name.to_str(), Some(".gitignore" | ".ignore"))) { return true; }
-    let Ok(relative) = path.strip_prefix(root) else { return false; };
+    if path
+        .file_name()
+        .is_some_and(|name| matches!(name.to_str(), Some(".gitignore" | ".ignore")))
+    {
+        return true;
+    }
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
     let mut parts = relative.components();
-    if !parts.by_ref().any(|part| part.as_os_str() == ".git") { return false; }
-    parts.next().is_none_or(|part| matches!(part.as_os_str().to_str(),
-        Some("config" | "config.worktree" | "info" | "index" | "commondir" | "gitdir")))
+    if !parts.by_ref().any(|part| part.as_os_str() == ".git") {
+        return false;
+    }
+    parts.next().is_none_or(|part| {
+        matches!(
+            part.as_os_str().to_str(),
+            Some("config" | "config.worktree" | "info" | "index" | "commondir" | "gitdir")
+        )
+    })
 }
 
 /// A tooltip must not stream a multi-gigabyte file from shared storage. A hard
@@ -1738,7 +2084,8 @@ fn workspace_rules_path(root: &std::path::Path, path: &std::path::Path) -> bool 
 pub(crate) const HOVER_LINE_COUNT_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 pub(crate) fn bounded_hover_line_count(
-    reader: impl std::io::Read, cancel: &CancellationToken,
+    reader: impl std::io::Read,
+    cancel: &CancellationToken,
 ) -> Option<usize> {
     use std::io::Read;
     let mut reader = reader.take(HOVER_LINE_COUNT_MAX_BYTES + 1);
@@ -1746,11 +2093,17 @@ pub(crate) fn bounded_hover_line_count(
     let mut bytes = 0_u64;
     let mut newlines = 0_usize;
     loop {
-        if cancel.is_cancelled() { return None; }
+        if cancel.is_cancelled() {
+            return None;
+        }
         let read = reader.read(&mut buffer).ok()?;
-        if read == 0 { return Some(newlines + 1); }
+        if read == 0 {
+            return Some(newlines + 1);
+        }
         bytes += read as u64;
-        if bytes > HOVER_LINE_COUNT_MAX_BYTES { return None; }
+        if bytes > HOVER_LINE_COUNT_MAX_BYTES {
+            return None;
+        }
         newlines += buffer[..read].iter().filter(|byte| **byte == b'\n').count();
     }
 }
@@ -1798,7 +2151,9 @@ fn is_ignored_workspace_event(root: &std::path::Path, path: &std::path::Path) ->
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
-    relative.components().any(|component| component.as_os_str() == ".git")
+    relative
+        .components()
+        .any(|component| component.as_os_str() == ".git")
 }
 
 fn is_temporary_workspace_path(path: &std::path::Path) -> bool {
@@ -1810,17 +2165,26 @@ fn is_temporary_workspace_path(path: &std::path::Path) -> bool {
 fn is_git_metadata_event(root: &std::path::Path, path: &std::path::Path) -> bool {
     path.strip_prefix(root).is_ok_and(|relative| {
         let mut components = relative.components();
-        if !components.by_ref().any(|component| component.as_os_str() == ".git") {
+        if !components
+            .by_ref()
+            .any(|component| component.as_os_str() == ".git")
+        {
             return false;
         }
         // Object downloads and lock-file preparation do not change visible Git
         // state. The subsequent index/ref/HEAD update is the invalidation.
-        if components.next().is_some_and(|component| matches!(
-            component.as_os_str().to_str(), Some("objects" | "logs" | "COMMIT_EDITMSG")
-        )) {
+        if components.next().is_some_and(|component| {
+            matches!(
+                component.as_os_str().to_str(),
+                Some("objects" | "logs" | "COMMIT_EDITMSG")
+            )
+        }) {
             return false;
         }
-        !path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.ends_with(".lock"))
+        !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".lock"))
     })
 }
 
@@ -1828,10 +2192,17 @@ pub(crate) fn workspace_path_is_watched(root: &std::path::Path, path: &std::path
     path.starts_with(root) && !is_ignored_workspace_event(root, path)
 }
 
-pub(crate) fn coalesce_workspace_event_paths(root: &std::path::Path, mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
-    paths.retain(|path| !is_temporary_workspace_path(path)
-        && (!is_ignored_workspace_event(root, path)
-            || path.parent().is_some_and(|parent| workspace_path_is_watched(root, parent))));
+pub(crate) fn coalesce_workspace_event_paths(
+    root: &std::path::Path,
+    mut paths: Vec<PathBuf>,
+) -> Vec<PathBuf> {
+    paths.retain(|path| {
+        !is_temporary_workspace_path(path)
+            && (!is_ignored_workspace_event(root, path)
+                || path
+                    .parent()
+                    .is_some_and(|parent| workspace_path_is_watched(root, parent)))
+    });
     paths.sort_unstable();
     paths.dedup();
     paths
@@ -1845,7 +2216,10 @@ mod tests {
     fn blocked_context_io_is_bounded_and_cannot_occupy_editor_read_save_or_cpu_workers() {
         use std::time::Duration;
         let mut workers = BackgroundWorkers::new();
-        assert!(workers.context_pool_sender.is_none(), "no context threads at startup");
+        assert!(
+            workers.context_pool_sender.is_none(),
+            "no context threads at startup"
+        );
         let (started, running) = mpsc::channel();
         let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
         for _ in 0..2 {
@@ -1858,16 +2232,31 @@ mod tests {
             });
         }
         let timeout = Duration::from_secs(5);
-        for _ in 0..2 { running.recv_timeout(timeout).unwrap(); }
+        for _ in 0..2 {
+            running.recv_timeout(timeout).unwrap();
+        }
         for _ in 0..64 {
-            workers.submit_context("chat-paste", |_| panic!("cancelled context job ran")).cancel();
+            workers
+                .submit_context("chat-paste", |_| panic!("cancelled context job ran"))
+                .cancel();
         }
         let (completed, results) = mpsc::channel();
         let cpu = completed.clone();
-        workers.submit_interactive(move |_| { let _ = cpu.send("cpu"); });
+        workers.submit_interactive(move |_| {
+            let _ = cpu.send("cpu");
+        });
         let read = completed.clone();
-        workers.read_for_file("file-load", std::path::Path::new("fixture"), true, move || { let _ = read.send("read"); });
-        workers.save_for_file(std::path::Path::new("fixture"), move || { let _ = completed.send("save"); });
+        workers.read_for_file(
+            "file-load",
+            std::path::Path::new("fixture"),
+            true,
+            move || {
+                let _ = read.send("read");
+            },
+        );
+        workers.save_for_file(std::path::Path::new("fixture"), move || {
+            let _ = completed.send("save");
+        });
         let independent: Vec<_> = (0..3).map(|_| results.recv_timeout(timeout)).collect();
         let pool = workers.context_pool_sender.as_ref().unwrap().load.clone();
         let active = pool.running.load(Ordering::Relaxed);
@@ -1880,15 +2269,18 @@ mod tests {
         assert_eq!(queued, 64);
         let end = std::time::Instant::now() + timeout;
         while pool.running.load(Ordering::Relaxed) + pool.queued.load(Ordering::Relaxed) > 0 {
-            assert!(std::time::Instant::now() < end, "cancelled context queue did not drain");
+            assert!(
+                std::time::Instant::now() < end,
+                "cancelled context queue did not drain"
+            );
             std::thread::yield_now();
         }
     }
 
     #[test]
     fn watcher_read_access_does_not_trigger_any_workspace_io() {
-        use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
         use notify::EventKind;
+        use notify::event::{AccessKind, AccessMode, MetadataKind, ModifyKind};
         let root = std::path::Path::new("workspace");
         let mut burst = WorkspaceEventBurst::default();
         for kind in [
@@ -1907,37 +2299,64 @@ mod tests {
 
     #[test]
     fn watcher_preserves_content_writes_without_invalidating_names() {
-        use notify::event::{AccessKind, AccessMode, DataChange, ModifyKind};
         use notify::EventKind;
+        use notify::event::{AccessKind, AccessMode, DataChange, ModifyKind};
         let root = std::path::Path::new("workspace");
         let mut burst = WorkspaceEventBurst::default();
-        for kind in [EventKind::Modify(ModifyKind::Data(DataChange::Content)),
+        for kind in [
+            EventKind::Modify(ModifyKind::Data(DataChange::Content)),
             EventKind::Modify(ModifyKind::Any),
-            EventKind::Access(AccessKind::Close(AccessMode::Write))]
-        {
-            burst.push(root, Ok(notify::Event::new(kind).add_path(root.join("main.rs"))));
+            EventKind::Access(AccessKind::Close(AccessMode::Write)),
+        ] {
+            burst.push(
+                root,
+                Ok(notify::Event::new(kind).add_path(root.join("main.rs"))),
+            );
         }
         assert!(!burst.is_empty());
         assert!(!burst.structure_changed);
         assert!(!burst.rescan);
-        assert_eq!(coalesce_workspace_event_paths(root, burst.paths), [root.join("main.rs")]);
+        assert_eq!(
+            coalesce_workspace_event_paths(root, burst.paths),
+            [root.join("main.rs")]
+        );
     }
 
     #[test]
     fn watcher_renames_and_nested_project_directory_changes_preserve_all_paths() {
-        use notify::event::{CreateKind, ModifyKind, RenameMode};
         use notify::EventKind;
+        use notify::event::{CreateKind, ModifyKind, RenameMode};
         let root = std::path::Path::new("workspace");
         let mut burst = WorkspaceEventBurst::default();
-        burst.push(root, Ok(notify::Event::new(EventKind::Create(CreateKind::File))
-            .add_path(root.join("target/deep/generated.rs"))));
+        burst.push(
+            root,
+            Ok(notify::Event::new(EventKind::Create(CreateKind::File))
+                .add_path(root.join("target/deep/generated.rs"))),
+        );
         assert!(!burst.is_empty());
-        burst.push(root, Ok(notify::Event::new(EventKind::Create(CreateKind::Folder)).add_path(root.join("target"))));
-        burst.push(root, Ok(notify::Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
-            .add_path(root.join("old.rs")).add_path(root.join("new.rs"))));
+        burst.push(
+            root,
+            Ok(notify::Event::new(EventKind::Create(CreateKind::Folder))
+                .add_path(root.join("target"))),
+        );
+        burst.push(
+            root,
+            Ok(
+                notify::Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+                    .add_path(root.join("old.rs"))
+                    .add_path(root.join("new.rs")),
+            ),
+        );
         assert!(burst.structure_changed);
-        assert_eq!(coalesce_workspace_event_paths(root, burst.paths),
-            [root.join("new.rs"), root.join("old.rs"), root.join("target"), root.join("target/deep/generated.rs")]);
+        assert_eq!(
+            coalesce_workspace_event_paths(root, burst.paths),
+            [
+                root.join("new.rs"),
+                root.join("old.rs"),
+                root.join("target"),
+                root.join("target/deep/generated.rs")
+            ]
+        );
     }
 
     #[test]
@@ -1959,11 +2378,25 @@ mod tests {
     fn git_object_downloads_and_lock_files_do_not_refresh_the_working_tree() {
         let root = std::path::Path::new("workspace");
         let mut burst = WorkspaceEventBurst::default();
-        for relative in [".git/objects/ab/1234", ".git/logs/HEAD", ".git/index.lock", ".git/refs/heads/main.lock"] {
-            burst.push(root, Ok(notify::Event::new(notify::EventKind::Any).add_path(root.join(relative))));
+        for relative in [
+            ".git/objects/ab/1234",
+            ".git/logs/HEAD",
+            ".git/index.lock",
+            ".git/refs/heads/main.lock",
+        ] {
+            burst.push(
+                root,
+                Ok(notify::Event::new(notify::EventKind::Any).add_path(root.join(relative))),
+            );
         }
         assert!(burst.is_empty());
-        for relative in [".git/index", ".git/HEAD", ".git/refs/heads/main", ".git/packed-refs", ".git/info/exclude"] {
+        for relative in [
+            ".git/index",
+            ".git/HEAD",
+            ".git/refs/heads/main",
+            ".git/packed-refs",
+            ".git/info/exclude",
+        ] {
             assert!(is_git_metadata_event(root, &root.join(relative)));
         }
     }
@@ -1971,10 +2404,18 @@ mod tests {
     #[test]
     fn tooltip_line_count_has_a_hard_io_limit_and_honors_cancellation() {
         let token = CancellationToken::new();
-        assert_eq!(bounded_hover_line_count(&b"one\ntwo\n"[..], &token), Some(3));
-        let mut remaining = std::io::Read::take(std::io::repeat(b'\n'), HOVER_LINE_COUNT_MAX_BYTES + 100);
+        assert_eq!(
+            bounded_hover_line_count(&b"one\ntwo\n"[..], &token),
+            Some(3)
+        );
+        let mut remaining =
+            std::io::Read::take(std::io::repeat(b'\n'), HOVER_LINE_COUNT_MAX_BYTES + 100);
         assert_eq!(bounded_hover_line_count(&mut remaining, &token), None);
-        assert_eq!(remaining.limit(), 99, "must stop reading even a growing file");
+        assert_eq!(
+            remaining.limit(),
+            99,
+            "must stop reading even a growing file"
+        );
         token.cancel();
         assert_eq!(bounded_hover_line_count(&mut remaining, &token), None);
         assert_eq!(remaining.limit(), 99);
@@ -2029,13 +2470,23 @@ mod tests {
         attempt_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         let notified_before_parking = done_rx.recv_timeout(Duration::from_millis(100)).is_ok();
         // Always release the guard and join, including on the regression path.
-        let (guard, timeout) = wake.wait.1.wait_timeout_while(
-            guard, Duration::from_secs(2), |_| wake.generation() == observed,
-        ).unwrap();
+        let (guard, timeout) = wake
+            .wait
+            .1
+            .wait_timeout_while(guard, Duration::from_secs(2), |_| {
+                wake.generation() == observed
+            })
+            .unwrap();
         drop(guard);
         producer.join().unwrap();
-        assert!(!notified_before_parking, "producer bypassed the wait mutex; its notification could be lost");
-        assert!(!timeout.timed_out(), "UI must wake without a second event or timer");
+        assert!(
+            !notified_before_parking,
+            "producer bypassed the wait mutex; its notification could be lost"
+        );
+        assert!(
+            !timeout.timed_out(),
+            "UI must wake without a second event or timer"
+        );
         assert_ne!(wake.generation(), observed);
     }
 
@@ -2064,7 +2515,10 @@ mod tests {
             wake.notify(); // release the test thread before reporting failure
         }
         thread.join().unwrap();
-        assert!(finished, "pending work was forgotten until another notification");
+        assert!(
+            finished,
+            "pending work was forgotten until another notification"
+        );
         assert_eq!(work_rx.try_recv().unwrap(), "late PTY/LSP work");
     }
 
@@ -2116,19 +2570,32 @@ mod tests {
             });
             attempt_rx.recv_timeout(Duration::from_secs(2)).unwrap();
             let started = Instant::now();
-            let (guard, timed_out) = wake.wait.1.wait_timeout_while(
-                guard, timer, |_| wake.generation() == observed,
-            ).unwrap();
+            let (guard, timed_out) = wake
+                .wait
+                .1
+                .wait_timeout_while(guard, timer, |_| wake.generation() == observed)
+                .unwrap();
             serialized_notification.push(started.elapsed());
             drop(guard);
             producer.join().unwrap();
             assert!(!timed_out.timed_out());
         }
-        for samples in [&mut late_ticket, &mut early_ticket, &mut lost_notification, &mut serialized_notification] {
+        for samples in [
+            &mut late_ticket,
+            &mut early_ticket,
+            &mut lost_notification,
+            &mut serialized_notification,
+        ] {
             samples.sort();
         }
-        eprintln!("late generation snapshot: before={:?}, after={:?}", late_ticket[2], early_ticket[2]);
-        eprintln!("notification in check/park gap: before={:?}, after={:?}", lost_notification[2], serialized_notification[2]);
+        eprintln!(
+            "late generation snapshot: before={:?}, after={:?}",
+            late_ticket[2], early_ticket[2]
+        );
+        eprintln!(
+            "notification in check/park gap: before={:?}, after={:?}",
+            lost_notification[2], serialized_notification[2]
+        );
     }
 
     #[test]
@@ -2162,39 +2629,68 @@ mod tests {
     fn result_application_yields_on_time_without_losing_order_or_readiness() {
         let mut workers = BackgroundWorkers::new();
         for index in 0..40 {
-            workers.sender.send(BackgroundResult::GitBranch(index.to_string())).unwrap();
+            workers
+                .sender
+                .send(BackgroundResult::GitBranch(index.to_string()))
+                .unwrap();
         }
         let now = std::time::Instant::now();
         let mut budget = ResultBudget::default();
         for index in 0..2 {
-            let BackgroundResult::GitBranch(value) = budget.next_at(&mut workers, now).unwrap() else { panic!() };
+            let BackgroundResult::GitBranch(value) = budget.next_at(&mut workers, now).unwrap()
+            else {
+                panic!()
+            };
             assert_eq!(value, index.to_string());
         }
-        assert!(budget.next_at(&mut workers, now + BACKGROUND_RESULT_BUDGET).is_none());
+        assert!(
+            budget
+                .next_at(&mut workers, now + BACKGROUND_RESULT_BUDGET)
+                .is_none()
+        );
         assert!(workers.has_pending_results());
         // An expensive first result must still leave input a turn, then the
         // next batch resumes at the exact next message, without a fresh wake.
         let mut budget = ResultBudget::default();
-        let BackgroundResult::GitBranch(value) = budget.next_at(&mut workers, now).unwrap() else { panic!() };
+        let BackgroundResult::GitBranch(value) = budget.next_at(&mut workers, now).unwrap() else {
+            panic!()
+        };
         assert_eq!(value, "2");
-        assert!(budget.next_at(&mut workers, now + std::time::Duration::from_secs(1)).is_none());
+        assert!(
+            budget
+                .next_at(&mut workers, now + std::time::Duration::from_secs(1))
+                .is_none()
+        );
         let mut budget = ResultBudget::default();
         for index in 3..35 {
-            let BackgroundResult::GitBranch(value) = budget.next_at(&mut workers, now).unwrap() else { panic!() };
+            let BackgroundResult::GitBranch(value) = budget.next_at(&mut workers, now).unwrap()
+            else {
+                panic!()
+            };
             assert_eq!(value, index.to_string());
         }
-        assert!(budget.next_at(&mut workers, now).is_none(), "count cap still applies to cheap results");
+        assert!(
+            budget.next_at(&mut workers, now).is_none(),
+            "count cap still applies to cheap results"
+        );
         let remaining = workers.poll();
         assert_eq!(remaining.len(), 5);
         assert!(!workers.has_pending_results());
-        assert_eq!(workers.poll().capacity(), 0, "no allocation for an empty queue");
+        assert_eq!(
+            workers.poll().capacity(),
+            0,
+            "no allocation for an empty queue"
+        );
     }
 
     #[test]
     fn result_application_uses_the_remaining_shared_budget() {
         let mut workers = BackgroundWorkers::new();
         for index in 0..4 {
-            workers.sender.send(BackgroundResult::GitBranch(index.to_string())).unwrap();
+            workers
+                .sender
+                .send(BackgroundResult::GitBranch(index.to_string()))
+                .unwrap();
         }
         let now = std::time::Instant::now();
         let deadline = now + std::time::Duration::from_millis(1);
@@ -2205,7 +2701,10 @@ mod tests {
         // Descheduling before the first message still permits one result,
         // rather than endlessly waking without finishing anything.
         let mut budget = ResultBudget::until(now);
-        let BackgroundResult::GitBranch(next) = budget.next_at(&mut workers, deadline).unwrap() else { panic!() };
+        let BackgroundResult::GitBranch(next) = budget.next_at(&mut workers, deadline).unwrap()
+        else {
+            panic!()
+        };
         assert_eq!(next, "1");
         assert!(budget.next_at(&mut workers, deadline).is_none());
         assert_eq!(workers.poll().len(), 2);
@@ -2225,8 +2724,11 @@ mod tests {
                     if reference {
                         // The old foreground poll reserved a full result batch
                         // before finding out whether there were any messages.
-                        let mut results = Vec::<BackgroundResult>::with_capacity(MAX_BACKGROUND_RESULTS_PER_POLL);
-                        if let Ok(result) = workers.receiver.try_recv() { results.push(result); }
+                        let mut results =
+                            Vec::<BackgroundResult>::with_capacity(MAX_BACKGROUND_RESULTS_PER_POLL);
+                        if let Ok(result) = workers.receiver.try_recv() {
+                            results.push(result);
+                        }
                         black_box(results);
                     } else {
                         black_box(ResultBudget::default().next(black_box(&mut workers)));
@@ -2235,9 +2737,15 @@ mod tests {
                 times[usize::from(!reference)].push(started.elapsed() / 100_000);
             }
         }
-        for samples in &mut times { samples.sort_unstable(); }
-        eprintln!("Empty background poll: {:?} -> {:?}; removes {}-byte reservation per poll",
-            times[0][4], times[1][4], MAX_BACKGROUND_RESULTS_PER_POLL * std::mem::size_of::<BackgroundResult>());
+        for samples in &mut times {
+            samples.sort_unstable();
+        }
+        eprintln!(
+            "Empty background poll: {:?} -> {:?}; removes {}-byte reservation per poll",
+            times[0][4],
+            times[1][4],
+            MAX_BACKGROUND_RESULTS_PER_POLL * std::mem::size_of::<BackgroundResult>()
+        );
     }
 
     #[test]
@@ -2259,24 +2767,52 @@ mod tests {
                 receiver.lock().unwrap().recv().unwrap();
             });
         }
-        let slots = workers.save_pool_sender.as_ref().unwrap().load.live.load(Ordering::Relaxed);
+        let slots = workers
+            .save_pool_sender
+            .as_ref()
+            .unwrap()
+            .load
+            .live
+            .load(Ordering::Relaxed);
         assert!((1..=2).contains(&slots));
-        for _ in 0..slots { running.recv_timeout(std::time::Duration::from_secs(5)).unwrap(); }
+        for _ in 0..slots {
+            running
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+        }
         assert_eq!(workers.active_job_count(), 20);
-        assert_eq!(workers.queue_snapshot(), (20 - slots, slots, initial_slots + slots, 0));
-        assert!(workers.join_handles.is_empty(), "saving does not spawn a thread per document");
+        assert_eq!(
+            workers.queue_snapshot(),
+            (20 - slots, slots, initial_slots + slots, 0)
+        );
+        assert!(
+            workers.join_handles.is_empty(),
+            "saving does not spawn a thread per document"
+        );
         // A blocked filesystem must not occupy syntax/diff worker slots.
         let (cpu_done, cpu_wait) = mpsc::channel();
-        workers.pool_sender().send(Box::new(move || cpu_done.send(()).unwrap())).unwrap();
-        cpu_wait.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-        for _ in 0..20 { release.send(()).unwrap(); }
+        workers
+            .pool_sender()
+            .send(Box::new(move || cpu_done.send(()).unwrap()))
+            .unwrap();
+        cpu_wait
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
+        for _ in 0..20 {
+            release.send(()).unwrap();
+        }
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while workers.has_active_jobs() && std::time::Instant::now() < deadline { std::thread::yield_now(); }
+        while workers.has_active_jobs() && std::time::Instant::now() < deadline {
+            std::thread::yield_now();
+        }
         assert!(!workers.has_active_jobs());
         assert_eq!(workers.queue_snapshot(), (0, 0, initial_slots + slots, 0));
         let (done, wait) = mpsc::channel();
-        workers.save_for_file(std::path::Path::new("next.txt"), move || done.send(()).unwrap());
-        wait.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        workers.save_for_file(std::path::Path::new("next.txt"), move || {
+            done.send(()).unwrap()
+        });
+        wait.recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         assert_eq!(workers.queue_snapshot().2, initial_slots + slots);
     }
 
@@ -2315,31 +2851,45 @@ mod tests {
         let (sender, receiver) = queue::channel();
         let load = Arc::new(PoolLoad::default());
         let active_jobs = Arc::new(AtomicUsize::new(0));
-        let pool = BackgroundTaskSender { sender, priority: queue::Priority::Analysis, active_jobs: active_jobs.clone(), load: load.clone(), wake: UiWake::default() };
+        let pool = BackgroundTaskSender {
+            sender,
+            priority: queue::Priority::Analysis,
+            active_jobs: active_jobs.clone(),
+            load: load.clone(),
+            wake: UiWake::default(),
+        };
         let worker_load = load.clone();
         pool.send(Box::new(move || {
             assert_eq!(worker_load.queued.load(Ordering::Relaxed), 0);
             assert_eq!(worker_load.running.load(Ordering::Relaxed), 1);
             panic!("test worker unwinding");
-        })).unwrap();
+        }))
+        .unwrap();
         assert_eq!(load.queued.load(Ordering::Relaxed), 1);
         assert_eq!(load.running.load(Ordering::Relaxed), 0);
         let task = receiver.recv().unwrap();
         load.live.store(1, Ordering::Relaxed);
-        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _thread_guard = PoolThreadGuard(load.clone());
-            task.run();
-        })).is_err());
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _thread_guard = PoolThreadGuard(load.clone());
+                task.run();
+            }))
+            .is_err()
+        );
         assert_eq!(load.live.load(Ordering::Relaxed), 0);
         assert_eq!(load.queued.load(Ordering::Relaxed), 0);
         assert_eq!(load.running.load(Ordering::Relaxed), 0);
         assert_eq!(active_jobs.load(Ordering::Relaxed), 0);
-        pool.send(Box::new(|| panic!("abandoned queued work must not run"))).unwrap();
+        pool.send(Box::new(|| panic!("abandoned queued work must not run")))
+            .unwrap();
         assert_eq!(load.queued.load(Ordering::Relaxed), 1);
         drop(receiver);
         assert_eq!(load.queued.load(Ordering::Relaxed), 0);
         assert_eq!(active_jobs.load(Ordering::Relaxed), 0);
-        assert!(pool.send(Box::new(|| panic!("disconnected task must not run"))).is_err());
+        assert!(
+            pool.send(Box::new(|| panic!("disconnected task must not run")))
+                .is_err()
+        );
         assert_eq!(load.queued.load(Ordering::Relaxed), 0);
         assert_eq!(active_jobs.load(Ordering::Relaxed), 0);
     }
@@ -2409,13 +2959,27 @@ mod tests {
             root.join(".mypy_cache").join("source.py"),
             root.join(".pytest_cache").join("source.py"),
         ] {
-            assert!(!is_ignored_workspace_event(&root, &path), "{}", path.display());
+            assert!(
+                !is_ignored_workspace_event(&root, &path),
+                "{}",
+                path.display()
+            );
             let mut burst = WorkspaceEventBurst::default();
-            burst.push(&root, Ok(notify::Event::new(notify::EventKind::Modify(
-                notify::event::ModifyKind::Data(notify::event::DataChange::Any))).add_path(path.clone())));
+            burst.push(
+                &root,
+                Ok(
+                    notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                        notify::event::DataChange::Any,
+                    )))
+                    .add_path(path.clone()),
+                ),
+            );
             assert_eq!(coalesce_workspace_event_paths(&root, burst.paths), [path]);
         }
-        assert!(is_ignored_workspace_event(&root, &root.join(".git/index.lock")));
+        assert!(is_ignored_workspace_event(
+            &root,
+            &root.join(".git/index.lock")
+        ));
         assert!(!is_ignored_workspace_event(
             &root,
             &root.join("src").join("main.rs")
@@ -2424,8 +2988,8 @@ mod tests {
 
     #[test]
     fn formatter_working_copies_do_not_trigger_workspace_refreshes() {
-        use notify::event::{CreateKind, ModifyKind, RemoveKind};
         use notify::EventKind;
+        use notify::event::{CreateKind, ModifyKind, RemoveKind};
         let root = PathBuf::from("workspace");
         let temporary = root.join("src").join(".vtcode-format-test");
         let file = temporary.join("main.py");
@@ -2459,18 +3023,31 @@ mod tests {
             let path = root.join("src/project/.git").join(suffix);
             assert!(is_git_metadata_event(&root, &path));
             let mut burst = WorkspaceEventBurst::default();
-            burst.push(&root, Ok(notify::Event::new(notify::EventKind::Any).add_path(path)));
+            burst.push(
+                &root,
+                Ok(notify::Event::new(notify::EventKind::Any).add_path(path)),
+            );
             assert!(burst.git_metadata_changed);
             assert!(burst.paths.is_empty());
         }
-        for suffix in ["objects/ab/1234", "logs/HEAD", "index.lock", "refs/heads/main.lock"] {
+        for suffix in [
+            "objects/ab/1234",
+            "logs/HEAD",
+            "index.lock",
+            "refs/heads/main.lock",
+        ] {
             let mut burst = WorkspaceEventBurst::default();
-            burst.push(&root, Ok(notify::Event::new(notify::EventKind::Any).add_path(root.join("src/project/.git").join(suffix))));
+            burst.push(
+                &root,
+                Ok(notify::Event::new(notify::EventKind::Any)
+                    .add_path(root.join("src/project/.git").join(suffix))),
+            );
             assert!(burst.is_empty());
         }
-        for kind in [notify::EventKind::Create(notify::event::CreateKind::Folder),
-            notify::EventKind::Remove(notify::event::RemoveKind::File)]
-        {
+        for kind in [
+            notify::EventKind::Create(notify::event::CreateKind::Folder),
+            notify::EventKind::Remove(notify::event::RemoveKind::File),
+        ] {
             let marker = root.join("src/project/.git");
             let mut burst = WorkspaceEventBurst::default();
             burst.push(&root, Ok(notify::Event::new(kind).add_path(marker.clone())));
@@ -2482,7 +3059,10 @@ mod tests {
     #[test]
     fn native_watcher_coverage_keeps_project_directories_and_excludes_external_paths() {
         let root = PathBuf::from("workspace");
-        assert!(workspace_path_is_watched(&root, &root.join("src").join("main.rs")));
+        assert!(workspace_path_is_watched(
+            &root,
+            &root.join("src").join("main.rs")
+        ));
         assert!(workspace_path_is_watched(
             &root,
             &root.join("target").join("debug").join("vtcode.exe")

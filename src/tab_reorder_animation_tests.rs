@@ -274,7 +274,10 @@ fn drag_targets_stay_logical_and_clicks_and_close_buttons_follow_the_presented_l
         .find(|(index, _, _)| app.tabs[*index].editor.navigation_id == moving)
         .unwrap()
         .2;
-    assert_eq!(terminal.backend().buffer()[(close.x, close.y)].symbol(), "×");
+    assert_eq!(
+        terminal.backend().buffer()[(close.x, close.y)].symbol(),
+        "×"
+    );
     mouse(
         &mut app,
         MouseEventKind::Down(MouseButton::Left),
@@ -413,8 +416,11 @@ fn close_buttons_and_hover_highlights_follow_moving_tabs_in_cached_frames() {
         let now = started + Duration::from_millis(elapsed);
         app.mouse_position_known = false;
         draw(&mut app, &mut terminal, area, now);
-        let (_, rect, close) = TabBarHits::new(&app, area).tabs.into_iter()
-            .find(|(index, _, _)| app.tabs[*index].editor.navigation_id == moving).unwrap();
+        let (_, rect, close) = TabBarHits::new(&app, area)
+            .tabs
+            .into_iter()
+            .find(|(index, _, _)| app.tabs[*index].editor.navigation_id == moving)
+            .unwrap();
         assert_eq!(close.width, 2);
         let idle = terminal.backend().buffer()[(close.x, close.y)].clone();
         assert_eq!(idle.symbol(), "×");
@@ -423,7 +429,10 @@ fn close_buttons_and_hover_highlights_follow_moving_tabs_in_cached_frames() {
         app.mouse_col = close.x;
         app.mouse_row = close.y;
         draw(&mut app, &mut terminal, area, now);
-        assert_eq!(terminal.backend().buffer()[(close.x, close.y)].symbol(), "×");
+        assert_eq!(
+            terminal.backend().buffer()[(close.x, close.y)].symbol(),
+            "×"
+        );
         assert_eq!(terminal.backend().buffer()[(close.x, close.y)].bg, hover_bg);
         assert!(text(&terminal, rect).contains('a'));
         app.mouse_row = area.bottom() + 1;

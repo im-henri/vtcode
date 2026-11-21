@@ -211,9 +211,7 @@ fn validate(catalog: &Catalog) -> io::Result<()> {
                     | (Scope::Remote(_), Location::Remote { .. })
             )
         }) {
-            return Err(invalid(
-                "A workspace cannot mix local and remote folders",
-            ));
+            return Err(invalid("A workspace cannot mix local and remote folders"));
         }
     }
     Ok(())
@@ -226,12 +224,14 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
     std::fs::create_dir_all(parent)?;
     let lock = crate::fs_ops::open_lock_file(&path.with_extension("lock"))?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    let _lock = vtcode::file_source::FileLock::try_acquire_before(lock, deadline)
-        .map_err(|error| match error {
-            TryLockError::WouldBlock => {
-                io::Error::new(io::ErrorKind::WouldBlock, "Saved workspaces are busy")
+    let _lock =
+        vtcode::file_source::FileLock::try_acquire_before(lock, deadline).map_err(|error| {
+            match error {
+                TryLockError::WouldBlock => {
+                    io::Error::new(io::ErrorKind::WouldBlock, "Saved workspaces are busy")
+                }
+                TryLockError::Error(error) => error,
             }
-            TryLockError::Error(error) => error,
         })?;
     let mut catalog = load(path)?;
     match mutation {
@@ -244,7 +244,9 @@ pub(crate) fn mutate(path: &Path, mutation: Mutation) -> io::Result<Catalog> {
         } => {
             let name = valid_name(&name)?;
             if roots.is_empty() || roots.len() > MAX_ROOTS || active >= roots.len() {
-                return Err(invalid("A workspace must contain between 1 and 128 folders"));
+                return Err(invalid(
+                    "A workspace must contain between 1 and 128 folders",
+                ));
             }
             if catalog.sets.iter().any(|set| {
                 set.scope == scope

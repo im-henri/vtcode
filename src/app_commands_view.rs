@@ -387,13 +387,18 @@ impl App {
             }
             "toggle_activity_bar_position" => {
                 self.activity_bar_position = self.activity_bar_position.opposite();
-                self.notify(format!("Activity Bar Position: {}", self.activity_bar_position.label()));
+                self.notify(format!(
+                    "Activity Bar Position: {}",
+                    self.activity_bar_position.label()
+                ));
             }
             "toggle_zen" => {
                 self.zen_mode = !self.zen_mode;
                 self.zen_exit_area = None;
                 if self.zen_mode {
-                    if self.active_pane == crate::app::ActivePane::Chat { self.active_pane = crate::app::ActivePane::Editor; }
+                    if self.active_pane == crate::app::ActivePane::Chat {
+                        self.active_pane = crate::app::ActivePane::Editor;
+                    }
                     self.zen_pre_state = Some((
                         self.show_explorer,
                         self.show_minimap,
@@ -639,14 +644,23 @@ impl App {
                 self.toggle_markdown_preview_tab();
             }
             "split_next_tab" | "split_prev_tab" => {
-                let panes=self.desk_panes();
-                if panes.len()>1 {
-                    let current=panes.iter().position(|&i|i==self.active_group).unwrap_or(0);
-                    let next=if id=="split_next_tab" {(current+1)%panes.len()}else{(current+panes.len()-1)%panes.len()};
+                let panes = self.desk_panes();
+                if panes.len() > 1 {
+                    let current = panes
+                        .iter()
+                        .position(|&i| i == self.active_group)
+                        .unwrap_or(0);
+                    let next = if id == "split_next_tab" {
+                        (current + 1) % panes.len()
+                    } else {
+                        (current + panes.len() - 1) % panes.len()
+                    };
                     self.switch_group(panes[next]);
                 }
             }
-            "split_editor" | "split_editor_right" => self.split_editor_tab(self.active_tab, TabDropZone::Right),
+            "split_editor" | "split_editor_right" => {
+                self.split_editor_tab(self.active_tab, TabDropZone::Right)
+            }
             "split_editor_down" => self.split_editor_tab(self.active_tab, TabDropZone::Bottom),
             "split_editor_left" => self.split_editor_tab(self.active_tab, TabDropZone::Left),
             "split_editor_up" => self.split_editor_tab(self.active_tab, TabDropZone::Top),
@@ -875,7 +889,13 @@ mod tests {
         assert!(!app.error_lens);
         exec(&mut app, "toggle_error_lens");
         assert!(app.error_lens);
-        assert!(app.notification_history.last().unwrap().0.contains("TODO/FIXME/HACK/BUG/NOTE"));
+        assert!(
+            app.notification_history
+                .last()
+                .unwrap()
+                .0
+                .contains("TODO/FIXME/HACK/BUG/NOTE")
+        );
         exec(&mut app, "toggle_error_lens");
         assert!(!app.error_lens);
     }

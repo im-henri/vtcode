@@ -1,9 +1,6 @@
 //! Opt-in measurements over a frozen copy of the actual vtcode source corpus.
 use super::*;
-use crate::{
-    app::Tab,
-    editor::Editor,
-};
+use crate::{app::Tab, editor::Editor};
 use std::{
     hash::{Hash, Hasher},
     time::{Duration, Instant},

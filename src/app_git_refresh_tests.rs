@@ -17,7 +17,12 @@ fn compiler_output_does_not_scan_status_but_tracked_files_inside_ignored_folders
     let mut index = repo.index().unwrap();
     index.add_path(Path::new("build/keep.cc")).unwrap();
     index.write().unwrap();
-    let mut discovery = Discovery { workspace: root.clone(), roots: vec![root.clone()], parent: None, errors: Vec::new() };
+    let mut discovery = Discovery {
+        workspace: root.clone(),
+        roots: vec![root.clone()],
+        parent: None,
+        errors: Vec::new(),
+    };
     let before = STATUS_READS.get();
     // New names in every burst model a compiler, rather than repeatedly
     // touching one small fixture that is already warm in a path cache.
@@ -28,21 +33,60 @@ fn compiler_output_does_not_scan_status_but_tracked_files_inside_ignored_folders
             std::fs::write(&path, "object\n").unwrap();
             changed.insert(path);
         }
-        let scans = collect(&mut discovery, vec![root.clone()], Some(changed), &root, &CancellationToken::new(), true);
+        let scans = collect(
+            &mut discovery,
+            vec![root.clone()],
+            Some(changed),
+            &root,
+            &CancellationToken::new(),
+            true,
+        );
         assert!(scans[0].files.is_empty());
         assert!(scans[0].worktree_paths.is_some());
     }
-    assert_eq!(STATUS_READS.get(), before, "ignored build output must never call libgit2 status");
+    assert_eq!(
+        STATUS_READS.get(),
+        before,
+        "ignored build output must never call libgit2 status"
+    );
 
     std::fs::write(root.join("build/keep.cc"), "changed source\n").unwrap();
-    let scans = collect(&mut discovery, vec![root.clone()], Some([root.join("build/tests"), root.join("build/keep.cc")].into_iter().collect()), &root, &CancellationToken::new(), true);
+    let scans = collect(
+        &mut discovery,
+        vec![root.clone()],
+        Some(
+            [root.join("build/tests"), root.join("build/keep.cc")]
+                .into_iter()
+                .collect(),
+        ),
+        &root,
+        &CancellationToken::new(),
+        true,
+    );
     assert_eq!(STATUS_READS.get(), before + 1);
-    assert!(scans[0].files.iter().any(|file| file.path == "build/keep.cc" && file.status == 'M'));
+    assert!(
+        scans[0]
+            .files
+            .iter()
+            .any(|file| file.path == "build/keep.cc" && file.status == 'M')
+    );
 
     std::fs::remove_file(root.join("build/keep.cc")).unwrap();
-    let scans = collect(&mut discovery, vec![root.clone()], Some([root.join("build")].into_iter().collect()), &root, &CancellationToken::new(), false);
+    let scans = collect(
+        &mut discovery,
+        vec![root.clone()],
+        Some([root.join("build")].into_iter().collect()),
+        &root,
+        &CancellationToken::new(),
+        false,
+    );
     assert_eq!(STATUS_READS.get(), before + 2);
-    assert!(scans[0].files.iter().any(|file| file.path == "build/keep.cc" && file.status == 'D'));
+    assert!(
+        scans[0]
+            .files
+            .iter()
+            .any(|file| file.path == "build/keep.cc" && file.status == 'D')
+    );
 }
 
 #[test]
@@ -52,15 +96,44 @@ fn hidden_untracked_output_skips_status_and_visible_output_is_still_reported() {
     init(&root);
     std::fs::create_dir_all(root.join("generated/deep")).unwrap();
     std::fs::write(root.join("generated/deep/result.log"), "test run\n").unwrap();
-    let mut discovery = Discovery { workspace: root.clone(), roots: vec![root.clone()], parent: None, errors: Vec::new() };
+    let mut discovery = Discovery {
+        workspace: root.clone(),
+        roots: vec![root.clone()],
+        parent: None,
+        errors: Vec::new(),
+    };
     let before = STATUS_READS.get();
-    let changes: FxHashSet<_> = [root.join("generated"), root.join("generated/deep/result.log")].into_iter().collect();
-    let scans = collect(&mut discovery, vec![root.clone()], Some(changes.clone()), &root, &CancellationToken::new(), false);
+    let changes: FxHashSet<_> = [
+        root.join("generated"),
+        root.join("generated/deep/result.log"),
+    ]
+    .into_iter()
+    .collect();
+    let scans = collect(
+        &mut discovery,
+        vec![root.clone()],
+        Some(changes.clone()),
+        &root,
+        &CancellationToken::new(),
+        false,
+    );
     assert!(scans[0].files.is_empty());
     assert_eq!(STATUS_READS.get(), before);
-    let scans = collect(&mut discovery, vec![root.clone()], Some(changes), &root, &CancellationToken::new(), true);
+    let scans = collect(
+        &mut discovery,
+        vec![root.clone()],
+        Some(changes),
+        &root,
+        &CancellationToken::new(),
+        true,
+    );
     assert_eq!(STATUS_READS.get(), before + 1);
-    assert!(scans[0].files.iter().any(|file| file.status == '?' && file.path == "generated"));
+    assert!(
+        scans[0]
+            .files
+            .iter()
+            .any(|file| file.status == '?' && file.path == "generated")
+    );
 }
 
 fn init(path: &Path) {
@@ -137,13 +210,16 @@ fn explicit_source_control_refresh_rechecks_open_remote_files_after_missed_watch
     std::fs::write(root.path().join("other.txt"), "external other\n").unwrap();
     assert!(app.execute_git_command("git_refresh"));
     app.wait_for_background(Duration::from_secs(10), |app| {
-        !app.bg_git_status_running && !app.bg_git_status_pending
+        !app.bg_git_status_running
+            && !app.bg_git_status_pending
             && !app.background.has_active_jobs()
     });
 
-    assert!(app.source_control_files.iter().any(|file| {
-        file.path == "first.txt" && file.status == 'M' && !file.staged
-    }));
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| { file.path == "first.txt" && file.status == 'M' && !file.staged })
+    );
     let clean = &app.tabs[0].editor;
     assert_eq!(clean.navigation_id, clean_view);
     assert_eq!(clean.rope, "external first\n");
@@ -151,9 +227,11 @@ fn explicit_source_control_refresh_rechecks_open_remote_files_after_missed_watch
     let dirty = app.editor().unwrap();
     assert_eq!(dirty.rope, "!other\n");
     assert!(dirty.modified);
-    assert!(app.notification_history.iter().any(|entry| {
-        entry.0.contains("other.txt changed on disk")
-    }));
+    assert!(
+        app.notification_history
+            .iter()
+            .any(|entry| { entry.0.contains("other.txt changed on disk") })
+    );
     workspace.client.call(remote::Command::Shutdown).unwrap();
 }
 
@@ -395,7 +473,10 @@ fn navigation_reuses_watched_status_but_expired_full_reads_still_catch_missed_ev
     };
     for _ in 0..10 {
         navigation(&mut app);
-        assert!(!app.bg_git_status_running && !app.bg_git_status_pending, "fresh navigation must do no Git work");
+        assert!(
+            !app.bg_git_status_running && !app.bg_git_status_pending,
+            "fresh navigation must do no Git work"
+        );
     }
     // A missed event must still be caught by a complete revalidation, even if
     // ordinary file events have kept the incremental snapshot active.
@@ -408,7 +489,11 @@ fn navigation_reuses_watched_status_but_expired_full_reads_still_catch_missed_ev
     app.refresh_source_control_for_navigation();
     assert!(app.bg_git_status_running);
     settle(&mut app);
-    assert!(app.source_control_files.iter().any(|file| file.path == "other.txt"));
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "other.txt")
+    );
     // Explicit refresh and loss of watcher coverage bypass the cached deadline.
     std::fs::write(root.join("other.txt"), "other\n").unwrap();
     full(&mut app);
@@ -428,7 +513,9 @@ fn navigation_flushes_pending_file_events_without_rescanning_unrelated_paths() {
     init(&root);
     let mut app = app_at(&root);
     full(&mut app);
-    for name in ["first.txt", "other.txt"] { std::fs::write(root.join(name), "changed\n").unwrap(); }
+    for name in ["first.txt", "other.txt"] {
+        std::fs::write(root.join(name), "changed\n").unwrap();
+    }
     app.refresh_source_control_from_watcher([root.join("first.txt")].into_iter().collect(), false);
     app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
     app.refresh_source_control_for_navigation();
@@ -458,7 +545,8 @@ fn worktree_merge_obeys_git_case_policy_without_dropping_other_case_variants() {
         paths.set_ignore_case(ignore_case);
         let mut files: Vec<_> = ["File.txt", "file.txt"]
             .into_iter()
-            .map(|path| GitFileChange { directory: false,
+            .map(|path| GitFileChange {
+                directory: false,
                 path: path.into(),
                 original_path: None,
                 status: 'M',
@@ -671,8 +759,12 @@ fn windows_event_refresh_only_scans_the_changed_case_distinct_worktree() {
     std::fs::write(&path, "changed lower repository\n").unwrap();
     let before = STATUS_READS.get();
     let scans = collect(
-        &mut discovery, roots, Some([path].into_iter().collect()), &workspace,
-        &CancellationToken::new(), true,
+        &mut discovery,
+        roots,
+        Some([path].into_iter().collect()),
+        &workspace,
+        &CancellationToken::new(),
+        true,
     );
     assert_eq!(scans.len(), 1);
     assert_eq!(scans[0].root, lower);
@@ -698,12 +790,21 @@ fn windows_event_refresh_finds_a_verified_alias_of_a_nested_worktree() {
     };
     std::fs::write(root.join("first.txt"), "changed through alias\n").unwrap();
     let scans = collect(
-        &mut discovery, vec![root.clone()], Some([alias].into_iter().collect()), &workspace,
-        &CancellationToken::new(), true,
+        &mut discovery,
+        vec![root.clone()],
+        Some([alias].into_iter().collect()),
+        &workspace,
+        &CancellationToken::new(),
+        true,
     );
     assert_eq!(scans.len(), 1);
     assert_eq!(scans[0].root, root);
-    assert!(scans[0].files.iter().any(|file| file.path == "first.txt" && file.status == 'M'));
+    assert!(
+        scans[0]
+            .files
+            .iter()
+            .any(|file| file.path == "first.txt" && file.status == 'M')
+    );
 }
 
 #[cfg(windows)]
@@ -806,7 +907,10 @@ fn benchmark_local_changed_path_status() {
 #[test]
 #[ignore = "manual remote status timing and protocol traffic measurement"]
 fn benchmark_remote_changed_path_status() {
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     let temp = tempfile::tempdir().unwrap();
     let root = std::fs::canonicalize(temp.path()).unwrap();
     init(&root);
@@ -814,12 +918,22 @@ fn benchmark_remote_changed_path_status() {
     std::fs::create_dir(&outputs).unwrap();
     for index in 0u64..6000 {
         let hash = index.wrapping_mul(0x9e3779b97f4a7c15).rotate_left(17);
-        std::fs::write(outputs.join(format!("file-{index:04}-{hash:016x}")), "output\n").unwrap();
+        std::fs::write(
+            outputs.join(format!("file-{index:04}-{hash:016x}")),
+            "output\n",
+        )
+        .unwrap();
     }
     let incoming = Arc::new(AtomicUsize::new(0));
     let outgoing = Arc::new(AtomicUsize::new(0));
-    let workspace = crate::remote::workspace::Workspace::new(crate::remote::tests::connection_with_traffic(
-        &root, Arc::default(), outgoing.clone(), Arc::default(), incoming.clone()));
+    let workspace =
+        crate::remote::workspace::Workspace::new(crate::remote::tests::connection_with_traffic(
+            &root,
+            Arc::default(),
+            outgoing.clone(),
+            Arc::default(),
+            incoming.clone(),
+        ));
     let mut app = app_at(&workspace.view_root);
     let key = workspace.target_key("first.txt").unwrap();
     app.remote_workspace = Some(workspace.clone());
@@ -828,33 +942,55 @@ fn benchmark_remote_changed_path_status() {
     let mut bytes = [Vec::new(), Vec::new()];
     for sample in 0..9 {
         for scoped in [sample % 2 == 0, sample % 2 != 0] {
-            std::fs::write(root.join("first.txt"), format!("changed {sample} {scoped}\n")).unwrap();
+            std::fs::write(
+                root.join("first.txt"),
+                format!("changed {sample} {scoped}\n"),
+            )
+            .unwrap();
             let before = incoming.load(Ordering::Relaxed) + outgoing.load(Ordering::Relaxed);
             let started = Instant::now();
-            if scoped { changed(&mut app, [key.clone()]); }
-            else { full(&mut app); }
+            if scoped {
+                changed(&mut app, [key.clone()]);
+            } else {
+                full(&mut app);
+            }
             let elapsed = started.elapsed();
-            let traffic = incoming.load(Ordering::Relaxed) + outgoing.load(Ordering::Relaxed) - before;
+            let traffic =
+                incoming.load(Ordering::Relaxed) + outgoing.load(Ordering::Relaxed) - before;
             assert_eq!(app.source_control_files.len(), 6001);
-            assert!(app.source_control_files.iter().any(|file| file.path == "first.txt" && file.status == 'M'));
+            assert!(
+                app.source_control_files
+                    .iter()
+                    .any(|file| file.path == "first.txt" && file.status == 'M')
+            );
             if sample > 1 {
                 times[usize::from(scoped)].push(elapsed.as_secs_f64() * 1000.);
                 bytes[usize::from(scoped)].push(traffic);
             }
         }
     }
-    for values in &mut times { values.sort_by(f64::total_cmp); }
-    for values in &mut bytes { values.sort_unstable(); }
-    println!("VTCODE_REMOTE_GIT_STATUS {}", serde_json::json!({
-        "untracked_files":6000,
-        "full_ms":times[0][times[0].len()/2], "scoped_ms":times[1][times[1].len()/2],
-        "full_bytes":bytes[0][bytes[0].len()/2], "scoped_bytes":bytes[1][bytes[1].len()/2]
-    }));
+    for values in &mut times {
+        values.sort_by(f64::total_cmp);
+    }
+    for values in &mut bytes {
+        values.sort_unstable();
+    }
+    println!(
+        "VTCODE_REMOTE_GIT_STATUS {}",
+        serde_json::json!({
+            "untracked_files":6000,
+            "full_ms":times[0][times[0].len()/2], "scoped_ms":times[1][times[1].len()/2],
+            "full_bytes":bytes[0][bytes[0].len()/2], "scoped_bytes":bytes[1][bytes[1].len()/2]
+        })
+    );
 }
 
 fn remote_app_at(root: &Path) -> (App, crate::remote::workspace::Workspace) {
     let workspace = crate::remote::workspace::Workspace::new(crate::remote::tests::connection(
-        root, Default::default(), Default::default()));
+        root,
+        Default::default(),
+        Default::default(),
+    ));
     let mut app = app_at(&workspace.view_root);
     app.remote_workspace = Some(workspace.clone());
     full(&mut app);
@@ -871,7 +1007,9 @@ fn remote_status_deltas_preserve_staged_renames_and_query_literal_paths() {
     let mut index = repo.index().unwrap();
     index.remove_path(Path::new("first.txt")).unwrap();
     for name in ["literal[1].rs", "literal1.rs", "renamed.txt"] {
-        if name != "renamed.txt" { std::fs::write(root.join(name), "original\n").unwrap(); }
+        if name != "renamed.txt" {
+            std::fs::write(root.join(name), "original\n").unwrap();
+        }
         index.add_path(Path::new(name)).unwrap();
     }
     index.write().unwrap();
@@ -880,20 +1018,49 @@ fn remote_status_deltas_preserve_staged_renames_and_query_literal_paths() {
     std::fs::write(root.join("other.txt"), "unreported\n").unwrap();
     std::fs::write(root.join("renamed.txt"), "edited after staging\n").unwrap();
     change(&mut app, "renamed.txt");
-    assert!(app.source_control_files.iter().any(|file| file.path == "renamed.txt" && file.staged
-        && file.status == 'R' && file.original_path.as_deref() == Some("first.txt")));
-    assert!(app.source_control_files.iter().any(|file| file.path == "renamed.txt" && !file.staged && file.status == 'M'));
-    assert!(!app.source_control_files.iter().any(|file| file.path == "other.txt"));
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "renamed.txt"
+                && file.staged
+                && file.status == 'R'
+                && file.original_path.as_deref() == Some("first.txt"))
+    );
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "renamed.txt" && !file.staged && file.status == 'M')
+    );
+    assert!(
+        !app.source_control_files
+            .iter()
+            .any(|file| file.path == "other.txt")
+    );
     std::fs::write(root.join("literal[1].rs"), "selected\n").unwrap();
     std::fs::write(root.join("literal1.rs"), "unreported neighbor\n").unwrap();
     change(&mut app, "literal[1].rs");
-    assert!(app.source_control_files.iter().any(|file| file.path == "literal[1].rs" && !file.staged));
-    assert!(!app.source_control_files.iter().any(|file| file.path == "literal1.rs" && !file.staged));
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "literal[1].rs" && !file.staged)
+    );
+    assert!(
+        !app.source_control_files
+            .iter()
+            .any(|file| file.path == "literal1.rs" && !file.staged)
+    );
     std::fs::write(root.join("renamed.txt"), "first\n").unwrap();
     change(&mut app, "renamed.txt");
-    assert!(!app.source_control_files.iter().any(|file| file.path == "renamed.txt" && !file.staged));
+    assert!(
+        !app.source_control_files
+            .iter()
+            .any(|file| file.path == "renamed.txt" && !file.staged)
+    );
     full(&mut app);
-    assert_eq!(key(&app.source_control_files), key(&collect_source_control_status(root).files));
+    assert_eq!(
+        key(&app.source_control_files),
+        key(&collect_source_control_status(root).files)
+    );
 }
 
 #[test]
@@ -902,13 +1069,33 @@ fn remote_directory_deltas_remove_deleted_rows_and_refresh_rules() {
     let root = std::fs::canonicalize(temp.path()).unwrap();
     init(&root);
     let (mut app, workspace) = remote_app_at(&root);
-    let change = |app: &mut App, names: &[&str]| changed(app,
-        names.iter().map(|name| workspace.target_key(name).unwrap()).collect::<Vec<_>>());
+    let change = |app: &mut App, names: &[&str]| {
+        changed(
+            app,
+            names
+                .iter()
+                .map(|name| workspace.target_key(name).unwrap())
+                .collect::<Vec<_>>(),
+        )
+    };
     let matches_full = |app: &App| {
-        let normalized = |files: &[GitFileChange]| key(files).into_iter().map(|(path, original, status, staged)|
-            (path.replace(std::path::MAIN_SEPARATOR, "/"), original.map(|path| path.replace(std::path::MAIN_SEPARATOR, "/")), status, staged))
-            .collect::<Vec<_>>();
-        assert_eq!(normalized(&app.source_control_files), normalized(&collect_source_control_status(root.clone()).files));
+        let normalized = |files: &[GitFileChange]| {
+            key(files)
+                .into_iter()
+                .map(|(path, original, status, staged)| {
+                    (
+                        path.replace(std::path::MAIN_SEPARATOR, "/"),
+                        original.map(|path| path.replace(std::path::MAIN_SEPARATOR, "/")),
+                        status,
+                        staged,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            normalized(&app.source_control_files),
+            normalized(&collect_source_control_status(root.clone()).files)
+        );
     };
     std::fs::create_dir_all(root.join("build/sub")).unwrap();
     std::fs::write(root.join("build/sub/界.txt"), "source\n").unwrap();

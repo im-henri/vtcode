@@ -91,14 +91,20 @@ fn explorer_file_window_actions_dispatch_paths_without_opening_source_tabs() {
         Some(Request::OpenFile { path: target, window: None }) if target == path));
 
     click(&mut app, "Open in Window");
-    assert!(matches!(app.desks.popup.mode, Some(crate::ui_desks::Mode::Window(_))));
+    assert!(matches!(
+        app.desks.popup.mode,
+        Some(crate::ui_desks::Mode::Window(_))
+    ));
     assert!(app.tab_window_request.is_none());
     key(&mut app, KeyCode::Esc);
     assert!(app.desks.popup.mode.is_none());
     assert!(app.tab_window_request.is_none());
     app.open_explorer_context_menu(2, 2);
-    app.explorer_context_selected = app.explorer_context_menu_items().iter()
-        .position(|&label| label == "Open in Window…").unwrap();
+    app.explorer_context_selected = app
+        .explorer_context_menu_items()
+        .iter()
+        .position(|&label| label == "Open in Window…")
+        .unwrap();
     key(&mut app, KeyCode::Enter);
     key(&mut app, KeyCode::Enter);
     assert!(matches!(app.tab_window_request.take(),
@@ -107,7 +113,11 @@ fn explorer_file_window_actions_dispatch_paths_without_opening_source_tabs() {
     assert_eq!(app.editor().unwrap().navigation_id, original);
 
     app.open_explorer_workspace_context_menu(2, 2);
-    assert!(!app.explorer_context_menu_items().iter().any(|item| item.starts_with("Open in Window") || *item == "Open in New Window"));
+    assert!(
+        !app.explorer_context_menu_items()
+            .iter()
+            .any(|item| item.starts_with("Open in Window") || *item == "Open in New Window")
+    );
 }
 
 #[test]

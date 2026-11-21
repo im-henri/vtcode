@@ -1,5 +1,5 @@
-use crate::text_input::TextInputId;
 use crate::app::{ActivePane, App};
+use crate::text_input::TextInputId;
 use crossterm::event::{KeyCode, KeyModifiers};
 
 fn finish_editor_edit(
@@ -108,20 +108,29 @@ pub(crate) fn handle_global_search_key(app: &mut App, code: KeyCode, modifiers: 
             }
         }
         KeyCode::Tab => {
-            if (!sidebar_search || app.search_focus_field == 3) && !app.global_search_results.is_empty()
+            if (!sidebar_search || app.search_focus_field == 3)
+                && !app.global_search_results.is_empty()
             {
                 app.focus_global_search_results();
                 app.ensure_global_search_selection_visible();
                 app.reveal_global_search_selection();
             } else if sidebar_search {
                 app.search_focus_field = (app.search_focus_field + 1) % 4;
-                if replace_hidden && app.search_focus_field == 1 { app.search_focus_field = 2; }
+                if replace_hidden && app.search_focus_field == 1 {
+                    app.search_focus_field = 2;
+                }
             }
         }
         KeyCode::BackTab => {
             if sidebar_search {
-                app.search_focus_field = if app.search_focus_field == 0 { 3 } else { app.search_focus_field - 1 };
-                if replace_hidden && app.search_focus_field == 1 { app.search_focus_field = 0; }
+                app.search_focus_field = if app.search_focus_field == 0 {
+                    3
+                } else {
+                    app.search_focus_field - 1
+                };
+                if replace_hidden && app.search_focus_field == 1 {
+                    app.search_focus_field = 0;
+                }
             } else if !app.global_search_results.is_empty() {
                 app.focus_global_search_results();
                 app.ensure_global_search_selection_visible();
@@ -146,15 +155,13 @@ pub(crate) fn handle_global_search_key(app: &mut App, code: KeyCode, modifiers: 
         }
         _ => {
             let field = app.search_focus_field;
-            let result = app.edit_text_input(
-                TextInputId::GlobalSearch(field),
-                code,
-                modifiers,
-                None,
-            );
+            let result =
+                app.edit_text_input(TextInputId::GlobalSearch(field), code, modifiers, None);
             if result.changed {
                 app.global_search_field_history_mut(field).edited();
-                if field != 1 { app.schedule_global_search(); }
+                if field != 1 {
+                    app.schedule_global_search();
+                }
             }
         }
     }
@@ -249,19 +256,9 @@ pub(crate) fn handle_search_key(app: &mut App, code: KeyCode, modifiers: KeyModi
         }
         _ => {
             let result = if app.search_focus_replace {
-                app.edit_text_input(
-                    TextInputId::SearchReplace,
-                    code,
-                    modifiers,
-                    None,
-                )
+                app.edit_text_input(TextInputId::SearchReplace, code, modifiers, None)
             } else {
-                app.edit_text_input(
-                    TextInputId::SearchFind,
-                    code,
-                    modifiers,
-                    None,
-                )
+                app.edit_text_input(TextInputId::SearchFind, code, modifiers, None)
             };
             if result.changed && !app.search_focus_replace {
                 app.search_history.edited();
@@ -271,7 +268,11 @@ pub(crate) fn handle_search_key(app: &mut App, code: KeyCode, modifiers: KeyModi
     }
 }
 
-pub(crate) fn handle_global_search_results_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+pub(crate) fn handle_global_search_results_key(
+    app: &mut App,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+) {
     match code {
         KeyCode::Up => {
             app.global_search_select_prev_visible();
@@ -289,10 +290,15 @@ pub(crate) fn handle_global_search_results_key(app: &mut App, code: KeyCode, mod
             // file headings or matches, so there is no direct index.
             let mut last = app.global_search_selected_row();
             for _ in 0..=app.global_search_results.len() * 2 {
-                if code == KeyCode::Home { app.global_search_select_prev_visible(); }
-                else { app.global_search_select_next_visible(); }
+                if code == KeyCode::Home {
+                    app.global_search_select_prev_visible();
+                } else {
+                    app.global_search_select_next_visible();
+                }
                 let now = app.global_search_selected_row();
-                if now == last { break; }
+                if now == last {
+                    break;
+                }
                 last = now;
             }
             app.preview_global_search_result();
@@ -304,8 +310,11 @@ pub(crate) fn handle_global_search_results_key(app: &mut App, code: KeyCode, mod
             }
         }
         KeyCode::Enter => {
-            if let Some(crate::search_results::SearchRow::Header(index)) = app.global_search_selected_row() {
-                let collapsed = app.is_global_search_file_collapsed(&app.global_search_results[index].file_path);
+            if let Some(crate::search_results::SearchRow::Header(index)) =
+                app.global_search_selected_row()
+            {
+                let collapsed = app
+                    .is_global_search_file_collapsed(&app.global_search_results[index].file_path);
                 app.set_selected_global_search_file_collapsed(!collapsed);
             } else if app.open_global_search_result() {
                 app.close_global_search();
@@ -313,8 +322,14 @@ pub(crate) fn handle_global_search_results_key(app: &mut App, code: KeyCode, mod
         }
         KeyCode::Esc if app.global_search_active => handle_global_search_key(app, code, modifiers),
         KeyCode::Tab | KeyCode::BackTab | KeyCode::Esc => {
-            let field = if code == KeyCode::BackTab && app.show_explorer
-                && app.sidebar_view == crate::app::SidebarView::Search { 3 } else { 0 };
+            let field = if code == KeyCode::BackTab
+                && app.show_explorer
+                && app.sidebar_view == crate::app::SidebarView::Search
+            {
+                3
+            } else {
+                0
+            };
             app.focus_text_input(TextInputId::GlobalSearch(field));
         }
         _ => {}
@@ -322,8 +337,12 @@ pub(crate) fn handle_global_search_results_key(app: &mut App, code: KeyCode, mod
 }
 
 pub(crate) fn handle_explorer_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
-    if !app.has_open_folder() && matches!(app.sidebar_view,
-        crate::app::SidebarView::Search | crate::app::SidebarView::Explorer) {
+    if !app.has_open_folder()
+        && matches!(
+            app.sidebar_view,
+            crate::app::SidebarView::Search | crate::app::SidebarView::Explorer
+        )
+    {
         crate::ui_empty_folder::key(app, code, modifiers);
         return;
     }
@@ -387,9 +406,12 @@ pub(crate) fn handle_explorer_key(app: &mut App, code: KeyCode, modifiers: KeyMo
             app.collapse_explorer_entry_async();
             app.set_explorer_single_selection(app.explorer.selected);
         }
-        KeyCode::F(2) if modifiers.is_empty()
-            && app.sidebar_view == crate::app::SidebarView::Explorer
-            && (app.explorer_selection_anchor.is_some() || !app.explorer_multi_selected.is_empty()) => {
+        KeyCode::F(2)
+            if modifiers.is_empty()
+                && app.sidebar_view == crate::app::SidebarView::Explorer
+                && (app.explorer_selection_anchor.is_some()
+                    || !app.explorer_multi_selected.is_empty()) =>
+        {
             if let Some(entry) = app.explorer.entries.get(app.explorer.selected) {
                 let initial = entry
                     .path
@@ -400,8 +422,9 @@ pub(crate) fn handle_explorer_key(app: &mut App, code: KeyCode, modifiers: KeyMo
                 app.begin_rename(entry.path.clone(), initial, true, false);
             }
         }
-        KeyCode::Delete if app.show_explorer
-            && app.sidebar_view == crate::app::SidebarView::Explorer => {
+        KeyCode::Delete
+            if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Explorer =>
+        {
             app.request_explorer_selection_delete();
         }
         _ => {}
@@ -454,7 +477,9 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
     if app.markdown_preview_selection_key(code, modifiers) {
         return;
     }
-    if app.diff_selection_key(code, modifiers) { return; }
+    if app.diff_selection_key(code, modifiers) {
+        return;
+    }
     // Original/deleted comparison text never sends edits or extra carets to
     // the target editor's unrelated native cursor.
     if app.diff_selection_owns_cursor()
@@ -463,7 +488,9 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
     {
         return;
     }
-    if app.wrapped_diff_vertical_navigation(code, modifiers) || app.context_diff_navigation(code, modifiers) {
+    if app.wrapped_diff_vertical_navigation(code, modifiers)
+        || app.context_diff_navigation(code, modifiers)
+    {
         return;
     }
     if code == KeyCode::Insert && modifiers == KeyModifiers::SHIFT {
@@ -495,8 +522,11 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
         }
     }
 
-    if !alt && !shift && (!ctrl || matches!(code, KeyCode::Home | KeyCode::End))
-        && app.markdown_preview_navigation(code) {
+    if !alt
+        && !shift
+        && (!ctrl || matches!(code, KeyCode::Home | KeyCode::End))
+        && app.markdown_preview_navigation(code)
+    {
         return;
     }
     // Ctrl+Up/Down for paragraph movement
@@ -532,8 +562,8 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
 
     // Alt+Arrow for line movement, Alt+Z for word wrap, Alt+key for common actions
     if alt {
-        let is_read_only = app.editor().is_some_and(|e| e.read_only)
-            || app.diff_selection_owns_cursor();
+        let is_read_only =
+            app.editor().is_some_and(|e| e.read_only) || app.diff_selection_owns_cursor();
         match code {
             KeyCode::Up => {
                 if is_read_only {
@@ -769,7 +799,10 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                     app.notify("Clipboard history is empty");
                     return;
                 }
-                if app.paste_in_progress() { app.notify_warn("Wait for the current paste or cancel it first"); return; }
+                if app.paste_in_progress() {
+                    app.notify_warn("Wait for the current paste or cancel it first");
+                    return;
+                }
                 let history_len = app.clipboard_history.len();
                 if app.clipboard_cycle_active {
                     // Undo previous cycle paste, then paste next older entry
@@ -854,15 +887,21 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                 return;
             }
             KeyCode::Char('c') => {
-                if app.copy_diff_selection() { return; }
+                if app.copy_diff_selection() {
+                    return;
+                }
                 app.copy_editor_selection();
                 let clip = app.editor().map(|ed| ed.clipboard.clone());
-                if let Some(text) = clip { app.push_clipboard_history(&text); }
+                if let Some(text) = clip {
+                    app.push_clipboard_history(&text);
+                }
                 return;
             }
             KeyCode::Char('x') => {
                 if (app.editor().is_some_and(|editor| editor.read_only)
-                    || app.diff_selection_owns_cursor()) && app.copy_diff_selection() {
+                    || app.diff_selection_owns_cursor())
+                    && app.copy_diff_selection()
+                {
                     return;
                 }
                 if let Some(ed) = app.editor_mut() {
@@ -884,7 +923,9 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                 return;
             }
             KeyCode::Char('v') => {
-                if app.diff_selection_owns_cursor() { return; }
+                if app.diff_selection_owns_cursor() {
+                    return;
+                }
                 app.paste_editor_clipboard(true);
                 return;
             }
@@ -1111,8 +1152,8 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
 
     // Regular keys — clear selection on movement, replace selection on typing
     // Read-only guard for editing operations
-    let is_read_only = app.editor().is_some_and(|e| e.read_only)
-        || app.diff_selection_owns_cursor();
+    let is_read_only =
+        app.editor().is_some_and(|e| e.read_only) || app.diff_selection_owns_cursor();
     match code {
         KeyCode::Char(c) => {
             if is_read_only {
@@ -1139,7 +1180,9 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
             }
             finish_editor_edit(app, previous_version);
             // Dismiss ghost text and restart debounce timer on typing
-            if (c.is_alphanumeric() || c == '_' || c == '$') && (app.quick_suggestions || app.vtcomplete_explicit || app.lsp_completion_active) {
+            if (c.is_alphanumeric() || c == '_' || c == '$')
+                && (app.quick_suggestions || app.vtcomplete_explicit || app.lsp_completion_active)
+            {
                 app.update_vtcomplete();
                 let lsp_completion_requested = app.request_lsp_suggestions(false);
                 if lsp_completion_requested {
@@ -1159,7 +1202,7 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
             } else {
                 if matches!(c, '&' | '*' | '=' | '>') {
                     app.update_vtcomplete();
-            } else {
+                } else {
                     app.dismiss_vtcomplete();
                 }
                 app.lsp_completion_active = false;
@@ -1199,8 +1242,14 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
             }
             finish_editor_edit(app, previous_version);
             app.update_vtcomplete();
-            if (app.quick_suggestions || app.lsp_completion_active) && app.editor().is_some_and(|editor| editor.has_word_prefix_at_cursor()) {
-                if app.request_lsp_suggestions(false) { app.vtcomplete_active = false; }
+            if (app.quick_suggestions || app.lsp_completion_active)
+                && app
+                    .editor()
+                    .is_some_and(|editor| editor.has_word_prefix_at_cursor())
+            {
+                if app.request_lsp_suggestions(false) {
+                    app.vtcomplete_active = false;
+                }
             } else {
                 app.lsp_completion_active = false;
             }
@@ -1408,7 +1457,14 @@ mod tests {
     #[test]
     fn tab_replaces_whitespace_only_selections() {
         for (source, anchor, caret, use_tabs, expected, end) in [
-            ("        value\n", (0, 0), (0, 8), false, "    value\n", (0, 4)),
+            (
+                "        value\n",
+                (0, 0),
+                (0, 8),
+                false,
+                "    value\n",
+                (0, 4),
+            ),
             (" \t  value\n", (0, 4), (0, 0), true, "\tvalue\n", (0, 1)),
             (
                 "a \t\r\n\u{2003} b\r\n",
@@ -1641,7 +1697,8 @@ mod tests {
                 _token_modifiers: 0,
             });
         app.lsp_document_highlights.push((0, 0, 0, 3));
-        app.lsp_inlay_hints.push(crate::app::InlayHintDisplay::new(0, 3, ": i32", None));
+        app.lsp_inlay_hints
+            .push(crate::app::InlayHintDisplay::new(0, 3, ": i32", None));
 
         handle_editor_key(&mut app, KeyCode::Char('x'), KeyModifiers::NONE);
 
@@ -1649,7 +1706,10 @@ mod tests {
         assert!(app.lsp_manager.diagnostic_dirty_documents.contains(&path));
         assert_eq!(app.lsp_semantic_tokens.len(), 1);
         assert_eq!(app.lsp_document_highlights, vec![(0, 0, 0, 3)]);
-        assert_eq!(app.lsp_inlay_hints, vec![crate::app::InlayHintDisplay::new(0, 3, ": i32", None)]);
+        assert_eq!(
+            app.lsp_inlay_hints,
+            vec![crate::app::InlayHintDisplay::new(0, 3, ": i32", None)]
+        );
         assert_eq!(app.lsp_semantic_tokens_last_version, u64::MAX);
     }
 
@@ -1668,10 +1728,11 @@ mod tests {
         });
 
         assert!(app.vtcomplete_active);
-        assert!(app
-            .vtcomplete_suggestions
-            .iter()
-            .any(|suggestion| suggestion == "print"));
+        assert!(
+            app.vtcomplete_suggestions
+                .iter()
+                .any(|suggestion| suggestion == "print")
+        );
         assert_eq!(app.tabs[0].editor.rope.to_string(), "prin print\n");
     }
 
@@ -1700,8 +1761,11 @@ mod tests {
                 app.vtcomplete_suggestions
             );
             assert!(!app.vtcomplete_explicit);
-            app.vtcomplete_selected = app.vtcomplete_suggestions.iter()
-                .position(|value| value == "source_value").unwrap();
+            app.vtcomplete_selected = app
+                .vtcomplete_suggestions
+                .iter()
+                .position(|value| value == "source_value")
+                .unwrap();
             crate::input_keyboard::handle_keyboard_event(
                 &mut app,
                 crossterm::event::KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
@@ -1711,8 +1775,11 @@ mod tests {
             } else {
                 "let borrowed = &source_value"
             };
-            assert!(app.editor().unwrap().rope.to_string().ends_with(expected),
-                "{suffix}: {:?}", app.editor().unwrap().rope.to_string());
+            assert!(
+                app.editor().unwrap().rope.to_string().ends_with(expected),
+                "{suffix}: {:?}",
+                app.editor().unwrap().rope.to_string()
+            );
         }
     }
 
@@ -1756,7 +1823,10 @@ mod tests {
             ("Rust", "let commentIdentifier = 1; // comment|"),
             ("Rust", "/// commentIdentifier\n/// comment|"),
             ("Rust", "/* commentIdentifier\n * comment| */"),
-            ("Rust", "/* outer /* nested */ commentIdentifier\n * comment| */"),
+            (
+                "Rust",
+                "/* outer /* nested */ commentIdentifier\n * comment| */",
+            ),
             ("Rust", "// commentIdentifier\n// \"comment|"),
             ("Python", "# commentIdentifier\n# comment|"),
             ("SQL", "-- commentIdentifier\n-- comment|"),
@@ -1775,13 +1845,20 @@ mod tests {
             });
             assert!(app.vtcomplete_active, "{language}: {source}");
             assert!(!app.vtcomplete_explicit);
-            app.vtcomplete_selected = app.vtcomplete_suggestions.iter()
+            app.vtcomplete_selected = app
+                .vtcomplete_suggestions
+                .iter()
                 .position(|word| word == "commentIdentifier")
                 .unwrap_or_else(|| panic!("{source}: {:?}", app.vtcomplete_suggestions));
-            crate::input_keyboard::handle_keyboard_event(&mut app,
-                crossterm::event::KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-            assert_eq!(app.editor().unwrap().rope.to_string(), format!("{before}Identifier{after}"),
-                "{language}: {source}");
+            crate::input_keyboard::handle_keyboard_event(
+                &mut app,
+                crossterm::event::KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE),
+            );
+            assert_eq!(
+                app.editor().unwrap().rope.to_string(),
+                format!("{before}Identifier{after}"),
+                "{language}: {source}"
+            );
         }
     }
 

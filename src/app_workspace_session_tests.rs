@@ -292,10 +292,11 @@ fn invalid_workspace_and_current_directory_leave_open_view_unchanged() {
     app.change_workspace(&workspace.path().join("missing-directory"));
     assert_eq!(app.explorer.root, workspace.path());
     assert_eq!(app.build_session(), before);
-    assert!(app
-        .notification_history
-        .iter()
-        .any(|(message, _, _)| message.contains("Not a directory")));
+    assert!(
+        app.notification_history
+            .iter()
+            .any(|(message, _, _)| message.contains("Not a directory"))
+    );
     assert!(!crate::session::session_path(workspace.path()).exists());
 
     app.change_workspace(&workspace.path().join("."));
@@ -324,10 +325,11 @@ fn workspace_switch_keeps_current_view_when_session_save_fails() {
     assert_eq!(app.explorer.root, current.path());
     assert_eq!(app.build_session(), before);
     assert!(app.tabs[0].editor.modified);
-    assert!(app
-        .notification_history
-        .iter()
-        .any(|(message, _, _)| message.contains("Could not save current workspace")));
+    assert!(
+        app.notification_history
+            .iter()
+            .any(|(message, _, _)| message.contains("Could not save current workspace"))
+    );
     assert!(!crate::session::session_path(destination.path()).exists());
 }
 
@@ -356,10 +358,11 @@ fn workspace_switch_preserves_dirty_custom_editor_in_inactive_split() {
         app.groups[0].tabs[0].editor.rope.to_string(),
         custom_content
     );
-    assert!(app
-        .notification_history
-        .iter()
-        .any(|(message, _, _)| message.contains("Save custom editor changes")));
+    assert!(
+        app.notification_history
+            .iter()
+            .any(|(message, _, _)| message.contains("Save custom editor changes"))
+    );
     assert!(!crate::session::session_path(destination.path()).exists());
 }
 
@@ -467,7 +470,10 @@ fn previous_workspace_save_completion_preserves_destination_recovery() {
     });
     assert_eq!(app.tabs[0].editor.rope.to_string(), recovered);
     assert!(app.tabs[0].editor.modified);
-    assert_eq!(std::fs::read_to_string(&shared).unwrap(), format!("A{original}"));
+    assert_eq!(
+        std::fs::read_to_string(&shared).unwrap(),
+        format!("A{original}")
+    );
 }
 
 #[test]
@@ -501,12 +507,16 @@ fn previous_workspace_load_results_do_not_replace_new_shared_file_view() {
     app.background
         .sender
         .send(crate::background::BackgroundResult::FileReloaded {
-            targets: app.tabs.iter().chain(app.groups.iter().flat_map(|group| &group.tabs))
-                .map(|tab| (tab.editor.navigation_id, tab.editor.content_version)).collect(),
+            targets: app
+                .tabs
+                .iter()
+                .chain(app.groups.iter().flat_map(|group| &group.tabs))
+                .map(|tab| (tab.editor.navigation_id, tab.editor.content_version))
+                .collect(),
             workspace_generation: old_generation,
             path: shared,
             result: Ok(crate::editor::LoadedTextFile {
-            remote_checkpoint: None,
+                remote_checkpoint: None,
                 rope: ropey::Rope::from_str("stale reload\n"),
                 encoding: "UTF-8",
                 file_size: 13,

@@ -54,14 +54,23 @@ impl App {
         request: p::RequestPermissionRequest,
         send: impl FnOnce(&mut Self, Command) -> bool,
     ) {
-        if self.chat.yolo_approvals.get(&id).is_some_and(|approval| approval.ticket == ticket)
-            || self.chat.permissions.iter().any(|pending| pending.id == id && pending.ticket == ticket)
+        if self
+            .chat
+            .yolo_approvals
+            .get(&id)
+            .is_some_and(|approval| approval.ticket == ticket)
+            || self
+                .chat
+                .permissions
+                .iter()
+                .any(|pending| pending.id == id && pending.ticket == ticket)
         {
             return;
         }
         self.chat.yolo_approvals.remove(&id);
         self.chat.permissions.retain(|pending| pending.id != id);
-        self.chat.mark_tab_unread(&request.session_id, self.terminal_has_focus);
+        self.chat
+            .mark_tab_unread(&request.session_id, self.terminal_has_focus);
         let tool_title = self
             .chat
             .sessions
@@ -93,7 +102,10 @@ impl App {
             self.chat.focus = None;
         }
         self.chat.permissions.push_back(permission);
-        self.record_workspace_event(format!("{}: permission needed", self.chat.name()), crate::app_workspaces::Level::Attention);
+        self.record_workspace_event(
+            format!("{}: permission needed", self.chat.name()),
+            crate::app_workspaces::Level::Attention,
+        );
         if !self.chat.visible {
             self.notify("Agent needs permission · open Agent Chat");
         }
@@ -184,14 +196,22 @@ impl App {
         ticket: u64,
         option: &p::PermissionOptionId,
     ) {
-        if self.chat.yolo_approvals.get(id).is_none_or(|approval| approval.ticket != ticket) { return; }
+        if self
+            .chat
+            .yolo_approvals
+            .get(id)
+            .is_none_or(|approval| approval.ticket != ticket)
+        {
+            return;
+        }
         let Some(approval) = self.chat.yolo_approvals.remove(id) else {
             return;
         };
         if &approval.option != option {
             return;
         }
-        self.chat.mark_tab_unread(&approval.session, self.terminal_has_focus);
+        self.chat
+            .mark_tab_unread(&approval.session, self.terminal_has_focus);
         if let Some(session) = self.chat.sessions.get_mut(&approval.session) {
             // Log only after the transport accepts the live selected response.
             // Turning YOLO off does not erase an approval already sent.

@@ -18,7 +18,11 @@ fn word_selection_keeps_terminal_identifiers_paths_and_unicode() {
     for (text, column, expected) in [
         ("run(foo_bar)", 6, "foo_bar"),
         ("path '/tmp/file.rs:42' next", 13, "/tmp/file.rs:42"),
-        ("open https://example.com/a?b=c next", 18, "https://example.com/a?b=c"),
+        (
+            "open https://example.com/a?b=c next",
+            18,
+            "https://example.com/a?b=c",
+        ),
         ("café_界 next", 3, "café_界"),
         ("a(b)", 1, "("),
         ("x", 0, "x"),
@@ -61,17 +65,27 @@ fn word_and_line_selection_follow_soft_wraps_through_scrollback() {
 #[test]
 fn word_selection_anchors_follow_history_eviction_and_output_invalidation() {
     let mut grid = TermGrid::new(12, 2);
-    for index in 0..5002 { feed(&mut grid, &format!("{index:05} aa\r\n")); }
+    for index in 0..5002 {
+        feed(&mut grid, &format!("{index:05} aa\r\n"));
+    }
     grid.scroll_view = 4990;
     grid.begin_word_selection(0, 1);
     let before = grid.selected_text();
     feed(&mut grid, "next\r\n");
     assert_eq!(grid.selected_text(), before);
     grid.extend_selection(0, 2);
-    assert_eq!(grid.selected_text(), before, "the original word anchor must move when history is trimmed");
+    assert_eq!(
+        grid.selected_text(),
+        before,
+        "the original word anchor must move when history is trimmed"
+    );
     grid.scroll_view = 0;
     feed(&mut grid, "\x1b[1;1Hchanged");
-    assert_eq!(grid.selected_text(), before, "live output must not retarget history selection");
+    assert_eq!(
+        grid.selected_text(),
+        before,
+        "live output must not retarget history selection"
+    );
     grid.begin_word_selection(0, 2);
     feed(&mut grid, "\x1b[1;1Hrewrite");
     assert!(!grid.has_selection());
@@ -117,7 +131,10 @@ fn selecting_past_a_command_trims_the_highlight_and_copied_text_in_both_directio
         select(&mut grid, start, end);
         assert_eq!(grid.selection_columns(0), 4..14);
         assert_eq!(grid.selected_text().as_deref(), Some("echo hello"));
-        assert!(grid.selection_contains(0, 8), "spaces between selected words remain selected");
+        assert!(
+            grid.selection_contains(0, 8),
+            "spaces between selected words remain selected"
+        );
         assert!(!grid.selection_contains(0, 14));
         assert!(!grid.selection_contains(0, 29));
     }
@@ -127,7 +144,12 @@ fn selecting_past_a_command_trims_the_highlight_and_copied_text_in_both_directio
 fn whitespace_only_drags_words_and_blank_lines_do_not_create_a_selection() {
     let mut grid = TermGrid::new(20, 3);
     feed(&mut grid, "aa    bb\r\n   \r\n    next");
-    for (start, end) in [((0, 2), (0, 5)), ((0, 8), (0, 19)), ((0, 12), (1, 19)), ((2, 0), (2, 3))] {
+    for (start, end) in [
+        ((0, 2), (0, 5)),
+        ((0, 8), (0, 19)),
+        ((0, 12), (1, 19)),
+        ((2, 0), (2, 3)),
+    ] {
         for (start, end) in [(start, end), (end, start)] {
             select(&mut grid, start, end);
             assert!(!grid.has_selection(), "{start:?}..{end:?}");
@@ -136,8 +158,11 @@ fn whitespace_only_drags_words_and_blank_lines_do_not_create_a_selection() {
         }
     }
     for word in [true, false] {
-        if word { grid.begin_word_selection(0, 3); }
-        else { grid.begin_line_selection(1, 1); }
+        if word {
+            grid.begin_word_selection(0, 3);
+        } else {
+            grid.begin_line_selection(1, 1);
+        }
         assert!(!grid.has_selection());
         assert_eq!(grid.selected_text(), None);
         grid.finish_selection();
@@ -147,10 +172,16 @@ fn whitespace_only_drags_words_and_blank_lines_do_not_create_a_selection() {
     grid.extend_selection(2, 3);
     assert!(!grid.has_selection());
     grid.extend_selection(2, 7);
-    assert!(grid.has_selection(), "dragging out of whitespace must still reach text");
+    assert!(
+        grid.has_selection(),
+        "dragging out of whitespace must still reach text"
+    );
     assert_eq!(grid.selected_text().as_deref(), Some("    next"));
     grid.extend_selection(2, 3);
-    assert!(!grid.has_selection(), "dragging back to only whitespace clears the visible selection");
+    assert!(
+        !grid.has_selection(),
+        "dragging back to only whitespace clears the visible selection"
+    );
 }
 
 #[test]
@@ -159,7 +190,10 @@ fn multiline_selection_trims_each_row_but_keeps_indentation_and_empty_lines() {
     feed(&mut grid, "first  \r\n  second \r\n\r\nlast    ");
     for (start, end) in [((0, 1), (3, 23)), ((3, 23), (0, 1))] {
         select(&mut grid, start, end);
-        assert_eq!(grid.selected_text().as_deref(), Some("irst\n  second\n\nlast"));
+        assert_eq!(
+            grid.selected_text().as_deref(),
+            Some("irst\n  second\n\nlast")
+        );
         for (row, expected) in [1..5, 0..8, 0..0, 0..4, 0..0].into_iter().enumerate() {
             assert_eq!(grid.selection_columns(row), expected, "row {row}");
         }

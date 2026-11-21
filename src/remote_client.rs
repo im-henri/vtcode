@@ -1,11 +1,11 @@
 //! Asynchronous transport. `call` is for file/tool workers only, never the UI.
 //! Submissions are bounded and nonblocking; network stalls cannot backpressure
 //! the terminal input pump or retain an unbounded history of Rope snapshots.
+#[path = "remote_cpu_capture.rs"]
+mod cpu_capture;
 #[cfg(test)]
 #[path = "remote_client_deadline_tests.rs"]
 mod deadline_tests;
-#[path = "remote_cpu_capture.rs"]
-mod cpu_capture;
 use super::*;
 #[cfg(test)]
 use std::io::{BufReader, Read};
@@ -192,12 +192,19 @@ impl Shared {
     fn operation(&self, id: u64) -> Option<diagnostics::Operation> {
         // No diagnostic lock is held with the admission lock. Formatting is
         // deferred to the viewer, never performed by these transport workers.
-        if self.diagnostics.is_none() && !self.git_logging.load(Ordering::Relaxed) { return None; }
-        self.pending.lock().unwrap().get(&id).and_then(|pending| pending.operation.clone())
+        if self.diagnostics.is_none() && !self.git_logging.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.pending
+            .lock()
+            .unwrap()
+            .get(&id)
+            .and_then(|pending| pending.operation.clone())
     }
     fn stop(&self, id: u64, error: &io::Error) {
         if let Some(pending) = self.take(id)
-            && let Some(operation) = &pending.operation {
+            && let Some(operation) = &pending.operation
+        {
             operation.error(error);
         }
     }
@@ -211,14 +218,22 @@ impl Shared {
     }
 
     fn fail(&self, error: String) {
-        if self.closed.swap(true, Ordering::AcqRel) { return; }
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return;
+        }
         *self.failure.lock().unwrap() = Some(error.clone());
-        if let Some(trace) = &self.diagnostics { trace.event("Disconnected", &error); }
+        if let Some(trace) = &self.diagnostics {
+            trace.event("Disconnected", &error);
+        }
         self.capture.disconnected();
         let pending = std::mem::take(&mut *self.pending.lock().unwrap_or_else(|e| e.into_inner()));
         for (_, pending) in pending {
-            if let Some(operation) = &pending.operation { operation.failed(&error); }
-            let _ = pending.completed.try_send(Delivery::error(error.clone().into()));
+            if let Some(operation) = &pending.operation {
+                operation.failed(&error);
+            }
+            let _ = pending
+                .completed
+                .try_send(Delivery::error(error.clone().into()));
         }
         self.capacity.notify_all();
         {
@@ -608,9 +623,15 @@ impl Client {
     pub(crate) fn disconnect(&self) {
         self.0.shared.fail("Remote connection closed; verify any interrupted save before retrying. Your local edits are retained.".into());
     }
-    pub(crate) fn disconnect_reason(&self) -> Option<String> { self.0.shared.failure.lock().unwrap().clone() }
+    pub(crate) fn disconnect_reason(&self) -> Option<String> {
+        self.0.shared.failure.lock().unwrap().clone()
+    }
     pub(crate) fn diagnostic_log(&self) -> Option<super::diagnostics::Log> {
-        self.0.shared.diagnostics.as_ref().map(|trace| trace.log.clone())
+        self.0
+            .shared
+            .diagnostics
+            .as_ref()
+            .map(|trace| trace.log.clone())
     }
     pub(crate) fn set_git_output(&self, log: &super::diagnostics::Log) {
         let mut logs = self.0.shared.git_output.lock().unwrap();
@@ -627,24 +648,51 @@ impl Client {
     pub(crate) fn release_git_output(&self) {
         let mut logs = self.0.shared.git_output.lock().unwrap();
         logs.remove(&self.hello().root_uri);
-        self.0.shared.git_logging.store(!logs.is_empty(), Ordering::Relaxed);
-        self.0.shared.workspace_changes.lock().unwrap().remove(&self.hello().root_uri);
+        self.0
+            .shared
+            .git_logging
+            .store(!logs.is_empty(), Ordering::Relaxed);
+        self.0
+            .shared
+            .workspace_changes
+            .lock()
+            .unwrap()
+            .remove(&self.hello().root_uri);
     }
     pub(crate) fn same_transport(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
-    pub(super) fn file_operation(&self, name: &'static str, path: &RemotePath) -> Option<diagnostics::Operation> {
-        self.0.shared.diagnostics.as_ref().map(|trace| trace.operation(name, path))
+    pub(super) fn file_operation(
+        &self,
+        name: &'static str,
+        path: &RemotePath,
+    ) -> Option<diagnostics::Operation> {
+        self.0
+            .shared
+            .diagnostics
+            .as_ref()
+            .map(|trace| trace.operation(name, path))
     }
-    pub(super) fn transfer_operation(&self, name: &'static str, transfer: u64, bytes: usize) -> Option<diagnostics::Operation> {
-        self.0.shared.diagnostics.as_ref().map(|trace| trace.transfer(name, transfer, bytes))
+    pub(super) fn transfer_operation(
+        &self,
+        name: &'static str,
+        transfer: u64,
+        bytes: usize,
+    ) -> Option<diagnostics::Operation> {
+        self.0
+            .shared
+            .diagnostics
+            .as_ref()
+            .map(|trace| trace.transfer(name, transfer, bytes))
     }
     pub(crate) fn hello(&self) -> &Hello {
         self.1
             .as_ref()
             .map_or(&self.0.hello, |context| &context.hello)
     }
-    pub(crate) fn workspace_sets_root_uri(&self) -> &str { &self.0.hello.root_uri }
+    pub(crate) fn workspace_sets_root_uri(&self) -> &str {
+        &self.0.hello.root_uri
+    }
     pub(crate) fn same_connection(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0.shared, &other.0.shared)
     }
@@ -878,7 +926,10 @@ impl Client {
     }
     pub(super) fn register_history(&self) -> io::Result<(u64, mpsc::Receiver<history::Page>)> {
         if !self.connected() {
-            return Err(io::Error::new(io::ErrorKind::NotConnected, "SSH connection is closed"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "SSH connection is closed",
+            ));
         }
         let mut histories = self.0.shared.histories.lock().unwrap();
         if histories.len() >= 4 {
@@ -886,12 +937,22 @@ impl Client {
         }
         let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = mpsc::sync_channel(1);
-        histories.insert(id, HistoryReceiver { pages: sender, started: false });
+        histories.insert(
+            id,
+            HistoryReceiver {
+                pages: sender,
+                started: false,
+            },
+        );
         Ok((id, receiver))
     }
     pub(crate) fn close_history(&self, id: u64) {
         let mut histories = self.0.shared.histories.lock().unwrap();
-        if histories.remove(&id).is_some_and(|receiver| receiver.started) && self.connected() {
+        if histories
+            .remove(&id)
+            .is_some_and(|receiver| receiver.started)
+            && self.connected()
+        {
             self.0.shared.history_closes.lock().unwrap().push(id);
             let _ = self.0.sender.try_send(None);
         }
@@ -1051,7 +1112,13 @@ impl Client {
                     }
                     result => {
                         started.end(Some(format!("Remote process could not start: {result:?}")));
-                        client.0.shared.stop(request_id, &io::Error::new(io::ErrorKind::TimedOut, "Remote process did not start"));
+                        client.0.shared.stop(
+                            request_id,
+                            &io::Error::new(
+                                io::ErrorKind::TimedOut,
+                                "Remote process did not start",
+                            ),
+                        );
                         client.close_process(id);
                     }
                 }
@@ -1114,7 +1181,9 @@ impl Client {
         let reply = if let Some(cancel) = cancel {
             loop {
                 if cancel.is_cancelled() {
-                    if let Some(operation) = self.0.shared.operation(id) { operation.stage("Cancellation requested"); }
+                    if let Some(operation) = self.0.shared.operation(id) {
+                        operation.stage("Cancellation requested");
+                    }
                     let _ = self.notify(Command::Cancel { request: id });
                     if drain_cancelled {
                         // Once cancellation has been sent there is no state to
@@ -1200,26 +1269,39 @@ impl Client {
     ) -> io::Result<(bool, Vec<usize>)> {
         query.stream = true;
         let open_files = query.open_files.len();
-        let (id, replies) = self.submit_inner(Command::Search(query), Some((Duration::from_secs(120), Some(cancel))))?;
+        let (id, replies) = self.submit_inner(
+            Command::Search(query),
+            Some((Duration::from_secs(120), Some(cancel))),
+        )?;
         // A healthy scan on a slow remote filesystem has no fixed total
         // deadline. Transport EOF and I/O errors handle disconnection.
         let result = (|| loop {
-            if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+            if cancel.is_cancelled() {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
             let reply = match replies.recv_timeout(Duration::from_millis(20)) {
                 Ok(reply) => reply.take().map_err(Failure::into_io)?,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(error) => return Err(io::Error::other(error)),
             };
-            if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+            if cancel.is_cancelled() {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
             match reply {
                 Reply::SearchProgress { request, hits } if request == id => consume(hits)?,
-                Reply::Search { hits, truncated, draft_aliases } => {
+                Reply::Search {
+                    hits,
+                    truncated,
+                    draft_aliases,
+                } => {
                     if draft_aliases.iter().any(|&index| index >= open_files)
                         || draft_aliases.windows(2).any(|pair| pair[0] >= pair[1])
                     {
                         return Err(io::Error::other("Invalid remote search draft aliases"));
                     }
-                    if !hits.is_empty() { consume(hits)?; }
+                    if !hits.is_empty() {
+                        consume(hits)?;
+                    }
                     return Ok((truncated, draft_aliases));
                 }
                 _ => return Err(io::Error::other("Invalid remote search reply")),
@@ -1257,7 +1339,10 @@ impl Client {
             let reply = match replies.recv_timeout(remaining.min(Duration::from_millis(20))) {
                 Ok(reply) => reply.take().map_err(Failure::into_io)?,
                 Err(mpsc::RecvTimeoutError::Timeout) if last_progress.elapsed() >= timeout => {
-                    return Err(io::Error::new(io::ErrorKind::TimedOut, "Remote Git status timed out"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "Remote Git status timed out",
+                    ));
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(error) => return Err(io::Error::other(error)),
@@ -1338,7 +1423,9 @@ impl Client {
                 progress(current);
             }
             if cancel.is_cancelled() && !cancelled {
-                if let Some(operation) = self.0.shared.operation(id) { operation.stage("Cancellation requested"); }
+                if let Some(operation) = self.0.shared.operation(id) {
+                    operation.stage("Cancellation requested");
+                }
                 self.notify(Command::Cancel { request: id })?;
                 cancelled = true;
                 start = std::time::Instant::now();
@@ -1358,7 +1445,10 @@ impl Client {
                 if !cancelled {
                     let _ = self.notify(Command::Cancel { request: id });
                 }
-                self.0.shared.stop(id, &io::Error::new(io::ErrorKind::TimedOut, "Remote operation timed out"));
+                self.0.shared.stop(
+                    id,
+                    &io::Error::new(io::ErrorKind::TimedOut, "Remote operation timed out"),
+                );
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     if mutation {
@@ -1380,7 +1470,13 @@ impl Client {
         let (id, result) = self.submit_inner(command, Some((timeout, None)))?;
         let reply = result.recv_timeout(timeout.saturating_sub(started.elapsed()));
         if reply.is_err() {
-            self.0.shared.stop(id, &io::Error::new(io::ErrorKind::TimedOut, "Remote request timed out; verify interrupted saves before retrying"));
+            self.0.shared.stop(
+                id,
+                &io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Remote request timed out; verify interrupted saves before retrying",
+                ),
+            );
         }
         reply.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "Remote request timed out; local edits are retained. Verify interrupted saves before retrying."))?.take()
             .map_err(Failure::into_io)
@@ -1404,28 +1500,55 @@ impl Client {
             ));
         }
         let id = self.0.next_id.fetch_add(1, Ordering::Relaxed);
-        let git_operation = crate::git_output::is_git_command(&command).then(|| {
-            let log = self.0.shared.git_output.lock().unwrap().get(&self.hello().root_uri).cloned();
-            log.and_then(|log| log.git_request(
-                self.0.shared.diagnostics.as_ref().map_or(0, |trace| trace.id),
-                id, &command, &self.hello().root,
-            ))
-        }).flatten();
-        let operation = git_operation.or_else(|| self
-            .0
-            .shared
-            .diagnostics
-            .as_ref()
-            .and_then(|trace| trace.request(id, &command, &self.hello().root)));
+        let git_operation = crate::git_output::is_git_command(&command)
+            .then(|| {
+                let log = self
+                    .0
+                    .shared
+                    .git_output
+                    .lock()
+                    .unwrap()
+                    .get(&self.hello().root_uri)
+                    .cloned();
+                log.and_then(|log| {
+                    log.git_request(
+                        self.0
+                            .shared
+                            .diagnostics
+                            .as_ref()
+                            .map_or(0, |trace| trace.id),
+                        id,
+                        &command,
+                        &self.hello().root,
+                    )
+                })
+            })
+            .flatten();
+        let operation = git_operation.or_else(|| {
+            self.0
+                .shared
+                .diagnostics
+                .as_ref()
+                .and_then(|trace| trace.request(id, &command, &self.hello().root))
+        });
         let submitted = (|| {
             // Search batches wake their worker immediately, without blocking
             // the transport reader. Their total count/bytes retain the same
             // bounds as a single legacy search reply.
             let search_budget = match &command {
-                Command::Search(query) if query.stream => Some((query.limit.min(100_000), MAX_PAYLOAD_BYTES)),
+                Command::Search(query) if query.stream => {
+                    Some((query.limit.min(100_000), MAX_PAYLOAD_BYTES))
+                }
                 _ => None,
             };
-            let git_progress_budget = matches!(&command, Command::GitStatus { progress: Some(_), .. }).then_some(2);
+            let git_progress_budget = matches!(
+                &command,
+                Command::GitStatus {
+                    progress: Some(_),
+                    ..
+                }
+            )
+            .then_some(2);
             let (completed, result) = if search_budget.is_some() || git_progress_budget.is_some() {
                 let (sender, receiver) = mpsc::channel();
                 (Completion::Stream(sender), receiver)
@@ -1600,7 +1723,11 @@ impl Client {
 
 fn write_history_closes(writer: &mut impl Write, closes: Vec<u64>, session: u64) -> io::Result<()> {
     for history in closes {
-        let request = Request { id: 0, workspace: None, command: Command::HistoryClose { history } };
+        let request = Request {
+            id: 0,
+            workspace: None,
+            command: Command::HistoryClose { history },
+        };
         wire::write_message(writer, 'C', session, 0, &wire::encode(&request)?)?;
     }
     Ok(())
@@ -1616,7 +1743,11 @@ fn write_controls(
     write_history_closes(writer, history_closes, session)?;
     let watches = std::mem::take(&mut *shared.watches.lock().unwrap());
     for (root, state) in watches {
-        let request = Request { id: 0, workspace: root, command: state.command() };
+        let request = Request {
+            id: 0,
+            workspace: root,
+            command: state.command(),
+        };
         wire::write_message(writer, 'C', session, 0, &wire::encode(&request)?)?;
     }
     let batch = std::mem::take(&mut *shared.agent_closed.lock().unwrap());

@@ -106,18 +106,34 @@ fn expired_deadline_does_not_keep_quiet_terminals_waking_the_ui() {
 fn terminals_observe_an_exhausted_shared_deadline_and_keep_the_remainder() {
     let (mut app, _exits) = fixture(3);
     for terminal in &app.terminals {
-        terminal.terminal_pty.as_ref().unwrap().test_queue_output(&vec![b'x'; 32 * 1024]);
+        terminal
+            .terminal_pty
+            .as_ref()
+            .unwrap()
+            .test_queue_output(&vec![b'x'; 32 * 1024]);
     }
     let wake = app.background.wake_handle().generation();
     let expired = Instant::now();
     for expected in [1, 2, 0] {
         app.process_terminals_until(expired, || true);
         assert_eq!(app.next_terminal_to_process, expected);
-        assert!(app.terminals.iter().all(|terminal| terminal.terminal_pty.as_ref().unwrap().has_pending_output()));
+        assert!(
+            app.terminals.iter().all(|terminal| terminal
+                .terminal_pty
+                .as_ref()
+                .unwrap()
+                .has_pending_output())
+        );
     }
     assert!(app.background.wake_handle().generation() > wake);
     for _ in 0..200 {
-        if app.terminals.iter().all(|terminal| !terminal.terminal_pty.as_ref().unwrap().has_pending_output()) { return; }
+        if app
+            .terminals
+            .iter()
+            .all(|terminal| !terminal.terminal_pty.as_ref().unwrap().has_pending_output())
+        {
+            return;
+        }
         app.process_terminals();
     }
     panic!("deferred terminal output never completed");
@@ -128,19 +144,32 @@ fn input_interrupts_a_single_busy_terminal_and_remaining_output_resumes_exactly(
     let (mut app, _exits) = fixture(1);
     let mut bytes = vec![0; 255];
     bytes.extend_from_slice("é\x1b[38;2;11;22;33m世界\r\n".repeat(300).as_bytes());
-    app.terminals[0].terminal_pty.as_ref().unwrap().test_queue_output(&bytes);
+    app.terminals[0]
+        .terminal_pty
+        .as_ref()
+        .unwrap()
+        .test_queue_output(&bytes);
     let mut checks = 0;
-    assert!(!app.process_terminals_until(Instant::now() + Duration::from_secs(60), || {
-        checks += 1;
-        false
-    }));
+    assert!(
+        !app.process_terminals_until(Instant::now() + Duration::from_secs(60), || {
+            checks += 1;
+            false
+        })
+    );
     assert_eq!(checks, 1, "a single terminal must observe arriving input");
     let pty = app.terminals[0].terminal_pty.as_ref().unwrap();
     assert!(pty.has_pending_output());
     assert_eq!(pty.grid.cells[0][0].ch, ' ', "yield in the middle of UTF-8");
     pty.test_queue_output(b"newer output");
     for _ in 0..1_000 {
-        if !app.terminals[0].terminal_pty.as_ref().unwrap().has_pending_output() { break; }
+        if !app.terminals[0]
+            .terminal_pty
+            .as_ref()
+            .unwrap()
+            .has_pending_output()
+        {
+            break;
+        }
         app.process_terminals_until(Instant::now() + Duration::from_secs(60), || false);
     }
     bytes.extend_from_slice(b"newer output");
@@ -149,8 +178,10 @@ fn input_interrupts_a_single_busy_terminal_and_remaining_output_resumes_exactly(
     assert!(!actual.has_pending_output());
     assert_eq!(actual.grid.cells, expected.grid.cells);
     assert_eq!(actual.grid.scrollback, expected.grid.scrollback);
-    assert_eq!((actual.grid.cursor_row, actual.grid.cursor_col),
-        (expected.grid.cursor_row, expected.grid.cursor_col));
+    assert_eq!(
+        (actual.grid.cursor_row, actual.grid.cursor_col),
+        (expected.grid.cursor_row, expected.grid.cursor_col)
+    );
 }
 
 #[test]
@@ -163,7 +194,11 @@ fn mid_batch_input_yields_without_starving_other_terminals_or_exits() {
     for expected in [1, 2, 0] {
         assert!(!app.process_terminals_until(Instant::now() + Duration::from_secs(60), || false));
         assert_eq!(app.next_terminal_to_process, expected);
-        assert!(app.terminals.iter().all(|tab| tab.terminal_pty.as_ref().unwrap().has_pending_output()));
+        assert!(
+            app.terminals
+                .iter()
+                .all(|tab| tab.terminal_pty.as_ref().unwrap().has_pending_output())
+        );
     }
     exits[1].send(()).unwrap();
     for _ in 0..3 {
@@ -178,11 +213,13 @@ fn mid_batch_input_yields_without_starving_other_terminals_or_exits() {
 #[ignore = "manual optimized-profile input handoff during sustained terminal output"]
 fn benchmark_build_output_input_handoff() {
     use crate::{app::Tab, editor::Editor};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
     use std::{hint::black_box, time::Duration};
 
-    let bytes = "\x1b[32mCompiling\x1b[0m project/file.rs:123: checking symbols and dependencies\r\n"
-        .repeat(20_000).into_bytes();
+    let bytes =
+        "\x1b[32mCompiling\x1b[0m project/file.rs:123: checking symbols and dependencies\r\n"
+            .repeat(20_000)
+            .into_bytes();
     let mut samples = Vec::new();
     let mut frames = Vec::new();
     let mut checks = Vec::new();
@@ -201,9 +238,19 @@ fn benchmark_build_output_input_handoff() {
             app.animation_settings.set(effect, false);
         }
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-        app.terminals[0].terminal_pty.as_mut().unwrap().resize(120, 30);
-        app.terminals[0].terminal_pty.as_ref().unwrap().test_queue_output(&bytes);
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        app.terminals[0]
+            .terminal_pty
+            .as_mut()
+            .unwrap()
+            .resize(120, 30);
+        app.terminals[0]
+            .terminal_pty
+            .as_ref()
+            .unwrap()
+            .test_queue_output(&bytes);
         let mut polls = 0;
         let start = Instant::now();
         // Input appears at the first opportunity to interrupt ongoing output.
@@ -213,7 +260,9 @@ fn benchmark_build_output_input_handoff() {
         });
         samples.push(start.elapsed());
         app.editor_mut().unwrap().move_down();
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
         frames.push(start.elapsed());
         checks.push(polls);
         assert_eq!(app.editor().unwrap().cursor_line, 1);
@@ -221,6 +270,8 @@ fn benchmark_build_output_input_handoff() {
     }
     samples.sort();
     frames.sort();
-    eprintln!("build output input handoff: service median={:?} p95={:?}; with editor move/draw median={:?} p95={:?}; interrupt checks={}",
-        samples[15], samples[29], frames[15], frames[29], checks[0]);
+    eprintln!(
+        "build output input handoff: service median={:?} p95={:?}; with editor move/draw median={:?} p95={:?}; interrupt checks={}",
+        samples[15], samples[29], frames[15], frames[29], checks[0]
+    );
 }

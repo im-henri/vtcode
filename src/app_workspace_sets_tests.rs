@@ -71,7 +71,10 @@ fn sets_switch_exact_membership_reuse_dirty_documents_and_keep_closed_recovery()
     let (saved, modified) = app.current_workspace_set().unwrap();
     assert!(!modified);
     assert_eq!(saved.active, 0);
-    assert_eq!(saved.roots, [b.path(), a.path()].map(|path| Location::local(path, &crate::portable::base_dir())));
+    assert_eq!(
+        saved.roots,
+        [b.path(), a.path()].map(|path| Location::local(path, &crate::portable::base_dir()))
+    );
     assert!(app.swap_workspace_order(0, 1));
     assert!(app.current_workspace_set().unwrap().1);
     let disk = app.workspaces.sets.path.clone();
@@ -104,7 +107,10 @@ fn sets_switch_exact_membership_reuse_dirty_documents_and_keep_closed_recovery()
     assert_eq!(app.editor().unwrap().save_identity, identity);
     assert!(app.editor().unwrap().rope.to_string().starts_with('B'));
     assert_eq!(
-        app.workspace_entries().into_iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        app.workspace_entries()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>(),
         [1, 0]
     );
     assert!(!app.current_workspace_set().unwrap().1);
@@ -265,10 +271,15 @@ fn title_button_directory_menu_name_input_and_small_frames_share_hit_geometry() 
         );
         draw(&mut app, width, 28);
         let saved_tab = app.workspaces.popup.tabs[1];
-        crate::mouse::handle_mouse(&mut app, MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left), column: saved_tab.x, row: saved_tab.y,
-            modifiers: KeyModifiers::NONE,
-        });
+        crate::mouse::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: saved_tab.x,
+                row: saved_tab.y,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
         assert!(matches!(
             app.workspaces.popup.sets.mode,
             Some(crate::ui_workspace_sets::Mode::List)
@@ -576,9 +587,14 @@ fn hovering_a_set_redraws_its_row_and_management_targets_that_set() {
     crate::ui_workspace_sets::open(&mut app);
     let buffer = draw(&mut app, 120, 28);
     let area = app.workspaces.popup.area;
-    let row = (area.y..area.bottom()).find(|&y| {
-        (area.x..area.right()).map(|x| buffer[(x, y)].symbol()).collect::<String>().contains("Beta")
-    }).unwrap();
+    let row = (area.y..area.bottom())
+        .find(|&y| {
+            (area.x..area.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .contains("Beta")
+        })
+        .unwrap();
     app.mouse_hover_changed = false;
     crate::mouse::handle_mouse(
         &mut app,
@@ -593,10 +609,15 @@ fn hovering_a_set_redraws_its_row_and_management_targets_that_set() {
     let buffer = draw(&mut app, 120, 28);
     let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
     assert!(!text.contains("Update from open folders"));
-    crate::mouse::handle_mouse(&mut app, MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left), column: area.right() - 3, row,
-        modifiers: KeyModifiers::NONE,
-    });
+    crate::mouse::handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.right() - 3,
+            row,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
     let buffer = draw(&mut app, 120, 28);
     let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
     assert!(text.contains("Beta") && text.contains("Update folders"));

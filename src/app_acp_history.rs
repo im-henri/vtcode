@@ -23,9 +23,11 @@ impl ChatState {
     }
 
     pub(super) fn empty_conversation(&self, id: &p::SessionId) -> bool {
-        !self.queues.get(id).is_some_and(|queue| !queue.is_empty()) && self.sessions
-            .get(id)
-            .is_some_and(|s| !s.has_conversation && !s.busy)
+        !self.queues.get(id).is_some_and(|queue| !queue.is_empty())
+            && self
+                .sessions
+                .get(id)
+                .is_some_and(|s| !s.has_conversation && !s.busy)
     }
 
     pub(crate) fn history_delete_unavailable(&self, id: &p::SessionId) -> Option<&'static str> {

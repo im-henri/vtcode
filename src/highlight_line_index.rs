@@ -250,9 +250,13 @@ impl<T, const HOT: usize> LineIndex<T, HOT> {
 
     /// Account for released values while visiting only discarded nodes. Lazy
     /// shifts still leave all surviving rows and their allocations untouched.
-    pub(super) fn shift_after_with_removed(&mut self, line: usize, delta: i128, last: usize,
-        mut removed: impl FnMut(T))
-    {
+    pub(super) fn shift_after_with_removed(
+        &mut self,
+        line: usize,
+        delta: i128,
+        last: usize,
+        mut removed: impl FnMut(T),
+    ) {
         if delta == 0 {
             return;
         }

@@ -97,32 +97,48 @@ fn capture(terminal: &Terminal<TestBackend>, name: &str) {
 fn picker_scrollbar_is_wide_inside_its_frame_and_uses_hover_theme_colors() {
     for theme in ["dark", "light", "high-contrast", "monokai"] {
         let mut app = tests::seeded();
-        app.settings_effective.workbench_color_customizations = serde_json::from_value(serde_json::json!({
-            "menu.background":"#223344", "menu.foreground":"#eef0f4",
-            "menu.border":"#aabbcc", "menu.separatorBackground":"#778899",
-            "scrollbar.background":"#00000020", "scrollbarSlider.background":"#ffffff30",
-            "scrollbarSlider.hoverBackground":"#ffffff90"
-        })).unwrap();
+        app.settings_effective.workbench_color_customizations =
+            serde_json::from_value(serde_json::json!({
+                "menu.background":"#223344", "menu.foreground":"#eef0f4",
+                "menu.border":"#aabbcc", "menu.separatorBackground":"#778899",
+                "scrollbar.background":"#00000020", "scrollbarSlider.background":"#ffffff30",
+                "scrollbarSlider.hoverBackground":"#ffffff90"
+            }))
+            .unwrap();
         app.set_theme_by_key(theme);
         app.mouse_col = u16::MAX;
         app.mouse_row = u16::MAX;
         app.chat.picker = Some(Picker::Models);
-        app.chat.choices = (0..40).map(|i| crate::app_acp::Choice {
-            label: format!("Model choice {i}"), detail: "Model description".into(),
-            action: ChatAction::AgentCommand(format!("model{i}")),
-        }).collect();
+        app.chat.choices = (0..40)
+            .map(|i| crate::app_acp::Choice {
+                label: format!("Model choice {i}"),
+                detail: "Model description".into(),
+                action: ChatAction::AgentCommand(format!("model{i}")),
+            })
+            .collect();
         let mut terminal = Terminal::new(TestBackend::new(92, 34)).unwrap();
         render(&mut app, &mut terminal);
         let (_, y) = position(&terminal, "Model choice 0");
-        let right = (0..92).rev().find(|x| terminal.backend().buffer()[(*x, y)].symbol() == "│").unwrap();
+        let right = (0..92)
+            .rev()
+            .find(|x| terminal.backend().buffer()[(*x, y)].symbol() == "│")
+            .unwrap();
         let background = Color::Rgb(34, 51, 68);
         let (track, thumb) = app.colors.ui.scrollbar_colors(background, false, false);
         for x in right - 2..right {
             let cell = &terminal.backend().buffer()[(x, y)];
             assert_eq!((cell.symbol(), cell.fg, cell.bg), ("█", thumb, track));
-            assert!(!app.chat.hits.iter().any(|hit| hit.area.contains((x, y).into())));
+            assert!(
+                !app.chat
+                    .hits
+                    .iter()
+                    .any(|hit| hit.area.contains((x, y).into()))
+            );
         }
-        assert_eq!(terminal.backend().buffer()[(right, y)].fg, Color::Rgb(170, 187, 204));
+        assert_eq!(
+            terminal.backend().buffer()[(right, y)].fg,
+            Color::Rgb(170, 187, 204)
+        );
         app.mouse_col = right - 1;
         app.mouse_row = y;
         render(&mut app, &mut terminal);
@@ -131,11 +147,15 @@ fn picker_scrollbar_is_wide_inside_its_frame_and_uses_hover_theme_colors() {
         assert_eq!(terminal.backend().buffer()[(right - 1, y)].fg, hover);
         app.handle_chat_mouse(crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: right - 1, row: y + 7, modifiers: crossterm::event::KeyModifiers::NONE,
+            column: right - 1,
+            row: y + 7,
+            modifiers: crossterm::event::KeyModifiers::NONE,
         });
         app.handle_chat_mouse(crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
-            column: right - 1, row: y + 7, modifiers: crossterm::event::KeyModifiers::NONE,
+            column: right - 1,
+            row: y + 7,
+            modifiers: crossterm::event::KeyModifiers::NONE,
         });
         assert_eq!(app.chat.picker, Some(Picker::Models));
         assert!(app.chat.picker_scroll > 0);
@@ -148,29 +168,38 @@ fn picker_scrollbar_is_wide_inside_its_frame_and_uses_hover_theme_colors() {
         capture(&terminal, &format!("wide-scrollbar-{theme}"));
         app.handle_chat_mouse(crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: right - 1, row: bottom, modifiers: crossterm::event::KeyModifiers::NONE,
+            column: right - 1,
+            row: bottom,
+            modifiers: crossterm::event::KeyModifiers::NONE,
         });
         app.chat.choices.truncate(2);
         app.handle_chat_mouse(crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
-            column: right - 1, row: u16::MAX, modifiers: crossterm::event::KeyModifiers::NONE,
+            column: right - 1,
+            row: u16::MAX,
+            modifiers: crossterm::event::KeyModifiers::NONE,
         });
         assert!(app.chat.picker_selected < 2);
         assert_eq!(app.chat.picker_scroll, 0);
         app.chat.choices.clear();
         app.handle_chat_mouse(crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Up(crossterm::event::MouseButton::Left),
-            column: right - 1, row: u16::MAX, modifiers: crossterm::event::KeyModifiers::NONE,
+            column: right - 1,
+            row: u16::MAX,
+            modifiers: crossterm::event::KeyModifiers::NONE,
         });
         assert_eq!(app.chat.picker_selected, 0);
         assert!(app.chat.scroll_drag.is_none());
         app.settings_effective.workbench_color_customizations = Default::default();
         app.set_theme_by_key(theme);
         app.chat.picker_selected = 0;
-        app.chat.choices = (0..40).map(|i| crate::app_acp::Choice {
-            label: format!("Model choice {i}"), detail: "Model description".into(),
-            action: ChatAction::AgentCommand(format!("model{i}")),
-        }).collect();
+        app.chat.choices = (0..40)
+            .map(|i| crate::app_acp::Choice {
+                label: format!("Model choice {i}"),
+                detail: "Model description".into(),
+                action: ChatAction::AgentCommand(format!("model{i}")),
+            })
+            .collect();
         app.mouse_col = u16::MAX;
         app.mouse_row = u16::MAX;
         render(&mut app, &mut terminal);
@@ -199,7 +228,12 @@ fn agent_and_conversation_hover_cards_preserve_opacity_on_the_covered_surface() 
                 .unwrap();
             assert!(app.set_theme_by_key("dark"));
             for (name, action, heading, detail) in [
-                ("agent", ChatAction::Picker(Picker::Display), "Chat display", "Choose tool output"),
+                (
+                    "agent",
+                    ChatAction::Picker(Picker::Display),
+                    "Chat display",
+                    "Choose tool output",
+                ),
                 (
                     "conversation",
                     ChatAction::Switch(session.clone()),
@@ -298,7 +332,10 @@ fn acp_chat_theme_uses_input_button_menu_and_tooltip_pairs() {
     app.active_pane = ActivePane::Editor;
     render(&mut app, &mut terminal);
     let (x, y) = position(&terminal, "Ask anything");
-    assert_eq!(terminal.backend().buffer()[(x - 2, y - 1)].fg, Color::Rgb(199, 154, 183));
+    assert_eq!(
+        terminal.backend().buffer()[(x - 2, y - 1)].fg,
+        Color::Rgb(199, 154, 183)
+    );
     app.active_pane = ActivePane::Chat;
 
     app.chat_action(ChatAction::Picker(Picker::Models));
@@ -365,10 +402,13 @@ fn acp_chat_theme_dropdown_hover_and_focus_outlines_override_the_idle_border() {
     for border in ["#aa66dd80", "#00000000"] {
         let mut app = themed();
         for (role, value) in [
-            ("dropdown.border", border), ("toolbar.hoverOutline", "#ffcc00"),
+            ("dropdown.border", border),
+            ("toolbar.hoverOutline", "#ffcc00"),
             ("focusBorder", "#11cc77"),
         ] {
-            app.settings_effective.workbench_color_customizations.insert(role.into(), value.into());
+            app.settings_effective
+                .workbench_color_customizations
+                .insert(role.into(), value.into());
         }
         assert!(app.set_theme_by_key("high-contrast"));
         app.chat.picker = None;
@@ -379,10 +419,23 @@ fn acp_chat_theme_dropdown_hover_and_focus_outlines_override_the_idle_border() {
             app.mouse_col = if state == 1 { area.x } else { u16::MAX };
             app.mouse_row = if state == 1 { area.y } else { u16::MAX };
             let mut terminal = Terminal::new(TestBackend::new(30, 4)).unwrap();
-            terminal.draw(|frame| {
-                frame.render_widget(Paragraph::new("").style(Style::default().bg(app.colors.bg_sidebar)), frame.area());
-                widgets::draw_button(frame, &mut app, area, "Model", action, true, widgets::ButtonKind::Dropdown);
-            }).unwrap();
+            terminal
+                .draw(|frame| {
+                    frame.render_widget(
+                        Paragraph::new("").style(Style::default().bg(app.colors.bg_sidebar)),
+                        frame.area(),
+                    );
+                    widgets::draw_button(
+                        frame,
+                        &mut app,
+                        area,
+                        "Model",
+                        action,
+                        true,
+                        widgets::ButtonKind::Dropdown,
+                    );
+                })
+                .unwrap();
             let cell = &terminal.backend().buffer()[(area.x, area.y)];
             let expected = match state {
                 1 => Some(Color::Rgb(255, 204, 0)),
@@ -390,8 +443,13 @@ fn acp_chat_theme_dropdown_hover_and_focus_outlines_override_the_idle_border() {
                 _ if border == "#00000000" => None,
                 _ => ColorLayer::rgba(170, 102, 221, 128).border(cell.bg),
             };
-            assert_eq!(cell.modifier.contains(Modifier::UNDERLINED), expected.is_some());
-            if let Some(outline) = expected { assert_eq!(cell.underline_color, outline); }
+            assert_eq!(
+                cell.modifier.contains(Modifier::UNDERLINED),
+                expected.is_some()
+            );
+            if let Some(outline) = expected {
+                assert_eq!(cell.underline_color, outline);
+            }
         }
     }
 }
@@ -416,8 +474,16 @@ fn acp_chat_theme_repaints_cached_messages_terminals_diffs_and_hovered_spans() {
     pair(
         &terminal,
         "●  You",
-        app.colors.ui.chat_avatar_style(app.colors.ui.bg_chat_request).fg.unwrap(),
-        app.colors.ui.chat_avatar_style(app.colors.ui.bg_chat_request).bg.unwrap(),
+        app.colors
+            .ui
+            .chat_avatar_style(app.colors.ui.bg_chat_request)
+            .fg
+            .unwrap(),
+        app.colors
+            .ui
+            .chat_avatar_style(app.colors.ui.bg_chat_request)
+            .bg
+            .unwrap(),
     );
     pair(
         &terminal,
@@ -507,20 +573,32 @@ fn request_bubble_text_code_avatars_and_hover_preserve_their_own_opacity() {
     use crate::theme_workbench::ColorLayer;
     let mut app = themed();
     for (id, value) in [
-        ("sideBar.background", "#15202b"), ("sideBar.foreground", "#ffeeddc0"),
+        ("sideBar.background", "#15202b"),
+        ("sideBar.foreground", "#ffeeddc0"),
         ("chat.requestBubbleBackground", "#66336680"),
         ("chat.requestBubbleHoverBackground", "#57773380"),
-        ("chat.avatarBackground", "#2c4c5c80"), ("chat.avatarForeground", "#ffeecce0"),
-        ("textPreformat.background", "#55663380"), ("textPreformat.foreground", "#ffffdde0"),
-        ("textCodeBlock.background", "#122e4a80"), ("list.hoverForeground", "#eeffbbd0"),
-    ] { app.settings_effective.workbench_color_customizations.insert(id.into(), value.into()); }
+        ("chat.avatarBackground", "#2c4c5c80"),
+        ("chat.avatarForeground", "#ffeecce0"),
+        ("textPreformat.background", "#55663380"),
+        ("textPreformat.foreground", "#ffffdde0"),
+        ("textCodeBlock.background", "#122e4a80"),
+        ("list.hoverForeground", "#eeffbbd0"),
+    ] {
+        app.settings_effective
+            .workbench_color_customizations
+            .insert(id.into(), value.into());
+    }
     assert!(app.set_theme_by_key("dark"));
     app.mouse_col = u16::MAX;
     app.mouse_row = u16::MAX;
     let session = app.chat.session_mut().unwrap();
     *session = Session::new(session.id.clone());
-    session.push(ChatEntry::User("User prose with `request_code`\n\n```text\nrequest_block\n```".into()));
-    session.push(ChatEntry::Agent("Agent prose with `agent_code`\n\n```text\nagent_block\n```".into()));
+    session.push(ChatEntry::User(
+        "User prose with `request_code`\n\n```text\nrequest_block\n```".into(),
+    ));
+    session.push(ChatEntry::Agent(
+        "Agent prose with `agent_code`\n\n```text\nagent_block\n```".into(),
+    ));
     let revision = session.revision;
     let mut terminal = Terminal::new(TestBackend::new(96, 48)).unwrap();
     render(&mut app, &mut terminal);
@@ -528,17 +606,52 @@ fn request_bubble_text_code_avatars_and_hover_preserve_their_own_opacity() {
     let bubble = ColorLayer::rgba(102, 51, 102, 128).over(sidebar).unwrap();
     let agent_avatar = format!("◇  {}", app.chat.name());
     for (prose, avatar, code, block, surface) in [
-        ("User prose", "●  You", "request_code", "request_block", bubble),
-        ("Agent prose", agent_avatar.as_str(), "agent_code", "agent_block", sidebar),
+        (
+            "User prose",
+            "●  You",
+            "request_code",
+            "request_block",
+            bubble,
+        ),
+        (
+            "Agent prose",
+            agent_avatar.as_str(),
+            "agent_code",
+            "agent_block",
+            sidebar,
+        ),
     ] {
-        pair(&terminal, prose, ColorLayer::rgba(255, 238, 221, 192).over(surface).unwrap(), surface);
+        pair(
+            &terminal,
+            prose,
+            ColorLayer::rgba(255, 238, 221, 192).over(surface).unwrap(),
+            surface,
+        );
         let avatar_bg = ColorLayer::rgba(44, 76, 92, 128).over(surface).unwrap();
-        pair(&terminal, avatar, ColorLayer::rgba(255, 238, 204, 224).over(avatar_bg).unwrap(), avatar_bg);
+        pair(
+            &terminal,
+            avatar,
+            ColorLayer::rgba(255, 238, 204, 224)
+                .over(avatar_bg)
+                .unwrap(),
+            avatar_bg,
+        );
         let code_bg = ColorLayer::rgba(85, 102, 51, 128).over(surface).unwrap();
-        pair(&terminal, code, ColorLayer::rgba(255, 255, 221, 224).over(code_bg).unwrap(), code_bg);
-        assert_eq!(cell(&terminal, block).bg, ColorLayer::rgba(18, 46, 74, 128).over(surface).unwrap());
+        pair(
+            &terminal,
+            code,
+            ColorLayer::rgba(255, 255, 221, 224).over(code_bg).unwrap(),
+            code_bg,
+        );
+        assert_eq!(
+            cell(&terminal, block).bg,
+            ColorLayer::rgba(18, 46, 74, 128).over(surface).unwrap()
+        );
     }
-    crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), "chat bubble and avatar opacity");
+    crate::ui_control_visibility_tests::snapshot(
+        terminal.backend().buffer(),
+        "chat bubble and avatar opacity",
+    );
 
     let before = app.chat.cache.entries[0].2.clone();
     // Two raw roles can yield the same cached foreground on the sidebar while
@@ -557,7 +670,10 @@ fn request_bubble_text_code_avatars_and_hover_preserve_their_own_opacity() {
     for label in ["User prose", "●  You", "request_code", "request_block"] {
         pair(&terminal, label, hover_fg, hover);
     }
-    crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), "chat bubble hover opacity");
+    crate::ui_control_visibility_tests::snapshot(
+        terminal.backend().buffer(),
+        "chat bubble hover opacity",
+    );
 
     app.colors.ui.chat_request_hover_background = ColorLayer::rgba(0, 0, 0, 0);
     render(&mut app, &mut terminal);
@@ -574,7 +690,7 @@ fn acp_chat_theme_syntax_registry_changes_recolor_existing_fenced_code() {
     let mut terminal = Terminal::new(TestBackend::new(70, 30)).unwrap();
     app.syntax_theme = "chat-test-syntax".into();
     for color in ["#F2BE76", "#ABE7FF"] {
-        let theme = crate::textmate::Theme::new("chat",color,"#000000",&[]).unwrap();
+        let theme = crate::textmate::Theme::new("chat", color, "#000000", &[]).unwrap();
         app.highlighter.register_theme(&app.syntax_theme, theme);
         render(&mut app, &mut terminal);
         pair(
@@ -657,7 +773,8 @@ fn acp_chat_theme_fallback_palette_changes_refresh_cached_prose() {
     app.colors.ui.preserve_theme_colors = false;
     app.colors.bg_sidebar = Color::Rgb(40, 40, 40);
     app.colors.ui.fg_sidebar = app.colors.bg_sidebar;
-    app.colors.ui.sidebar_foreground = crate::theme_workbench::ColorLayer::opaque(app.colors.bg_sidebar);
+    app.colors.ui.sidebar_foreground =
+        crate::theme_workbench::ColorLayer::opaque(app.colors.bg_sidebar);
     app.colors.ui.contrast_palette = [Color::Rgb(200, 210, 220); 14];
     let mut terminal = Terminal::new(TestBackend::new(110, 35)).unwrap();
     terminal

@@ -107,8 +107,11 @@ fn cached_chrome_preserves_cells_and_targets_across_semantic_changes() {
             expected,
             "warm step={step}"
         );
-        assert_eq!(app.animation_frame_cache.chrome.replays > replays, step != 7,
-            "only visible chrome can be replayed");
+        assert_eq!(
+            app.animation_frame_cache.chrome.replays > replays,
+            step != 7,
+            "only visible chrome can be replayed"
+        );
         assert_eq!(app.code_area, code);
         assert_eq!(app.explorer_area, sidebar);
         assert_eq!(app.activity_bar_area, activity);
@@ -130,7 +133,11 @@ fn search_and_rename_inputs_keep_their_live_mouse_maps_on_cosmetic_frames() {
     let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
     render(&mut app, &mut terminal, false);
     app.open_explorer_find();
-    for id in [TextInputId::ExplorerFind, TextInputId::ExplorerFindPath, TextInputId::ExplorerRename] {
+    for id in [
+        TextInputId::ExplorerFind,
+        TextInputId::ExplorerFindPath,
+        TextInputId::ExplorerRename,
+    ] {
         if id == TextInputId::ExplorerRename {
             app.explorer.find.open = false;
             app.rename.active = true;

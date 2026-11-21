@@ -4,12 +4,12 @@
 pub use agent_client_protocol_schema::{ProtocolVersion, v1 as protocol};
 
 mod files;
-mod model;
 pub mod locations;
+mod model;
 mod process;
-pub use process::command as local_command;
 pub use process::Process as LocalProcess;
 pub use process::ProcessKiller;
+pub use process::command as local_command;
 pub use process::without_controlling_terminal;
 pub mod rollback;
 mod tasks;
@@ -17,11 +17,14 @@ pub mod terminal_history;
 pub mod terminal_style;
 mod transport;
 
-pub use files::{FileEdit, FileRequest, FileBackend, MAX_FILE_BYTES, Workspace};
 pub use files::line_range as text_range;
+pub use files::{FileBackend, FileEdit, FileRequest, MAX_FILE_BYTES, Workspace};
 pub use model::{ChatEntry, Session, content_text};
 pub use tasks::{TaskEntry, TaskList, TaskStatus, tool_tasks};
-pub use transport::{Client, ClientHandle, Command, CommandSink, HostedEvent, Event, Operation, TerminalSnapshot, command_context};
+pub use transport::{
+    Client, ClientHandle, Command, CommandSink, Event, HostedEvent, Operation, TerminalSnapshot,
+    command_context,
+};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

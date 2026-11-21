@@ -343,15 +343,13 @@ impl Evidence {
             update_pool(prior, &self.pools[slot])
         };
         if specificity_order() {
-            return (0..self.pools.len())
-                .step_by(2)
-                .fold(prior, |prior, slot| {
-                    if self.pools[slot].length > self.pools[slot + 1].length {
-                        update(update(prior, slot + 1), slot)
-                    } else {
-                        update(update(prior, slot), slot + 1)
-                    }
-                });
+            return (0..self.pools.len()).step_by(2).fold(prior, |prior, slot| {
+                if self.pools[slot].length > self.pools[slot + 1].length {
+                    update(update(prior, slot + 1), slot)
+                } else {
+                    update(update(prior, slot), slot + 1)
+                }
+            });
         }
         (0..self.pools.len()).fold(prior, update)
     }

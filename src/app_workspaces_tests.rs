@@ -13,14 +13,14 @@ mod edge_tests;
 #[path = "app_workspaces_race_tests.rs"]
 mod race_tests;
 
-#[path = "app_workspace_sets_tests.rs"]
-mod sets_tests;
-#[path = "app_open_folder_tests.rs"]
-mod open_folder_tests;
-#[path = "app_workspaces_idle_tests.rs"]
-mod idle_tests;
 #[path = "app_workspaces_audit_tests.rs"]
 mod audit_tests;
+#[path = "app_workspaces_idle_tests.rs"]
+mod idle_tests;
+#[path = "app_open_folder_tests.rs"]
+mod open_folder_tests;
+#[path = "app_workspace_sets_tests.rs"]
+mod sets_tests;
 #[path = "app_workspaces_warm_tests.rs"]
 mod warm_tests;
 
@@ -313,11 +313,13 @@ fn title_picker_mouse_keyboard_and_small_viewports_use_matching_geometry() {
         .record_workspace_event("Build finished", Level::Done);
     for width in [48, 80, 100, 140, 200] {
         let buffer = draw(&mut app, width, 30);
-        let picker =
-            crate::ui_chrome::workspace_button_area(&app).expect("workspace control fits");
+        let picker = crate::ui_chrome::workspace_button_area(&app).expect("workspace control fits");
         assert!(picker.right() < width - 3);
         let title: String = (0..width).map(|x| buffer[(x, picker.y)].symbol()).collect();
-        assert!(!title.contains('+'), "the title bar only offers the workspace picker");
+        assert!(
+            !title.contains('+'),
+            "the title bar only offers the workspace picker"
+        );
         crate::mouse::handle_mouse(
             &mut app,
             MouseEvent {
@@ -328,7 +330,10 @@ fn title_picker_mouse_keyboard_and_small_viewports_use_matching_geometry() {
             },
         );
         assert!(app.workspaces.popup.open);
-        crate::ui_workspaces::handle_key(&mut app, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+        crate::ui_workspaces::handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Home, KeyModifiers::NONE),
+        );
         let popup = draw(&mut app, width, 30);
         let text: String = popup.content.iter().map(|cell| cell.symbol()).collect();
         assert!(text.contains("Open folders"));
@@ -356,8 +361,12 @@ fn title_picker_mouse_keyboard_and_small_viewports_use_matching_geometry() {
         let buffer = draw(&mut app, width, 25);
         let picker = crate::ui_chrome::workspace_button_area(&app).unwrap();
         let label: String = (picker.x..picker.right())
-            .map(|x| buffer[(x, picker.y)].symbol()).collect();
-        assert!(label.contains('▾'), "wide names must preserve the workspace dropdown");
+            .map(|x| buffer[(x, picker.y)].symbol())
+            .collect();
+        assert!(
+            label.contains('▾'),
+            "wide names must preserve the workspace dropdown"
+        );
         assert_eq!(buffer[(width - 2, 0)].symbol(), "×");
     }
 }

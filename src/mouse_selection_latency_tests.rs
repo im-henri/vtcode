@@ -143,21 +143,29 @@ fn drag_batch_applies_a_short_lines_horizontal_reveal_before_the_next_hit() {
     editor.rope.remove(start..end);
     editor.invalidate_rope_caches();
     editor.horizontal_scroll = 120;
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let area = app.code_area.unwrap();
     crate::mouse::handle_mouse(
         &mut app,
-        pointer(MouseEventKind::Down(MouseButton::Left), area.x + 5, area.y + 3),
+        pointer(
+            MouseEventKind::Down(MouseButton::Left),
+            area.x + 5,
+            area.y + 3,
+        ),
     );
 
     let (sender, receiver) = std::sync::mpsc::channel();
     let mut pump = TerminalEventPump::from_receiver(receiver);
     for (col, row) in [(10, 3), (8, 4), (12, 3)] {
-        sender.send(Ok(Event::Mouse(pointer(
-            MouseEventKind::Drag(MouseButton::Left),
-            area.x + col,
-            area.y + row,
-        )))).unwrap();
+        sender
+            .send(Ok(Event::Mouse(pointer(
+                MouseEventKind::Drag(MouseButton::Left),
+                area.x + col,
+                area.y + row,
+            ))))
+            .unwrap();
     }
     while pump.has_pending_event() {
         assert!(send_drag(&mut pump, &mut app));
@@ -346,7 +354,11 @@ fn drag_endpoint_coalescing_preserves_every_input_and_geometry_boundary() {
             ..drag
         }),
         Event::Mouse(pointer(MouseEventKind::Drag(MouseButton::Right), 50, 8)),
-        Event::Mouse(pointer(MouseEventKind::Drag(MouseButton::Left), 50, area.bottom())),
+        Event::Mouse(pointer(
+            MouseEventKind::Drag(MouseButton::Left),
+            50,
+            area.bottom(),
+        )),
         Event::Mouse(pointer(MouseEventKind::Drag(MouseButton::Left), 9, 8)),
         Event::Mouse(pointer(MouseEventKind::Drag(MouseButton::Left), 110, 8)),
         Event::Mouse(pointer(MouseEventKind::ScrollDown, 50, 8)),
@@ -549,8 +561,16 @@ fn late_selection_refresh_never_crosses_input_boundaries() {
     for case in 0..10 {
         let (mut app, _) = fixture(true);
         let area = app.code_area.unwrap();
-        let old = pointer(MouseEventKind::Drag(MouseButton::Left), area.x + 10, area.y + 3);
-        let fresh = pointer(MouseEventKind::Drag(MouseButton::Left), area.x + 30, area.y + 5);
+        let old = pointer(
+            MouseEventKind::Drag(MouseButton::Left),
+            area.x + 10,
+            area.y + 3,
+        );
+        let fresh = pointer(
+            MouseEventKind::Drag(MouseButton::Left),
+            area.x + 30,
+            area.y + 5,
+        );
         let (sender, receiver) = std::sync::mpsc::channel();
         let mut pump = TerminalEventPump::from_receiver(receiver);
         handle_mouse_input(&mut app, &mut pump, old);
@@ -559,24 +579,52 @@ fn late_selection_refresh_never_crosses_input_boundaries() {
         assert!(drag.is_some());
         let boundary = match case {
             0 => Event::Key(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL)),
-            1 => Event::Mouse(pointer(MouseEventKind::Up(MouseButton::Left), fresh.column, fresh.row)),
-            2 => Event::Mouse(pointer(MouseEventKind::Down(MouseButton::Left), fresh.column, fresh.row)),
+            1 => Event::Mouse(pointer(
+                MouseEventKind::Up(MouseButton::Left),
+                fresh.column,
+                fresh.row,
+            )),
+            2 => Event::Mouse(pointer(
+                MouseEventKind::Down(MouseButton::Left),
+                fresh.column,
+                fresh.row,
+            )),
             3 => Event::Paste("replacement λ\nnext line".into()),
             4 => Event::Resize(180, 60),
             5 => Event::FocusLost,
-            6 => Event::Mouse(MouseEvent { modifiers: KeyModifiers::SHIFT, ..fresh }),
+            6 => Event::Mouse(MouseEvent {
+                modifiers: KeyModifiers::SHIFT,
+                ..fresh
+            }),
             7 => Event::Mouse(pointer(MouseEventKind::Moved, fresh.column, fresh.row)),
-            8 => Event::Mouse(pointer(MouseEventKind::Drag(MouseButton::Left), area.x, area.y + area.height)),
-            _ => Event::Mouse(pointer(MouseEventKind::Drag(MouseButton::Middle), fresh.column, fresh.row)),
+            8 => Event::Mouse(pointer(
+                MouseEventKind::Drag(MouseButton::Left),
+                area.x,
+                area.y + area.height,
+            )),
+            _ => Event::Mouse(pointer(
+                MouseEventKind::Drag(MouseButton::Middle),
+                fresh.column,
+                fresh.row,
+            )),
         };
         sender.send(Ok(boundary.clone())).unwrap();
         sender.send(Ok(Event::Mouse(fresh))).unwrap();
-        assert!(!super::refresh_selection_before_paint(&mut app, &mut pump, &mut drag));
-        assert_eq!(super::input_performance_tests::selection_state(&app), before);
+        assert!(!super::refresh_selection_before_paint(
+            &mut app, &mut pump, &mut drag
+        ));
+        assert_eq!(
+            super::input_performance_tests::selection_state(&app),
+            before
+        );
         assert_eq!(pump.try_recv().unwrap(), Some(boundary));
         assert_eq!(pump.try_recv().unwrap(), Some(Event::Mouse(fresh)));
-        sender.send(Err(std::io::Error::other("input failed"))).unwrap();
-        assert!(!super::refresh_selection_before_paint(&mut app, &mut pump, &mut drag));
+        sender
+            .send(Err(std::io::Error::other("input failed")))
+            .unwrap();
+        assert!(!super::refresh_selection_before_paint(
+            &mut app, &mut pump, &mut drag
+        ));
         assert_eq!(pump.try_recv().unwrap_err().to_string(), "input failed");
     }
 }
@@ -586,8 +634,16 @@ fn late_selection_refresh_rejects_changed_editor_or_gesture_state() {
     for case in 0..6 {
         let (mut app, _) = fixture(false);
         let area = app.code_area.unwrap();
-        let old = pointer(MouseEventKind::Drag(MouseButton::Left), area.x + 10, area.y + 3);
-        let fresh = pointer(MouseEventKind::Drag(MouseButton::Left), area.x + 30, area.y + 5);
+        let old = pointer(
+            MouseEventKind::Drag(MouseButton::Left),
+            area.x + 10,
+            area.y + 3,
+        );
+        let fresh = pointer(
+            MouseEventKind::Drag(MouseButton::Left),
+            area.x + 30,
+            area.y + 5,
+        );
         let (sender, receiver) = std::sync::mpsc::channel();
         let mut pump = TerminalEventPump::from_receiver(receiver);
         handle_mouse_input(&mut app, &mut pump, old);
@@ -602,7 +658,9 @@ fn late_selection_refresh_rejects_changed_editor_or_gesture_state() {
             _ => app.hunk_popup_active = true,
         }
         sender.send(Ok(Event::Mouse(fresh))).unwrap();
-        assert!(!super::refresh_selection_before_paint(&mut app, &mut pump, &mut drag));
+        assert!(!super::refresh_selection_before_paint(
+            &mut app, &mut pump, &mut drag
+        ));
         assert!(drag.is_none());
         assert_eq!(pump.try_recv().unwrap(), Some(Event::Mouse(fresh)));
     }

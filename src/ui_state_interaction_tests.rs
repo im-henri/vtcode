@@ -59,7 +59,11 @@ fn key(app: &mut App, code: KeyCode) {
 fn screen(terminal: &Terminal<TestBackend>) -> Vec<String> {
     let buffer = terminal.backend().buffer();
     (0..buffer.area.height)
-        .map(|y| (0..buffer.area.width).map(|x| buffer[(x, y)].symbol()).collect())
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
+        })
         .collect()
 }
 
@@ -84,7 +88,10 @@ fn keyboard_shortcuts_command_opens_settings_page_instead_of_a_tab() {
     let mut app = fixture();
     assert_eq!(app.tabs.len(), 2);
     assert_eq!(app.tabs[app.active_tab].kind, TabKind::Settings);
-    assert_eq!(app.settings_category_selected, crate::ui_settings_shortcuts::CATEGORY);
+    assert_eq!(
+        app.settings_category_selected,
+        crate::ui_settings_shortcuts::CATEGORY
+    );
     assert!(selected_binding(&app).is_some());
     // Running it again reuses the same Settings tab.
     app.execute_palette_command("keybindings");
@@ -108,35 +115,60 @@ fn shortcut_table_uses_one_line_per_command_with_a_column_header() {
     let (_, header) = find(&terminal, "Command");
     let lines = screen(&terminal);
     assert!(lines[header as usize].contains("Shortcut") && lines[header as usize].contains("When"));
-    let first = app.keybinding_settings_cache.iter()
-        .filter(|(_, _, id)| id.starts_with("kb_")).take(2)
+    let first = app
+        .keybinding_settings_cache
+        .iter()
+        .filter(|(_, _, id)| id.starts_with("kb_"))
+        .take(2)
         .map(|(label, _, _)| label.trim_start_matches("Shortcut: ").to_owned())
         .collect::<Vec<_>>();
     let (_, a) = find(&terminal, &first[0]);
     let (_, b) = find(&terminal, &first[1]);
     assert_eq!(b, a + 1, "consecutive commands sit on consecutive lines");
-    assert!(!lines.iter().any(|line| line.contains("[Unassign]") || line.contains("Shortcut: ")));
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("[Unassign]") || line.contains("Shortcut: "))
+    );
 }
 
 #[test]
 fn single_click_selects_and_double_click_or_key_cap_edits() {
     let mut app = fixture();
     let terminal = draw(&mut app);
-    let next_label = app.settings_items()
+    let next_label = app
+        .settings_items()
         .iter()
         .filter_map(|(label, _, id)| id.starts_with("kb_").then_some(label.clone()))
         .nth(1)
         .unwrap();
     let (x, next_y) = find(&terminal, next_label.trim_start_matches("Shortcut: "));
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x + 1, next_y);
-    assert!(app.shortcut_editor.is_none(), "one click on the name only selects");
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        x + 1,
+        next_y,
+    );
+    assert!(
+        app.shortcut_editor.is_none(),
+        "one click on the name only selects"
+    );
     assert_ne!(selected_binding(&app), None);
     assert!(app.settings_focus_control);
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), x + 1, next_y);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        x + 1,
+        next_y,
+    );
     assert!(app.shortcut_editor.is_some(), "double-click edits");
     key(&mut app, KeyCode::Esc);
     assert!(app.shortcut_editor.is_none());
-    assert_eq!(app.tabs.len(), 2, "Escape cancels capture before closing Settings");
+    assert_eq!(
+        app.tabs.len(),
+        2,
+        "Escape cancels capture before closing Settings"
+    );
 
     // The key cap is itself a button.
     let terminal = draw(&mut app);
@@ -144,7 +176,12 @@ fn single_click_selects_and_double_click_or_key_cap_edits() {
     let (kx, ky) = find(&terminal, &format!(" {keys} "));
     assert_eq!(ky, next_y);
     app.settings_shortcut_click = None;
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), kx + 1, ky);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        kx + 1,
+        ky,
+    );
     assert!(app.shortcut_editor.is_some());
 }
 
@@ -161,7 +198,12 @@ fn hovered_row_offers_change_and_remove_buttons() {
     assert!(line.contains(" Remove "), "{line}");
     let (rx, ry) = find(&terminal, " Remove ");
     assert_eq!(ry, y);
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), rx + 2, ry);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        rx + 2,
+        ry,
+    );
     assert_eq!(app.keybindings[index].display(), "Unassigned");
 }
 
@@ -236,7 +278,10 @@ fn shortcut_assignment_cannot_capture_a_popup_dismissal() {
             _ => app.quick_open_active = true,
         }
         key(&mut app, KeyCode::Esc);
-        assert!(app.shortcut_editor.is_some(), "the popup owns Escape; popup={popup}");
+        assert!(
+            app.shortcut_editor.is_some(),
+            "the popup owns Escape; popup={popup}"
+        );
         assert_eq!(app.tabs.len(), 2, "popup={popup}");
     }
 }

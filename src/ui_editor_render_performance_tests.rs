@@ -555,9 +555,7 @@ fn semantic_color_cache_preserves_language_modifiers_and_missing_selector_behavi
         .collect();
     let expected: Vec<_> = tokens
         .iter()
-        .map(|token| {
-            crate::lsp::themed_semantic_token_style(token, &legend, "rust", Some(&theme))
-        })
+        .map(|token| crate::lsp::themed_semantic_token_style(token, &legend, "rust", Some(&theme)))
         .collect();
     assert_eq!(colors, expected);
     assert_eq!(
@@ -878,8 +876,12 @@ fn benchmark_disabled_large_file_occurrence_target() {
                     // discarded it because whole-file analysis was disabled.
                     let editor = app.editor().unwrap();
                     editor.word_at_cursor().and_then(|word| {
-                        app.editor_analysis_target()
-                            .map(|editor| crate::background::WordOccurrenceTarget { editor, word: word.into() })
+                        app.editor_analysis_target().map(|editor| {
+                            crate::background::WordOccurrenceTarget {
+                                editor,
+                                word: word.into(),
+                            }
+                        })
                     })
                 };
                 assert!(black_box(target).is_none());

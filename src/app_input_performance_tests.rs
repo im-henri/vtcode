@@ -24,21 +24,41 @@ fn input_backlog_is_handled_before_ready_background_results() {
     use crate::ui_work::{Scheduler, Turn};
     let mut app = editor_app();
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     for index in 0..100 {
-        app.background.sender.send(crate::background::BackgroundResult::GitBranch(index.to_string())).unwrap();
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::GitBranch(
+                index.to_string(),
+            ))
+            .unwrap();
     }
     let (sender, receiver) = std::sync::mpsc::channel();
     let mut pump = TerminalEventPump::from_receiver(receiver);
-    sender.send(Ok(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT)))).unwrap();
+    sender
+        .send(Ok(Event::Key(KeyEvent::new(
+            KeyCode::Down,
+            KeyModifiers::SHIFT,
+        ))))
+        .unwrap();
     let now = std::time::Instant::now();
-    assert!(Scheduler::default().next(&mut Turn::new(now), now, pump.has_pending_event()).is_none());
-    let Some(Event::Key(key)) = pump.try_recv().unwrap() else { panic!("lost input") };
+    assert!(
+        Scheduler::default()
+            .next(&mut Turn::new(now), now, pump.has_pending_event())
+            .is_none()
+    );
+    let Some(Event::Key(key)) = pump.try_recv().unwrap() else {
+        panic!("lost input")
+    };
     assert!(!handle_keyboard_input(&mut app, &mut pump, key));
     assert_eq!(app.editor().unwrap().cursor_line, 1);
     assert!(app.editor().unwrap().selection_anchor.is_some());
     assert!(app.background.has_pending_results());
-    for _ in 0..100 { app.poll_background_results(); }
+    for _ in 0..100 {
+        app.poll_background_results();
+    }
     assert_eq!(app.cached_git_branch, "99");
     assert!(!app.background.has_pending_results());
 }
@@ -48,19 +68,34 @@ fn input_backlog_is_handled_before_ready_background_results() {
 fn benchmark_input_latency_with_busy_services() {
     use crate::ui_work::{Scheduler, Service, Turn};
     use std::time::{Duration, Instant};
-    const SERVICES: [Service; 5] = [Service::LanguageServers, Service::Workers, Service::Terminals, Service::Agents, Service::Extensions];
+    const SERVICES: [Service; 5] = [
+        Service::LanguageServers,
+        Service::Workers,
+        Service::Terminals,
+        Service::Agents,
+        Service::Extensions,
+    ];
     let mut latencies = [Vec::new(), Vec::new()];
     let mut final_states = Vec::new();
     for scheduled in [false, true] {
         let mut app = editor_app();
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
         let mut pump = TerminalEventPump::from_receiver(receiver);
         for index in 0..100 {
-            sender.send(Ok(Event::Key(KeyEvent::new(
-                if index % 2 == 0 { KeyCode::Down } else { KeyCode::Right }, KeyModifiers::SHIFT,
-            )))).unwrap();
+            sender
+                .send(Ok(Event::Key(KeyEvent::new(
+                    if index % 2 == 0 {
+                        KeyCode::Down
+                    } else {
+                        KeyCode::Right
+                    },
+                    KeyModifiers::SHIFT,
+                ))))
+                .unwrap();
         }
         let mut remaining = [100; 5];
         let mut scheduler = Scheduler::default();
@@ -68,11 +103,18 @@ fn benchmark_input_latency_with_busy_services() {
             let input_pending = pump.has_pending_event();
             let started = Instant::now();
             let mut work = |service: Service| {
-                let index = SERVICES.iter().position(|candidate| *candidate == service).unwrap();
-                if remaining[index] == 0 { return; }
+                let index = SERVICES
+                    .iter()
+                    .position(|candidate| *candidate == service)
+                    .unwrap();
+                if remaining[index] == 0 {
+                    return;
+                }
                 remaining[index] -= 1;
                 let end = Instant::now() + Duration::from_millis(1);
-                while Instant::now() < end { std::hint::spin_loop(); }
+                while Instant::now() < end {
+                    std::hint::spin_loop();
+                }
             };
             if scheduled {
                 let mut turn = Turn::new(started);
@@ -80,22 +122,39 @@ fn benchmark_input_latency_with_busy_services() {
                     work(service);
                 }
             } else {
-                for service in SERVICES { work(service); }
+                for service in SERVICES {
+                    work(service);
+                }
             }
-            if !input_pending { continue; }
-            let Some(Event::Key(key)) = pump.try_recv().unwrap() else { panic!("lost input") };
+            if !input_pending {
+                continue;
+            }
+            let Some(Event::Key(key)) = pump.try_recv().unwrap() else {
+                panic!("lost input")
+            };
             latencies[usize::from(scheduled)].push(started.elapsed());
             assert!(!handle_keyboard_input(&mut app, &mut pump, key));
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
         }
-        assert_eq!(remaining, [0; 5], "all background work eventually completes");
+        assert_eq!(
+            remaining, [0; 5],
+            "all background work eventually completes"
+        );
         final_states.push((selection_state(&app), terminal.backend().buffer().clone()));
     }
     assert_eq!(final_states[0], final_states[1]);
     for (index, values) in latencies.iter_mut().enumerate() {
         values.sort();
-        eprintln!("mixed service burst scheduled={}: dispatch median={:?}, p95={:?}, max={:?}, events={}",
-            index == 1, values[values.len() / 2], values[values.len() * 95 / 100], values.last().unwrap(), values.len());
+        eprintln!(
+            "mixed service burst scheduled={}: dispatch median={:?}, p95={:?}, max={:?}, events={}",
+            index == 1,
+            values[values.len() / 2],
+            values[values.len() * 95 / 100],
+            values.last().unwrap(),
+            values.len()
+        );
     }
 }
 

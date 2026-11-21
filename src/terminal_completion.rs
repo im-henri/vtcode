@@ -15,9 +15,13 @@ pub(crate) struct Commands {
 
 impl Commands {
     #[cfg(test)]
-    pub(crate) fn finished_count(&self) -> u64 { self.finished }
+    pub(crate) fn finished_count(&self) -> u64 {
+        self.finished
+    }
 
-    pub(crate) fn running(&self) -> bool { self.running }
+    pub(crate) fn running(&self) -> bool {
+        self.running
+    }
 
     pub(crate) fn osc(&mut self, params: &[&[u8]]) {
         if params.len() < 2 || !matches!(params[0], b"133" | b"633") {
@@ -31,9 +35,12 @@ impl Commands {
             b"D" if self.running => {
                 self.finished = self.finished.wrapping_add(1);
                 self.running = false;
-                self.exit_code = params.get(2)
+                self.exit_code = params
+                    .get(2)
                     .and_then(|code| std::str::from_utf8(code).ok()?.parse().ok());
-                if self.exit_code.is_some_and(|code| code != 0) { self.failed = self.failed.wrapping_add(1); }
+                if self.exit_code.is_some_and(|code| code != 0) {
+                    self.failed = self.failed.wrapping_add(1);
+                }
             }
             _ => {}
         }
@@ -49,8 +56,12 @@ pub(crate) struct Notice {
 }
 
 impl Notice {
-    pub(crate) fn finished_count(&self) -> u64 { self.commands.finished }
-    pub(crate) fn failed_count(&self) -> u64 { self.commands.failed }
+    pub(crate) fn finished_count(&self) -> u64 {
+        self.commands.finished
+    }
+    pub(crate) fn failed_count(&self) -> u64 {
+        self.commands.failed
+    }
     pub(crate) fn update(&mut self, commands: Commands, focused: bool, now: Instant) -> bool {
         let changed = commands != self.commands;
         if changed {
@@ -78,8 +89,10 @@ impl Notice {
     }
 
     pub(crate) fn visible(&self, now: Instant) -> bool {
-        self.unread || self.blink_started.is_some_and(|start|
-            now.saturating_duration_since(start) < BLINK_DURATION)
+        self.unread
+            || self
+                .blink_started
+                .is_some_and(|start| now.saturating_duration_since(start) < BLINK_DURATION)
     }
 
     pub(crate) fn failed(&self) -> bool {
@@ -87,16 +100,18 @@ impl Notice {
     }
 
     pub(crate) fn pulse(&self, now: Instant, animate: bool) -> bool {
-        animate && self.blink_started.is_some_and(|start| {
-            let elapsed = now.saturating_duration_since(start);
-            elapsed < BLINK_DURATION && elapsed.as_millis() / BLINK_STEP.as_millis() % 2 == 0
-        })
+        animate
+            && self.blink_started.is_some_and(|start| {
+                let elapsed = now.saturating_duration_since(start);
+                elapsed < BLINK_DURATION && elapsed.as_millis() / BLINK_STEP.as_millis() % 2 == 0
+            })
     }
 
     pub(crate) fn advance(&mut self, now: Instant, animate: bool) -> bool {
         let pulse = self.pulse(now, animate);
-        let expired = self.blink_started.is_some_and(|start|
-            now.saturating_duration_since(start) >= BLINK_DURATION);
+        let expired = self
+            .blink_started
+            .is_some_and(|start| now.saturating_duration_since(start) >= BLINK_DURATION);
         if expired {
             self.blink_started = None;
         }
@@ -130,7 +145,12 @@ mod tests {
         let mut notice = Notice::default();
         let now = Instant::now();
         assert!(!notice.update(terminal.grid.commands, false, now));
-        for chunk in [b"\x1b]13".as_slice(), b"3;C\x1b", b"\\output\x1b]633;C\x07\x1b]633;D;", b"17\x07"] {
+        for chunk in [
+            b"\x1b]13".as_slice(),
+            b"3;C\x1b",
+            b"\\output\x1b]633;C\x07\x1b]633;D;",
+            b"17\x07",
+        ] {
             terminal.test_queue_output(chunk);
             terminal.process_while(|| true);
         }
@@ -141,13 +161,20 @@ mod tests {
         terminal.test_queue_output(b"\x1b]133;D;0\x07");
         terminal.process_while(|| true);
         assert!(!notice.update(terminal.grid.commands, false, now));
-        assert!(notice.failed(), "a duplicate finish must not overwrite the result");
+        assert!(
+            notice.failed(),
+            "a duplicate finish must not overwrite the result"
+        );
     }
 
     #[test]
     fn terminal_completion_survives_screen_resets_and_alternate_screens() {
         for reset in ["\x1bc", "\x1b[?1049htext\x1b[?1049l"] {
-            let terminal = TerminalEmulator::test_with_output(40, 4, &format!("\x1b]633;C\x07{reset}\x1b]633;D;0\x07"));
+            let terminal = TerminalEmulator::test_with_output(
+                40,
+                4,
+                &format!("\x1b]633;C\x07{reset}\x1b]633;D;0\x07"),
+            );
             let mut notice = Notice::default();
             assert!(notice.update(terminal.grid.commands, false, Instant::now()));
             assert!(notice.unread);
@@ -173,18 +200,31 @@ mod tests {
         let later = start + Duration::from_secs(20);
         assert!(notice.unread);
         assert!(!notice.pulse(later, true));
-        assert_eq!(notice.next_wait(later, true), None, "no idle animation polling");
+        assert_eq!(
+            notice.next_wait(later, true),
+            None,
+            "no idle animation polling"
+        );
         assert!(notice.acknowledge());
         assert!(!notice.visible(later));
         assert!(!notice.acknowledge());
 
         commands.osc(&[b"633", b"C"]);
         notice.update(commands, false, later);
-        assert!(!notice.visible(later), "a new command clears the previous result");
+        assert!(
+            !notice.visible(later),
+            "a new command clears the previous result"
+        );
         commands.osc(&[b"633", b"D", b"0"]);
         notice.update(commands, true, later);
-        assert!(!notice.unread, "watching the terminal acknowledges completion");
-        assert!(!notice.visible(later), "a focused terminal must never show completion feedback");
+        assert!(
+            !notice.unread,
+            "watching the terminal acknowledges completion"
+        );
+        assert!(
+            !notice.visible(later),
+            "a focused terminal must never show completion feedback"
+        );
         assert!(!notice.pulse(later, false), "respect disabled animations");
         assert_eq!(notice.next_wait(later, false), None);
         assert!(!notice.advance(later + BLINK_DURATION, false));
@@ -195,6 +235,9 @@ mod tests {
         commands.osc(&[b"633", b"D", b"0"]);
         notice.update(commands, false, later);
         assert!(notice.acknowledge());
-        assert!(!notice.visible(later), "visiting a newly completed terminal also cancels its blink");
+        assert!(
+            !notice.visible(later),
+            "visiting a newly completed terminal also cancels its blink"
+        );
     }
 }

@@ -34,16 +34,42 @@ fn problems_order_refreshes_on_publication_close_and_empty_reports() {
     late.range.start.line = 20;
     late.range.end.line = 20;
     manager.publish_diagnostics(b.clone(), Arc::new(vec![diagnostic("b error")]));
-    manager.publish_diagnostics(a.clone(), Arc::new(vec![warning.clone(), late,
-        diagnostic("first same-position error"), diagnostic("second same-position error")]));
-    let messages = |manager: &mut LspManager| manager.problems_diagnostics()
-        .map(|(_, diagnostic)| diagnostic.message.clone()).collect::<Vec<_>>();
-    let expected = ["first same-position error", "second same-position error", "later error", "b error", "warning"];
+    manager.publish_diagnostics(
+        a.clone(),
+        Arc::new(vec![
+            warning.clone(),
+            late,
+            diagnostic("first same-position error"),
+            diagnostic("second same-position error"),
+        ]),
+    );
+    let messages = |manager: &mut LspManager| {
+        manager
+            .problems_diagnostics()
+            .map(|(_, diagnostic)| diagnostic.message.clone())
+            .collect::<Vec<_>>()
+    };
+    let expected = [
+        "first same-position error",
+        "second same-position error",
+        "later error",
+        "b error",
+        "warning",
+    ];
     assert_eq!(messages(&mut manager), expected);
     assert_eq!(messages(&mut manager), expected);
     // Replacement with the same number of items must also invalidate order.
     manager.publish_diagnostics(b.clone(), Arc::new(vec![warning]));
-    assert_eq!(messages(&mut manager), ["first same-position error", "second same-position error", "later error", "warning", "warning"]);
+    assert_eq!(
+        messages(&mut manager),
+        [
+            "first same-position error",
+            "second same-position error",
+            "later error",
+            "warning",
+            "warning"
+        ]
+    );
     manager.did_close(&a);
     assert_eq!(messages(&mut manager), ["warning"]);
     manager.publish_diagnostics(b, Arc::new(Vec::new()));
@@ -361,7 +387,10 @@ fn repeated_reports_keep_display_storage_but_refresh_quick_fix_data() {
         manager.receive_diagnostics(path.clone(), Some(0), vec![report.clone()], now);
         assert_eq!(manager.diagnostics_version, 1);
         assert_eq!(manager.get_diagnostics(&path).unwrap().as_ptr(), storage);
-        assert_eq!(manager.code_action_diagnostics(&path, 1)[0].data, report.data);
+        assert_eq!(
+            manager.code_action_diagnostics(&path, 1)[0].data,
+            report.data
+        );
     }
     // Every displayed attribute can independently invalidate the cache.
     report.message = "changed error".into();
@@ -379,15 +408,20 @@ fn delayed_display_shares_one_report_and_quick_fixes_reject_unsynchronized_or_st
     let now = Instant::now();
     edit_and_sync(&mut manager, &path, 2, now);
     manager.receive_diagnostics(path.clone(), Some(1), vec![diagnostic("current")], now);
-    assert!(Arc::ptr_eq(&manager.diagnostic_context[&path].diagnostics,
-        &manager.diagnostic_publication.pending[&path].diagnostics));
+    assert!(Arc::ptr_eq(
+        &manager.diagnostic_context[&path].diagnostics,
+        &manager.diagnostic_publication.pending[&path].diagnostics
+    ));
     assert_eq!(manager.code_action_diagnostics(&path, 1).len(), 1);
     manager.invalidate_document_feedback(&path);
     assert!(manager.code_action_diagnostics(&path, 1).is_empty());
     manager.sync_document_owned(&path, 3, "different text".into());
     assert!(manager.code_action_diagnostics(&path, 1).is_empty());
     manager.receive_diagnostics(path.clone(), Some(2), vec![diagnostic("new version")], now);
-    assert_eq!(manager.code_action_diagnostics(&path, 1)[0].message, "new version");
+    assert_eq!(
+        manager.code_action_diagnostics(&path, 1)[0].message,
+        "new version"
+    );
     manager.did_close(&path);
     assert!(manager.current_diagnostic_context(&path).is_none());
 }
@@ -404,8 +438,16 @@ fn late_empty_and_pre_reopen_reports_cannot_repopulate_closed_document_state() {
     assert!(manager.diagnostic_context.is_empty());
     assert_eq!(manager.diagnostics_version, revision);
     manager.sync_document_owned(&path, 3, "reopened".into());
-    manager.receive_diagnostics(path.clone(), Some(1), vec![diagnostic("previous open")], now);
+    manager.receive_diagnostics(
+        path.clone(),
+        Some(1),
+        vec![diagnostic("previous open")],
+        now,
+    );
     assert!(manager.get_diagnostics(&path).is_none());
     manager.receive_diagnostics(path.clone(), Some(0), vec![diagnostic("new open")], now);
-    assert_eq!(manager.get_diagnostics(&path).unwrap()[0].message, "new open");
+    assert_eq!(
+        manager.get_diagnostics(&path).unwrap()[0].message,
+        "new open"
+    );
 }

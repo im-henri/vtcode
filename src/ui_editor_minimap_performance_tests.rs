@@ -43,13 +43,24 @@ fn cached_minimap_matches_reference_after_typing_history_line_shifts_and_theme_c
                 lines: &changes,
                 staged: false,
             }),
-            colors: if step % 2 == 0 { crate::app_theme::EditorTheme::Dark } else { crate::app_theme::EditorTheme::Light }.colors(),
+            colors: if step % 2 == 0 {
+                crate::app_theme::EditorTheme::Dark
+            } else {
+                crate::app_theme::EditorTheme::Light
+            }
+            .colors(),
             hovered: step % 3 == 0,
             active: step % 3 == 1,
         };
         terminal.draw(|frame| draw_minimap(frame, params)).unwrap();
-        reference_terminal.draw(|frame| reference::draw_minimap_reference(frame, params)).unwrap();
-        assert_eq!(terminal.backend().buffer(), reference_terminal.backend().buffer(), "step {step}");
+        reference_terminal
+            .draw(|frame| reference::draw_minimap_reference(frame, params))
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer(),
+            reference_terminal.backend().buffer(),
+            "step {step}"
+        );
         editor.clear_selection();
     }
 }
@@ -84,7 +95,10 @@ fn direct_minimap_cells_match_paragraph_styles_for_unicode_markers_and_clipping(
                             diagnostic_lines: &diagnostics,
                             diagnostic_index: (state != 0).then_some(&diagnostic_index),
                             change_index: (state != 0).then_some(&change_index),
-                            diff_changes: Some(MinimapDiffChanges { lines: &changes, staged: false }),
+                            diff_changes: Some(MinimapDiffChanges {
+                                lines: &changes,
+                                staged: false,
+                            }),
                             colors: theme.colors(),
                             hovered: state == 1,
                             active: state == 2,
@@ -139,7 +153,10 @@ fn benchmark_minimap_direct_cells() {
         diagnostic_lines: &diagnostics,
         diagnostic_index: Some(&diagnostic_index),
         change_index: Some(&change_index),
-        diff_changes: Some(MinimapDiffChanges { lines: &changes, staged: false }),
+        diff_changes: Some(MinimapDiffChanges {
+            lines: &changes,
+            staged: false,
+        }),
         colors: crate::app_theme::EditorTheme::Dark.colors(),
         hovered: false,
         active: false,
@@ -182,7 +199,11 @@ fn direct_scrollbar_cells_match_paragraph_markers_mapped_ranges_and_empty_tracks
     for width in [1, 2, 7] {
         for height in [1, 9, 31] {
             for state in 0..4 {
-                let changes = ChangeRows::from_lines(height as usize, 80, [(0, 'N'), (4, 'D'), (12, 'S'), (28, 'M')]);
+                let changes = ChangeRows::from_lines(
+                    height as usize,
+                    80,
+                    [(0, 'N'), (4, 'D'), (12, 'S'), (28, 'M')],
+                );
                 let params = ScrollbarParams {
                     area: Rect::new(3, 2, width, height),
                     total_lines: if state == 0 { 0 } else { 80 },
@@ -219,7 +240,11 @@ fn direct_scrollbar_cells_match_paragraph_markers_mapped_ranges_and_empty_tracks
                             if direct {
                                 let wrap = crate::diff_wrap::Layout::default();
                                 draw_scrollbar_with_mapping(
-                                    frame, params, mapping.map(|rows| (rows, &wrap)), None, false,
+                                    frame,
+                                    params,
+                                    mapping.map(|rows| (rows, &wrap)),
+                                    None,
+                                    false,
                                 );
                             } else {
                                 reference::draw_scrollbar_reference(frame, params, mapping);
@@ -251,7 +276,10 @@ fn dense_fixture(lines: usize) -> (Editor, Vec<(usize, u8)>, Vec<(usize, char)>)
             _ => ' ',
         })
         .collect();
-    let mut changes: Vec<_> = statuses.iter().copied().enumerate()
+    let mut changes: Vec<_> = statuses
+        .iter()
+        .copied()
+        .enumerate()
         .filter(|&(_, status)| status != ' ')
         .collect();
     editor.set_git_line_status(statuses);
@@ -331,7 +359,10 @@ fn indexed_minimap_and_scrollbar_frames_match_scans_across_resize_and_scroll() {
                                 diagnostic_lines: &diagnostics,
                                 diagnostic_index: indexed.then_some(&diagnostic_index),
                                 change_index: indexed.then_some(&change_index),
-                                diff_changes: Some(MinimapDiffChanges { lines: &changes, staged: false }),
+                                diff_changes: Some(MinimapDiffChanges {
+                                    lines: &changes,
+                                    staged: false,
+                                }),
                                 colors,
                                 hovered: true,
                                 active: false,

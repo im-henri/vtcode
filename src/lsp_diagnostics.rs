@@ -95,17 +95,26 @@ impl LspManager {
         (errors, warnings - errors, rows.len() - warnings)
     }
 
-    pub(crate) fn problems_diagnostics(&mut self) -> impl ExactSizeIterator<Item = (&Path, &LspDiagnostic)> {
+    pub(crate) fn problems_diagnostics(
+        &mut self,
+    ) -> impl ExactSizeIterator<Item = (&Path, &LspDiagnostic)> {
         let cache = &mut self.diagnostic_rows;
         if cache.revision != Some(self.diagnostics_version) {
             cache.paths.clear();
-            cache.paths.extend(self.diagnostics.iter().filter(|(_, items)| !items.is_empty())
-                .map(|(path, _)| path.clone()));
+            cache.paths.extend(
+                self.diagnostics
+                    .iter()
+                    .filter(|(_, items)| !items.is_empty())
+                    .map(|(path, _)| path.clone()),
+            );
             cache.paths.sort_unstable();
             cache.rows.clear();
             for (file, path) in cache.paths.iter().enumerate() {
-                cache.rows.extend(self.diagnostics[path].iter().enumerate()
-                    .map(|(index, diagnostic)| (diagnostic.severity, file, diagnostic.line, index)));
+                cache
+                    .rows
+                    .extend(self.diagnostics[path].iter().enumerate().map(
+                        |(index, diagnostic)| (diagnostic.severity, file, diagnostic.line, index),
+                    ));
             }
             cache.rows.sort_unstable();
             cache.revision = Some(self.diagnostics_version);
@@ -134,7 +143,10 @@ impl LspManager {
 
         // Code actions and delayed publication share one immutable report,
         // including potentially large related-information and fix payloads.
-        let report = DiagnosticReport { version: current, diagnostics: Arc::new(diagnostics) };
+        let report = DiagnosticReport {
+            version: current,
+            diagnostics: Arc::new(diagnostics),
+        };
         self.diagnostic_context.insert(path.clone(), report.clone());
         if !self.diagnostic_publication.remaining(&path, now).is_zero() {
             self.diagnostic_publication.pending.insert(path, report);
@@ -153,14 +165,21 @@ impl LspManager {
         // Nonempty reports must refresh that mapping for a new snapshot.
         let same_snapshot = self.diagnostic_publication.displayed_versions.get(&path)
             == self.doc_versions.get(&path);
-        if (diagnostics.is_empty() || same_snapshot) && self.diagnostics.get(&path).is_some_and(|displayed| {
-            displayed.len() == diagnostics.len() && displayed.iter().zip(diagnostics.iter()).all(|(a, b)| {
-                a.line == b.range.start.line as usize && a.col == b.range.start.character as usize
-                    && a.end_line == b.range.end.line as usize && a.end_col == b.range.end.character as usize
-                    && a.message == b.message
-                    && a.severity == b.severity.unwrap_or(DiagnosticSeverity::INFORMATION)
+        if (diagnostics.is_empty() || same_snapshot)
+            && self.diagnostics.get(&path).is_some_and(|displayed| {
+                displayed.len() == diagnostics.len()
+                    && displayed.iter().zip(diagnostics.iter()).all(|(a, b)| {
+                        a.line == b.range.start.line as usize
+                            && a.col == b.range.start.character as usize
+                            && a.end_line == b.range.end.line as usize
+                            && a.end_col == b.range.end.character as usize
+                            && a.message == b.message
+                            && a.severity == b.severity.unwrap_or(DiagnosticSeverity::INFORMATION)
+                    })
             })
-        }) { return; }
+        {
+            return;
+        }
         let diagnostics = diagnostics
             .iter()
             .map(|diagnostic| LspDiagnostic {
@@ -175,7 +194,9 @@ impl LspManager {
             })
             .collect();
         if let Some(&version) = self.doc_versions.get(&path) {
-            self.diagnostic_publication.displayed_versions.insert(path.clone(), version);
+            self.diagnostic_publication
+                .displayed_versions
+                .insert(path.clone(), version);
         }
         self.diagnostics.insert(path, diagnostics);
         self.diagnostics_version = self.diagnostics_version.wrapping_add(1);
@@ -185,7 +206,7 @@ impl LspManager {
         let report = self.diagnostic_context.get(path)?;
         (!self.diagnostic_dirty_documents.contains(path)
             && self.doc_versions.get(path) == Some(&report.version))
-            .then_some(report.diagnostics.as_slice())
+        .then_some(report.diagnostics.as_slice())
     }
 
     pub(crate) fn publish_pending_diagnostics(&mut self, now: Instant) {

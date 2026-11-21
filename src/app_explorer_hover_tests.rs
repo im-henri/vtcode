@@ -216,12 +216,21 @@ fn remote_explorer_and_tab_tooltips_show_the_remote_machines_paths() {
     use ratatui::{Terminal, backend::TestBackend};
 
     for (native, uri, expected) in [
-        ("/home/remote/project space", "file:///home/remote/project%20space/",
-            "/home/remote/project space/src/white space λ #%.rs"),
-        (r"C:\work\project space", "file:///C:/work/project%20space/",
-            r"C:\work\project space\src\white space λ #%.rs"),
-        (r"\\server\share\project space", "file://server/share/project%20space/",
-            r"\\server\share\project space\src\white space λ #%.rs"),
+        (
+            "/home/remote/project space",
+            "file:///home/remote/project%20space/",
+            "/home/remote/project space/src/white space λ #%.rs",
+        ),
+        (
+            r"C:\work\project space",
+            "file:///C:/work/project%20space/",
+            r"C:\work\project space\src\white space λ #%.rs",
+        ),
+        (
+            r"\\server\share\project space",
+            "file://server/share/project%20space/",
+            r"\\server\share\project space\src\white space λ #%.rs",
+        ),
     ] {
         let hello = remote::Hello {
             version: remote::VERSION,
@@ -232,16 +241,18 @@ fn remote_explorer_and_tab_tooltips_show_the_remote_machines_paths() {
             root_uri: uri.into(),
             session: 42,
         };
-        let client = remote::client::Client::attach(
-            std::io::Cursor::new(Vec::new()), Vec::new(), hello,
-        ).unwrap();
+        let client =
+            remote::client::Client::attach(std::io::Cursor::new(Vec::new()), Vec::new(), hello)
+                .unwrap();
         let workspace = remote::workspace::Workspace::new(client);
         let target = RemotePath::new("src/white space λ #%.rs".as_bytes().to_vec()).unwrap();
         let key = workspace.view_key(&target);
         assert!(key.to_string_lossy().contains("vtcode-remote-"));
         for is_dir in [false, true] {
             for tab_tooltip in [false, true] {
-                if is_dir && tab_tooltip { continue; }
+                if is_dir && tab_tooltip {
+                    continue;
+                }
                 let (_root, mut app) = tooltip_scene(is_dir);
                 let old = app.explorer.entries[0].path.clone();
                 let mut info = app.explorer_hover_info_cache.remove(&old).unwrap();
@@ -259,15 +270,32 @@ fn remote_explorer_and_tab_tooltips_show_the_remote_machines_paths() {
                     app.hovered_explorer = Some(0);
                 }
                 let mut terminal = Terminal::new(TestBackend::new(180, 35)).unwrap();
-                let completed = terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-                let text = completed.buffer.content.iter().map(|cell| cell.symbol()).collect::<String>();
-                assert!(text.contains(expected),
-                    "root={native}, directory={is_dir}, tab={tab_tooltip}: expected {expected:?}");
+                let completed = terminal
+                    .draw(|frame| crate::ui::draw(frame, &mut app))
+                    .unwrap();
+                let text = completed
+                    .buffer
+                    .content
+                    .iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<String>();
+                assert!(
+                    text.contains(expected),
+                    "root={native}, directory={is_dir}, tab={tab_tooltip}: expected {expected:?}"
+                );
                 assert!(!text.contains("vtcode-remote-") && !text.contains('\0'));
-                assert_eq!(workspace.remote_path(&app.explorer.entries[0].path).unwrap(), target);
+                assert_eq!(
+                    workspace
+                        .remote_path(&app.explorer.entries[0].path)
+                        .unwrap(),
+                    target
+                );
                 assert_eq!(app.tab_tooltip_shown, tab_tooltip);
-                assert_eq!(app.background.active_job_count(), 0,
-                    "formatting the tooltip must not request filesystem or network work");
+                assert_eq!(
+                    app.background.active_job_count(),
+                    0,
+                    "formatting the tooltip must not request filesystem or network work"
+                );
             }
         }
     }
@@ -308,12 +336,14 @@ fn commit_details_tabs_allow_explorer_hover_when_selected_hidden_or_in_another_g
         assert!(app.commit_details.active);
         assert_eq!(app.commit_details.visible, placement != 1);
 
-        let explorer_button =
-            crate::ui_chrome::activity_item_regions(app.activity_bar_area.unwrap(), app.activity_bar_position)
-                .into_iter()
-                .find(|(_, index)| *index == 0)
-                .unwrap()
-                .0;
+        let explorer_button = crate::ui_chrome::activity_item_regions(
+            app.activity_bar_area.unwrap(),
+            app.activity_bar_position,
+        )
+        .into_iter()
+        .find(|(_, index)| *index == 0)
+        .unwrap()
+        .0;
         crate::mouse::handle_mouse(&mut app, moved(explorer_button.x + 1, explorer_button.y));
         assert_eq!(app.hovered_activity, Some(0), "placement={placement}");
 

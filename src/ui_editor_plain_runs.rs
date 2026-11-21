@@ -12,7 +12,9 @@ thread_local! {
 
 pub(super) fn enabled() -> bool {
     #[cfg(test)]
-    if REFERENCE.get() { return false; }
+    if REFERENCE.get() {
+        return false;
+    }
     true
 }
 
@@ -21,9 +23,15 @@ pub(super) fn enabled() -> bool {
 /// whitespace still use the existing renderer and its exact rules.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn end(
-    chars: &[char], start: usize, end: usize, colorize_brackets: bool,
-    decorated_indent: usize, bracket_guides: bool, selected: bool,
-    whitespace: &mut LineWhitespace<'_>, source_spaces: &[bool],
+    chars: &[char],
+    start: usize,
+    end: usize,
+    colorize_brackets: bool,
+    decorated_indent: usize,
+    bracket_guides: bool,
+    selected: bool,
+    whitespace: &mut LineWhitespace<'_>,
+    source_spaces: &[bool],
 ) -> usize {
     #[cfg(test)]
     let unicode = !ASCII_ONLY.get();
@@ -32,19 +40,27 @@ pub(super) fn end(
     let mut at = start;
     while at < end {
         let ch = chars[at];
-        let ordinary = if ch.is_ascii() { (' '..='~').contains(&ch) } else {
-            unicode && unicode_width::UnicodeWidthChar::width(ch) == Some(1)
+        let ordinary = if ch.is_ascii() {
+            (' '..='~').contains(&ch)
+        } else {
+            unicode
+                && unicode_width::UnicodeWidthChar::width(ch) == Some(1)
                 && !('\u{1f1e6}'..='\u{1f1ff}').contains(&ch)
         };
-        if !ordinary
-            || (colorize_brackets && matches!(ch, '(' | ')' | '[' | ']' | '{' | '}'))
-        {
+        if !ordinary || (colorize_brackets && matches!(ch, '(' | ')' | '[' | ']' | '{' | '}')) {
             break;
         }
-        if ch == ' ' && (at < decorated_indent || bracket_guides || whitespace.shows(
-            ch, at, at.checked_sub(1).is_some_and(|prev| chars[prev] == ' ')
-                || source_spaces.get(at + 1) == Some(&true), selected,
-        )) {
+        if ch == ' '
+            && (at < decorated_indent
+                || bracket_guides
+                || whitespace.shows(
+                    ch,
+                    at,
+                    at.checked_sub(1).is_some_and(|prev| chars[prev] == ' ')
+                        || source_spaces.get(at + 1) == Some(&true),
+                    selected,
+                ))
+        {
             break;
         }
         at += 1;

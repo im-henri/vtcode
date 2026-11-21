@@ -1,6 +1,8 @@
 //! Mouse capture and clipboard routing for regular workbench terminals.
 use crate::app::{ActivePane, App, TabKind};
-use crossterm::event::{KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::layout::Rect;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -26,16 +28,30 @@ struct TerminalClick {
 
 impl TerminalClicks {
     /// Count every workbench press, including clicks intercepted by overlays.
-    pub(crate) fn press(&mut self) { self.serial = self.serial.wrapping_add(1); }
+    pub(crate) fn press(&mut self) {
+        self.serial = self.serial.wrapping_add(1);
+    }
 
     fn count(&mut self, surface: TerminalSurface, mouse: MouseEvent) -> u8 {
         let time = std::time::Instant::now();
         let position = (mouse.column, mouse.row);
-        let count = self.last.as_ref().filter(|last| last.surface == surface
-            && last.position == position && last.serial.wrapping_add(1) == self.serial
-            && time.duration_since(last.time) < std::time::Duration::from_millis(400))
+        let count = self
+            .last
+            .as_ref()
+            .filter(|last| {
+                last.surface == surface
+                    && last.position == position
+                    && last.serial.wrapping_add(1) == self.serial
+                    && time.duration_since(last.time) < std::time::Duration::from_millis(400)
+            })
             .map_or(1, |last| (last.count + 1).min(3));
-        self.last = Some(TerminalClick { surface, position, time, serial: self.serial, count });
+        self.last = Some(TerminalClick {
+            surface,
+            position,
+            time,
+            serial: self.serial,
+            count,
+        });
         count
     }
 }
@@ -82,8 +98,10 @@ impl App {
                     .find(|surface| surface.area.contains((mouse.column, mouse.row).into()))
                     .and_then(|surface| self.terminals.get(surface.index))
                     .and_then(|terminal| terminal.terminal_pty.as_ref())
-                    .is_some_and(|pty| pty.grid.mouse_tracking != 0
-                        || pty.grid.alternate_scroll_key(mouse.kind).is_some()))
+                    .is_some_and(|pty| {
+                        pty.grid.mouse_tracking != 0
+                            || pty.grid.alternate_scroll_key(mouse.kind).is_some()
+                    }))
     }
 
     fn forward_terminal_mouse_at(&mut self, surface: TerminalSurface, mouse: MouseEvent) {
@@ -146,9 +164,16 @@ impl App {
 
     /// Capture a selection until release, even when the pointer leaves its pane.
     pub(crate) fn handle_terminal_selection_mouse(&mut self, mouse: MouseEvent) -> bool {
-        if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
-            || (matches!(mouse.kind, MouseEventKind::Drag(_))
-                && self.terminal_clicks.last.as_ref().is_some_and(|last| last.position != (mouse.column, mouse.row))) {
+        if matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) || (matches!(mouse.kind, MouseEventKind::Drag(_))
+            && self
+                .terminal_clicks
+                .last
+                .as_ref()
+                .is_some_and(|last| last.position != (mouse.column, mouse.row)))
+        {
             self.terminal_clicks.last = None;
         }
         if let Some(capture) = self.terminal_mouse_capture {
@@ -240,12 +265,19 @@ impl App {
         if surface.index >= self.terminals.len() {
             return false;
         }
-        if matches!(mouse.kind, MouseEventKind::Down(_)) { self.cancel_remote_terminal_location(); }
-        let selected = self.terminals[surface.index].terminal_pty.as_ref()
+        if matches!(mouse.kind, MouseEventKind::Down(_)) {
+            self.cancel_remote_terminal_location();
+        }
+        let selected = self.terminals[surface.index]
+            .terminal_pty
+            .as_ref()
             .is_some_and(|pty| pty.grid.has_selection());
         // A local selection owns Copy even when the child requests mouse input.
         let copy_selection = mouse.kind == MouseEventKind::Down(MouseButton::Right) && selected;
-        if self.terminal_wants_mouse(mouse) && self.terminal_selection_drag.is_none() && !copy_selection {
+        if self.terminal_wants_mouse(mouse)
+            && self.terminal_selection_drag.is_none()
+            && !copy_selection
+        {
             if matches!(mouse.kind, MouseEventKind::Down(_)) {
                 self.focus_terminal_surface(surface);
                 self.terminal_mouse_capture = Some(surface);

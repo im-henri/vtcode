@@ -1,7 +1,11 @@
 //! CommonMark/GFM preview, laid out in terminal cells before viewport scrolling.
 use crate::textmate_backend::HighlightLines;
-use std::{ops::Range, sync::{Arc, Mutex, MutexGuard}};
+use std::{
+    ops::Range,
+    sync::{Arc, Mutex, MutexGuard},
+};
 
+use crate::textmate::{SyntaxRegistry, Theme};
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag};
 use ratatui::{
     Frame,
@@ -10,7 +14,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use crate::textmate::{Theme,SyntaxRegistry};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -18,10 +21,10 @@ use crate::{app::App, app_theme::ThemeColors};
 
 #[path = "ui_markdown_diagrams.rs"]
 mod diagrams;
-#[path = "ui_markdown_markup.rs"]
-mod markup;
 #[path = "ui_markdown_extensions.rs"]
 mod extensions;
+#[path = "ui_markdown_markup.rs"]
+mod markup;
 #[path = "ui_markdown_preview.rs"]
 mod preview;
 pub(crate) use preview::PreviewService;
@@ -31,15 +34,23 @@ pub(crate) fn settle_preview_for_test(app: &mut App, mut draw: impl FnMut(&mut A
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         draw(app);
-        if !app.markdown_previews.busy() { return; }
-        assert!(std::time::Instant::now() < deadline, "Markdown preview did not settle");
+        if !app.markdown_previews.busy() {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Markdown preview did not settle"
+        );
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
 }
 
 #[cfg(test)]
 fn with_preview_for_test<T>(app: &App, inspect: impl FnOnce(&CachedPreview) -> T) -> T {
-    inspect(app.markdown_previews.ready(app.editor().unwrap().navigation_id))
+    inspect(
+        app.markdown_previews
+            .ready(app.editor().unwrap().navigation_id),
+    )
 }
 #[cfg(test)]
 #[path = "ui_markdown_feature_tests.rs"]
@@ -75,11 +86,29 @@ impl From<&ThemeColors> for Palette {
             link: c.fg_md_link,
             code: c.fg_md_code,
             code_bg: c.bg_md_code,
-            inline_code: c.ui.readable_foreground(c.ui.fg_md_inline, c.ui.bg_md_inline, 4.5),
+            inline_code: c
+                .ui
+                .readable_foreground(c.ui.fg_md_inline, c.ui.bg_md_inline, 4.5),
             inline_bg: c.ui.bg_md_inline,
-            quote: c.ui.md_quote_border.over(c.ui.md_quote_background.over(c.bg_editor).unwrap_or(c.bg_editor)).unwrap_or(c.fg_md_blockquote),
+            quote: c
+                .ui
+                .md_quote_border
+                .over(
+                    c.ui.md_quote_background
+                        .over(c.bg_editor)
+                        .unwrap_or(c.bg_editor),
+                )
+                .unwrap_or(c.fg_md_blockquote),
             quote_background: c.ui.md_quote_background.over(c.bg_editor),
-            quote_text: c.ui.editor_foreground.over(c.ui.md_quote_background.over(c.bg_editor).unwrap_or(c.bg_editor)).unwrap_or(c.fg_text),
+            quote_text: c
+                .ui
+                .editor_foreground
+                .over(
+                    c.ui.md_quote_background
+                        .over(c.bg_editor)
+                        .unwrap_or(c.bg_editor),
+                )
+                .unwrap_or(c.fg_text),
             success: c.fg_success,
             warning: c.fg_warning,
             error: c.fg_error,
@@ -115,30 +144,71 @@ impl CachedPreview {
     fn highlight_visible(&mut self, rows: Range<usize>, syntax: (&SyntaxRegistry, Option<&Theme>)) {
         // Layout ranges are sorted. A scroll inspects only the visible fences,
         // and previously highlighted fences retain their measured text/spans.
-        let first = self.code_views.partition_point(|view| view.rows.end <= rows.start);
-        for view in self.code_views[first..].iter().take_while(|view| view.rows.start < rows.end) {
-            if self.document.highlighted().contains(&view.block) { continue; }
-            let Some(path) = self.document.code_paths.get(&view.block) else { continue; };
+        let first = self
+            .code_views
+            .partition_point(|view| view.rows.end <= rows.start);
+        for view in self.code_views[first..]
+            .iter()
+            .take_while(|view| view.rows.start < rows.end)
+        {
+            if self.document.highlighted().contains(&view.block) {
+                continue;
+            }
+            let Some(path) = self.document.code_paths.get(&view.block) else {
+                continue;
+            };
             let mut nodes = &self.document.nodes;
             let mut node = None;
-            for &index in path { node = nodes.get(index); nodes = &node.unwrap().children; }
-            let Some(node) = node else { continue; };
-            let Event::Start(Tag::CodeBlock(kind)) = &node.event else { continue; };
+            for &index in path {
+                node = nodes.get(index);
+                nodes = &node.unwrap().children;
+            }
+            let Some(node) = node else {
+                continue;
+            };
+            let Event::Start(Tag::CodeBlock(kind)) = &node.event else {
+                continue;
+            };
             let previous = self.document.code().get(&view.block).cloned();
-            let mut renderer = Renderer { rows: vec![], code_views: vec![], width: self.width.max(1), palette: self.palette, document: &self.document, syntax: Some(syntax), cancel: None };
+            let mut renderer = Renderer {
+                rows: vec![],
+                code_views: vec![],
+                width: self.width.max(1),
+                palette: self.palette,
+                document: &self.document,
+                syntax: Some(syntax),
+                cancel: None,
+            };
             renderer.code(node, kind, &view.prefix);
             let range = renderer.code_views[0].rows.clone();
-            let stable = range.len() == view.rows.len() && self.rows[view.rows.clone()].iter().zip(&renderer.rows[range.clone()]).all(|(old, new)| {
-                old.source == new.source && old.line.spans.iter().flat_map(|span| span.content.chars()).eq(new.line.spans.iter().flat_map(|span| span.content.chars()))
-            });
+            let stable = range.len() == view.rows.len()
+                && self.rows[view.rows.clone()]
+                    .iter()
+                    .zip(&renderer.rows[range.clone()])
+                    .all(|(old, new)| {
+                        old.source == new.source
+                            && old
+                                .line
+                                .spans
+                                .iter()
+                                .flat_map(|span| span.content.chars())
+                                .eq(new.line.spans.iter().flat_map(|span| span.content.chars()))
+                    });
             if !stable {
                 // A grammar can split a Unicode grapheme across token styles.
                 // Keep literal text if that would move rows or invalidate an
                 // active selection. Do not retry the same grammar every frame.
-                if let Some(previous) = previous { self.document.code().insert(view.block, previous); }
+                if let Some(previous) = previous {
+                    self.document.code().insert(view.block, previous);
+                }
                 continue;
             }
-            for (old, new) in self.rows[view.rows.clone()].iter_mut().zip(renderer.rows.drain(range)) { *old = new; }
+            for (old, new) in self.rows[view.rows.clone()]
+                .iter_mut()
+                .zip(renderer.rows.drain(range))
+            {
+                *old = new;
+            }
         }
     }
 }
@@ -164,10 +234,16 @@ pub(crate) struct PreviewScroll {
 
 impl PreviewScroll {
     fn link_at(&self, col: u16, row: u16) -> Option<Arc<str>> {
-        if !self.body.contains((col, row).into()) { return None; }
+        if !self.body.contains((col, row).into()) {
+            return None;
+        }
         let row = self.row + (row - self.body.y) as usize;
         let cell = (col - self.body.x) as usize;
-        self.links.get(row)?.iter().find(|link| link.cells.contains(&cell)).map(|link| Arc::clone(&link.target))
+        self.links
+            .get(row)?
+            .iter()
+            .find(|link| link.cells.contains(&cell))
+            .map(|link| Arc::clone(&link.target))
     }
     fn update_text(&mut self, rows: Arc<[String]>, body: Rect) {
         if !Arc::ptr_eq(&self.text_rows, &rows) && self.text_rows != rows {
@@ -197,7 +273,9 @@ impl PreviewScroll {
         let mut selected = String::new();
         for row in start.0..=end.0 {
             let text = self.text_rows.get(row)?;
-            if row != start.0 { selected.push('\n'); }
+            if row != start.0 {
+                selected.push('\n');
+            }
             let from = if row == start.0 { start.1 } else { 0 };
             let to = if row == end.0 { end.1 } else { text.len() };
             selected.push_str(text.get(from..to)?);
@@ -216,13 +294,17 @@ impl PreviewScroll {
         let mut width = 0;
         for (byte, grapheme) in text.grapheme_indices(true) {
             width += grapheme.width();
-            if width > cell { return byte; }
+            if width > cell {
+                return byte;
+            }
         }
         text.len()
     }
 
     fn point(&self, col: u16, row: u16) -> (usize, usize) {
-        let row = self.row.saturating_add(row.saturating_sub(self.body.y) as usize)
+        let row = self
+            .row
+            .saturating_add(row.saturating_sub(self.body.y) as usize)
             .min(self.text_rows.len().saturating_sub(1));
         let byte = self.text_rows.get(row).map_or(0, |text| {
             Self::byte_at_cell(text, col.saturating_sub(self.body.x) as usize)
@@ -243,8 +325,10 @@ impl PreviewScroll {
                     self.anchor = Some((point.0, 0));
                     self.cursor.1 = text.len();
                 } else if count == 2 {
-                    if let Some((byte, word)) = text.split_word_bound_indices()
-                        .find(|(byte, word)| *byte <= point.1 && point.1 < byte + word.len()) {
+                    if let Some((byte, word)) = text
+                        .split_word_bound_indices()
+                        .find(|(byte, word)| *byte <= point.1 && point.1 < byte + word.len())
+                    {
                         self.anchor = Some((point.0, byte));
                         self.cursor.1 = byte + word.len();
                     }
@@ -255,22 +339,42 @@ impl PreviewScroll {
     }
 
     fn drag_selection(&mut self, col: u16, row: u16) {
-        if row < self.body.y { self.scroll(-1); }
-        else if row >= self.body.bottom() { self.scroll(1); }
-        self.cursor = self.point(col, row.clamp(self.body.y, self.body.bottom().saturating_sub(1)));
+        if row < self.body.y {
+            self.scroll(-1);
+        } else if row >= self.body.bottom() {
+            self.scroll(1);
+        }
+        self.cursor = self.point(
+            col,
+            row.clamp(self.body.y, self.body.bottom().saturating_sub(1)),
+        );
     }
 
     fn paint_selection(&self, f: &mut Frame, color: Color) {
-        if self.body.height == 0 { return; }
-        let Some((start, end)) = self.selection() else { return };
+        if self.body.height == 0 {
+            return;
+        }
+        let Some((start, end)) = self.selection() else {
+            return;
+        };
         for row in start.0.max(self.row)..=end.0.min(self.row + self.body.height as usize - 1) {
-            let Some(text) = self.text_rows.get(row) else { continue };
+            let Some(text) = self.text_rows.get(row) else {
+                continue;
+            };
             let from = if row == start.0 { start.1 } else { 0 };
             let to = if row == end.0 { end.1 } else { text.len() };
             let left = text[..from].width().min(self.body.width as usize);
-            let right = if row < end.0 { self.body.width as usize } else { text[..to].width().min(self.body.width as usize) };
+            let right = if row < end.0 {
+                self.body.width as usize
+            } else {
+                text[..to].width().min(self.body.width as usize)
+            };
             for col in left..right {
-                f.buffer_mut()[(self.body.x + col as u16, self.body.y + (row - self.row) as u16)].set_bg(color);
+                f.buffer_mut()[(
+                    self.body.x + col as u16,
+                    self.body.y + (row - self.row) as u16,
+                )]
+                    .set_bg(color);
             }
         }
     }
@@ -380,12 +484,23 @@ pub(crate) fn draw_markdown_preview(f: &mut Frame, app: &mut App, area: Rect) {
     let source = editor.scroll_offset;
     let mut viewport = editor.markdown_preview_scroll.clone().unwrap_or_default();
     let key = preview::Key {
-        rope: editor.rope.clone(), width: width as usize, palette,
-        theme: app.syntax_theme.clone(), registry: app.highlighter.registry_generation(),
+        rope: editor.rope.clone(),
+        width: width as usize,
+        palette,
+        theme: app.syntax_theme.clone(),
+        registry: app.highlighter.registry_generation(),
     };
     let syntax = app.highlighter.shared_sets();
-    let display = app.markdown_previews.get(view, key, f.count(), &viewport, source,
-        body.height as usize, syntax.clone(), &app.background);
+    let display = app.markdown_previews.get(
+        view,
+        key,
+        f.count(),
+        &viewport,
+        source,
+        body.height as usize,
+        syntax.clone(),
+        &app.background,
+    );
     let loading = display.loading;
     if let Some(entry) = display.preview {
         viewport.update_text(Arc::clone(&entry.text_rows), body);
@@ -394,39 +509,61 @@ pub(crate) fn draw_markdown_preview(f: &mut Frame, app: &mut App, area: Rect) {
         viewport.update(Arc::clone(&entry.source_rows), source, body.height as usize);
         let start = viewport.row;
         if !loading {
-            entry.highlight_visible(start..start + body.height as usize,
-                (&syntax.0, syntax.1.themes.get(&app.syntax_theme)));
+            entry.highlight_visible(
+                start..start + body.height as usize,
+                (&syntax.0, syntax.1.themes.get(&app.syntax_theme)),
+            );
         }
-        let visible: Vec<Line<'static>> = entry.rows.iter().skip(start)
-            .take(body.height as usize).map(|row| row.line.clone()).collect();
-        f.render_widget(Paragraph::new(visible).style(Style::default().fg(colors.fg_text)), body);
+        let visible: Vec<Line<'static>> = entry
+            .rows
+            .iter()
+            .skip(start)
+            .take(body.height as usize)
+            .map(|row| row.line.clone())
+            .collect();
+        f.render_widget(
+            Paragraph::new(visible).style(Style::default().fg(colors.fg_text)),
+            body,
+        );
         viewport.paint_selection(f, colors.bg_selection);
     } else {
         viewport = PreviewScroll::default();
         viewport.body = body;
-        let message = if display.failed { "Could not prepare Markdown preview." }
-            else { "Preparing Markdown preview…" };
-        f.render_widget(Paragraph::new(message).style(Style::default().fg(colors.fg_dim)), body);
+        let message = if display.failed {
+            "Could not prepare Markdown preview."
+        } else {
+            "Preparing Markdown preview…"
+        };
+        f.render_widget(
+            Paragraph::new(message).style(Style::default().fg(colors.fg_dim)),
+            body,
+        );
     }
     if loading && area.width >= 45 {
         let label = " Updating preview… ";
-        f.render_widget(Paragraph::new(label).style(Style::default().fg(colors.fg_dim).bg(colors.bg_tabbar)),
-            Rect::new(area.right().saturating_sub(label.width() as u16), area.y, label.width() as u16, 1));
+        f.render_widget(
+            Paragraph::new(label).style(Style::default().fg(colors.fg_dim).bg(colors.bg_tabbar)),
+            Rect::new(
+                area.right().saturating_sub(label.width() as u16),
+                area.y,
+                label.width() as u16,
+                1,
+            ),
+        );
     }
     let scrollbar = Rect::new(area.right() - 1, body.y, 1, body.height);
     let (top, size) = viewport.thumb();
     let (track_color, thumb_color) = colors.ui.scrollbar_colors(
-        colors.bg_editor, scrollbar.contains((app.mouse_col, app.mouse_row).into()), app.dragging_v_scrollbar);
+        colors.bg_editor,
+        scrollbar.contains((app.mouse_col, app.mouse_row).into()),
+        app.dragging_v_scrollbar,
+    );
     let track = (0..body.height as usize)
         .map(|row| {
             let thumb = row >= top && row < top + size;
             Line::from(Span::styled(
                 if thumb { "┃" } else { "│" },
-                Style::default().fg(if thumb {
-                    thumb_color
-                } else {
-                    track_color
-                }),
+                Style::default().fg(if thumb { thumb_color } else { track_color }),
             ))
         })
         .collect::<Vec<_>>();
@@ -452,21 +589,40 @@ fn parse_nodes<'a>(events: &mut impl Iterator<Item = (Event<'a>, Range<usize>)>)
     for (event, range) in events.by_ref() {
         let node = match event {
             Event::End(_) => {
-                if flattened > 0 { flattened -= 1; continue; }
-                let Some(node) = stack.pop() else { continue; };
+                if flattened > 0 {
+                    flattened -= 1;
+                    continue;
+                }
+                let Some(node) = stack.pop() else {
+                    continue;
+                };
                 node
             }
             Event::Start(_) => {
                 // Bound layout/drop recursion too. Deeply nested documents keep
                 // their text even once additional indentation is unhelpful.
-                if stack.len() >= 128 { flattened += 1; }
-                else { stack.push(Node { event, range, children: vec![] }); }
+                if stack.len() >= 128 {
+                    flattened += 1;
+                } else {
+                    stack.push(Node {
+                        event,
+                        range,
+                        children: vec![],
+                    });
+                }
                 continue;
             }
-            _ => Node { event, range, children: vec![] },
+            _ => Node {
+                event,
+                range,
+                children: vec![],
+            },
         };
-        if let Some(parent) = stack.last_mut() { parent.children.push(node); }
-        else { nodes.push(node); }
+        if let Some(parent) = stack.last_mut() {
+            parent.children.push(node);
+        } else {
+            nodes.push(node);
+        }
     }
     nodes
 }
@@ -479,14 +635,29 @@ struct Row {
 }
 
 #[derive(Clone, Debug)]
-struct LinkSpan { cells: Range<usize>, target: Arc<str> }
+struct LinkSpan {
+    cells: Range<usize>,
+    target: Arc<str>,
+}
 
 fn append_link(links: &mut Vec<LinkSpan>, target: &Option<Arc<str>>, start: usize, width: usize) {
-    let Some(target) = target else { return; };
-    if width == 0 { return; }
-    if let Some(last) = links.last_mut().filter(|link| link.target == *target && link.cells.end == start) {
+    let Some(target) = target else {
+        return;
+    };
+    if width == 0 {
+        return;
+    }
+    if let Some(last) = links
+        .last_mut()
+        .filter(|link| link.target == *target && link.cells.end == start)
+    {
         last.cells.end += width;
-    } else { links.push(LinkSpan { cells: start..start + width, target: Arc::clone(target) }); }
+    } else {
+        links.push(LinkSpan {
+            cells: start..start + width,
+            target: Arc::clone(target),
+        });
+    }
 }
 
 /// Reuse the editor's CommonMark layout for streamed chat messages.
@@ -509,22 +680,49 @@ pub(crate) fn chat_lines_on_surface(
     surface: Color,
 ) -> Vec<Line<'static>> {
     let palette = surface_palette(colors, surface);
-    PreparedDocument::new(source).render(width, palette, syntax)
-        .into_iter().map(|row| row.line).collect()
+    PreparedDocument::new(source)
+        .render(width, palette, syntax)
+        .into_iter()
+        .map(|row| row.line)
+        .collect()
 }
 
 fn surface_palette(colors: &ThemeColors, surface: Color) -> Palette {
-    let inline_bg = colors.ui.md_inline_background.over(surface).unwrap_or(surface);
+    let inline_bg = colors
+        .ui
+        .md_inline_background
+        .over(surface)
+        .unwrap_or(surface);
     let quote_background = colors.ui.md_quote_background.over(surface);
     let quote_surface = quote_background.unwrap_or(surface);
     Palette {
         text: colors.ui.sidebar_text_color(surface),
-        heading: if colors.ui.preserve_theme_colors { colors.ui.sidebar_text_color(surface) } else { colors.fg_md_heading },
+        heading: if colors.ui.preserve_theme_colors {
+            colors.ui.sidebar_text_color(surface)
+        } else {
+            colors.fg_md_heading
+        },
         quote_background,
         quote_text: colors.ui.sidebar_text_color(quote_surface),
-        quote: colors.ui.md_quote_border.over(quote_surface).unwrap_or(colors.fg_md_blockquote),
-        code_bg: colors.ui.md_code_background.over(surface).unwrap_or(surface),
-        inline_code: colors.ui.readable_foreground(colors.ui.md_inline_foreground.over(inline_bg).unwrap_or(colors.ui.fg_md_inline), inline_bg, 4.5),
+        quote: colors
+            .ui
+            .md_quote_border
+            .over(quote_surface)
+            .unwrap_or(colors.fg_md_blockquote),
+        code_bg: colors
+            .ui
+            .md_code_background
+            .over(surface)
+            .unwrap_or(surface),
+        inline_code: colors.ui.readable_foreground(
+            colors
+                .ui
+                .md_inline_foreground
+                .over(inline_bg)
+                .unwrap_or(colors.ui.fg_md_inline),
+            inline_bg,
+            4.5,
+        ),
         inline_bg,
         ..Palette::from(colors)
     }
@@ -538,16 +736,30 @@ pub(crate) struct EmbeddedMarkdown {
 
 impl EmbeddedMarkdown {
     pub(crate) fn new(source: &str) -> Self {
-        Self { document: PreparedDocument::new(source), cache: None }
+        Self {
+            document: PreparedDocument::new(source),
+            cache: None,
+        }
     }
 
-    pub(crate) fn lines(&mut self, width: usize, colors: &ThemeColors, surface: Color) -> &[Line<'static>] {
+    pub(crate) fn lines(
+        &mut self,
+        width: usize,
+        colors: &ThemeColors,
+        surface: Color,
+    ) -> &[Line<'static>] {
         let palette = surface_palette(colors, surface);
         self.render_lines(width, palette)
     }
 
     /// Embedded language help inherits its widget's foreground and surface.
-    pub(crate) fn widget_lines(&mut self, width: usize, colors: &ThemeColors, surface: Color, foreground: Color) -> &[Line<'static>] {
+    pub(crate) fn widget_lines(
+        &mut self,
+        width: usize,
+        colors: &ThemeColors,
+        surface: Color,
+        foreground: Color,
+    ) -> &[Line<'static>] {
         let mut palette = surface_palette(colors, surface);
         palette.text = foreground;
         palette.heading = foreground;
@@ -559,22 +771,46 @@ impl EmbeddedMarkdown {
     }
 
     fn render_lines(&mut self, width: usize, palette: Palette) -> &[Line<'static>] {
-        if self.cache.as_ref().is_none_or(|(w, p, _)| *w != width || *p != palette) {
-            if self.cache.as_ref().is_some_and(|(_, previous, _)| *previous != palette) {
+        if self
+            .cache
+            .as_ref()
+            .is_none_or(|(w, p, _)| *w != width || *p != palette)
+        {
+            if self
+                .cache
+                .as_ref()
+                .is_some_and(|(_, previous, _)| *previous != palette)
+            {
                 // Prepared spans include colors. Width-only reflow can reuse
                 // them; a theme or translucent surface change cannot.
                 self.document.code().clear();
                 self.document.inline().clear();
                 self.document.highlighted().clear();
             }
-            self.cache = Some((width, palette, self.document.render(width, palette, None).into_iter().map(|row| row.line).collect()));
+            self.cache = Some((
+                width,
+                palette,
+                self.document
+                    .render(width, palette, None)
+                    .into_iter()
+                    .map(|row| row.line)
+                    .collect(),
+            ));
         }
         &self.cache.as_ref().unwrap().2
     }
 }
 
 fn preview_text_rows(rows: &[Row]) -> Arc<[String]> {
-    rows.iter().map(|row| row.line.spans.iter().map(|span| span.content.as_ref()).collect()).collect()
+    rows.iter()
+        .map(|row| {
+            row.line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect()
 }
 #[derive(Clone)]
 struct Piece {
@@ -610,23 +846,33 @@ struct CodeLine {
 impl PreparedDocument {
     fn inline(&self) -> MutexGuard<'_, rustc_hash::FxHashMap<(usize, usize, Style), PreparedText>> {
         #[cfg(test)]
-        self.cache_accesses.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.inline.lock().unwrap_or_else(|error| error.into_inner())
+        self.cache_accesses
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.inline
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
     fn code(&self) -> MutexGuard<'_, rustc_hash::FxHashMap<usize, Arc<[CodeLine]>>> {
         self.code.lock().unwrap_or_else(|error| error.into_inner())
     }
     fn highlighted(&self) -> MutexGuard<'_, rustc_hash::FxHashSet<usize>> {
-        self.highlighted.lock().unwrap_or_else(|error| error.into_inner())
+        self.highlighted
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     fn new(source: &str) -> Self {
         Self::prepare(source, None).expect("uncancelled Markdown preparation")
     }
 
-    fn prepare(source: &str, cancel: Option<&crate::background::CancellationToken>) -> Option<Self> {
+    fn prepare(
+        source: &str,
+        cancel: Option<&crate::background::CancellationToken>,
+    ) -> Option<Self> {
         let cancelled = || cancel.is_some_and(|cancel| cancel.is_cancelled());
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         let (source, source_lines) = extensions::prepare(source);
         let options = Options::ENABLE_TABLES
             | Options::ENABLE_STRIKETHROUGH
@@ -646,27 +892,54 @@ impl PreparedDocument {
                 .take_while(|_| !cancelled())
                 .map(|(event, range)| (event.into_static(), range)),
         );
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         let mut line_starts = vec![0];
         line_starts.extend(source.match_indices('\n').map(|(offset, _)| offset + 1));
-        fn collect_code(nodes: &[Node<'_>], path: &mut Vec<usize>, diagrams: &mut rustc_hash::FxHashMap<usize, diagrams::Diagram>, paths: &mut rustc_hash::FxHashMap<usize, Vec<usize>>) {
+        fn collect_code(
+            nodes: &[Node<'_>],
+            path: &mut Vec<usize>,
+            diagrams: &mut rustc_hash::FxHashMap<usize, diagrams::Diagram>,
+            paths: &mut rustc_hash::FxHashMap<usize, Vec<usize>>,
+        ) {
             for (index, node) in nodes.iter().enumerate() {
                 path.push(index);
                 if let Event::Start(Tag::CodeBlock(kind)) = &node.event {
                     paths.insert(node.range.start, path.clone());
-                    if let CodeBlockKind::Fenced(info) = kind && info.split_whitespace().next() == Some("mermaid") {
-                        let source: String = node.children.iter().filter_map(|node| match &node.event { Event::Text(text) => Some(text.as_ref()), _ => None }).collect();
-                        if let Some(diagram) = diagrams::Diagram::parse(&source) { diagrams.insert(node.range.start, diagram); }
+                    if let CodeBlockKind::Fenced(info) = kind
+                        && info.split_whitespace().next() == Some("mermaid")
+                    {
+                        let source: String = node
+                            .children
+                            .iter()
+                            .filter_map(|node| match &node.event {
+                                Event::Text(text) => Some(text.as_ref()),
+                                _ => None,
+                            })
+                            .collect();
+                        if let Some(diagram) = diagrams::Diagram::parse(&source) {
+                            diagrams.insert(node.range.start, diagram);
+                        }
                     }
-                } else { collect_code(&node.children, path, diagrams, paths); }
+                } else {
+                    collect_code(&node.children, path, diagrams, paths);
+                }
                 path.pop();
             }
         }
         let mut diagrams = rustc_hash::FxHashMap::default();
         let mut code_paths = rustc_hash::FxHashMap::default();
         collect_code(&nodes, &mut vec![], &mut diagrams, &mut code_paths);
-        if cancelled() { return None; }
-        fn anchors(nodes: &[Node<'_>], starts: &[usize], result: &mut rustc_hash::FxHashMap<String, usize>, suffixes: &mut rustc_hash::FxHashMap<String, usize>) {
+        if cancelled() {
+            return None;
+        }
+        fn anchors(
+            nodes: &[Node<'_>],
+            starts: &[usize],
+            result: &mut rustc_hash::FxHashMap<String, usize>,
+            suffixes: &mut rustc_hash::FxHashMap<String, usize>,
+        ) {
             fn label(nodes: &[Node<'_>], out: &mut String) {
                 for node in nodes {
                     match &node.event {
@@ -681,25 +954,58 @@ impl PreparedDocument {
                     Event::Start(Tag::Heading { id, .. }) => {
                         let mut text = String::new();
                         label(&node.children, &mut text);
-                        let slug = id.as_ref().map_or_else(|| text.to_lowercase().chars().filter_map(|c| {
-                            if c.is_whitespace() { Some('-') } else if c.is_alphanumeric() || matches!(c, '-' | '_') { Some(c) } else { None }
-                        }).collect::<String>(), ToString::to_string);
+                        let slug = id.as_ref().map_or_else(
+                            || {
+                                text.to_lowercase()
+                                    .chars()
+                                    .filter_map(|c| {
+                                        if c.is_whitespace() {
+                                            Some('-')
+                                        } else if c.is_alphanumeric() || matches!(c, '-' | '_') {
+                                            Some(c)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect::<String>()
+                            },
+                            ToString::to_string,
+                        );
                         let mut key = slug.clone();
                         let suffix = suffixes.entry(slug.clone()).or_default();
-                        while result.contains_key(&key) { *suffix += 1; key = format!("{slug}-{suffix}"); }
+                        while result.contains_key(&key) {
+                            *suffix += 1;
+                            key = format!("{slug}-{suffix}");
+                        }
                         Some(key)
                     }
                     Event::Start(Tag::FootnoteDefinition(label)) => Some(format!("fn-{label}")),
                     _ => None,
                 };
-                if let Some(key) = key { result.insert(key, starts.partition_point(|&offset| offset <= node.range.start).saturating_sub(1)); }
+                if let Some(key) = key {
+                    result.insert(
+                        key,
+                        starts
+                            .partition_point(|&offset| offset <= node.range.start)
+                            .saturating_sub(1),
+                    );
+                }
                 anchors(&node.children, starts, result, suffixes);
             }
         }
         let mut anchor_map = rustc_hash::FxHashMap::default();
-        anchors(&nodes, &line_starts, &mut anchor_map, &mut rustc_hash::FxHashMap::default());
-        for line in anchor_map.values_mut() { *line = source_lines.get(*line).copied().unwrap_or(*line); }
-        if cancelled() { return None; }
+        anchors(
+            &nodes,
+            &line_starts,
+            &mut anchor_map,
+            &mut rustc_hash::FxHashMap::default(),
+        );
+        for line in anchor_map.values_mut() {
+            *line = source_lines.get(*line).copied().unwrap_or(*line);
+        }
+        if cancelled() {
+            return None;
+        }
         Some(Self {
             #[cfg(test)]
             prepared_on: std::thread::current().id(),
@@ -726,11 +1032,23 @@ impl PreparedDocument {
         self.layout(width, palette, syntax).0
     }
 
-    fn layout(&self, width: usize, palette: Palette, syntax: Option<(&SyntaxRegistry, Option<&Theme>)>) -> (Vec<Row>, Vec<CodeView>) {
-        self.layout_with_cancel(width, palette, syntax, None).expect("uncancelled Markdown layout")
+    fn layout(
+        &self,
+        width: usize,
+        palette: Palette,
+        syntax: Option<(&SyntaxRegistry, Option<&Theme>)>,
+    ) -> (Vec<Row>, Vec<CodeView>) {
+        self.layout_with_cancel(width, palette, syntax, None)
+            .expect("uncancelled Markdown layout")
     }
 
-    fn layout_with_cancel(&self, width: usize, palette: Palette, syntax: Option<(&SyntaxRegistry, Option<&Theme>)>, cancel: Option<&crate::background::CancellationToken>) -> Option<(Vec<Row>, Vec<CodeView>)> {
+    fn layout_with_cancel(
+        &self,
+        width: usize,
+        palette: Palette,
+        syntax: Option<(&SyntaxRegistry, Option<&Theme>)>,
+        cancel: Option<&crate::background::CancellationToken>,
+    ) -> Option<(Vec<Row>, Vec<CodeView>)> {
         let mut renderer = Renderer {
             rows: Vec::new(),
             code_views: Vec::new(),
@@ -742,8 +1060,11 @@ impl PreparedDocument {
         };
         renderer.gap(0, "");
         renderer.blocks(&self.nodes, "", Style::default().fg(palette.text));
-        if cancel.is_some_and(|cancel| cancel.is_cancelled()) { None }
-        else { Some((renderer.rows, renderer.code_views)) }
+        if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+            None
+        } else {
+            Some((renderer.rows, renderer.code_views))
+        }
     }
 }
 
@@ -797,15 +1118,24 @@ fn mapped_viewport_start(rows: &[usize], source_line: usize, height: usize) -> u
 
 impl Renderer<'_> {
     fn source_line(&self, offset: usize) -> usize {
-        let line = self.document
+        let line = self
+            .document
             .line_starts
             .partition_point(|&start| start <= offset)
             .saturating_sub(1);
-        self.document.source_lines.get(line).copied().unwrap_or(line)
+        self.document
+            .source_lines
+            .get(line)
+            .copied()
+            .unwrap_or(line)
     }
     fn piece(&self, text: impl Into<String>, style: Style, offset: usize) -> Piece {
         let text = text.into();
-        let text = if text.chars().any(|ch| ch.is_control() && ch != '\n') { clean_text(&text) } else { text };
+        let text = if text.chars().any(|ch| ch.is_control() && ch != '\n') {
+            clean_text(&text)
+        } else {
+            text
+        };
         Piece {
             span: Span::styled(text, style),
             source: self.source_line(offset),
@@ -881,39 +1211,89 @@ impl Renderer<'_> {
         self.inline_with_html(nodes, style, &mut markup::Html::default())
     }
     fn prose(&self, text: &str, style: Style, at: usize) -> Vec<Piece> {
-        static LINKS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(
-            r"(?i)\b(?:https?://|www\.)[^\s<>]+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"
-        ).unwrap());
+        static LINKS: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(
+                r"(?i)\b(?:https?://|www\.)[^\s<>]+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+            )
+            .unwrap()
+        });
         let mut pieces = Vec::new();
         let mut previous = 0;
         for link in LINKS.find_iter(text) {
             let mut end = link.end();
             let candidate = &text[link.start()..end];
             let mut excess = [
-                candidate.matches(')').count().saturating_sub(candidate.matches('(').count()),
-                candidate.matches(']').count().saturating_sub(candidate.matches('[').count()),
-                candidate.matches('}').count().saturating_sub(candidate.matches('{').count()),
+                candidate
+                    .matches(')')
+                    .count()
+                    .saturating_sub(candidate.matches('(').count()),
+                candidate
+                    .matches(']')
+                    .count()
+                    .saturating_sub(candidate.matches('[').count()),
+                candidate
+                    .matches('}')
+                    .count()
+                    .saturating_sub(candidate.matches('{').count()),
             ];
             while let Some(last) = text[link.start()..end].chars().last() {
-                let bracket = match last { ')' => Some(0), ']' => Some(1), '}' => Some(2), _ => None };
+                let bracket = match last {
+                    ')' => Some(0),
+                    ']' => Some(1),
+                    '}' => Some(2),
+                    _ => None,
+                };
                 let unbalanced = bracket.is_some_and(|i| excess[i] > 0);
-                if unbalanced { excess[bracket.unwrap()] -= 1; }
-                if matches!(last, '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"') || unbalanced { end -= last.len_utf8(); }
-                else { break; }
+                if unbalanced {
+                    excess[bracket.unwrap()] -= 1;
+                }
+                if matches!(last, '.' | ',' | ';' | ':' | '!' | '?' | '\'' | '"') || unbalanced {
+                    end -= last.len_utf8();
+                } else {
+                    break;
+                }
             }
-            if end == link.start() { continue; }
-            if link.start() > previous { pieces.push(self.piece(&text[previous..link.start()], style, at)); }
+            if end == link.start() {
+                continue;
+            }
+            if link.start() > previous {
+                pieces.push(self.piece(&text[previous..link.start()], style, at));
+            }
             let label = &text[link.start()..end];
-            let mut piece = self.piece(label, style.fg(self.palette.link).add_modifier(Modifier::UNDERLINED), at);
-            piece.link = Some(Arc::from(if label.as_bytes().get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"www.")) { format!("https://{label}") }
-                else if label.contains('@') && !label.contains("://") { format!("mailto:{label}") } else { label.into() }));
+            let mut piece = self.piece(
+                label,
+                style
+                    .fg(self.palette.link)
+                    .add_modifier(Modifier::UNDERLINED),
+                at,
+            );
+            piece.link = Some(Arc::from(
+                if label
+                    .as_bytes()
+                    .get(..4)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"www."))
+                {
+                    format!("https://{label}")
+                } else if label.contains('@') && !label.contains("://") {
+                    format!("mailto:{label}")
+                } else {
+                    label.into()
+                },
+            ));
             pieces.push(piece);
             previous = end;
         }
-        if previous < text.len() { pieces.push(self.piece(&text[previous..], style, at)); }
+        if previous < text.len() {
+            pieces.push(self.piece(&text[previous..], style, at));
+        }
         pieces
     }
-    fn inline_with_html(&self, nodes: &[Node<'_>], base: Style, html: &mut markup::Html) -> Vec<Piece> {
+    fn inline_with_html(
+        &self,
+        nodes: &[Node<'_>],
+        base: Style,
+        html: &mut markup::Html,
+    ) -> Vec<Piece> {
         let mut out = Vec::new();
         let mut nodes = nodes.iter().peekable();
         while let Some(node) = nodes.next() {
@@ -937,12 +1317,20 @@ impl Renderer<'_> {
                     let mut children = self.inline_with_html(&node.children, styled, html);
                     if let Tag::Link { dest_url, .. } = tag {
                         let target: Arc<str> = Arc::from(dest_url.as_ref());
-                        if children.is_empty() { children.push(self.piece(dest_url.to_string(), styled, at)); }
-                        for piece in &mut children { piece.link = Some(Arc::clone(&target)); }
+                        if children.is_empty() {
+                            children.push(self.piece(dest_url.to_string(), styled, at));
+                        }
+                        for piece in &mut children {
+                            piece.link = Some(Arc::clone(&target));
+                        }
                     }
                     if matches!(tag, Tag::Superscript | Tag::Subscript) {
                         for piece in &mut children {
-                            piece.span.content = markup::script(&piece.span.content, matches!(tag, Tag::Superscript)).into();
+                            piece.span.content = markup::script(
+                                &piece.span.content,
+                                matches!(tag, Tag::Superscript),
+                            )
+                            .into();
                         }
                     }
                     out.extend(children);
@@ -950,7 +1338,11 @@ impl Renderer<'_> {
                         if node.children.is_empty() {
                             out.push(self.piece("image", styled, at));
                         }
-                        out.push(self.piece(format!("] ({})", markup::image_destination(dest_url)), styled, at));
+                        out.push(self.piece(
+                            format!("] ({})", markup::image_destination(dest_url)),
+                            styled,
+                            at,
+                        ));
                     }
                 }
                 Event::Text(text) if html.visible() => {
@@ -958,21 +1350,43 @@ impl Renderer<'_> {
                     // emphasis delimiter. Join adjacent text once before
                     // detecting links; otherwise only its prefix is clickable.
                     let mut text = std::borrow::Cow::Borrowed(text.as_ref());
-                    while nodes.peek().is_some_and(|node| matches!(node.event, Event::Text(_))) {
-                        if let Event::Text(next) = &nodes.next().unwrap().event { text.to_mut().push_str(next); }
+                    while nodes
+                        .peek()
+                        .is_some_and(|node| matches!(node.event, Event::Text(_)))
+                    {
+                        if let Event::Text(next) = &nodes.next().unwrap().event {
+                            text.to_mut().push_str(next);
+                        }
                     }
-                    if html.literal() { let mut piece = self.piece(html.text(&text), style, at); piece.literal = true; out.push(piece); }
-                    else { out.extend(self.prose(&html.text(&text), style, at)); }
+                    if html.literal() {
+                        let mut piece = self.piece(html.text(&text), style, at);
+                        piece.literal = true;
+                        out.push(piece);
+                    } else {
+                        out.extend(self.prose(&html.text(&text), style, at));
+                    }
                 }
                 Event::Code(text) => {
-                    let mut piece = self.piece(text.to_string(), style.fg(self.palette.inline_code).bg(self.palette.inline_bg), at);
+                    let mut piece = self.piece(
+                        text.to_string(),
+                        style
+                            .fg(self.palette.inline_code)
+                            .bg(self.palette.inline_bg),
+                        at,
+                    );
                     piece.literal = true;
                     out.push(piece);
                 }
                 Event::SoftBreak => out.push(self.piece(" ", style, at)),
                 Event::HardBreak => out.push(self.piece("\n", style, at)),
                 Event::FootnoteReference(label) => {
-                    let mut piece = self.piece(format!("[{label}]"), style.fg(self.palette.link).add_modifier(Modifier::UNDERLINED), at);
+                    let mut piece = self.piece(
+                        format!("[{label}]"),
+                        style
+                            .fg(self.palette.link)
+                            .add_modifier(Modifier::UNDERLINED),
+                        at,
+                    );
                     piece.link = Some(Arc::from(format!("#fn-{label}")));
                     out.push(piece);
                 }
@@ -986,7 +1400,11 @@ impl Renderer<'_> {
                     at,
                 )),
                 Event::Html(text) | Event::InlineHtml(text) => {
-                    out.extend(html.feed(text, base, self.palette).into_iter().map(|(text, style)| self.piece(text, style, at)));
+                    out.extend(
+                        html.feed(text, base, self.palette)
+                            .into_iter()
+                            .map(|(text, style)| self.piece(text, style, at)),
+                    );
                 }
                 Event::InlineMath(text) => {
                     let mut piece = self.piece(markup::math(text), style.fg(self.palette.code), at);
@@ -994,7 +1412,11 @@ impl Renderer<'_> {
                     out.push(piece);
                 }
                 Event::DisplayMath(text) => {
-                    let mut piece = self.piece(format!("\n{}\n", markup::math(text).trim()), style.fg(self.palette.code), at);
+                    let mut piece = self.piece(
+                        format!("\n{}\n", markup::math(text).trim()),
+                        style.fg(self.palette.code),
+                        at,
+                    );
                     piece.literal = true;
                     out.push(piece);
                 }
@@ -1015,9 +1437,14 @@ impl Renderer<'_> {
                 }
                 Event::Start(Tag::Heading { level, .. }) => {
                     self.gap(source, prefix);
-                    let mut heading_style = style.fg(self.palette.heading).add_modifier(Modifier::BOLD);
-                    if matches!(level, HeadingLevel::H4 | HeadingLevel::H6) { heading_style = heading_style.add_modifier(Modifier::ITALIC); }
-                    if matches!(level, HeadingLevel::H5 | HeadingLevel::H6) { heading_style = heading_style.fg(self.palette.dim); }
+                    let mut heading_style =
+                        style.fg(self.palette.heading).add_modifier(Modifier::BOLD);
+                    if matches!(level, HeadingLevel::H4 | HeadingLevel::H6) {
+                        heading_style = heading_style.add_modifier(Modifier::ITALIC);
+                    }
+                    if matches!(level, HeadingLevel::H5 | HeadingLevel::H6) {
+                        heading_style = heading_style.fg(self.palette.dim);
+                    }
                     self.emit(
                         self.inline(&node.children, heading_style),
                         prefix,
@@ -1070,7 +1497,9 @@ impl Renderer<'_> {
                     };
                     let start = self.rows.len();
                     self.blocks(&node.children, &quote_prefix, body_style);
-                    if self.palette.contrast.is_none() && let Some(bg) = self.palette.quote_background {
+                    if self.palette.contrast.is_none()
+                        && let Some(bg) = self.palette.quote_background
+                    {
                         for row in &mut self.rows[start..] {
                             row.line.style = row.line.style.bg(bg);
                         }
@@ -1105,10 +1534,18 @@ impl Renderer<'_> {
                     self.gap(source, prefix);
                 }
                 Event::Start(Tag::CodeBlock(kind)) => self.code(node, kind, prefix),
-                Event::Start(Tag::MetadataBlock(_)) => {},
+                Event::Start(Tag::MetadataBlock(_)) => {}
                 Event::Start(Tag::HtmlBlock) => {
                     self.gap(source, prefix);
-                    self.rows.extend(wrap_pieces(&self.inline(&node.children, style), self.width, prefix, prefix, source, self.palette.quote, true));
+                    self.rows.extend(wrap_pieces(
+                        &self.inline(&node.children, style),
+                        self.width,
+                        prefix,
+                        prefix,
+                        source,
+                        self.palette.quote,
+                        true,
+                    ));
                     self.gap(source, prefix);
                 }
                 Event::Start(Tag::Table(alignments)) => self.table(node, alignments, prefix, style),
@@ -1165,12 +1602,31 @@ impl Renderer<'_> {
         let source = self.source_line(node.range.start);
         if let Some(diagram) = self.document.diagrams.get(&node.range.start) {
             self.gap(source, prefix);
-            self.rule(prefix, &format!("╭─ {} ", diagram.title()), "─", Style::default().fg(self.palette.heading), source);
+            self.rule(
+                prefix,
+                &format!("╭─ {} ", diagram.title()),
+                "─",
+                Style::default().fg(self.palette.heading),
+                source,
+            );
             let width = self.width.saturating_sub(prefix.width()).max(1);
             for line in diagram.lines(width) {
-                self.rows.push(Row { line: Line::from(vec![Span::raw(truncate_cells(prefix, self.width.saturating_sub(1))), Span::styled(line, Style::default().fg(self.palette.code))]), source, links: vec![] });
+                self.rows.push(Row {
+                    line: Line::from(vec![
+                        Span::raw(truncate_cells(prefix, self.width.saturating_sub(1))),
+                        Span::styled(line, Style::default().fg(self.palette.code)),
+                    ]),
+                    source,
+                    links: vec![],
+                });
             }
-            self.rule(prefix, "╰", "─", Style::default().fg(self.palette.dim), self.source_line(node.range.end.saturating_sub(1)));
+            self.rule(
+                prefix,
+                "╰",
+                "─",
+                Style::default().fg(self.palette.dim),
+                self.source_line(node.range.end.saturating_sub(1)),
+            );
             self.gap(self.source_line(node.range.end.saturating_sub(1)), prefix);
             return;
         }
@@ -1184,10 +1640,22 @@ impl Renderer<'_> {
         self.gap(source, prefix);
         let view_start = self.rows.len();
         if !self.palette.compact_code {
-            self.rule(prefix, &format!("╭─ {language} "), "─", style.fg(self.palette.dim), source);
+            self.rule(
+                prefix,
+                &format!("╭─ {language} "),
+                "─",
+                style.fg(self.palette.dim),
+                source,
+            );
         }
-        let cached = self.document.code().get(&node.range.start).cloned()
-            .filter(|_| self.syntax.is_none() || self.document.highlighted().contains(&node.range.start));
+        let cached = self
+            .document
+            .code()
+            .get(&node.range.start)
+            .cloned()
+            .filter(|_| {
+                self.syntax.is_none() || self.document.highlighted().contains(&node.range.start)
+            });
         let lines = if let Some(lines) = cached {
             lines
         } else {
@@ -1206,7 +1674,9 @@ impl Renderer<'_> {
                 if let Event::Text(text) = &child.event {
                     let mut offset = child.range.start;
                     for (line_number, line) in text.split_inclusive('\n').enumerate() {
-                        if self.cancel.is_some_and(|cancel| cancel.is_cancelled()) { return; }
+                        if self.cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+                            return;
+                        }
                         let line_source = self.source_line(child.range.start) + line_number;
                         let expanded = expand_code_tabs(line);
                         let content = expanded.trim_end_matches(['\n', '\r']);
@@ -1214,7 +1684,9 @@ impl Renderer<'_> {
                         // Regex highlighting of generated/minified fences can
                         // otherwise dominate opening a preview. After the limit
                         // keep complete literal text, including subsequent lines.
-                        if line.len() > 4096 || highlighted_bytes > 262_144 { highlighter = None; }
+                        if line.len() > 4096 || highlighted_bytes > 262_144 {
+                            highlighter = None;
+                        }
                         let mut spans: Vec<Piece> = highlighter
                             .as_mut()
                             .map(|h| h.highlight_line(&expanded))
@@ -1222,9 +1694,22 @@ impl Renderer<'_> {
                                 ranges
                                     .into_iter()
                                     .map(|(s, text)| {
-                                        let foreground = crate::ui_colors::syntax_color(s.foreground, self.palette.code_bg);
-                                        let mut token_style = style.fg(crate::ui_colors::ensure_contrast(foreground, self.palette.code_bg, 4.5, crate::ui_colors::contrast_colors(&self.palette.contrast)));
-                                        token_style = token_style.add_modifier(crate::ui_colors::syntax_font_modifiers(s.font_style));
+                                        let foreground = crate::ui_colors::syntax_color(
+                                            s.foreground,
+                                            self.palette.code_bg,
+                                        );
+                                        let mut token_style =
+                                            style.fg(crate::ui_colors::ensure_contrast(
+                                                foreground,
+                                                self.palette.code_bg,
+                                                4.5,
+                                                crate::ui_colors::contrast_colors(
+                                                    &self.palette.contrast,
+                                                ),
+                                            ));
+                                        token_style = token_style.add_modifier(
+                                            crate::ui_colors::syntax_font_modifiers(s.font_style),
+                                        );
                                         self.piece(
                                             text.trim_end_matches(['\n', '\r']),
                                             token_style,
@@ -1233,9 +1718,7 @@ impl Renderer<'_> {
                                     })
                                     .collect()
                             })
-                            .unwrap_or_else(|| {
-                                vec![self.piece(content, style, offset)]
-                            });
+                            .unwrap_or_else(|| vec![self.piece(content, style, offset)]);
                         for piece in &mut spans {
                             piece.source = line_source;
                         }
@@ -1253,8 +1736,14 @@ impl Renderer<'_> {
                 .insert(node.range.start, Arc::clone(&lines));
             lines
         };
-        if self.syntax.is_some() { self.document.highlighted().insert(node.range.start); }
-        let code_prefix = if self.palette.compact_code { prefix.to_owned() } else { format!("{prefix}│ ") };
+        if self.syntax.is_some() {
+            self.document.highlighted().insert(node.range.start);
+        }
+        let code_prefix = if self.palette.compact_code {
+            prefix.to_owned()
+        } else {
+            format!("{prefix}│ ")
+        };
         for line in lines.iter() {
             let first = self.rows.len();
             self.rows.extend(wrap_pieces(
@@ -1273,9 +1762,19 @@ impl Renderer<'_> {
             }
         }
         if !self.palette.compact_code {
-            self.rule(prefix, "╰", "─", style.fg(self.palette.dim), self.source_line(node.range.end.saturating_sub(1)));
+            self.rule(
+                prefix,
+                "╰",
+                "─",
+                style.fg(self.palette.dim),
+                self.source_line(node.range.end.saturating_sub(1)),
+            );
         }
-        self.code_views.push(CodeView { block: node.range.start, rows: view_start..self.rows.len(), prefix: prefix.into() });
+        self.code_views.push(CodeView {
+            block: node.range.start,
+            rows: view_start..self.rows.len(),
+            prefix: prefix.into(),
+        });
         self.gap(self.source_line(node.range.end.saturating_sub(1)), prefix);
     }
     fn table(&mut self, node: &Node<'_>, alignments: &[Alignment], prefix: &str, style: Style) {
@@ -1387,7 +1886,11 @@ impl Renderer<'_> {
                         _ => 0,
                     };
                     if let Some(row) = wrapped[column].get(y) {
-                        links.extend(row.links.iter().map(|link| LinkSpan { cells: link.cells.start + cell_start + left + 1..link.cells.end + cell_start + left + 1, target: Arc::clone(&link.target) }));
+                        links.extend(row.links.iter().map(|link| LinkSpan {
+                            cells: link.cells.start + cell_start + left + 1
+                                ..link.cells.end + cell_start + left + 1,
+                            target: Arc::clone(&link.target),
+                        }));
                     }
                     cell_start += widths[column] + 3;
                     spans.push(Span::raw(" ".repeat(left + 1)));
@@ -1463,7 +1966,9 @@ fn clean_text(text: &str) -> String {
 }
 
 fn expand_code_tabs(text: &str) -> String {
-    if !text.contains('\t') { return text.to_owned(); }
+    if !text.contains('\t') {
+        return text.to_owned();
+    }
     let mut out = String::with_capacity(text.len());
     let mut column = 0;
     for glyph in text.graphemes(true) {
@@ -1471,7 +1976,14 @@ fn expand_code_tabs(text: &str) -> String {
             let spaces = 4 - column % 4;
             out.extend(std::iter::repeat_n(' ', spaces));
             column += spaces;
-        } else { out.push_str(glyph); if glyph.contains('\n') { column = 0; } else { column += glyph.width(); } }
+        } else {
+            out.push_str(glyph);
+            if glyph.contains('\n') {
+                column = 0;
+            } else {
+                column += glyph.width();
+            }
+        }
     }
     out
 }
@@ -1576,11 +2088,32 @@ fn append_fragment(line: &mut Line<'static>, text: &str, style: Style, merge: bo
 
 /// Reflow small language-help paragraphs without losing active parameter styles.
 pub(crate) fn wrap_help_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
-    lines.into_iter().flat_map(|line| {
-        let pieces = line.spans.into_iter().map(|span| Piece { span, source: 0, literal: true, link: None }).collect::<Vec<_>>();
-        wrap_pieces(&PreparedText::from(pieces), width.max(1), "", "", 0, Color::Reset, true)
-            .into_iter().map(|row| row.line)
-    }).collect()
+    lines
+        .into_iter()
+        .flat_map(|line| {
+            let pieces = line
+                .spans
+                .into_iter()
+                .map(|span| Piece {
+                    span,
+                    source: 0,
+                    literal: true,
+                    link: None,
+                })
+                .collect::<Vec<_>>();
+            wrap_pieces(
+                &PreparedText::from(pieces),
+                width.max(1),
+                "",
+                "",
+                0,
+                Color::Reset,
+                true,
+            )
+            .into_iter()
+            .map(|row| row.line)
+        })
+        .collect()
 }
 
 /// Reflow already measured text. The common path copies whole styled words;
@@ -1627,13 +2160,36 @@ fn wrap_pieces(
                 continue;
             }
         }
-        if !preserve_spaces && whitespace && used == indent && word.fragments.iter().all(|fragment| !text.0.pieces[fragment.piece].literal) {
+        if !preserve_spaces
+            && whitespace
+            && used == indent
+            && word
+                .fragments
+                .iter()
+                .all(|fragment| !text.0.pieces[fragment.piece].literal)
+        {
             continue;
         }
-        if !preserve_spaces && whitespace && word.fragments.iter().all(|fragment| !text.0.pieces[fragment.piece].literal) {
+        if !preserve_spaces
+            && whitespace
+            && word
+                .fragments
+                .iter()
+                .all(|fragment| !text.0.pieces[fragment.piece].literal)
+        {
             if used < width {
-                append_fragment(&mut line, " ", text.0.pieces[word.fragments[0].piece].span.style, used > indent);
-                append_link(&mut links, &text.0.pieces[word.fragments[0].piece].link, used, 1);
+                append_fragment(
+                    &mut line,
+                    " ",
+                    text.0.pieces[word.fragments[0].piece].span.style,
+                    used > indent,
+                );
+                append_link(
+                    &mut links,
+                    &text.0.pieces[word.fragments[0].piece].link,
+                    used,
+                    1,
+                );
                 used += 1;
             }
             continue;
@@ -1690,8 +2246,14 @@ fn wrap_pieces(
     rows
 }
 
-fn preview_link_url(target: &str, path: Option<&std::path::Path>, remote: Option<&crate::remote::workspace::Workspace>) -> Option<url::Url> {
-    if let Ok(uri) = url::Url::parse(target) { return Some(uri); }
+fn preview_link_url(
+    target: &str,
+    path: Option<&std::path::Path>,
+    remote: Option<&crate::remote::workspace::Workspace>,
+) -> Option<url::Url> {
+    if let Ok(uri) = url::Url::parse(target) {
+        return Some(uri);
+    }
     let base = if let Some(remote) = remote {
         let local = url::Url::from_file_path(path?).ok()?;
         url::Url::parse(&remote.lsp_uri(local.as_str(), true)?).ok()?
@@ -1704,55 +2266,104 @@ fn preview_link_url(target: &str, path: Option<&std::path::Path>, remote: Option
 
 impl App {
     pub(crate) fn markdown_preview_link_click(&mut self, col: u16, row: u16) -> bool {
-        let Some(target) = self.editor().and_then(|ed| ed.markdown_preview_scroll.as_ref()).and_then(|view| view.link_at(col, row)) else { return false; };
+        let Some(target) = self
+            .editor()
+            .and_then(|ed| ed.markdown_preview_scroll.as_ref())
+            .and_then(|view| view.link_at(col, row))
+        else {
+            return false;
+        };
         if let Some(anchor) = target.strip_prefix('#') {
             let anchor = crate::path_links::decode_percent_escapes(anchor);
             let editor = self.editor_mut().unwrap();
             let view = editor.markdown_preview_scroll.as_mut().unwrap();
-            if let Some(source) = if anchor.is_empty() { Some(0) } else { view.anchors.get(&anchor).copied() } {
+            if let Some(source) = if anchor.is_empty() {
+                Some(0)
+            } else {
+                view.anchors.get(&anchor).copied()
+            } {
                 let row = mapped_viewport_start(&view.source_rows, source, view.height);
                 view.set_row(row);
                 view.clear_selection();
                 view.selecting = false;
                 editor.scroll_offset = view.source_scroll;
                 self.sync_markdown_preview_state();
-            } else { self.notify_warn(format!("Markdown heading not found: {anchor}")); }
+            } else {
+                self.notify_warn(format!("Markdown heading not found: {anchor}"));
+            }
             return true;
         }
-        if target.chars().any(char::is_control) { self.notify_warn("Invalid Markdown link"); return true; }
-        let url = preview_link_url(&target, self.editor().and_then(|ed| ed.file_path.as_deref()), self.remote_workspace.as_ref());
+        if target.chars().any(char::is_control) {
+            self.notify_warn("Invalid Markdown link");
+            return true;
+        }
+        let url = preview_link_url(
+            &target,
+            self.editor().and_then(|ed| ed.file_path.as_deref()),
+            self.remote_workspace.as_ref(),
+        );
         match url.as_ref().map(url::Url::scheme) {
-            Some("http" | "https" | "mailto" | "tel") => self.open_external(crate::external_open::Request::Url(url.unwrap().to_string())),
+            Some("http" | "https" | "mailto" | "tel") => {
+                self.open_external(crate::external_open::Request::Url(url.unwrap().to_string()))
+            }
             Some("file") => {
                 let url = url.unwrap();
-                let path = self.remote_workspace.as_ref().map_or_else(|| url.to_file_path().ok(), |remote| remote.file_uri_key(url.as_str()));
+                let path = self.remote_workspace.as_ref().map_or_else(
+                    || url.to_file_path().ok(),
+                    |remote| remote.file_uri_key(url.as_str()),
+                );
                 if let Some(path) = path {
                     if self.remote_workspace.is_some() {
-                        self.open_remote_location(path, None, crate::app_remote_navigation::Source::Markdown);
-                    } else { self.push_nav_history(); self.open_file(&path); }
+                        self.open_remote_location(
+                            path,
+                            None,
+                            crate::app_remote_navigation::Source::Markdown,
+                        );
+                    } else {
+                        self.push_nav_history();
+                        self.open_file(&path);
+                    }
+                } else {
+                    self.notify_warn("Invalid file link");
                 }
-                else { self.notify_warn("Invalid file link"); }
             }
             _ => self.notify_warn("This Markdown link cannot be opened"),
         }
         true
     }
     pub(crate) fn markdown_preview_selection_click(&mut self, col: u16, row: u16, extend: bool) {
-        if !self.code_area.is_some_and(|area| area.contains((col, row).into())) { return; }
+        if !self
+            .code_area
+            .is_some_and(|area| area.contains((col, row).into()))
+        {
+            return;
+        }
         let now = std::time::Instant::now();
         self.click_count = if now.duration_since(self.last_click_time).as_millis() < 400
-            && self.last_click_pos == (col, row) { (self.click_count + 1).min(3) } else { 1 };
+            && self.last_click_pos == (col, row)
+        {
+            (self.click_count + 1).min(3)
+        } else {
+            1
+        };
         self.last_click_time = now;
         self.last_click_pos = (col, row);
         let count = self.click_count;
-        if let Some(view) = self.editor_mut().and_then(|ed| ed.markdown_preview_scroll.as_mut()) {
+        if let Some(view) = self
+            .editor_mut()
+            .and_then(|ed| ed.markdown_preview_scroll.as_mut())
+        {
             view.click(col, row, extend, count);
         }
     }
 
     pub(crate) fn markdown_preview_selection_drag(&mut self, col: u16, row: u16) -> bool {
-        let Some(editor) = self.editor_mut() else { return false };
-        let Some(view) = &mut editor.markdown_preview_scroll else { return false };
+        let Some(editor) = self.editor_mut() else {
+            return false;
+        };
+        let Some(view) = &mut editor.markdown_preview_scroll else {
+            return false;
+        };
         if view.selecting {
             view.drag_selection(col, row);
             editor.scroll_offset = view.source_scroll;
@@ -1761,23 +2372,42 @@ impl App {
         true
     }
 
-    pub(crate) fn markdown_preview_selection_key(&mut self, key: crossterm::event::KeyCode, modifiers: crossterm::event::KeyModifiers) -> bool {
+    pub(crate) fn markdown_preview_selection_key(
+        &mut self,
+        key: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    ) -> bool {
         use crossterm::event::{KeyCode, KeyModifiers};
-        if self.active_pane != crate::app::ActivePane::Editor || modifiers.contains(KeyModifiers::ALT) { return false; }
-        let Some(editor) = self.editor_mut() else { return false };
-        let Some(view) = &mut editor.markdown_preview_scroll else { return false };
+        if self.active_pane != crate::app::ActivePane::Editor
+            || modifiers.contains(KeyModifiers::ALT)
+        {
+            return false;
+        }
+        let Some(editor) = self.editor_mut() else {
+            return false;
+        };
+        let Some(view) = &mut editor.markdown_preview_scroll else {
+            return false;
+        };
         if key == KeyCode::Esc {
             view.anchor = None;
             return true;
         }
-        if !modifiers.contains(KeyModifiers::SHIFT) { return false; }
-        let Some(text) = view.text_rows.get(view.cursor.0) else { return false };
+        if !modifiers.contains(KeyModifiers::SHIFT) {
+            return false;
+        }
+        let Some(text) = view.text_rows.get(view.cursor.0) else {
+            return false;
+        };
         let ctrl = modifiers.contains(KeyModifiers::CONTROL);
         let mut next = view.cursor;
         match key {
             KeyCode::Left => {
                 if next.1 > 0 {
-                    next.1 = text[..next.1].grapheme_indices(true).next_back().map_or(0, |(byte, _)| byte);
+                    next.1 = text[..next.1]
+                        .grapheme_indices(true)
+                        .next_back()
+                        .map_or(0, |(byte, _)| byte);
                 } else if next.0 > 0 {
                     next.0 -= 1;
                     next.1 = view.text_rows[next.0].len();
@@ -1786,25 +2416,44 @@ impl App {
             KeyCode::Right => {
                 if next.1 < text.len() {
                     next.1 += text[next.1..].graphemes(true).next().map_or(0, str::len);
-                } else if next.0 + 1 < view.text_rows.len() { next = (next.0 + 1, 0); }
+                } else if next.0 + 1 < view.text_rows.len() {
+                    next = (next.0 + 1, 0);
+                }
             }
-            KeyCode::Home => { next = if ctrl { (0, 0) } else { (next.0, 0) }; }
+            KeyCode::Home => {
+                next = if ctrl { (0, 0) } else { (next.0, 0) };
+            }
             KeyCode::End => {
-                if ctrl { next.0 = view.text_rows.len() - 1; }
+                if ctrl {
+                    next.0 = view.text_rows.len() - 1;
+                }
                 next.1 = view.text_rows[next.0].len();
             }
             KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
-                let amount = if matches!(key, KeyCode::PageUp | KeyCode::PageDown) { view.height.max(1) } else { 1 };
-                next.0 = if matches!(key, KeyCode::Up | KeyCode::PageUp) { next.0.saturating_sub(amount) }
-                    else { (next.0 + amount).min(view.text_rows.len() - 1) };
-                next.1 = PreviewScroll::byte_at_cell(&view.text_rows[next.0], text[..view.cursor.1].width());
+                let amount = if matches!(key, KeyCode::PageUp | KeyCode::PageDown) {
+                    view.height.max(1)
+                } else {
+                    1
+                };
+                next.0 = if matches!(key, KeyCode::Up | KeyCode::PageUp) {
+                    next.0.saturating_sub(amount)
+                } else {
+                    (next.0 + amount).min(view.text_rows.len() - 1)
+                };
+                next.1 = PreviewScroll::byte_at_cell(
+                    &view.text_rows[next.0],
+                    text[..view.cursor.1].width(),
+                );
             }
             _ => return false,
         }
         view.anchor.get_or_insert(view.cursor);
         view.cursor = next;
-        if next.0 < view.row { view.set_row(next.0); }
-        else if next.0 >= view.row + view.height { view.set_row(next.0 + 1 - view.height); }
+        if next.0 < view.row {
+            view.set_row(next.0);
+        } else if next.0 >= view.row + view.height {
+            view.set_row(next.0 + 1 - view.height);
+        }
         editor.scroll_offset = view.source_scroll;
         self.sync_markdown_preview_state();
         true
@@ -2232,50 +2881,101 @@ mod scroll_tests {
     #[test]
     fn preview_mouse_selection_paints_and_copies_rendered_text_without_editing_source() {
         let (mut app, mut terminal) = split_preview();
-        let source = "# Heading\n\nHello **bold** [world](https://example.com).\n\nSecond paragraph.\n";
+        let source =
+            "# Heading\n\nHello **bold** [world](https://example.com).\n\nSecond paragraph.\n";
         let editor = &mut app.groups[0].tabs[0].editor;
         editor.rope = ropey::Rope::from_str(source);
         editor.content_version += 1;
         draw(&mut app, &mut terminal);
-        let view = app.editor().unwrap().markdown_preview_scroll.as_ref().unwrap();
-        let index = view.text_rows.iter().position(|text| text == "Hello bold world.").unwrap();
+        let view = app
+            .editor()
+            .unwrap()
+            .markdown_preview_scroll
+            .as_ref()
+            .unwrap();
+        let index = view
+            .text_rows
+            .iter()
+            .position(|text| text == "Hello bold world.")
+            .unwrap();
         let x = view.body.x;
         let y = view.body.y + (index - view.row) as u16;
         // Focus the source first: clicking the preview must route into that pane.
         app.switch_group(0);
         draw(&mut app, &mut terminal);
         use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
-        for (kind, column) in [(MouseEventKind::Down(MouseButton::Left), x + 6),
+        for (kind, column) in [
+            (MouseEventKind::Down(MouseButton::Left), x + 6),
             (MouseEventKind::Drag(MouseButton::Left), x + 16),
-            (MouseEventKind::Up(MouseButton::Left), x + 16)] {
-            crate::mouse::handle_mouse(&mut app, MouseEvent { kind, column, row: y, modifiers: KeyModifiers::NONE });
+            (MouseEventKind::Up(MouseButton::Left), x + 16),
+        ] {
+            crate::mouse::handle_mouse(
+                &mut app,
+                MouseEvent {
+                    kind,
+                    column,
+                    row: y,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
         }
         assert_eq!(app.tabs[app.active_tab].kind, TabKind::MarkdownPreview);
         draw(&mut app, &mut terminal);
-        let view = app.editor().unwrap().markdown_preview_scroll.as_ref().unwrap();
+        let view = app
+            .editor()
+            .unwrap()
+            .markdown_preview_scroll
+            .as_ref()
+            .unwrap();
         assert_eq!(view.selected_text().as_deref(), Some("bold world"));
         assert!(!view.selecting);
         assert!(!app.is_menu_cmd_disabled("copy"));
         assert!(app.is_menu_cmd_disabled("cut"));
         assert!(app.is_menu_cmd_disabled("paste"));
-        assert_eq!(terminal.backend().buffer()[(x + 6, y)].bg, app.colors.bg_selection);
-        assert_ne!(terminal.backend().buffer()[(x + 5, y)].bg, app.colors.bg_selection);
+        assert_eq!(
+            terminal.backend().buffer()[(x + 6, y)].bg,
+            app.colors.bg_selection
+        );
+        assert_ne!(
+            terminal.backend().buffer()[(x + 5, y)].bg,
+            app.colors.bg_selection
+        );
         crate::input::handle_editor_key(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert_eq!(app.editor().unwrap().clipboard, "bold world");
-        for key in [KeyCode::Char('z'), KeyCode::Backspace, KeyCode::Delete, KeyCode::Enter] {
+        for key in [
+            KeyCode::Char('z'),
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::Enter,
+        ] {
             crate::input::handle_editor_key(&mut app, key, KeyModifiers::NONE);
         }
         assert_eq!(app.editor().unwrap().rope.to_string(), source);
         assert_eq!(app.groups[0].tabs[0].editor.rope.to_string(), source);
         assert!(!app.editor().unwrap().modified);
         crate::input::handle_editor_key(&mut app, KeyCode::Char('a'), KeyModifiers::CONTROL);
-        let selected = app.editor().unwrap().markdown_preview_scroll.as_ref().unwrap().selected_text().unwrap();
+        let selected = app
+            .editor()
+            .unwrap()
+            .markdown_preview_scroll
+            .as_ref()
+            .unwrap()
+            .selected_text()
+            .unwrap();
         assert!(selected.contains("Hello bold world."));
         assert!(selected.contains("Second paragraph."));
         assert!(!selected.contains("**"));
         assert!(!selected.contains("https://"));
         crate::input::handle_editor_key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        assert!(app.editor().unwrap().markdown_preview_scroll.as_ref().unwrap().selected_text().is_none());
+        assert!(
+            app.editor()
+                .unwrap()
+                .markdown_preview_scroll
+                .as_ref()
+                .unwrap()
+                .selected_text()
+                .is_none()
+        );
     }
 
     #[test]
@@ -2302,20 +3002,50 @@ mod scroll_tests {
     #[test]
     fn preview_keyboard_selection_and_drag_scrolling_use_rendered_rows() {
         let (mut app, mut terminal) = split_preview();
-        let view = app.editor_mut().unwrap().markdown_preview_scroll.as_mut().unwrap();
-        let index = view.text_rows.iter().position(|text| !text.is_empty()).unwrap();
+        let view = app
+            .editor_mut()
+            .unwrap()
+            .markdown_preview_scroll
+            .as_mut()
+            .unwrap();
+        let index = view
+            .text_rows
+            .iter()
+            .position(|text| !text.is_empty())
+            .unwrap();
         view.click(view.body.x, view.body.y + index as u16, false, 1);
         crate::input::handle_editor_key(&mut app, KeyCode::End, KeyModifiers::SHIFT);
-        let view = app.editor().unwrap().markdown_preview_scroll.as_ref().unwrap();
-        assert_eq!(view.selected_text().as_deref(), Some(view.text_rows[index].as_str()));
+        let view = app
+            .editor()
+            .unwrap()
+            .markdown_preview_scroll
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            view.selected_text().as_deref(),
+            Some(view.text_rows[index].as_str())
+        );
         let (x, y) = (view.body.x + 2, view.body.bottom());
         app.markdown_preview_selection_drag(x, y);
-        let view = app.editor().unwrap().markdown_preview_scroll.as_ref().unwrap();
+        let view = app
+            .editor()
+            .unwrap()
+            .markdown_preview_scroll
+            .as_ref()
+            .unwrap();
         assert_eq!(view.row, 1);
         assert!(view.cursor.0 >= view.height);
         let selected = view.selected_text();
         draw(&mut app, &mut terminal);
-        assert_eq!(app.editor().unwrap().markdown_preview_scroll.as_ref().unwrap().selected_text(), selected);
+        assert_eq!(
+            app.editor()
+                .unwrap()
+                .markdown_preview_scroll
+                .as_ref()
+                .unwrap()
+                .selected_text(),
+            selected
+        );
     }
 
     #[test]
@@ -2378,8 +3108,18 @@ mod scroll_tests {
                 },
             );
         }
-        assert_eq!(app.groups[1].tabs[0].editor.markdown_preview_scroll.as_ref().unwrap().row, 1);
-        assert!(app.advance_wheel_scroll(std::time::Instant::now() + std::time::Duration::from_millis(120)));
+        assert_eq!(
+            app.groups[1].tabs[0]
+                .editor
+                .markdown_preview_scroll
+                .as_ref()
+                .unwrap()
+                .row,
+            1
+        );
+        assert!(app.advance_wheel_scroll(
+            std::time::Instant::now() + std::time::Duration::from_millis(120)
+        ));
         let view = app.groups[1].tabs[0]
             .editor
             .markdown_preview_scroll
@@ -2628,7 +3368,8 @@ mod resize_bench {
             let laid_out = start.elapsed();
             println!(
                 "cold Markdown: {} bytes, {} rows, parse {:.2} ms, layout/maps {:.2} ms, total {:.2} ms",
-                rope.len_bytes(), rows.len(),
+                rope.len_bytes(),
+                rows.len(),
                 prepared.as_secs_f64() * 1000.0,
                 laid_out.as_secs_f64() * 1000.0,
                 (prepared + laid_out).as_secs_f64() * 1000.0,
@@ -2669,8 +3410,10 @@ mod resize_tests {
 
     #[test]
     fn cached_reflow_matches_fresh_rendering_at_every_width() {
-        let source = format!("{}\n\n> ## Nested heading\n>\n> ```rust\n> let 世界 = 42;\n> ```\n",
-            include_str!("../examples/markdown-preview.md"));
+        let source = format!(
+            "{}\n\n> ## Nested heading\n>\n> ```rust\n> let 世界 = 42;\n> ```\n",
+            include_str!("../examples/markdown-preview.md")
+        );
         let highlighter = crate::highlight::Highlighter::new();
         let (syntaxes, themes) = highlighter.shared_sets();
         for theme in [EditorTheme::Dark, EditorTheme::Light] {
@@ -2678,8 +3421,11 @@ mod resize_tests {
             let syntax = Some((&*syntaxes, themes.themes.get(theme.syntax_theme_key())));
             let document = PreparedDocument::new(&source);
             for width in [76, 40, 18, 8, 1, 100, 53] {
-                assert_eq!(format!("{:?}", document.render(width, palette, syntax)),
-                    format!("{:?}", render_document(&source, width, palette, syntax)), "width {width}");
+                assert_eq!(
+                    format!("{:?}", document.render(width, palette, syntax)),
+                    format!("{:?}", render_document(&source, width, palette, syntax)),
+                    "width {width}"
+                );
             }
         }
     }
@@ -2693,14 +3439,20 @@ mod resize_tests {
     }
     fn draw(app: &mut App, terminal: &mut Terminal<TestBackend>, width: u16, height: u16) {
         settle_preview_for_test(app, |app| {
-            terminal.draw(|frame| draw_markdown_preview(frame, app, Rect::new(0, 0, width, height))).unwrap();
+            terminal
+                .draw(|frame| draw_markdown_preview(frame, app, Rect::new(0, 0, width, height)))
+                .unwrap();
         });
     }
     fn assert_current_preview_matches_fresh_rendering(app: &App) {
         let (syntaxes, themes) = app.highlighter.shared_sets();
         with_preview_for_test(app, |entry| {
-            let fresh = render_document(&app.editor().unwrap().rope.to_string(), entry.width,
-                Palette::from(&app.colors), Some((&syntaxes, themes.themes.get(&app.syntax_theme))));
+            let fresh = render_document(
+                &app.editor().unwrap().rope.to_string(),
+                entry.width,
+                Palette::from(&app.colors),
+                Some((&syntaxes, themes.themes.get(&app.syntax_theme))),
+            );
             assert_eq!(format!("{:?}", entry.rows), format!("{fresh:?}"));
         });
     }
@@ -2709,21 +3461,37 @@ mod resize_tests {
         let (mut app, mut terminal) = app_and_terminal();
         draw(&mut app, &mut terminal, 80, 25);
         let (document, code, inline, source_rows) = with_preview_for_test(&app, |entry| {
-            (entry.document.clone(), entry.document.code().clone(), entry.document.inline().clone(), entry.source_rows.clone())
+            (
+                entry.document.clone(),
+                entry.document.code().clone(),
+                entry.document.inline().clone(),
+                entry.source_rows.clone(),
+            )
         });
         assert!(!code.is_empty());
         assert!(!inline.is_empty());
         draw(&mut app, &mut terminal, 80, 19);
-        with_preview_for_test(&app, |entry| assert!(Arc::ptr_eq(&source_rows, &entry.source_rows)));
+        with_preview_for_test(&app, |entry| {
+            assert!(Arc::ptr_eq(&source_rows, &entry.source_rows))
+        });
         for width in [40, 45, 50, 55, 60, 65, 70, 75, 90] {
             draw(&mut app, &mut terminal, width, 25);
             with_preview_for_test(&app, |entry| {
-                assert!(Arc::ptr_eq(&entry.document, &document), "resize reparsed Markdown");
+                assert!(
+                    Arc::ptr_eq(&entry.document, &document),
+                    "resize reparsed Markdown"
+                );
                 for (key, lines) in &code {
-                    assert!(Arc::ptr_eq(lines, &entry.document.code()[key]), "resize reran highlighting");
+                    assert!(
+                        Arc::ptr_eq(lines, &entry.document.code()[key]),
+                        "resize reran highlighting"
+                    );
                 }
                 for (key, text) in &inline {
-                    assert!(Arc::ptr_eq(&text.0, &entry.document.inline()[key].0), "resize remeasured text");
+                    assert!(
+                        Arc::ptr_eq(&text.0, &entry.document.inline()[key].0),
+                        "resize remeasured text"
+                    );
                 }
             });
         }
@@ -2733,11 +3501,17 @@ mod resize_tests {
         let (mut app, mut terminal) = app_and_terminal();
         draw(&mut app, &mut terminal, 80, 25);
         let original = with_preview_for_test(&app, |entry| entry.document.clone());
-        app.editor_mut().unwrap().rope = ropey::Rope::from_str("# Reloaded\n\n```rust\nlet x = 1;\n```\n");
+        app.editor_mut().unwrap().rope =
+            ropey::Rope::from_str("# Reloaded\n\n```rust\nlet x = 1;\n```\n");
         draw(&mut app, &mut terminal, 80, 25);
         let (document, anchors, source_rows, registry) = with_preview_for_test(&app, |entry| {
             assert!(!Arc::ptr_eq(&original, &entry.document));
-            (entry.document.clone(), entry.document.anchors.clone(), entry.source_rows.clone(), entry.registry)
+            (
+                entry.document.clone(),
+                entry.document.anchors.clone(),
+                entry.source_rows.clone(),
+                entry.registry,
+            )
         });
         app.colors.fg_md_code = Color::Magenta;
         draw(&mut app, &mut terminal, 80, 25);
@@ -2745,31 +3519,48 @@ mod resize_tests {
             assert!(Arc::ptr_eq(&entry.document, &document));
             assert!(Arc::ptr_eq(&entry.document.anchors, &anchors));
             assert!(Arc::ptr_eq(&entry.source_rows, &source_rows));
-            (entry.document.inline().clone(), entry.document.code().clone())
+            (
+                entry.document.inline().clone(),
+                entry.document.code().clone(),
+            )
         });
         assert_current_preview_matches_fresh_rendering(&app);
-        app.highlighter.register_theme(&app.syntax_theme, Theme::new("test", "#000000", "#ffffff", &[]).unwrap());
+        app.highlighter.register_theme(
+            &app.syntax_theme,
+            Theme::new("test", "#000000", "#ffffff", &[]).unwrap(),
+        );
         draw(&mut app, &mut terminal, 80, 25);
         with_preview_for_test(&app, |entry| {
             assert_ne!(entry.registry, registry);
             assert!(Arc::ptr_eq(&entry.document, &document));
             assert!(Arc::ptr_eq(&entry.document.anchors, &anchors));
             assert!(Arc::ptr_eq(&entry.source_rows, &source_rows));
-            for (key, text) in &inline { assert!(Arc::ptr_eq(&text.0, &entry.document.inline()[key].0)); }
-            for (key, lines) in &code { assert!(!Arc::ptr_eq(lines, &entry.document.code()[key])); }
+            for (key, text) in &inline {
+                assert!(Arc::ptr_eq(&text.0, &entry.document.inline()[key].0));
+            }
+            for (key, lines) in &code {
+                assert!(!Arc::ptr_eq(lines, &entry.document.code()[key]));
+            }
         });
         assert_current_preview_matches_fresh_rendering(&app);
     }
     #[test]
     fn restyling_keeps_scroll_within_a_paragraph_and_its_selection() {
         let (mut app, mut terminal) = app_and_terminal();
-        app.editor_mut().unwrap().rope = ropey::Rope::from_str(
-            &format!("# Heading\n\n{}\n", "alpha beta gamma delta epsilon ".repeat(300)));
+        app.editor_mut().unwrap().rope = ropey::Rope::from_str(&format!(
+            "# Heading\n\n{}\n",
+            "alpha beta gamma delta epsilon ".repeat(300)
+        ));
         draw(&mut app, &mut terminal, 80, 25);
         let editor = app.editor_mut().unwrap();
         let view = editor.markdown_preview_scroll.as_mut().unwrap();
-        let row = (1..view.text_rows.len()).find(|&row| view.text_rows[row].len() > 12
-            && !view.text_rows[row - 1].is_empty() && view.source_rows[row] == view.source_rows[row - 1]).unwrap();
+        let row = (1..view.text_rows.len())
+            .find(|&row| {
+                view.text_rows[row].len() > 12
+                    && !view.text_rows[row - 1].is_empty()
+                    && view.source_rows[row] == view.source_rows[row - 1]
+            })
+            .unwrap();
         view.set_row(row);
         editor.scroll_offset = view.source_scroll;
         view.click(view.body.x + 1, view.body.y, false, 1);
@@ -2778,8 +3569,16 @@ mod resize_tests {
         assert!(selected.is_some());
         app.colors.fg_md_heading = Color::Magenta;
         draw(&mut app, &mut terminal, 80, 25);
-        let view = app.editor().unwrap().markdown_preview_scroll.as_ref().unwrap();
-        assert_eq!(view.row, row, "restyling jumped to the paragraph's first row");
+        let view = app
+            .editor()
+            .unwrap()
+            .markdown_preview_scroll
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            view.row, row,
+            "restyling jumped to the paragraph's first row"
+        );
         assert_eq!(view.selected_text(), selected);
     }
 }

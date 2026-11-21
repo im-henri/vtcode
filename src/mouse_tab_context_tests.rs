@@ -77,14 +77,20 @@ fn tab_text_color_menu_sets_and_resets_the_right_clicked_tab() {
     };
 
     choose(&mut app);
-    let blue = TabTextColor::CHOICES.iter()
-        .position(|(color, _)| *color == Some(TabTextColor::Blue)).unwrap();
+    let blue = TabTextColor::CHOICES
+        .iter()
+        .position(|(color, _)| *color == Some(TabTextColor::Blue))
+        .unwrap();
     for _ in 0..blue {
         key(&mut app, KeyCode::Down);
     }
     let clipped = render_menu(&mut app, 40, 7);
     assert!(app.tab_context_scroll > 0);
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), label_position(&clipped, "Blue"));
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        label_position(&clipped, "Blue"),
+    );
     assert!(!app.tab_context_active);
     assert_eq!(app.tabs[0].text_color, Some(TabTextColor::Blue));
     assert_eq!(app.tabs[1].text_color, None);
@@ -323,12 +329,7 @@ fn tab_menu_split_direction_matches_the_command_for_mouse_and_keyboard() {
             SplitDirection::Horizontal,
             [1, 0],
         ),
-        (
-            "Split Up",
-            "tab_split_up",
-            SplitDirection::Vertical,
-            [1, 0],
-        ),
+        ("Split Up", "tab_split_up", SplitDirection::Vertical, [1, 0]),
     ] {
         for keyboard in [false, true] {
             let mut app = app_with_tab_menu((0, 0));
@@ -358,7 +359,10 @@ fn tab_menu_split_direction_matches_the_command_for_mouse_and_keyboard() {
             assert_eq!(app.split_tree.as_ref().unwrap().leaves(), leaves);
             assert_eq!(app.tabs[app.active_tab].editor.file_name(), "target.rs");
             let source = &app.groups[0];
-            assert_eq!(source.tabs[source.active_tab].editor.navigation_id, source_selection);
+            assert_eq!(
+                source.tabs[source.active_tab].editor.navigation_id,
+                source_selection
+            );
             assert_eq!(source.tabs[0].editor.navigation_id, original);
             assert!(source.tabs[0].editor.shares_document(app.editor().unwrap()));
         }

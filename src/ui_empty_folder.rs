@@ -32,13 +32,22 @@ struct Layout {
 }
 
 fn layout(app: &App, area: Rect) -> Option<Layout> {
-    body_layout(app, crate::ui_chrome::empty_folder_state_area(app, area)?, app.sidebar_view)
+    body_layout(
+        app,
+        crate::ui_chrome::empty_folder_state_area(app, area)?,
+        app.sidebar_view,
+    )
 }
 
 fn source_control_tab_layout(app: &App, area: Rect) -> Option<Layout> {
     let top = area.height.min(2);
     let width = area.width.min(64);
-    let body = Rect::new(area.x + (area.width - width) / 2, area.y + top, width, area.height - top);
+    let body = Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + top,
+        width,
+        area.height - top,
+    );
     body_layout(app, body, SidebarView::SourceControl)
 }
 
@@ -184,8 +193,14 @@ pub(crate) fn click(app: &mut App, col: u16, row: u16) -> bool {
     true
 }
 
-pub(crate) fn click_source_control_tab(app: &mut App, area: Rect, point: ratatui::layout::Position) {
-    let Some(layout) = source_control_tab_layout(app, area) else { return; };
+pub(crate) fn click_source_control_tab(
+    app: &mut App,
+    area: Rect,
+    point: ratatui::layout::Position,
+) {
+    let Some(layout) = source_control_tab_layout(app, area) else {
+        return;
+    };
     if layout.open.contains(point) {
         activate(app, Action::OpenFolder);
     } else if layout.saved.is_some_and(|area| area.contains(point)) {
@@ -197,7 +212,9 @@ pub(crate) fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     let saved_visible = if let Some((_, area)) = app.source_control_tab_surface() {
         source_control_tab_layout(app, area).is_some_and(|layout| layout.saved.is_some())
     } else {
-        app.explorer_area.and_then(|area| saved_area(app, area)).is_some()
+        app.explorer_area
+            .and_then(|area| saved_area(app, area))
+            .is_some()
     };
     if !saved_visible {
         app.empty_folder.focused = Action::OpenFolder;

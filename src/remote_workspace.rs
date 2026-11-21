@@ -37,7 +37,8 @@ pub(crate) struct Workspace {
     pub(super) git_sources: Arc<Mutex<cache::Cache<(u64, Arc<git::Sources>)>>>,
     /// One request per (file, staged) at a time: an open's prefetch and the
     /// gutter refresh that follows share a single transfer.
-    pub(super) git_sources_inflight: Arc<Mutex<std::collections::HashMap<(RemotePath, bool), Arc<git::SourceFlight>>>>,
+    pub(super) git_sources_inflight:
+        Arc<Mutex<std::collections::HashMap<(RemotePath, bool), Arc<git::SourceFlight>>>>,
     pub(super) blame_sources: Arc<Mutex<cache::Cache<Arc<blame::Base>>>>,
     pub(super) git_snapshots: Arc<Mutex<git::Snapshots>>,
     pub(super) git_source_state: Arc<Mutex<git::SourceState>>,
@@ -86,10 +87,14 @@ pub(crate) fn display_name(path: &Path) -> Option<String> {
 /// Decode exactly one component of an opaque view key. Native filenames with
 /// literal percent sequences must never be interpreted as encoded names.
 pub(crate) fn display_component(path: &Path, name: &std::ffi::OsStr) -> Option<Vec<u8>> {
-    if !is_view_key(path) { return None; }
+    if !is_view_key(path) {
+        return None;
+    }
     let name = name.to_str()?;
     // Ordinary names can keep the editor's borrowed, allocation-free label.
-    if !name.contains('%') { return None; }
+    if !name.contains('%') {
+        return None;
+    }
     uncomponent(name).ok()
 }
 /// A human label for a hosted location, without retaining a connection in the
@@ -190,7 +195,9 @@ impl Workspace {
         use sha2::{Digest, Sha256};
         let mut hash = Sha256::new();
         hash.update(&self.connection_identity);
-        if self.connection_identity.is_empty() { hash.update(self.client.workspace_sets_root_uri()); }
+        if self.connection_identity.is_empty() {
+            hash.update(self.client.workspace_sets_root_uri());
+        }
         URL_SAFE_NO_PAD.encode(hash.finalize())
     }
     #[cfg(test)]
@@ -268,20 +275,33 @@ impl Workspace {
             && !self
                 .disconnect_reported
                 .swap(true, std::sync::atomic::Ordering::Relaxed);
-        if disconnected && let Some(connection) = &self.connection { connection.terminate(); }
+        if disconnected && let Some(connection) = &self.connection {
+            connection.terminate();
+        }
         disconnected
     }
-    pub(crate) fn same_family(&self, other: &Self) -> bool { Arc::ptr_eq(&self.family, &other.family) }
+    pub(crate) fn same_family(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.family, &other.family)
+    }
     pub(crate) fn disconnect(&self) {
-        self.disconnect_requested.store(true, std::sync::atomic::Ordering::Release);
+        self.disconnect_requested
+            .store(true, std::sync::atomic::Ordering::Release);
         self.client.disconnect();
-        if let Some(connection) = &self.connection { connection.terminate(); }
+        if let Some(connection) = &self.connection {
+            connection.terminate();
+        }
     }
     pub(crate) fn reconnect_allowed(&self) -> bool {
-        self.recipe.is_some() && !self.disconnect_requested.load(std::sync::atomic::Ordering::Acquire)
+        self.recipe.is_some()
+            && !self
+                .disconnect_requested
+                .load(std::sync::atomic::Ordering::Acquire)
     }
     pub(crate) fn diagnostics(&self) -> Option<super::diagnostics::Log> {
-        self.recipe.as_ref().map(|recipe| recipe.diagnostics.clone()).or_else(|| self.client.diagnostic_log())
+        self.recipe
+            .as_ref()
+            .map(|recipe| recipe.diagnostics.clone())
+            .or_else(|| self.client.diagnostic_log())
     }
     /// Resolve a new transport's initial root back to the current open folder.
     /// New scheduler allocations may choose a different host, but must expose
@@ -291,14 +311,21 @@ impl Workspace {
             connected
         } else {
             let uri = url::Url::parse(&self.client.hello().root_uri).map_err(io::Error::other)?;
-            let bytes = super::lsp::uri_path(&uri).ok_or_else(|| io::Error::other("Invalid reconnect folder"))?;
+            let bytes = super::lsp::uri_path(&uri)
+                .ok_or_else(|| io::Error::other("Invalid reconnect folder"))?;
             // Directory URIs carry a trailing slash; RemotePath components do
             // not. Keep the filesystem root '/' valid too.
             let mut path = bytes.as_slice();
-            while path.len() > 1 && path.ends_with(b"/") { path = &path[..path.len() - 1]; }
+            while path.len() > 1 && path.ends_with(b"/") {
+                path = &path[..path.len() - 1];
+            }
             connected.open_workspace(&connected.view_key(&RemotePath::absolute(path)?))?
         };
-        if next.view_root != self.view_root { return Err(io::Error::other("Reconnected workspace identity changed; local buffers were not retargeted")); }
+        if next.view_root != self.view_root {
+            return Err(io::Error::other(
+                "Reconnected workspace identity changed; local buffers were not retargeted",
+            ));
+        }
         next.recovery = self.recovery.clone();
         next.recipe = self.recipe.clone();
         next.family = self.family.clone();
@@ -371,9 +398,16 @@ impl Workspace {
     }
     pub(crate) fn parent_key(&self, key: &Path) -> io::Result<Option<PathBuf>> {
         let path = self.remote_path(key)?;
-        let drive_root = |path: &RemotePath| self.windows_paths() && path.is_absolute()
-            && path.0.len() == 2 && path.0[0].is_ascii_alphabetic() && path.0[1] == b':';
-        if drive_root(&path) { return Ok(None); }
+        let drive_root = |path: &RemotePath| {
+            self.windows_paths()
+                && path.is_absolute()
+                && path.0.len() == 2
+                && path.0[0].is_ascii_alphabetic()
+                && path.0[1] == b':'
+        };
+        if drive_root(&path) {
+            return Ok(None);
+        }
         if let Some(parent) = path.parent() {
             return Ok(Some(self.view_key(&parent)));
         }
@@ -382,14 +416,18 @@ impl Workspace {
         }
         let uri = url::Url::parse(&self.client.hello().root_uri).map_err(io::Error::other)?;
         // UNC ancestors cannot be represented by a hostless absolute path.
-        if uri.host_str().is_some() { return Ok(None); }
+        if uri.host_str().is_some() {
+            return Ok(None);
+        }
         let mut bytes = super::lsp::uri_path(&uri)
             .ok_or_else(|| io::Error::other("Invalid remote root URI"))?;
         while bytes.len() > 1 && bytes.last() == Some(&b'/') {
             bytes.pop();
         }
         let absolute = RemotePath::absolute(&bytes)?;
-        if drive_root(&absolute) { return Ok(None); }
+        if drive_root(&absolute) {
+            return Ok(None);
+        }
         Ok(absolute.parent().map(|parent| self.view_key(&parent)))
     }
     pub(crate) fn display_path(&self, key: &Path) -> io::Result<String> {
@@ -423,7 +461,11 @@ impl Workspace {
         let bytes = lsp::uri_path(&uri)?;
         let path = String::from_utf8_lossy(&bytes);
         let name = path.rsplit('/').next().unwrap_or("");
-        let full = if let Some(host) = uri.host_str() { format!("//{host}{path}") } else { path.to_string() };
+        let full = if let Some(host) = uri.host_str() {
+            format!("//{host}{path}")
+        } else {
+            path.to_string()
+        };
         Some(crate::file_order::SearchPathKey::new(&full, name))
     }
     pub(crate) fn breadcrumbs(&self, key: &Path) -> io::Result<Vec<(String, PathBuf)>> {
@@ -431,15 +473,18 @@ impl Workspace {
         // ancestors. Map each clickable location back through the path codec.
         let uri = url::Url::from_file_path(key)
             .map_err(|_| io::Error::other("Invalid remote view key"))?;
-        let mut uri = self.lsp_uri(uri.as_str(), true)
+        let mut uri = self
+            .lsp_uri(uri.as_str(), true)
             .and_then(|uri| url::Url::parse(&uri).ok())
             .ok_or_else(|| io::Error::other("Invalid remote file URL"))?;
         let mut key = key.to_path_buf();
         let mut parts = Vec::new();
         loop {
             let path = uri.path().trim_end_matches('/');
-            let drive_root = self.windows_paths() && path.len() == 3
-                && path.as_bytes()[1].is_ascii_alphabetic() && path.ends_with(':');
+            let drive_root = self.windows_paths()
+                && path.len() == 3
+                && path.as_bytes()[1].is_ascii_alphabetic()
+                && path.ends_with(':');
             let parent = path.rfind('/').filter(|_| !drive_root).and_then(|end| {
                 let mut parent = uri.clone();
                 parent.set_path(if end == 0 { "/" } else { &path[..end] });
@@ -449,7 +494,10 @@ impl Workspace {
             });
             let name = if parent.is_some() {
                 display_name(&key).unwrap_or_else(|| {
-                    key.file_name().unwrap_or_default().to_string_lossy().into_owned()
+                    key.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned()
                 })
             } else if drive_root {
                 format!("{}\\", &path[1..])
@@ -461,7 +509,9 @@ impl Workspace {
                 self.display_path(&key)?
             };
             parts.push((name, key));
-            let Some((parent_uri, parent_key)) = parent else { break; };
+            let Some((parent_uri, parent_key)) = parent else {
+                break;
+            };
             uri = parent_uri;
             key = parent_key;
         }
@@ -472,7 +522,10 @@ impl Workspace {
         let Reply::FilesystemRoots(roots) = self.client.call(Command::FilesystemRoots)? else {
             return Err(io::Error::other("Invalid remote filesystem roots reply"));
         };
-        Ok(roots.into_iter().map(|(name, path)| (name, self.view_key(&path))).collect())
+        Ok(roots
+            .into_iter()
+            .map(|(name, path)| (name, self.view_key(&path)))
+            .collect())
     }
     pub(crate) fn initial_save_path(&self, suggested: Option<&str>) -> String {
         let path = RemotePath::new(
@@ -611,10 +664,21 @@ impl Workspace {
     }
     pub(crate) fn validate_saved(&self, key: &Path, baseline: &Baseline) -> io::Result<Validation> {
         // A dirty editor needs only the verdict and metadata, never the file body.
-        match self.client.call_file(Command::Reload { path: self.remote_path(key)?,
-            known: Some(baseline.checkpoint.revision.clone()), read_changed: false })? {
-            Reply::Unchanged { size, modified, .. } => Ok(Validation { changed: false, size, modified }),
-            Reply::Changed { size, modified } => Ok(Validation { changed: true, size, modified }),
+        match self.client.call_file(Command::Reload {
+            path: self.remote_path(key)?,
+            known: Some(baseline.checkpoint.revision.clone()),
+            read_changed: false,
+        })? {
+            Reply::Unchanged { size, modified, .. } => Ok(Validation {
+                changed: false,
+                size,
+                modified,
+            }),
+            Reply::Changed { size, modified } => Ok(Validation {
+                changed: true,
+                size,
+                modified,
+            }),
             _ => Err(io::Error::other("Invalid remote validation response")),
         }
     }
@@ -865,11 +929,18 @@ impl Workspace {
                     && expected.encoding == request.encoding
                     && crate::rope_changes::equal(&expected.rope, &rope)
                     && let Some((checkpoint, previous, encoding)) = &checkpoint
-                    && !checkpoint.conflicted && *encoding == expected.encoding
+                    && !checkpoint.conflicted
+                    && *encoding == expected.encoding
                     && crate::rope_changes::equal(previous, &expected.rope)
                 {
-                    return Ok(Saved { rope, transformed_lines, size, modified,
-                        checkpoint: checkpoint.clone(), disk_written: false });
+                    return Ok(Saved {
+                        rope,
+                        transformed_lines,
+                        size,
+                        modified,
+                        checkpoint: checkpoint.clone(),
+                        disk_written: false,
+                    });
                 }
                 let old = request
                     .expected_disk
@@ -933,7 +1004,11 @@ impl Workspace {
                     "{} bytes; {} lines; {}",
                     saved.size,
                     saved.rope.len_lines(),
-                    if saved.disk_written { "saved remotely" } else { "unchanged; no remote request" },
+                    if saved.disk_written {
+                        "saved remotely"
+                    } else {
+                        "unchanged; no remote request"
+                    },
                 )
             },
         )

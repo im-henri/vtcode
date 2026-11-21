@@ -3,11 +3,13 @@ use std::path::PathBuf;
 
 fn file_tabs_app(count: usize) -> App {
     let mut app = App::test_new();
-    app.tabs = (0..count).map(|i| {
-        let mut editor = Editor::test_with_text("value = 1\n");
-        editor.file_path = Some(PathBuf::from(format!("/benchmark/tab-{i}.py")));
-        Tab::new_file(editor)
-    }).collect();
+    app.tabs = (0..count)
+        .map(|i| {
+            let mut editor = Editor::test_with_text("value = 1\n");
+            editor.file_path = Some(PathBuf::from(format!("/benchmark/tab-{i}.py")));
+            Tab::new_file(editor)
+        })
+        .collect();
     app.active_tab = count.saturating_sub(1);
     app.tab_mru_order = (0..count).rev().collect();
     app
@@ -22,13 +24,20 @@ fn benchmark_tab_lifecycle() {
             for _ in 0..5 {
                 let mut app = file_tabs_app(count);
                 let start = std::time::Instant::now();
-                if saved { app.close_saved_tabs(); }
-                else { app.close_tabs_matching(|_| true); }
+                if saved {
+                    app.close_saved_tabs();
+                } else {
+                    app.close_tabs_matching(|_| true);
+                }
                 samples.push(start.elapsed());
                 assert!(app.tabs.is_empty());
             }
             samples.sort_unstable();
-            eprintln!("close {} {count} tabs: {:?}", if saved { "saved" } else { "group" }, samples[2]);
+            eprintln!(
+                "close {} {count} tabs: {:?}",
+                if saved { "saved" } else { "group" },
+                samples[2]
+            );
         }
     }
     let mut app = file_tabs_app(4_000);
@@ -99,8 +108,10 @@ fn cell_reveal_keeps_unicode_tabs_visible_in_narrow_bars() {
                 app.ensure_active_tab_visible();
                 let hits = crate::ui_chrome_tabs::TabBarHits::new(&app, area);
                 if width > crate::ui_desks::controls(&app, area, app.active_group).width {
-                    assert!(hits.tabs.iter().any(|(index, _, _)| *index == active),
-                        "width={width} offset={offset} active={active}");
+                    assert!(
+                        hits.tabs.iter().any(|(index, _, _)| *index == active),
+                        "width={width} offset={offset} active={active}"
+                    );
                 }
                 for (_, rect, close) in hits.tabs {
                     assert_eq!(rect.intersection(area), rect);
@@ -150,8 +161,12 @@ fn benchmark_distant_tab_reveal() {
             let start = std::time::Instant::now();
             app.ensure_active_tab_visible();
             samples.push(start.elapsed());
-            assert!(crate::ui_chrome_tabs::TabBarHits::new(&app, area)
-                .tabs.iter().any(|(index, _, _)| *index == active));
+            assert!(
+                crate::ui_chrome_tabs::TabBarHits::new(&app, area)
+                    .tabs
+                    .iter()
+                    .any(|(index, _, _)| *index == active)
+            );
         }
         samples.sort_unstable();
         eprintln!("cell reveal {count} tabs: {:?}", samples[9]);

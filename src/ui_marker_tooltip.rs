@@ -44,7 +44,8 @@ fn marker_at(line: ropey::RopeSlice<'_>, column: usize) -> Option<(usize, usize)
 
 pub(crate) fn has_tooltip(app: &App, position: Option<(usize, usize)>) -> bool {
     position.is_some_and(|(line, column)| {
-        app.editor().and_then(|editor| editor.rope.get_line(line))
+        app.editor()
+            .and_then(|editor| editor.rope.get_line(line))
             .is_some_and(|line| marker_at(line, column).is_some())
     })
 }
@@ -54,12 +55,17 @@ fn preview(line: ropey::RopeSlice<'_>, column: usize) -> Option<(usize, String)>
     let (marker, label) = MARKERS[index];
     // Read only enough description for the visible tooltip. In particular,
     // never format a full line and then truncate it.
-    let rest: String = line.chars_at(position + marker.len())
+    let rest: String = line
+        .chars_at(position + marker.len())
         .skip_while(|&ch| ch == ':' || ch == ' ')
-        .take(PREVIEW_CHARS).collect();
+        .take(PREVIEW_CHARS)
+        .collect();
     let rest = rest.trim_end();
-    let text = if rest.is_empty() { format!(" ⚠ {label} ") }
-        else { format!(" ⚠ {label}: {rest} ") };
+    let text = if rest.is_empty() {
+        format!(" ⚠ {label} ")
+    } else {
+        format!(" ⚠ {label}: {rest} ")
+    };
     Some((index, text.chars().take(PREVIEW_CHARS).collect()))
 }
 

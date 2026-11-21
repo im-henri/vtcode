@@ -13,13 +13,21 @@ impl App {
 
     pub(crate) fn tab_context_command_disabled(&self, command: &str) -> bool {
         match command {
-            "tab_rename_terminal" | "tab_find_terminal" => self.tabs.get(self.tab_context_tab)
+            "tab_rename_terminal" | "tab_find_terminal" => self
+                .tabs
+                .get(self.tab_context_tab)
                 .filter(|tab| tab.kind == crate::app::TabKind::Terminal)
                 .and_then(|tab| tab.terminal_idx)
                 .is_none_or(|index| !self.terminal_is_open(index)),
-            "tab_group_edit" | "tab_group_remove" => self.tabs.get(self.tab_context_tab).is_none_or(|t| self.tab_group(t).is_none()),
+            "tab_group_edit" | "tab_group_remove" => self
+                .tabs
+                .get(self.tab_context_tab)
+                .is_none_or(|t| self.tab_group(t).is_none()),
             "duplicate_tab" => !self.can_duplicate_tab(self.tab_context_tab),
-            "tab_copy_desk" => self.tabs.get(self.tab_context_tab).is_some_and(|tab| tab.kind == crate::app::TabKind::SourceControl),
+            "tab_copy_desk" => self
+                .tabs
+                .get(self.tab_context_tab)
+                .is_some_and(|tab| tab.kind == crate::app::TabKind::SourceControl),
             "tab_split_right" | "tab_split_down" | "tab_split_left" | "tab_split_up" => {
                 !self.can_split_editor_tab(self.tab_context_tab)
             }
@@ -45,9 +53,11 @@ impl App {
         if self.tab_context_color_target.is_some() {
             index < TabTextColor::CHOICES.len()
         } else {
-            Self::tab_context_items().get(index).is_some_and(|(_, command, _)| {
-                !command.is_empty() && !self.tab_context_command_disabled(command)
-            })
+            Self::tab_context_items()
+                .get(index)
+                .is_some_and(|(_, command, _)| {
+                    !command.is_empty() && !self.tab_context_command_disabled(command)
+                })
         }
     }
 
@@ -66,9 +76,12 @@ impl App {
     }
 
     pub(crate) fn open_tab_text_color_menu(&mut self, index: usize) {
-        let Some(tab) = self.tabs.get(index) else { return; };
+        let Some(tab) = self.tabs.get(index) else {
+            return;
+        };
         self.tab_context_color_target = Some(tab.editor.navigation_id);
-        self.tab_context_selected = TabTextColor::CHOICES.iter()
+        self.tab_context_selected = TabTextColor::CHOICES
+            .iter()
             .position(|(color, _)| *color == tab.text_color)
             .unwrap_or(0);
         self.tab_context_scroll = 0;
@@ -82,7 +95,9 @@ impl App {
     }
 
     pub(crate) fn set_tab_text_color(&mut self, view: u64, color: Option<TabTextColor>) {
-        let Some((group, index)) = self.tab_location(view) else { return; };
+        let Some((group, index)) = self.tab_location(view) else {
+            return;
+        };
         let tab = if group == self.active_group {
             &mut self.tabs[index]
         } else {
@@ -193,7 +208,10 @@ impl App {
         }
         let entries = &self.explorer.entries[start..=end.min(self.explorer.entries.len() - 1)];
         if entries.len() > 8
-            && entries.len().saturating_add(self.explorer_multi_selected.len()) > 32
+            && entries
+                .len()
+                .saturating_add(self.explorer_multi_selected.len())
+                > 32
         {
             // Preserve selection order and existing additive selections, but
             // do not search the growing selection again for every new row.
@@ -201,7 +219,8 @@ impl App {
             // an owned path. This also handles duplicate constructed entries.
             let mut selected: rustc_hash::FxHashSet<_> =
                 self.explorer_multi_selected.iter().collect();
-            let additions: Vec<_> = entries.iter()
+            let additions: Vec<_> = entries
+                .iter()
                 .filter(|entry| selected.insert(&entry.path))
                 .map(|entry| entry.path.clone())
                 .collect();
@@ -310,48 +329,108 @@ impl App {
                 ("Switch / Create Branch…", "git_checkout", true),
                 ("Rebase Current Branch…", "git_rebase", false),
                 ("Cherry-pick Commit…", "git_cherry_pick", true),
-                (if self.sc_visibility.untracked { "✓ Show untracked files" } else { "  Show untracked files" },
-                    "git_show_untracked", true),
+                (
+                    if self.sc_visibility.untracked {
+                        "✓ Show untracked files"
+                    } else {
+                        "  Show untracked files"
+                    },
+                    "git_show_untracked",
+                    true,
+                ),
                 ("Disable Source Control", "source_control_toggle", false),
-            ].into_iter().map(|(label, id, separator_after)| ContextMenuItem {
-                label: label.into(), shortcut: String::new(), id, separator_after,
-            }).collect()
+            ]
+            .into_iter()
+            .map(|(label, id, separator_after)| ContextMenuItem {
+                label: label.into(),
+                shortcut: String::new(),
+                id,
+                separator_after,
+            })
+            .collect()
         } else {
-            vec![ContextMenuItem { label: "Enable Source Control".into(), shortcut: String::new(),
-                id: "source_control_toggle", separator_after: false }]
+            vec![ContextMenuItem {
+                label: "Enable Source Control".into(),
+                shortcut: String::new(),
+                id: "source_control_toggle",
+                separator_after: false,
+            }]
         };
         if self.source_control_enabled && self.source_control_action_menu_items() {
             if let Some(operation) = self.current_git_operation() {
                 let label = operation.kind.continue_label();
-                let actions = [(label, "git_operation_continue"), ("Skip Current Commit…", "git_operation_skip"), ("Abort Operation…", "git_operation_abort")];
+                let actions = [
+                    (label, "git_operation_continue"),
+                    ("Skip Current Commit…", "git_operation_skip"),
+                    ("Abort Operation…", "git_operation_abort"),
+                ];
                 for (index, (label, id)) in actions.into_iter().enumerate() {
-                    self.context_menu_items.insert(index, ContextMenuItem { label: label.into(), shortcut: String::new(), id, separator_after: index == 2 });
+                    self.context_menu_items.insert(
+                        index,
+                        ContextMenuItem {
+                            label: label.into(),
+                            shortcut: String::new(),
+                            id,
+                            separator_after: index == 2,
+                        },
+                    );
                 }
             }
             let mut index = self.context_menu_items.len().saturating_sub(1);
             let mut add = |label: &str, id: &'static str| {
-                self.context_menu_items.insert(index, ContextMenuItem {
-                    label: label.into(), shortcut: String::new(), id, separator_after: true,
-                });
+                self.context_menu_items.insert(
+                    index,
+                    ContextMenuItem {
+                        label: label.into(),
+                        shortcut: String::new(),
+                        id,
+                        separator_after: true,
+                    },
+                );
                 index += 1;
             };
-            if self.repositories.parent.is_some() && !self.repositories.parent_open { add("Open Parent Repository…", "git_open_parent"); }
-            if self.repositories.active.is_some() { add("Close Repository", "git_close_repository"); }
-            if self.repositories.closed_roots().next().is_some() { add("Reopen Repository…", "git_open_repository"); }
+            if self.repositories.parent.is_some() && !self.repositories.parent_open {
+                add("Open Parent Repository…", "git_open_parent");
+            }
+            if self.repositories.active.is_some() {
+                add("Close Repository", "git_close_repository");
+            }
+            if self.repositories.closed_roots().next().is_some() {
+                add("Reopen Repository…", "git_open_repository");
+            }
         }
         let placement = if self.source_control_tab_surface().is_some() {
             if self.detached_window_id().is_some() {
                 &[("Move to Main Window", "source_control_main_window")][..]
             } else {
-                &[("Move to Sidebar", "source_control_move_sidebar"), ("Move to New Window", "source_control_new_window")][..]
+                &[
+                    ("Move to Sidebar", "source_control_move_sidebar"),
+                    ("Move to New Window", "source_control_new_window"),
+                ][..]
             }
         } else {
-            &[("Open in Editor", "source_control_open_editor"), ("Open in New Window", "source_control_new_window")][..]
+            &[
+                ("Open in Editor", "source_control_open_editor"),
+                ("Open in New Window", "source_control_new_window"),
+            ][..]
         };
-        let insertion = self.context_menu_items.iter().position(|item| item.id == "git_show_untracked").unwrap_or(0);
-        self.context_menu_items.splice(insertion..insertion, placement.iter().enumerate().map(|(index, &(label, id))| ContextMenuItem {
-            label: label.into(), shortcut: String::new(), id, separator_after: index + 1 == placement.len(),
-        }));
+        let insertion = self
+            .context_menu_items
+            .iter()
+            .position(|item| item.id == "git_show_untracked")
+            .unwrap_or(0);
+        self.context_menu_items.splice(
+            insertion..insertion,
+            placement
+                .iter()
+                .enumerate()
+                .map(|(index, &(label, id))| ContextMenuItem {
+                    label: label.into(),
+                    shortcut: String::new(),
+                    id,
+                    separator_after: index + 1 == placement.len(),
+                }),
+        );
         self.context_menu_pos = (x, y);
         self.context_menu_inner = None;
         self.context_menu_selected = 0;
@@ -361,7 +440,14 @@ impl App {
     pub(crate) fn open_source_control_filter_menu(&mut self, x: u16, y: u16) {
         self.context_menu_button_drag = None;
         self.context_menu_items = vec![ContextMenuItem {
-            label: format!("{} Show untracked files", if self.sc_visibility.untracked { "✓" } else { " " }),
+            label: format!(
+                "{} Show untracked files",
+                if self.sc_visibility.untracked {
+                    "✓"
+                } else {
+                    " "
+                }
+            ),
             shortcut: String::new(),
             id: "git_show_untracked",
             separator_after: false,
@@ -373,7 +459,11 @@ impl App {
     }
 
     pub(crate) fn source_control_filter_menu_open(&self) -> bool {
-        self.context_menu_active && self.context_menu_items.first().is_some_and(|item| item.id == "git_show_untracked")
+        self.context_menu_active
+            && self
+                .context_menu_items
+                .first()
+                .is_some_and(|item| item.id == "git_show_untracked")
     }
 
     pub(crate) fn source_control_action_menu_open(&self) -> bool {
@@ -381,31 +471,63 @@ impl App {
     }
 
     pub(crate) fn source_control_action_menu_items(&self) -> bool {
-        self.context_menu_items.last().is_some_and(|item| item.id == "source_control_toggle")
+        self.context_menu_items
+            .last()
+            .is_some_and(|item| item.id == "source_control_toggle")
     }
 
     pub(crate) fn source_control_menu_command_disabled(&self, id: &str) -> bool {
         if self.source_control_action_menu_items() {
-            if id == "git_operation_continue" { return self.current_git_operation().is_none() || self.git_operation_blocker().is_some(); }
-            if matches!(id, "git_rebase" | "git_cherry_pick" | "git_checkout" | "git_pull" | "git_push")
-                && self.current_git_operation().is_some() { return true; }
+            if id == "git_operation_continue" {
+                return self.current_git_operation().is_none()
+                    || self.git_operation_blocker().is_some();
+            }
+            if matches!(
+                id,
+                "git_rebase" | "git_cherry_pick" | "git_checkout" | "git_pull" | "git_push"
+            ) && self.current_git_operation().is_some()
+            {
+                return true;
+            }
         }
         self.source_control_action_menu_items()
-            && matches!(id, "git_fetch" | "git_pull" | "git_push" | "git_checkout" | "git_rebase" | "git_cherry_pick" | "git_operation_skip" | "git_operation_abort")
-            && (self.source_control_repository_state != crate::app::SourceControlRepositoryState::Available
-                || self.bg_git_remote_running || self.bg_git_action_running)
+            && matches!(
+                id,
+                "git_fetch"
+                    | "git_pull"
+                    | "git_push"
+                    | "git_checkout"
+                    | "git_rebase"
+                    | "git_cherry_pick"
+                    | "git_operation_skip"
+                    | "git_operation_abort"
+            )
+            && (self.source_control_repository_state
+                != crate::app::SourceControlRepositoryState::Available
+                || self.bg_git_remote_running
+                || self.bg_git_action_running)
     }
 
     pub(crate) fn source_control_context_menu_items(&self) -> Vec<&'static str> {
         if let Some(target) = &self.sc_context_target {
             if self.sc_context_targets.len() > 1 {
-                let mut items = if target.directory { vec!["Reveal in Explorer"] } else { vec!["Open Diff", "Open File"] };
-                if self.sc_context_targets.iter().any(|file| !file.staged) { items.push("Stage Selected"); }
-                if self.sc_context_targets.iter().any(|file| file.staged) { items.push("Unstage Selected"); }
+                let mut items = if target.directory {
+                    vec!["Reveal in Explorer"]
+                } else {
+                    vec!["Open Diff", "Open File"]
+                };
+                if self.sc_context_targets.iter().any(|file| !file.staged) {
+                    items.push("Stage Selected");
+                }
+                if self.sc_context_targets.iter().any(|file| file.staged) {
+                    items.push("Unstage Selected");
+                }
                 items.extend(["Discard Selected", "Cancel"]);
                 return items;
             }
-            if target.directory { return vec!["Reveal in Explorer", "Stage", "Discard", "Cancel"]; }
+            if target.directory {
+                return vec!["Reveal in Explorer", "Stage", "Discard", "Cancel"];
+            }
             vec![
                 "Open Diff",
                 "Open File",
@@ -452,7 +574,11 @@ impl App {
 
     pub(crate) fn hunk_popup_items(&self) -> Vec<&'static str> {
         if let Some(feedback) = &self.hunk_preview_feedback {
-            return if feedback.loading() { vec!["Close Preview"] } else { vec!["Retry Preview", "Close Preview"] };
+            return if feedback.loading() {
+                vec!["Close Preview"]
+            } else {
+                vec!["Retry Preview", "Close Preview"]
+            };
         }
         match self.hunk_popup_status {
             'N' if self.hunk_peek.is_some() => vec!["Revert Unsaved Hunk", "Close Preview"],
@@ -498,7 +624,9 @@ impl App {
             self.retry_hunk_preview();
             return;
         }
-        if self.hunk_preview_action_pending() { return; }
+        if self.hunk_preview_action_pending() {
+            return;
+        }
         if action == "Revert Unsaved Hunk" {
             let next = self.hunk_peek.as_ref().map_or(0, |peek| peek.selected);
             match self.revert_unsaved_hunk() {
@@ -524,7 +652,9 @@ impl App {
             self.notify_error("Another git operation is already running");
             return;
         }
-        let operation = if self.remote_workspace.is_some() { "apply hunk" } else {
+        let operation = if self.remote_workspace.is_some() {
+            "apply hunk"
+        } else {
             match action {
                 "Stage Hunk" => "stage hunk",
                 "Revert Hunk" => "unstage hunk",
@@ -570,7 +700,9 @@ impl App {
         };
         let target = self.sc_context_target.clone();
         let mut targets = std::mem::take(&mut self.sc_context_targets);
-        if targets.is_empty() { targets.extend(target.clone()); }
+        if targets.is_empty() {
+            targets.extend(target.clone());
+        }
         match action {
             "Open File" | "Reveal in Explorer" => {
                 if let Some(target) = target.as_ref() {
@@ -620,8 +752,15 @@ impl App {
             return;
         };
         if let Some(remote) = &self.remote_workspace {
-            let task = remote.remote_path(&source).and_then(|from| remote.remote_path(&destination).map(|to| crate::remote::fs::Task::Rename { from, to }));
-            match task { Ok(task) => self.run_remote_filesystem_action("Move", task, None), Err(error) => self.notify_error(error.to_string()) }
+            let task = remote.remote_path(&source).and_then(|from| {
+                remote
+                    .remote_path(&destination)
+                    .map(|to| crate::remote::fs::Task::Rename { from, to })
+            });
+            match task {
+                Ok(task) => self.run_remote_filesystem_action("Move", task, None),
+                Err(error) => self.notify_error(error.to_string()),
+            }
             return;
         }
 
@@ -641,7 +780,8 @@ impl App {
                     destination_parent.display()
                 ));
             }
-            crate::app_explorer::rename_no_replace(&source, &destination).map_err(|error| error.to_string())?;
+            crate::app_explorer::rename_no_replace(&source, &destination)
+                .map_err(|error| error.to_string())?;
             let message = format!("Moved to {}", destination_parent.display());
             Ok(crate::background::FilesystemActionOutcome {
                 message,
@@ -814,27 +954,35 @@ mod tests {
     #[test]
     fn context_menu_items_unstaged_file() {
         let mut app = make_app();
-        app.sc_context_target = Some(GitFileChange { directory: false,
+        app.sc_context_target = Some(GitFileChange {
+            directory: false,
             original_path: None,
             path: "file.rs".to_string(),
             status: 'M',
             staged: false,
         });
         let items = app.source_control_context_menu_items();
-        assert_eq!(items, vec!["Open Diff", "Open File", "Stage", "Discard", "Cancel"]);
+        assert_eq!(
+            items,
+            vec!["Open Diff", "Open File", "Stage", "Discard", "Cancel"]
+        );
     }
 
     #[test]
     fn context_menu_items_staged_file() {
         let mut app = make_app();
-        app.sc_context_target = Some(GitFileChange { directory: false,
+        app.sc_context_target = Some(GitFileChange {
+            directory: false,
             original_path: None,
             path: "file.rs".to_string(),
             status: 'A',
             staged: true,
         });
         let items = app.source_control_context_menu_items();
-        assert_eq!(items, vec!["Open Diff", "Open File", "Unstage", "Discard", "Cancel"]);
+        assert_eq!(
+            items,
+            vec!["Open Diff", "Open File", "Unstage", "Discard", "Cancel"]
+        );
     }
 
     // --- hunk_popup_items ---
@@ -929,7 +1077,8 @@ mod tests {
     #[test]
     fn open_source_control_context_menu_sets_state() {
         let mut app = make_app();
-        let target = GitFileChange { directory: false,
+        let target = GitFileChange {
+            directory: false,
             original_path: None,
             path: "main.rs".to_string(),
             status: 'M',

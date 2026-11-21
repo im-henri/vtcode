@@ -2,13 +2,22 @@
 use crate::{editor::Editor, lsp_positions};
 use lsp_types::TextEdit;
 
-fn offset_map(edits: impl IntoIterator<Item = (usize, usize, usize)>) -> Vec<crate::rope_changes::EditOffset> {
+fn offset_map(
+    edits: impl IntoIterator<Item = (usize, usize, usize)>,
+) -> Vec<crate::rope_changes::EditOffset> {
     let (mut old_end, mut new_end) = (0, 0);
-    edits.into_iter().map(|(start, end, inserted)| {
-        new_end += start - old_end + inserted;
-        old_end = end;
-        crate::rope_changes::EditOffset { start, end, new_end }
-    }).collect()
+    edits
+        .into_iter()
+        .map(|(start, end, inserted)| {
+            new_end += start - old_end + inserted;
+            old_end = end;
+            crate::rope_changes::EditOffset {
+                start,
+                end,
+                new_end,
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn prepare(
@@ -46,47 +55,62 @@ pub(crate) fn ensure_writable(editor: &Editor) -> Result<(), String> {
 
 /// Apply sorted, non-overlapping edits in the current Rope's character coordinates.
 /// Local renames use the same undo and cursor mapping as language-server edits.
-pub(crate) fn apply_prepared(editor: &mut Editor, mut edits: Vec<(usize, usize, String)>) -> Result<usize, String> {
-        crate::editor_document::edit!(editor, {
-    ensure_writable(editor)?;
-    // Validate the complete response first, then ignore edits that do nothing.
-    // Format Document must not clear redo or dirty an already formatted file.
-    edits.retain(|(start, end, text)| editor.rope.slice(*start..*end) != text.as_str());
-    if edits.is_empty() {
-        return Ok(0);
-    }
-    let dirty_from = editor.rope.char_to_line(edits[0].0);
-    let source = editor.rope.clone();
-    let dirty_through = source.char_to_line(edits.last().unwrap().1);
-    let structure_changed = edits.iter().any(|(start, end, text)|
-        source.slice(*start..*end).len_lines() > 1 || text.contains(['\r', '\n']));
-    let changes = offset_map(edits.iter().map(|(start, end, text)| (*start, *end, text.chars().count())));
-    let new_end = changes.last().unwrap().new_end;
-    let mut cursors = editor.collect_multi_cursors();
-    editor.save_undo_for_range(dirty_from, dirty_through);
-    editor.clear_selection();
-    editor.snippet_cancel();
-    for (start, end, text) in edits.iter().rev() {
-        editor.rope.remove(*start..*end);
-        editor.rope.insert(*start, text);
-    }
-    editor.modified = true;
-    editor.mark_syntax_dirty_range(dirty_from, dirty_through.max(editor.rope.char_to_line(new_end)));
-    if structure_changed { editor.clear_stale_folds(); }
-    for cursor in &mut cursors {
-        let line = cursor.line.min(source.len_lines() - 1);
-        let offset = source.line_to_char(line) + cursor.col.min(Editor::line_content_len(source.line(line)));
-        let mapped = crate::rope_changes::map_offset(&changes, offset).min(editor.rope.len_chars());
-        cursor.line = editor.rope.char_to_line(mapped);
-        cursor.col = mapped - editor.rope.line_to_char(cursor.line);
-        cursor.anchor = None;
-    }
-    editor.desired_col = None;
-    editor.set_multi_cursor_states(cursors);
-    editor.refresh_modified_from_saved();
-    Ok(edits.len())
-        })
-    }
+pub(crate) fn apply_prepared(
+    editor: &mut Editor,
+    mut edits: Vec<(usize, usize, String)>,
+) -> Result<usize, String> {
+    crate::editor_document::edit!(editor, {
+        ensure_writable(editor)?;
+        // Validate the complete response first, then ignore edits that do nothing.
+        // Format Document must not clear redo or dirty an already formatted file.
+        edits.retain(|(start, end, text)| editor.rope.slice(*start..*end) != text.as_str());
+        if edits.is_empty() {
+            return Ok(0);
+        }
+        let dirty_from = editor.rope.char_to_line(edits[0].0);
+        let source = editor.rope.clone();
+        let dirty_through = source.char_to_line(edits.last().unwrap().1);
+        let structure_changed = edits.iter().any(|(start, end, text)| {
+            source.slice(*start..*end).len_lines() > 1 || text.contains(['\r', '\n'])
+        });
+        let changes = offset_map(
+            edits
+                .iter()
+                .map(|(start, end, text)| (*start, *end, text.chars().count())),
+        );
+        let new_end = changes.last().unwrap().new_end;
+        let mut cursors = editor.collect_multi_cursors();
+        editor.save_undo_for_range(dirty_from, dirty_through);
+        editor.clear_selection();
+        editor.snippet_cancel();
+        for (start, end, text) in edits.iter().rev() {
+            editor.rope.remove(*start..*end);
+            editor.rope.insert(*start, text);
+        }
+        editor.modified = true;
+        editor.mark_syntax_dirty_range(
+            dirty_from,
+            dirty_through.max(editor.rope.char_to_line(new_end)),
+        );
+        if structure_changed {
+            editor.clear_stale_folds();
+        }
+        for cursor in &mut cursors {
+            let line = cursor.line.min(source.len_lines() - 1);
+            let offset = source.line_to_char(line)
+                + cursor.col.min(Editor::line_content_len(source.line(line)));
+            let mapped =
+                crate::rope_changes::map_offset(&changes, offset).min(editor.rope.len_chars());
+            cursor.line = editor.rope.char_to_line(mapped);
+            cursor.col = mapped - editor.rope.line_to_char(cursor.line);
+            cursor.anchor = None;
+        }
+        editor.desired_col = None;
+        editor.set_multi_cursor_states(cursors);
+        editor.refresh_modified_from_saved();
+        Ok(edits.len())
+    })
+}
 
 pub(crate) fn complete(
     editor: &mut Editor,
@@ -118,18 +142,31 @@ pub(crate) fn complete(
         return Err("Language server returned an overlapping completion edit".into());
     }
     let source = editor.rope.clone();
-    let snippet = item.is_snippet.then(|| crate::editor_snippets::parse_snippet_body(&item.insert_text));
-    let inserted = snippet.as_ref().map_or(item.insert_text.as_str(), |(text, _)| text).chars().count();
+    let snippet = item
+        .is_snippet
+        .then(|| crate::editor_snippets::parse_snippet_body(&item.insert_text));
+    let inserted = snippet
+        .as_ref()
+        .map_or(item.insert_text.as_str(), |(text, _)| text)
+        .chars()
+        .count();
     let structure_changed = source.slice(start..end).len_lines() > 1
         || item.insert_text.contains(['\r', '\n'])
-        || additional.iter().any(|(a, b, text)| source.slice(*a..*b).len_lines() > 1 || text.contains(['\r', '\n']));
+        || additional.iter().any(|(a, b, text)| {
+            source.slice(*a..*b).len_lines() > 1 || text.contains(['\r', '\n'])
+        });
     let mut cursors = (!editor.extra_cursors.is_empty()).then(|| editor.collect_multi_cursors());
     let changes = if cursors.is_some() {
-        let mut ranges: Vec<_> = additional.iter().map(|(a, b, text)| (*a, *b, text.chars().count())).collect();
+        let mut ranges: Vec<_> = additional
+            .iter()
+            .map(|(a, b, text)| (*a, *b, text.chars().count()))
+            .collect();
         ranges.push((start, end, inserted));
         ranges.sort_by_key(|(a, b, _)| (*a, *b));
         offset_map(ranges)
-    } else { Vec::new() };
+    } else {
+        Vec::new()
+    };
     let dirty_from = editor
         .rope
         .char_to_line(additional.first().map_or(start, |edit| edit.0.min(start)));
@@ -167,13 +204,17 @@ pub(crate) fn complete(
         editor.ensure_visible();
     }
     editor.mark_syntax_dirty_range(dirty_from, dirty_through);
-    if structure_changed { editor.clear_stale_folds(); }
+    if structure_changed {
+        editor.clear_stale_folds();
+    }
     editor.desired_col = None;
     if let Some(cursors) = cursors.as_mut() {
         let map = |(line, col): (usize, usize)| {
             let line = line.min(source.len_lines() - 1);
-            let offset = source.line_to_char(line) + col.min(Editor::line_content_len(source.line(line)));
-            let offset = crate::rope_changes::map_offset(&changes, offset).min(editor.rope.len_chars());
+            let offset =
+                source.line_to_char(line) + col.min(Editor::line_content_len(source.line(line)));
+            let offset =
+                crate::rope_changes::map_offset(&changes, offset).min(editor.rope.len_chars());
             let line = editor.rope.char_to_line(offset);
             (line, offset - editor.rope.line_to_char(line))
         };
@@ -182,11 +223,16 @@ pub(crate) fn complete(
             cursor.anchor = cursor.anchor.map(map);
         }
         cursors[0] = crate::editor_multicursor::MultiCursor {
-            line: editor.cursor_line, col: editor.cursor_col, anchor: editor.selection_anchor,
+            line: editor.cursor_line,
+            col: editor.cursor_col,
+            anchor: editor.selection_anchor,
         };
     }
-    if let Some(cursors) = cursors { editor.set_multi_cursor_states(cursors); }
-    else { editor.ensure_visible(); }
+    if let Some(cursors) = cursors {
+        editor.set_multi_cursor_states(cursors);
+    } else {
+        editor.ensure_visible();
+    }
     Ok(())
 }
 

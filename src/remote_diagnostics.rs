@@ -77,8 +77,13 @@ impl Body {
 impl Entry {
     fn level(&self) -> &'static str {
         match &self.body {
-            Body::Operation { phase: "Failed", .. } => "error",
-            Body::Operation { phase: "Stopped" | "Cancelled", .. } => "warning",
+            Body::Operation {
+                phase: "Failed", ..
+            } => "error",
+            Body::Operation {
+                phase: "Stopped" | "Cancelled",
+                ..
+            } => "warning",
             _ => match self.source {
                 "Error" | "Launch failed" | "Setup failed" | "Reconnect failed" => "error",
                 "Disconnected" | "Retry" | "Transport exit" | "Local helper exit" => "warning",
@@ -106,9 +111,23 @@ impl Entry {
         let _ = write!(line, "{}: ", self.source);
         match &self.body {
             Body::Message(text) => line.push_str(text),
-            Body::WorkspaceChanges { workspace, paths, structural, git, rescan, active } => {
-                let watcher = active.map_or("unchanged", |active| if active { "active" } else { "unavailable" });
-                let _ = write!(line, "{paths} paths; structure={structural}; Git={git}; rescan={rescan}; watcher={watcher}; workspace={workspace}");
+            Body::WorkspaceChanges {
+                workspace,
+                paths,
+                structural,
+                git,
+                rescan,
+                active,
+            } => {
+                let watcher =
+                    active.map_or(
+                        "unchanged",
+                        |active| if active { "active" } else { "unavailable" },
+                    );
+                let _ = write!(
+                    line,
+                    "{paths} paths; structure={structural}; Git={git}; rescan={rescan}; watcher={watcher}; workspace={workspace}"
+                );
             }
             Body::Operation {
                 description,

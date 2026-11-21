@@ -11,20 +11,28 @@ pub(in crate::ui_editor_animations) struct Ownership {
 
 fn ownership(geometry: &Geometry, pair: Pair) -> Rc<Ownership> {
     if geometry.is_retained()
-        && let Some((_, rows)) = geometry.fill_rows.borrow().iter().find(|(key, _)| *key == pair)
+        && let Some((_, rows)) = geometry
+            .fill_rows
+            .borrow()
+            .iter()
+            .find(|(key, _)| *key == pair)
     {
         return Rc::clone(rows);
     }
     let mut source_rows = HashSet::new();
     let mut limits = BTreeMap::<u16, (u16, u16)>::new();
     for &(line, _, y) in &geometry.scope_rows {
-        if line >= pair.0.0 && line <= pair.1.0 { source_rows.insert(y); }
+        if line >= pair.0.0 && line <= pair.1.0 {
+            source_rows.insert(y);
+        }
     }
     for anchor in &geometry.anchors {
         if bubble::contains(pair, anchor.line, anchor.col) {
             source_rows.insert(anchor.y);
         } else {
-            let limit = limits.entry(anchor.y).or_insert((geometry.area.x, geometry.area.right()));
+            let limit = limits
+                .entry(anchor.y)
+                .or_insert((geometry.area.x, geometry.area.right()));
             if (anchor.line, anchor.col) < pair.0 {
                 limit.0 = limit.0.max(anchor.x.saturating_add(anchor.width));
             } else {
@@ -32,10 +40,15 @@ fn ownership(geometry: &Geometry, pair: Pair) -> Rc<Ownership> {
             }
         }
     }
-    let rows = Rc::new(Ownership { source_rows, limits });
+    let rows = Rc::new(Ownership {
+        source_rows,
+        limits,
+    });
     if geometry.is_retained() {
         let mut cached = geometry.fill_rows.borrow_mut();
-        if cached.len() >= 6 { cached.remove(0); }
+        if cached.len() >= 6 {
+            cached.remove(0);
+        }
         cached.push((pair, Rc::clone(&rows)));
     }
     rows
@@ -73,7 +86,8 @@ pub(super) fn draw(
         if !ownership.source_rows.contains(&span.y) || span.right <= span.left + 1 {
             continue;
         }
-        let (left, right) = ownership.limits
+        let (left, right) = ownership
+            .limits
             .get(&span.y)
             .copied()
             .unwrap_or((geometry.area.x, geometry.area.right()));
@@ -92,7 +106,8 @@ pub(super) fn draw(
             budget -= 1;
             let position = (x as u16, span.y);
             if painter.is_caret(position)
-                || (painter.mask.is_none() && geometry.obstacles.contains(&position)) {
+                || (painter.mask.is_none() && geometry.obstacles.contains(&position))
+            {
                 continue;
             }
             let depth = ((x - span.left).min(span.right - x) as f32 - 0.5) / half_width;
@@ -107,8 +122,8 @@ pub(super) fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::buffer::Buffer;
     use crate::{app_theme::EditorTheme, ui_editor_animations::REFERENCE_RETAINED_GEOMETRY};
+    use ratatui::buffer::Buffer;
 
     fn fixture() -> (Geometry, Buffer) {
         let mut geometry = Geometry::new(Rect::new(2, 1, 100, 45), true);
@@ -137,14 +152,22 @@ mod tests {
         let updated = ownership(&geometry, pair);
         assert!(!Rc::ptr_eq(&initial, &updated));
         assert!(!updated.source_rows.contains(&1));
-        for line in 0..50 { ownership(&geometry, ((line, 0), (line + 2, 5))); }
+        for line in 0..50 {
+            ownership(&geometry, ((line, 0), (line + 2, 5)));
+        }
         assert!(geometry.fill_rows.borrow().len() <= 6);
     }
 
     #[test]
     fn cached_fill_and_dense_masks_match_fresh_ownership_for_partial_scopes_and_selections() {
         let (geometry, base) = fixture();
-        let spans: Vec<_> = (1..46).map(|y| Span { y, left: 2, right: 100 }).collect();
+        let spans: Vec<_> = (1..46)
+            .map(|y| Span {
+                y,
+                left: 2,
+                right: 100,
+            })
+            .collect();
         for pair in [((1, 5), (12, 15)), ((5, 7), (5, 20)), ((0, 0), (44, 30))] {
             for selection in [None, Some((3, 1, 10, 12))] {
                 let protection = geometry.protection(None, selection, &[], &[]);
@@ -155,15 +178,34 @@ mod tests {
                         let mut actual = base.clone();
                         for (buffer, cached) in [(&mut expected, false), (&mut actual, true)] {
                             REFERENCE_RETAINED_GEOMETRY.set(!cached);
-                            let mut painter = Painter::new(buffer, geometry.area, colors,
-                                protection.protected_cells(), protection.caret_cells(), geometry.unsafe_rows.clone());
+                            let mut painter = Painter::new(
+                                buffer,
+                                geometry.area,
+                                colors,
+                                protection.protected_cells(),
+                                protection.caret_cells(),
+                                geometry.unsafe_rows.clone(),
+                            );
                             painter.overlays = std::borrow::Cow::Borrowed(&geometry.overlays);
-                            if cached { painter.mask = protection.mask.as_ref(); }
-                            draw(&mut painter, &geometry, pair, &spans, colors.fg_accent, progress, 0.7);
+                            if cached {
+                                painter.mask = protection.mask.as_ref();
+                            }
+                            draw(
+                                &mut painter,
+                                &geometry,
+                                pair,
+                                &spans,
+                                colors.fg_accent,
+                                progress,
+                                0.7,
+                            );
                             painter.finish();
                             REFERENCE_RETAINED_GEOMETRY.set(false);
                         }
-                        assert_eq!(actual, expected, "pair={pair:?} selection={selection:?} progress={progress}");
+                        assert_eq!(
+                            actual, expected,
+                            "pair={pair:?} selection={selection:?} progress={progress}"
+                        );
                     }
                 }
             }

@@ -1,7 +1,7 @@
 //! Native, debounced remote filesystem notifications. There is no idle polling
 //! or stat-per-frame traffic. Bursts are bounded and coalesced at both ends.
 use super::*;
-use crate::workspace_watch::{Burst, NoiseFilter, Delivery, GitWatches};
+use crate::workspace_watch::{Burst, Delivery, GitWatches, NoiseFilter};
 #[cfg(all(test, target_os = "linux"))]
 #[path = "remote_watch_scope_tests.rs"]
 mod scope_tests;
@@ -44,34 +44,67 @@ impl Observation {
     }
     fn active_for(&self, owner: &Arc<()>, active: bool) -> bool {
         let current = self.wake.lock().unwrap();
-        if !current.as_ref().is_some_and(|(id, _)| Arc::ptr_eq(id, owner)) { return false; }
+        if !current
+            .as_ref()
+            .is_some_and(|(id, _)| Arc::ptr_eq(id, owner))
+        {
+            return false;
+        }
         self.active(active);
         true
     }
     fn finish(&self, owner: &Arc<()>) {
         let mut current = self.wake.lock().unwrap();
-        if current.as_ref().is_some_and(|(id, _)| Arc::ptr_eq(id, owner)) {
+        if current
+            .as_ref()
+            .is_some_and(|(id, _)| Arc::ptr_eq(id, owner))
+        {
             self.active(false);
             *current = None;
         }
     }
-    fn send_for(&self, owner: &Arc<()>, output: &mpsc::SyncSender<Response>, response: Response) -> bool {
+    fn send_for(
+        &self,
+        owner: &Arc<()>,
+        output: &mpsc::SyncSender<Response>,
+        response: Response,
+    ) -> bool {
         // Serialize publication with replacement so a retiring watcher cannot
         // publish an inactive stamp after the new subscription became active.
         let current = self.wake.lock().unwrap();
-        current.as_ref().is_some_and(|(id, _)| Arc::ptr_eq(id, owner)) && output.send(response).is_ok()
+        current
+            .as_ref()
+            .is_some_and(|(id, _)| Arc::ptr_eq(id, owner))
+            && output.send(response).is_ok()
     }
     // Repository discovery supplies explicit dependencies; arbitrary directory
     // symlinks are not recursive workspace subscriptions.
-    pub(super) fn repositories(&self, root: &Path, discovery: &git::Discovery, parent_open: bool, closed: &[RemotePath]) {
+    pub(super) fn repositories(
+        &self,
+        root: &Path,
+        discovery: &git::Discovery,
+        parent_open: bool,
+        closed: &[RemotePath],
+    ) {
         let mut paths = Vec::new();
-        for path in discovery.roots.iter().chain(discovery.parent.iter().filter(|_| parent_open))
-            .filter(|path| !closed.contains(path)) {
-            let Ok(native) = path.resolve(root) else { continue };
-            let Ok(repo) = git2::Repository::open(native) else { continue };
+        for path in discovery
+            .roots
+            .iter()
+            .chain(discovery.parent.iter().filter(|_| parent_open))
+            .filter(|path| !closed.contains(path))
+        {
+            let Ok(native) = path.resolve(root) else {
+                continue;
+            };
+            let Ok(repo) = git2::Repository::open(native) else {
+                continue;
+            };
             for directory in [repo.path(), repo.commondir()] {
                 if let Ok(directory) = std::fs::canonicalize(directory)
-                    && crate::native_paths::strip_prefix(&directory, root).is_none() { paths.push(directory); }
+                    && crate::native_paths::strip_prefix(&directory, root).is_none()
+                {
+                    paths.push(directory);
+                }
             }
         }
         paths.sort();
@@ -80,7 +113,9 @@ impl Observation {
         if *previous != paths {
             *previous = paths;
             self.invalidate();
-            if let Some((_, wake)) = &*self.wake.lock().unwrap() { let _ = wake.try_send(()); }
+            if let Some((_, wake)) = &*self.wake.lock().unwrap() {
+                let _ = wake.try_send(());
+            }
         }
     }
 }
@@ -93,11 +128,21 @@ fn git_metadata_under_a_workspace_uri_alias_needs_no_external_subscription() {
     let canonical = std::fs::canonicalize(directory.path()).unwrap();
     // Windows file URIs omit the extended-length prefix. Comparing raw native
     // spellings would subscribe to the same Git directory a second time.
-    let root = url::Url::from_directory_path(canonical).unwrap().to_file_path().unwrap();
+    let root = url::Url::from_directory_path(canonical)
+        .unwrap()
+        .to_file_path()
+        .unwrap();
     let observation = Observation::default();
-    observation.repositories(&root, &git::Discovery {
-        roots: vec![RemotePath::default()], parent: None, errors: Vec::new(),
-    }, false, &[]);
+    observation.repositories(
+        &root,
+        &git::Discovery {
+            roots: vec![RemotePath::default()],
+            parent: None,
+            errors: Vec::new(),
+        },
+        false,
+        &[],
+    );
     assert!(observation.git.lock().unwrap().is_empty());
 }
 
@@ -127,7 +172,9 @@ pub(crate) struct State {
     pub modified: Option<std::time::SystemTime>,
     pub size: Option<u64>,
 }
-fn is_false(value: &bool) -> bool { !value }
+fn is_false(value: &bool) -> bool {
+    !value
+}
 impl State {
     pub(crate) fn read(root: &Path, path: RemotePath) -> io::Result<Self> {
         let native = path.resolve(root)?;
@@ -228,7 +275,9 @@ impl Watch {
     pub(super) fn is_finished(&self) -> bool {
         self.finished.load(Ordering::Acquire) || self.coverage_lost.load(Ordering::Acquire)
     }
-    pub(super) fn pause(&self) { self.delivery.pause(); }
+    pub(super) fn pause(&self) {
+        self.delivery.pause();
+    }
     pub(super) fn resume(&self) -> io::Result<()> {
         self.delivery.resume();
         match self.wake.try_send(()) {
@@ -241,7 +290,7 @@ impl Watch {
         output: mpsc::SyncSender<Response>,
         observation: Arc<Observation>,
     ) -> io::Result<Self> {
-        use notify::{Watcher};
+        use notify::Watcher;
         let burst = Arc::new(Mutex::new(Burst::default()));
         let stop = Arc::new(AtomicBool::new(false));
         let (wake, requests) = mpsc::sync_channel(1);
@@ -272,11 +321,17 @@ impl Watch {
                         self.2.store(true, Ordering::Release);
                     }
                 }
-                let _inactive = InactiveOnExit(worker_observation.clone(), worker_owner.clone(), worker_finished);
+                let _inactive = InactiveOnExit(
+                    worker_observation.clone(),
+                    worker_owner.clone(),
+                    worker_finished,
+                );
                 let send = |response| worker_observation.send_for(&worker_owner, &output, response);
                 let mut noise = NoiseFilter::default();
                 let callback_observation = worker_observation.clone();
-                if worker_stop.load(Ordering::Acquire) { return; }
+                if worker_stop.load(Ordering::Acquire) {
+                    return;
+                }
                 crate::worker_priority::lower_current_thread();
                 let callback_root = root.clone();
                 let callback_burst = burst.clone();
@@ -287,23 +342,41 @@ impl Watch {
                 let callback_delivery = worker_delivery.clone();
                 let watcher = crate::workspace_watch::native_watcher(
                     move |event| {
-                        if callback_stop.load(Ordering::Acquire) { return; }
+                        if callback_stop.load(Ordering::Acquire) {
+                            return;
+                        }
                         let mut burst = callback_burst.lock().unwrap();
                         let was_empty = burst.event.is_empty();
-                        let listing_changed = burst.push_with_dependencies(&callback_root, event, &callback_observation.git.lock().unwrap());
-                        if burst.event.watcher_failed && !callback_coverage_lost.swap(true, Ordering::AcqRel) {
+                        let listing_changed = burst.push_with_dependencies(
+                            &callback_root,
+                            event,
+                            &callback_observation.git.lock().unwrap(),
+                        );
+                        if burst.event.watcher_failed
+                            && !callback_coverage_lost.swap(true, Ordering::AcqRel)
+                        {
                             callback_observation.active_for(&callback_owner, false);
                         }
-                        if listing_changed { callback_observation.invalidate(); }
+                        if listing_changed {
+                            callback_observation.invalidate();
+                        }
                         if !burst.event.is_empty() {
                             if callback_delivery.visible() {
-                                if was_empty { let _ = callback_wake.try_send(()); }
+                                if was_empty {
+                                    let _ = callback_wake.try_send(());
+                                }
                             }
                         }
                     },
                     native_watch_config(),
-                    move |path| !coverage_stop.load(Ordering::Acquire) && crate::workspace_watch::directory_is_relevant(
-                        &coverage_root, path, &coverage_observation.git.lock().unwrap()),
+                    move |path| {
+                        !coverage_stop.load(Ordering::Acquire)
+                            && crate::workspace_watch::directory_is_relevant(
+                                &coverage_root,
+                                path,
+                                &coverage_observation.git.lock().unwrap(),
+                            )
+                    },
                 );
                 let mut watcher = match watcher.and_then(|mut watcher| {
                     crate::workspace_watch::watch_root(&mut watcher, &root)?;
@@ -325,36 +398,55 @@ impl Watch {
                         return;
                     }
                 };
-                if worker_stop.load(Ordering::Acquire) || !worker_observation.active_for(&worker_owner, true) { return; }
+                if worker_stop.load(Ordering::Acquire)
+                    || !worker_observation.active_for(&worker_owner, true)
+                {
+                    return;
+                }
                 let mut git_watches = GitWatches::default();
                 if !send(Response {
-                        id: 0,
-                        result: Ok(Reply::WorkspaceChanges(Batch {
-                            root_uri: root_uri.clone(),
-                            active: Some(true),
-                            rescan: true,
-                            ..Default::default()
-                        })),
-                    })
-                {
+                    id: 0,
+                    result: Ok(Reply::WorkspaceChanges(Batch {
+                        root_uri: root_uri.clone(),
+                        active: Some(true),
+                        rescan: true,
+                        ..Default::default()
+                    })),
+                }) {
                     return;
                 }
                 let mut initial = true;
                 while requests.recv().is_ok() && !worker_stop.load(Ordering::Acquire) {
-                    if !worker_delivery.visible() { continue; }
+                    if !worker_delivery.visible() {
+                        continue;
+                    }
                     let mut resumed = worker_delivery.take_resume();
                     let initializing = std::mem::take(&mut initial);
-                    while !resumed && !initializing && worker_delivery.visible() && !worker_stop.load(Ordering::Acquire) {
+                    while !resumed
+                        && !initializing
+                        && worker_delivery.visible()
+                        && !worker_stop.load(Ordering::Acquire)
+                    {
                         let remaining = burst.lock().unwrap().next_wait(std::time::Instant::now());
-                        if remaining.is_zero() { break; }
+                        if remaining.is_zero() {
+                            break;
+                        }
                         match requests.recv_timeout(remaining) {
-                            Ok(()) => if worker_delivery.take_resume() { resumed = true; },
-                            Err(mpsc::RecvTimeoutError::Timeout) => {},
+                            Ok(()) => {
+                                if worker_delivery.take_resume() {
+                                    resumed = true;
+                                }
+                            }
+                            Err(mpsc::RecvTimeoutError::Timeout) => {}
                             Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         }
                     }
-                    if worker_stop.load(Ordering::Acquire) { break; }
-                    if !worker_delivery.visible() { continue; }
+                    if worker_stop.load(Ordering::Acquire) {
+                        break;
+                    }
+                    if !worker_delivery.visible() {
+                        continue;
+                    }
                     // Only discovery changes alter subscriptions. This is not
                     // a recurring directory scan or a background Git query.
                     let paths = worker_observation.git.lock().unwrap().clone();
@@ -395,16 +487,21 @@ impl Watch {
                         structural: event.structure_changed,
                         git: event.git_metadata_changed,
                         rescan: event.rescan,
-                        active: if event.watcher_failed { Some(false) } else { resumed.then_some(true) },
+                        active: if event.watcher_failed {
+                            Some(false)
+                        } else {
+                            resumed.then_some(true)
+                        },
                     };
                     if !send(Response {
-                            id: 0,
-                            result: Ok(Reply::WorkspaceChanges(batch)),
-                        })
-                    {
+                        id: 0,
+                        result: Ok(Reply::WorkspaceChanges(batch)),
+                    }) {
                         break;
                     }
-                    if event.watcher_failed { break; }
+                    if event.watcher_failed {
+                        break;
+                    }
                 }
                 let _ = watcher.unwatch(&root);
             })?;
@@ -421,7 +518,9 @@ impl Watch {
 }
 
 #[cfg(all(test, target_os = "linux"))]
-fn native_watcher(event_handler: impl notify::EventHandler) -> notify::Result<notify::RecommendedWatcher> {
+fn native_watcher(
+    event_handler: impl notify::EventHandler,
+) -> notify::Result<notify::RecommendedWatcher> {
     crate::workspace_watch::native_watcher(event_handler, native_watch_config(), |_| true)
 }
 
@@ -429,7 +528,9 @@ fn native_watch_config() -> notify::Config {
     // VTCode consumes modifications, including close-after-write, but ignores
     // read-only opens. Filter those in the kernel, before allocating events or
     // waking a thread for other tools' reads of the workspace and its caches.
-    notify::Config::default().with_open_events(false).with_follow_symlinks(false)
+    notify::Config::default()
+        .with_open_events(false)
+        .with_follow_symlinks(false)
 }
 
 impl workspace::Workspace {
@@ -444,13 +545,18 @@ impl workspace::Workspace {
             && crate::background::workspace_path_is_watched(&self.view_root, key)
     }
 
-    pub(crate) fn apply_notifications(&self, sender: &crate::background::BackgroundResultSender, generation: u64) {
+    pub(crate) fn apply_notifications(
+        &self,
+        sender: &crate::background::BackgroundResultSender,
+        generation: u64,
+    ) {
         let Some(batch) = self.client.take_workspace_changes() else {
             return;
         };
         let send = |result| {
             let _ = sender.send(crate::background::BackgroundResult::WorkspaceResult {
-                generation, result: Box::new(result),
+                generation,
+                result: Box::new(result),
             });
         };
         if let Some(active) = batch.active {
@@ -519,12 +625,26 @@ mod tests {
         let (output, received) = mpsc::sync_channel(32);
         let watch = Watch::start(root.clone(), output, observation).unwrap();
         let first = received.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(matches!(first.result, Ok(Reply::WorkspaceChanges(Batch { active: Some(true), .. }))));
+        assert!(matches!(
+            first.result,
+            Ok(Reply::WorkspaceChanges(Batch {
+                active: Some(true),
+                ..
+            }))
+        ));
         // Resume acknowledges the initial control wake before generating files.
         watch.resume().unwrap();
         loop {
             let response = received.recv_timeout(Duration::from_secs(5)).unwrap();
-            if matches!(response.result, Ok(Reply::WorkspaceChanges(Batch { active: Some(true), .. }))) { break; }
+            if matches!(
+                response.result,
+                Ok(Reply::WorkspaceChanges(Batch {
+                    active: Some(true),
+                    ..
+                }))
+            ) {
+                break;
+            }
         }
         let mut expected = Vec::new();
         for index in 0..8 {
@@ -532,24 +652,48 @@ mod tests {
             std::fs::write(&path, format!("build output {index}")).unwrap();
             expected.push(git::from_native(&path, &root).unwrap());
             // Writes continue beyond several old 300 ms delivery windows.
-            assert!(matches!(received.recv_timeout(Duration::from_millis(150)),
-                Err(mpsc::RecvTimeoutError::Timeout)), "build notifications must wait for quiet");
+            assert!(
+                matches!(
+                    received.recv_timeout(Duration::from_millis(150)),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                ),
+                "build notifications must wait for quiet"
+            );
         }
         std::fs::remove_file(root.join("object-0.o")).unwrap();
         std::fs::write(root.join("object-1.o"), "final output").unwrap();
         let response = received.recv_timeout(Duration::from_secs(5)).unwrap();
-        let Ok(Reply::WorkspaceChanges(batch)) = response.result else { panic!("expected final changes") };
+        let Ok(Reply::WorkspaceChanges(batch)) = response.result else {
+            panic!("expected final changes")
+        };
         assert!(batch.structural && !batch.rescan);
         assert_eq!(batch.states.len(), expected.len());
         let removed = git::from_native(&root.join("object-0.o"), &root).unwrap();
         let updated = git::from_native(&root.join("object-1.o"), &root).unwrap();
         for path in expected {
-            let state = batch.states.iter().find(|state| state.path == path).unwrap();
+            let state = batch
+                .states
+                .iter()
+                .find(|state| state.path == path)
+                .unwrap();
             assert_eq!(state.exists, path != removed);
         }
-        assert_eq!(batch.states.iter().find(|state| state.path == updated).unwrap().size, Some(12));
-        assert!(matches!(received.recv_timeout(Duration::from_millis(200)), Err(mpsc::RecvTimeoutError::Timeout)),
-            "the quiet flush must not schedule another notification");
+        assert_eq!(
+            batch
+                .states
+                .iter()
+                .find(|state| state.path == updated)
+                .unwrap()
+                .size,
+            Some(12)
+        );
+        assert!(
+            matches!(
+                received.recv_timeout(Duration::from_millis(200)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "the quiet flush must not schedule another notification"
+        );
     }
 
     #[test]
@@ -565,10 +709,25 @@ mod tests {
         observation.finish(&old);
         assert!(!observation.active_for(&old, false));
         assert_eq!(observation.stamp(), stamp);
-        observation.wake.lock().unwrap().as_ref().unwrap().1.try_send(()).unwrap();
+        observation
+            .wake
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .1
+            .try_send(())
+            .unwrap();
         wake_receive.try_recv().unwrap();
         let (output, receive) = mpsc::sync_channel(1);
-        assert!(!observation.send_for(&old, &output, Response { id: 0, result: Ok(Reply::Done) }));
+        assert!(!observation.send_for(
+            &old,
+            &output,
+            Response {
+                id: 0,
+                result: Ok(Reply::Done)
+            }
+        ));
         assert!(receive.try_recv().is_err());
         observation.finish(&new);
         assert!(!observation.stamp().active);
@@ -582,7 +741,8 @@ mod tests {
         std::fs::create_dir(&directory).unwrap();
         std::fs::write(&file, "text").unwrap();
         for (path, is_dir) in [(directory, true), (file, false)] {
-            let state = State::read(root.path(), git::from_native(&path, root.path()).unwrap()).unwrap();
+            let state =
+                State::read(root.path(), git::from_native(&path, root.path()).unwrap()).unwrap();
             assert_eq!(state.is_dir, is_dir);
             let mut json = serde_json::to_value(&state).unwrap();
             assert_eq!(json.get("is_dir").is_some(), is_dir);
@@ -590,7 +750,10 @@ mod tests {
             assert_eq!(decoded.is_dir, is_dir);
             json.as_object_mut().unwrap().remove("is_dir");
             let legacy: State = serde_json::from_value(json).unwrap();
-            assert!(!legacy.is_dir, "unknown file kinds must conservatively refresh existing folders");
+            assert!(
+                !legacy.is_dir,
+                "unknown file kinds must conservatively refresh existing folders"
+            );
         }
     }
     use notify::{
@@ -601,7 +764,10 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn native_headless_watch_stays_asleep_for_reads_but_reports_writes_and_renames() {
-        use notify::{RecursiveMode, Watcher, event::{AccessKind, AccessMode}};
+        use notify::{
+            RecursiveMode, Watcher,
+            event::{AccessKind, AccessMode},
+        };
         use std::time::{Duration, Instant};
         let root = tempfile::tempdir().unwrap();
         let nested = root.path().join("node_modules/cache");
@@ -610,26 +776,53 @@ mod tests {
         std::fs::write(&file, "before").unwrap();
         let (events, received) = mpsc::channel();
         let mut watcher = native_watcher(events).unwrap();
-        watcher.watch(root.path(), RecursiveMode::Recursive).unwrap();
-        for _ in 0..1000 { assert_eq!(std::fs::read(&file).unwrap(), b"before"); }
-        assert!(matches!(received.recv_timeout(Duration::from_millis(50)), Err(mpsc::RecvTimeoutError::Timeout)),
-            "read-only opens must not wake the native event handler");
+        watcher
+            .watch(root.path(), RecursiveMode::Recursive)
+            .unwrap();
+        for _ in 0..1000 {
+            assert_eq!(std::fs::read(&file).unwrap(), b"before");
+        }
+        assert!(
+            matches!(
+                received.recv_timeout(Duration::from_millis(50)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "read-only opens must not wake the native event handler"
+        );
         std::fs::write(&file, "after").unwrap();
-        let changed = received.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
+        let changed = received
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
         assert!(changed.paths.contains(&file));
-        assert!(matches!(changed.kind, EventKind::Modify(_) | EventKind::Access(AccessKind::Close(AccessMode::Write))));
+        assert!(matches!(
+            changed.kind,
+            EventKind::Modify(_) | EventKind::Access(AccessKind::Close(AccessMode::Write))
+        ));
         let renamed = nested.join("renamed.txt");
         std::fs::rename(&file, &renamed).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
-            if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_))) && event.paths.contains(&renamed) { break; }
+            let event = received
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap()
+                .unwrap();
+            if matches!(event.kind, EventKind::Modify(ModifyKind::Name(_)))
+                && event.paths.contains(&renamed)
+            {
+                break;
+            }
         }
         std::fs::remove_file(&renamed).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
-            if matches!(event.kind, EventKind::Remove(_)) && event.paths.contains(&renamed) { break; }
+            let event = received
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap()
+                .unwrap();
+            if matches!(event.kind, EventKind::Remove(_)) && event.paths.contains(&renamed) {
+                break;
+            }
         }
     }
 
@@ -641,10 +834,14 @@ mod tests {
         let file = root.path().join("entry.txt");
         std::fs::write(&file, "content").unwrap();
         let (events, received) = mpsc::channel();
-        let mut watcher = notify::RecommendedWatcher::new(events, notify::Config::default()).unwrap();
+        let mut watcher =
+            notify::RecommendedWatcher::new(events, notify::Config::default()).unwrap();
         watcher.watch(&file, RecursiveMode::NonRecursive).unwrap();
         std::fs::read(&file).unwrap();
-        let event = received.recv_timeout(std::time::Duration::from_secs(3)).unwrap().unwrap();
+        let event = received
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
         assert!(matches!(event.kind, EventKind::Access(AccessKind::Open(_))));
     }
 
@@ -655,9 +852,21 @@ mod tests {
         use std::time::{Duration, Instant};
         let workspace = tempfile::tempdir().unwrap();
         let root = workspace.path();
-        let files: Vec<_> = ["build/source.rs", "target/generated.rs", "node_modules/cache", "dist/source.js",
-            "__pycache__/source.py", ".venv/source.py", "venv/source.py", ".tox/source.py",
-            ".mypy_cache/source.py", ".pytest_cache/source.py"].into_iter().map(|path| root.join(path)).collect();
+        let files: Vec<_> = [
+            "build/source.rs",
+            "target/generated.rs",
+            "node_modules/cache",
+            "dist/source.js",
+            "__pycache__/source.py",
+            ".venv/source.py",
+            "venv/source.py",
+            ".tox/source.py",
+            ".mypy_cache/source.py",
+            ".pytest_cache/source.py",
+        ]
+        .into_iter()
+        .map(|path| root.join(path))
+        .collect();
         for path in &files {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, "before").unwrap();
@@ -665,18 +874,29 @@ mod tests {
         let (events, received) = mpsc::channel();
         let mut watcher = native_watcher(events).unwrap();
         watcher.watch(root, RecursiveMode::Recursive).unwrap();
-        for path in &files { std::fs::write(path, "after").unwrap(); }
+        for path in &files {
+            std::fs::write(path, "after").unwrap();
+        }
         let hot = &files[2];
-        for _ in 0..1000 { std::fs::write(hot, "hot file").unwrap(); }
+        for _ in 0..1000 {
+            std::fs::write(hot, "hot file").unwrap();
+        }
         let mut missing: std::collections::HashSet<_> = files.iter().cloned().collect();
         let deadline = Instant::now() + Duration::from_secs(3);
         while !missing.is_empty() {
-            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
-            for path in event.paths { missing.remove(&path); }
+            let event = received
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap()
+                .unwrap();
+            for path in event.paths {
+                missing.remove(&path);
+            }
         }
         let drain = || loop {
             match received.recv_timeout(Duration::from_millis(50)) {
-                Ok(event) => { event.unwrap(); }
+                Ok(event) => {
+                    event.unwrap();
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => break,
                 Err(error) => panic!("{error}"),
             }
@@ -693,18 +913,29 @@ mod tests {
         let mut saw_rename = false;
         let deadline = Instant::now() + Duration::from_secs(3);
         while modifications < 2 || !saw_rename {
-            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
-            if matches!(event.kind, EventKind::Modify(ModifyKind::Data(_))) && event.paths.contains(hot) {
+            let event = received
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap()
+                .unwrap();
+            if matches!(event.kind, EventKind::Modify(ModifyKind::Data(_)))
+                && event.paths.contains(hot)
+            {
                 modifications += 1;
             }
-            saw_rename |= matches!(event.kind, EventKind::Modify(ModifyKind::Name(_))) && event.paths.contains(&renamed);
+            saw_rename |= matches!(event.kind, EventKind::Modify(ModifyKind::Name(_)))
+                && event.paths.contains(&renamed);
         }
         drain();
         std::fs::remove_file(&renamed).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
-            if matches!(event.kind, EventKind::Remove(_)) && event.paths.contains(&renamed) { break; }
+            let event = received
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap()
+                .unwrap();
+            if matches!(event.kind, EventKind::Remove(_)) && event.paths.contains(&renamed) {
+                break;
+            }
         }
         drain();
 
@@ -713,16 +944,26 @@ mod tests {
         std::fs::create_dir(&nested).unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
-            if event.paths.contains(&nested) { break; }
+            let event = received
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap()
+                .unwrap();
+            if event.paths.contains(&nested) {
+                break;
+            }
         }
         drain();
         let child = nested.join("new.rs");
         std::fs::write(&child, "new source").unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            let event = received.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap().unwrap();
-            if event.paths.contains(&child) { break; }
+            let event = received
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap()
+                .unwrap();
+            if event.paths.contains(&child) {
+                break;
+            }
         }
     }
 

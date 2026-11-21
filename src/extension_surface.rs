@@ -48,7 +48,8 @@ fn surface_colors(
         _ => colors.bg_editor,
     };
     let selection_foreground = (span.background == "selection" || span.role == "selection")
-        .then(|| colors.ui.editor_selection_foreground.over(bg)).flatten();
+        .then(|| colors.ui.editor_selection_foreground.over(bg))
+        .flatten();
     let fg = if span.background == "cursor" || span.role == "cursor" {
         colors.fg_cursor
     } else if let Some(foreground) = selection_foreground {
@@ -91,7 +92,10 @@ pub(crate) fn render_frame(
     if area.is_empty() {
         return;
     }
-    buffer.set_style(area, Style::default().fg(colors.fg_text).bg(colors.bg_editor));
+    buffer.set_style(
+        area,
+        Style::default().fg(colors.fg_text).bg(colors.bg_editor),
+    );
     let mut styles = rustc_hash::FxHashMap::default();
     for (row, line) in frame
         .lines

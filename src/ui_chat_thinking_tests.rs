@@ -255,7 +255,8 @@ fn acp_chat_sdk_round_trip_expanded_thinking_while_prompt_is_pending() {
     let root = tempfile::tempdir().unwrap();
     let mut app = App::test_new();
     app.explorer.root = root.path().to_path_buf();
-    let python = std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
+    let python = std::env::var("VTCODE_ACP_TEST_PYTHON")
+        .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
     let mut config = vtcode::acp::AgentConfig::new("Official SDK scenario agent", python);
     config.args = vec![
         "-u".into(),

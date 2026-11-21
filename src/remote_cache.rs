@@ -18,7 +18,13 @@ impl<T, K> Default for Cache<T, K> {
 }
 impl<T, K> Cache<T, K> {
     pub(super) fn with_limits(max_entries: usize, max_bytes: usize) -> Self {
-        Self { entries: HashMap::new(), bytes: 0, clock: 0, max_entries, max_bytes }
+        Self {
+            entries: HashMap::new(),
+            bytes: 0,
+            clock: 0,
+            max_entries,
+            max_bytes,
+        }
     }
 }
 impl<T, K: Clone + std::hash::Hash + Eq> Cache<T, K> {
@@ -33,7 +39,9 @@ impl<T, K: Clone + std::hash::Hash + Eq> Cache<T, K> {
         if self.max_entries == 0 || bytes > self.max_bytes {
             return;
         }
-        while self.bytes.saturating_add(bytes) > self.max_bytes || self.entries.len() >= self.max_entries {
+        while self.bytes.saturating_add(bytes) > self.max_bytes
+            || self.entries.len() >= self.max_entries
+        {
             let Some(path) = self
                 .entries
                 .iter()

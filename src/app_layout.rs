@@ -1,4 +1,6 @@
-use crate::app::{ActivePane, App, EditorGroup, SplitDirection, SplitNode, Tab, TabDropZone, TabKind};
+use crate::app::{
+    ActivePane, App, EditorGroup, SplitDirection, SplitNode, Tab, TabDropZone, TabKind,
+};
 
 impl App {
     /// Validate pane hit maps against the currently visible tab, including
@@ -23,16 +25,23 @@ impl App {
 
     /// Whether there is more than one editor group (i.e. a split view is active)
     pub(crate) fn split_active(&self) -> bool {
-        if self.desks.items.len() > 1 || (self.groups.len()==1 && self.groups[0].tabs.is_empty()) {
-            self.split_tree.as_ref().is_some_and(|tree| tree.leaves().len() > 1)
-        } else { !self.groups.is_empty() }
+        if self.desks.items.len() > 1 || (self.groups.len() == 1 && self.groups[0].tabs.is_empty())
+        {
+            self.split_tree
+                .as_ref()
+                .is_some_and(|tree| tree.leaves().len() > 1)
+        } else {
+            !self.groups.is_empty()
+        }
     }
 
     /// Save current active group state into the groups vector
     pub(crate) fn save_active_group(&mut self) {
         let g = EditorGroup {
             desk: self.desks.active,
-            inactive_chrome_cache: self.groups.get_mut(self.active_group)
+            inactive_chrome_cache: self
+                .groups
+                .get_mut(self.active_group)
                 .and_then(|group| group.inactive_chrome_cache.take()),
             visible_highlight_key: self.visible_highlight_key.take(),
             visible_highlight_cancel_token: self.visible_highlight_cancel_token.take(),
@@ -42,9 +51,11 @@ impl App {
             tab_mru_order: std::mem::take(&mut self.tab_mru_order),
             active_tab: self.active_tab,
             tab_scroll_offset: self.tab_scroll_offset,
-            tab_strip_scroll: self.tab_strip_scroll.map(|scroll| crate::ui_chrome_tabs::StripScroll {
-                manual: self.tab_scroll_manual_anchor == Some(self.active_tab),
-                ..scroll
+            tab_strip_scroll: self.tab_strip_scroll.map(|scroll| {
+                crate::ui_chrome_tabs::StripScroll {
+                    manual: self.tab_scroll_manual_anchor == Some(self.active_tab),
+                    ..scroll
+                }
             }),
             code_area: self.code_area,
             tab_bar_area: self.tab_bar_area,
@@ -81,8 +92,15 @@ impl App {
             };
             self.tab_scroll_offset = g.tab_scroll_offset;
             self.tab_strip_scroll = g.tab_strip_scroll;
-            self.tab_scroll_manual_anchor = self.tab_strip_scroll
-                .filter(|scroll| scroll.manual && self.tabs.get(self.active_tab).is_some_and(|tab| scroll.anchor == tab.editor.navigation_id))
+            self.tab_scroll_manual_anchor = self
+                .tab_strip_scroll
+                .filter(|scroll| {
+                    scroll.manual
+                        && self
+                            .tabs
+                            .get(self.active_tab)
+                            .is_some_and(|tab| scroll.anchor == tab.editor.navigation_id)
+                })
                 .map(|_| self.active_tab);
             self.code_area = g.code_area;
             self.tab_bar_area = g.tab_bar_area;
@@ -96,28 +114,36 @@ impl App {
             self.hovered_close_button = g.hovered_close_btn;
             self.breadcrumb_area = g.breadcrumb_area;
             self.breadcrumb_segments = std::mem::take(&mut g.breadcrumb_segments);
-            self.settings_editor_active = self.tabs.get(self.active_tab).is_some_and(|t|t.kind==crate::app::TabKind::Settings);
+            self.settings_editor_active = self
+                .tabs
+                .get(self.active_tab)
+                .is_some_and(|t| t.kind == crate::app::TabKind::Settings);
         }
     }
 
     /// Switch focus to a different editor group
     pub(crate) fn switch_group(&mut self, new_group: usize) {
         if let Some(desk) = self.groups.get(new_group).map(|g| g.desk)
-            && desk != self.desks.active {
+            && desk != self.desks.active
+        {
             self.switch_desk(desk);
         }
         if new_group == self.active_group || new_group >= self.groups.len() {
             return;
         }
         if !self.source_control_tab_active() {
-            self.source_control_preview.last_editor = self.tabs.get(self.active_tab)
+            self.source_control_preview.last_editor = self
+                .tabs
+                .get(self.active_tab)
                 .map(|tab| tab.editor.navigation_id);
         }
         self.cancel_remote_location();
         // Input can change focus before the next render/synchronization pass.
         // Flush the outgoing document and its history before the new view can edit.
         self.sync_duplicate_file_tabs();
-        if let Some(editor) = self.editor_mut() { editor.break_undo_group(); }
+        if let Some(editor) = self.editor_mut() {
+            editor.break_undo_group();
+        }
         self.clear_tab_tooltip();
         self.save_active_group();
         self.active_group = new_group;
@@ -196,7 +222,8 @@ impl App {
         self.desks.membership.remove(&tab.editor.navigation_id);
         tab.preview = false;
         crate::tab_collection::removed(&mut source.tab_mru_order, tab_idx);
-        source.active_tab = source.active_tab
+        source.active_tab = source
+            .active_tab
             .saturating_sub(usize::from(tab_idx < source.active_tab))
             .min(source.tabs.len() - 1);
         self.insert_split_group(tab, zone);
@@ -272,7 +299,10 @@ impl App {
 
     /// Remove empty groups and compact indices, updating split_tree.
     fn compact_groups(&mut self) {
-        if self.desks.items.len() > 1 { self.compact_desk_groups(); return; }
+        if self.desks.items.len() > 1 {
+            self.compact_desk_groups();
+            return;
+        }
         let index_map = self.build_group_index_map();
         if index_map.len() == self.groups.len() {
             return;
@@ -387,7 +417,10 @@ impl App {
 
     /// Collapse split mode into a single pane, keeping all open tabs.
     pub(crate) fn close_all_splits(&mut self) {
-        if self.desks.items.len() > 1 { self.merge_desk_panes(); return; }
+        if self.desks.items.len() > 1 {
+            self.merge_desk_panes();
+            return;
+        }
         if self.groups.is_empty() {
             self.active_group = 0;
             self.split_tree = None;
@@ -401,8 +434,13 @@ impl App {
             if i != self.active_group {
                 let mut other_tabs = std::mem::take(&mut self.groups[i].tabs);
                 let offset = merged_tabs.len();
-                merged_mru.extend(self.groups[i].tab_mru_order.iter()
-                    .filter(|&&index| index < other_tabs.len()).map(|index| index + offset));
+                merged_mru.extend(
+                    self.groups[i]
+                        .tab_mru_order
+                        .iter()
+                        .filter(|&&index| index < other_tabs.len())
+                        .map(|index| index + offset),
+                );
                 merged_tabs.append(&mut other_tabs);
             }
         }

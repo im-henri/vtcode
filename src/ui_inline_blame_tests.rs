@@ -286,7 +286,11 @@ fn inline_blame_drag_highlights_and_copies_across_wrapped_and_logical_lines() {
     let mut author_end = author;
     author_end.x += "Alex Morgan <alex@example.com>".len() as u16;
     pointer(&mut app, author, MouseEventKind::Down(MouseButton::Left));
-    pointer(&mut app, author_end, MouseEventKind::Drag(MouseButton::Left));
+    pointer(
+        &mut app,
+        author_end,
+        MouseEventKind::Drag(MouseButton::Left),
+    );
     pointer(&mut app, author_end, MouseEventKind::Up(MouseButton::Left));
     let copy = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
     crate::input_keyboard::handle_keyboard_event(&mut app, copy);
@@ -301,7 +305,10 @@ fn inline_blame_drag_highlights_and_copies_across_wrapped_and_logical_lines() {
         .iter()
         .position(|row| hover.message[row.clone()].starts_with("東京"))
         .unwrap();
-    assert!(hover.rows.len() > body_row + 2, "the first body line must wrap");
+    assert!(
+        hover.rows.len() > body_row + 2,
+        "the first body line must wrap"
+    );
     let start = Rect::new(area.x + 1, area.y + body_row as u16, 1, 1);
     let end = Rect::new(area.x, hover.area.bottom(), 1, 1);
     let editor = app.editor().unwrap();
@@ -570,7 +577,10 @@ fn inline_blame_hover_follows_source_rows_when_ai_review_inserts_virtual_rows() 
     let row = usize::from(anchor.y - app.code_area.unwrap().y);
     assert!(row > 1, "review rows shifted the annotation");
     let (candidate, candidate_line) = editor.blame.inline_candidate.unwrap();
-    assert_eq!(candidate.y, anchor.y, "Cold blame demand follows the same source cells");
+    assert_eq!(
+        candidate.y, anchor.y,
+        "Cold blame demand follows the same source cells"
+    );
     assert_eq!(candidate_line, line);
     assert_eq!(editor.ai_review.source_rows[row].unwrap().line_idx, line);
     assert_eq!(line, 1);
@@ -582,7 +592,10 @@ fn inline_blame_hover_follows_source_rows_when_ai_review_inserts_virtual_rows() 
             app.editor().unwrap().blame.inline_annotation,
             Some((anchor, line))
         );
-        assert_eq!(app.editor().unwrap().blame.inline_candidate, Some((candidate, line)));
+        assert_eq!(
+            app.editor().unwrap().blame.inline_candidate,
+            Some((candidate, line))
+        );
         assert!(output(&terminal).contains("The source line's commit message"));
     }
     assert!(app.animation_frame_cache.replays >= 3);

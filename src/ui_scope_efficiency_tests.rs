@@ -126,9 +126,19 @@ fn scope_profiles_render_selected_pairs_without_raw_fallback_and_keep_settled_ro
     let mut editor = Editor::test_with_text("call(\n    value,\n    other\n);\n");
     editor.language_override = Some("Custom".into());
     editor.cursor_col = 4;
-    let profile = |pairs| Rules::compile(&[("Custom".into(), Config {
-        syntax: Syntax::Cpp, delimiters: Some(pairs), language_blocks: false,
-    })].into());
+    let profile = |pairs| {
+        Rules::compile(
+            &[(
+                "Custom".into(),
+                Config {
+                    syntax: Syntax::Cpp,
+                    delimiters: Some(pairs),
+                    language_blocks: false,
+                },
+            )]
+            .into(),
+        )
+    };
     editor.scope_bubble_rules = profile(vec![]);
     app.tabs[0] = Tab::new_file(editor);
     app.cached_structural_scope_index = None;
@@ -136,7 +146,10 @@ fn scope_profiles_render_selected_pairs_without_raw_fallback_and_keep_settled_ro
     app.cached_matching_bracket = Some((3, 0));
     app.cached_cursor_match_target = app.cursor_match_target();
     let hidden = settle(&mut app);
-    assert!(rail(&app, &hidden).is_empty(), "raw matching must not override the selected scope rules");
+    assert!(
+        rail(&app, &hidden).is_empty(),
+        "raw matching must not override the selected scope rules"
+    );
     app.tabs[0].editor.scope_bubble_rules = profile(vec![Delimiter::Parentheses]);
     app.tabs[0].editor.cursor_line = 1;
     app.tabs[0].editor.cursor_col = 5;

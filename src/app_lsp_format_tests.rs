@@ -30,7 +30,10 @@ fn fixture(initialized: bool) -> (tempfile::TempDir, App, TestLspServer, PathBuf
     editor.content_version = 1;
     app.tabs = vec![Tab::new_file(editor)];
     app.active_tab = 0;
-    app.formatters.insert(crate::formatters::language(app.editor().unwrap()), Default::default());
+    app.formatters.insert(
+        crate::formatters::language(app.editor().unwrap()),
+        Default::default(),
+    );
     app.lsp_manager = LspManager::new(dir.path().to_path_buf());
     app.lsp_manager
         .register_config(config("c", "test-clangd", "*.c"));
@@ -50,7 +53,10 @@ fn closing_a_workspace_does_not_drop_an_outstanding_format_request() {
     assert!(app.request_lsp_format(false, false));
     assert!(app.lsp_format_pending);
     let other = tempfile::tempdir().unwrap();
-    app.insert_workspace(App::new_startup(other.path().into(), app.background.wake_handle()));
+    app.insert_workspace(App::new_startup(
+        other.path().into(),
+        app.background.wake_handle(),
+    ));
     assert!(app.switch_workspace(0));
     app.workspaces.request = Some(crate::app_workspaces::Request::Close);
     app.poll_workspace_requests();
@@ -63,7 +69,11 @@ fn closing_a_workspace_does_not_drop_an_outstanding_format_request() {
     }
     app.shutdown_anim_active = true;
     app.advance_workspace_exit();
-    assert_eq!(app.workspace_entries().len(), 2, "pending formatting must complete or closing must be cancelled; it cannot be silently dropped");
+    assert_eq!(
+        app.workspace_entries().len(),
+        2,
+        "pending formatting must complete or closing must be cancelled; it cannot be silently dropped"
+    );
     assert!(app.lsp_format_pending);
     assert!(app.save_error.is_some());
 }
@@ -74,11 +84,25 @@ fn a_hidden_formatter_failure_sets_the_workspaces_attention_badge() {
     assert!(app.request_lsp_format(false, false));
     let id = request(&server.take_messages(), "textDocument/formatting");
     let other = tempfile::tempdir().unwrap();
-    app.insert_workspace(App::new_startup(other.path().into(), app.background.wake_handle()));
+    app.insert_workspace(App::new_startup(
+        other.path().into(),
+        app.background.wake_handle(),
+    ));
     server.respond(json!({"id":id, "error":{"code":-32603,"message":"formatter unavailable"}}));
-    app.service_workspaces_until(crate::ui_work::Service::LanguageServers, Instant::now() + Duration::from_millis(20), || true);
+    app.service_workspaces_until(
+        crate::ui_work::Service::LanguageServers,
+        Instant::now() + Duration::from_millis(20),
+        || true,
+    );
     let hidden = &app.workspaces.parked[0].app;
-    assert!(hidden.formatting.error.as_ref().unwrap().contains("formatter unavailable"));
+    assert!(
+        hidden
+            .formatting
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("formatter unavailable")
+    );
     assert!(hidden.workspace_activity.attention);
     assert_eq!(hidden.workspace_activity.unread, 1);
     assert!(app.workspace_needs_attention());
@@ -97,11 +121,21 @@ fn a_parked_workspace_finishes_format_on_save_without_requesting_ui_features() {
     app.save_current_file();
     assert!(app.lsp_format_pending);
     let other = tempfile::tempdir().unwrap();
-    app.insert_workspace(App::new_startup(other.path().into(), app.background.wake_handle()));
-    server.queue_event(LspEvent::Initialized { capabilities: Box::new(Some(
-        serde_json::from_value(json!({"documentFormattingProvider":true,"textDocumentSync":1})).unwrap())) });
+    app.insert_workspace(App::new_startup(
+        other.path().into(),
+        app.background.wake_handle(),
+    ));
+    server.queue_event(LspEvent::Initialized {
+        capabilities: Box::new(Some(
+            serde_json::from_value(json!({"documentFormattingProvider":true,"textDocumentSync":1}))
+                .unwrap(),
+        )),
+    });
     let service = |app: &mut App| {
-        for kind in [crate::ui_work::Service::Workers, crate::ui_work::Service::LanguageServers] {
+        for kind in [
+            crate::ui_work::Service::Workers,
+            crate::ui_work::Service::LanguageServers,
+        ] {
             app.service_workspaces_until(kind, Instant::now() + Duration::from_millis(20), || true);
         }
     };
@@ -112,14 +146,28 @@ fn a_parked_workspace_finishes_format_on_save_without_requesting_ui_features() {
     loop {
         service(&mut app);
         let hidden = &app.workspaces.parked[0].app;
-        if hidden.pending_file_saves.is_empty() && !hidden.lsp_format_pending && !hidden.editor().unwrap().modified { break; }
-        assert!(Instant::now() < deadline, "hidden format/save did not finish");
+        if hidden.pending_file_saves.is_empty()
+            && !hidden.lsp_format_pending
+            && !hidden.editor().unwrap().modified
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "hidden format/save did not finish"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(std::fs::read_to_string(path).unwrap(), text);
     assert!(!app.workspaces.parked[0].app.workspace_visible);
-    assert!(!server.take_messages().iter().any(|message| matches!(message["method"].as_str(),
-        Some("textDocument/foldingRange" | "textDocument/inlayHint" | "textDocument/semanticTokens/full"))));
+    assert!(!server.take_messages().iter().any(|message| matches!(
+        message["method"].as_str(),
+        Some(
+            "textDocument/foldingRange"
+                | "textDocument/inlayHint"
+                | "textDocument/semanticTokens/full"
+        )
+    )));
 }
 
 #[test]
@@ -131,19 +179,33 @@ fn repeated_save_joins_pending_document_formatting_instead_of_writing_unformatte
     app.insert_final_newline = false;
     app.editor_mut().unwrap().insert_char('A');
     let text = app.editor().unwrap().rope.to_string();
-    for _ in 0..64 { app.save_current_file(); }
+    for _ in 0..64 {
+        app.save_current_file();
+    }
     assert!(app.lsp_format_pending);
     assert_eq!(app.lsp_save_after_format_path.as_ref(), Some(&path));
     assert!(app.pending_file_saves.is_empty() && app.deferred_file_saves.is_empty());
     assert!(app.formatting.error.is_none());
-    server.queue_event(LspEvent::Initialized { capabilities: Box::new(Some(
-        serde_json::from_value(json!({"documentFormattingProvider":true,"textDocumentSync":1})).unwrap())) });
+    server.queue_event(LspEvent::Initialized {
+        capabilities: Box::new(Some(
+            serde_json::from_value(json!({"documentFormattingProvider":true,"textDocumentSync":1}))
+                .unwrap(),
+        )),
+    });
     poll(&mut app);
     let messages = server.take_messages();
-    assert_eq!(messages.iter().filter(|message| message["method"] == "textDocument/formatting").count(), 1);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message["method"] == "textDocument/formatting")
+            .count(),
+        1
+    );
     server.respond(json!({"id":request(&messages,"textDocument/formatting"),"result":[]}));
     poll(&mut app);
-    app.wait_for_background(Duration::from_secs(10), |app| app.pending_file_saves.is_empty());
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.pending_file_saves.is_empty()
+    });
     assert!(app.save_conflict.is_none());
     assert_eq!(std::fs::read_to_string(path).unwrap(), text);
     assert!(!app.editor().unwrap().modified);
@@ -545,7 +607,10 @@ fn real_app_format(language: &str, command: &str, args: Vec<String>) -> (tempfil
         },
     );
     let before = editor.rope.to_string();
-    app.formatters.insert(crate::formatters::language(app.editor().unwrap()), Default::default());
+    app.formatters.insert(
+        crate::formatters::language(app.editor().unwrap()),
+        Default::default(),
+    );
     app.execute_palette_command("format_document");
     let start = Instant::now();
     while app.lsp_format_pending {

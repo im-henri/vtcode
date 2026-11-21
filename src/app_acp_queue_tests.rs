@@ -156,7 +156,8 @@ fn acp_chat_sdk_round_trip_queue_cancellation_fifo_and_message_checkpoints() {
         let log = data.path().join("queue.log");
         let mut app = App::test_new();
         app.explorer.root = root.path().into();
-        let python = std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
+        let python = std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
         let mut config = AgentConfig::new("Queue SDK", python);
         config.args = vec![
             "-u".into(),
@@ -275,7 +276,8 @@ fn acp_chat_sdk_round_trip_queue_stop_attachments_and_error_recovery() {
     std::fs::write(&path, "old context").unwrap();
     let mut app = App::test_new();
     app.explorer.root = root.path().into();
-    let python = std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
+    let python = std::env::var("VTCODE_ACP_TEST_PYTHON")
+        .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
     let mut config = AgentConfig::new("Queue SDK", python);
     config.args = vec![
         "-u".into(),

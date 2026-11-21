@@ -20,8 +20,12 @@ pub(super) fn recheck_workspace_repository(
         Ok(repo) => {
             if let Some(root) = repo.workdir() {
                 let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned());
-                if !discovery.roots.contains(&root) { discovery.roots.insert(0, root); }
-                if !parent_open { discovery.parent = None; }
+                if !discovery.roots.contains(&root) {
+                    discovery.roots.insert(0, root);
+                }
+                if !parent_open {
+                    discovery.parent = None;
+                }
             }
         }
         Err(error) if error.code() != git2::ErrorCode::NotFound => {
@@ -118,38 +122,65 @@ impl WorktreePaths {
                 .any(|(end, _)| self.keys.contains(&key[..end]))
     }
 
-    pub(crate) fn ignore_case(&self) -> bool { self.ignore_case }
+    pub(crate) fn ignore_case(&self) -> bool {
+        self.ignore_case
+    }
 
     pub(super) fn relevant(&self, repo: &git2::Repository, include_untracked: bool) -> Self {
-        let Ok(index) = repo.index() else { return self.clone(); };
-        let mut paths = Self::new(self.paths.iter().filter(|path| {
-            // Ignore rules never hide tracked files, even when a force-added
-            // source lives inside an otherwise ignored output directory. Include
-            // conflict stages, directory deletions and submodule descendants.
-            let indexed = (0..=3).any(|stage| index.get_path(path, stage).is_some())
-                || index.find_prefix(format!("{}/", path_key(&path.to_string_lossy(), false))).is_ok()
-                || path.ancestors().skip(1).take_while(|ancestor| !ancestor.as_os_str().is_empty()).any(|ancestor| {
-                    index.get_path(ancestor, 0).is_some_and(|entry| entry.mode == 0o160000)
-                });
-            indexed || include_untracked && !repo.status_should_ignore(path).unwrap_or(false)
-        }).cloned().collect());
+        let Ok(index) = repo.index() else {
+            return self.clone();
+        };
+        let mut paths = Self::new(
+            self.paths
+                .iter()
+                .filter(|path| {
+                    // Ignore rules never hide tracked files, even when a force-added
+                    // source lives inside an otherwise ignored output directory. Include
+                    // conflict stages, directory deletions and submodule descendants.
+                    let indexed = (0..=3).any(|stage| index.get_path(path, stage).is_some())
+                        || index
+                            .find_prefix(format!("{}/", path_key(&path.to_string_lossy(), false)))
+                            .is_ok()
+                        || path
+                            .ancestors()
+                            .skip(1)
+                            .take_while(|ancestor| !ancestor.as_os_str().is_empty())
+                            .any(|ancestor| {
+                                index
+                                    .get_path(ancestor, 0)
+                                    .is_some_and(|entry| entry.mode == 0o160000)
+                            });
+                    indexed
+                        || include_untracked && !repo.status_should_ignore(path).unwrap_or(false)
+                })
+                .cloned()
+                .collect(),
+        );
         paths.set_ignore_case(self.ignore_case);
         paths
     }
 
     pub(super) fn expand_untracked_directories(&mut self, repo: &git2::Repository) {
-        let Ok(index) = repo.index() else { return; };
+        let Ok(index) = repo.index() else {
+            return;
+        };
         let mut widened = Vec::with_capacity(self.paths.len());
         for path in &self.paths {
             let mut scope = path.clone();
-            for ancestor in path.ancestors().skip(1).take_while(|path| !path.as_os_str().is_empty()) {
+            for ancestor in path
+                .ancestors()
+                .skip(1)
+                .take_while(|path| !path.as_os_str().is_empty())
+            {
                 #[cfg(windows)]
                 let prefix = ancestor.to_string_lossy().replace('\\', "/");
                 #[cfg(not(windows))]
                 let prefix = ancestor.to_string_lossy();
                 if index.get_path(ancestor, 0).is_some()
                     || index.find_prefix(format!("{prefix}/")).is_ok()
-                { break; }
+                {
+                    break;
+                }
                 scope = ancestor.to_owned();
             }
             widened.push(scope);
@@ -162,20 +193,35 @@ impl WorktreePaths {
 
 /// Keep staged entries and unrelated worktree rows, then merge ordered deltas
 /// without cloning all cached paths. Used by both editor views and SSH snapshots.
-pub(crate) fn merge_worktree(files: &mut Vec<GitFileChange>, changed: Vec<GitFileChange>, paths: &WorktreePaths) {
+pub(crate) fn merge_worktree(
+    files: &mut Vec<GitFileChange>,
+    changed: Vec<GitFileChange>,
+    paths: &WorktreePaths,
+) {
     files.retain(|file| file.staged || !paths.contains(&file.path));
-    if changed.is_empty() { return; }
-    let compare = |a: &GitFileChange, b: &GitFileChange|
-        crate::source_control_rows::Group::of(a).cmp(&crate::source_control_rows::Group::of(b)).then(a.path.cmp(&b.path));
-    if files.last().is_none_or(|last| !compare(last, &changed[0]).is_gt()) {
+    if changed.is_empty() {
+        return;
+    }
+    let compare = |a: &GitFileChange, b: &GitFileChange| {
+        crate::source_control_rows::Group::of(a)
+            .cmp(&crate::source_control_rows::Group::of(b))
+            .then(a.path.cmp(&b.path))
+    };
+    if files
+        .last()
+        .is_none_or(|last| !compare(last, &changed[0]).is_gt())
+    {
         files.extend(changed);
     } else {
         let mut previous = std::mem::take(files).into_iter().peekable();
         let mut changed = changed.into_iter().peekable();
         files.reserve(previous.len() + changed.len());
         while let (Some(old), Some(new)) = (previous.peek(), changed.peek()) {
-            if compare(old, new).is_le() { files.push(previous.next().unwrap()); }
-            else { files.push(changed.next().unwrap()); }
+            if compare(old, new).is_le() {
+                files.push(previous.next().unwrap());
+            } else {
+                files.push(changed.next().unwrap());
+            }
         }
         files.extend(previous);
         files.extend(changed);
@@ -231,15 +277,20 @@ fn event_paths(
             // Watchers usually report the entry's own spelling. Verify any
             // alternate spelling of a nested worktree once per event.
             if cfg!(windows)
-                && let Some(verified) = discovery.roots.iter().chain(discovery.parent.iter()).find_map(|root| {
-                    if strip_spelling_prefix(&path, root).is_none()
-                        && strip_possible_alias_prefix(&path, root).is_some()
-                    {
-                        repository_relative_path(root, &path).map(|relative| root.join(relative))
-                    } else {
-                        None
-                    }
-                })
+                && let Some(verified) = discovery
+                    .roots
+                    .iter()
+                    .chain(discovery.parent.iter())
+                    .find_map(|root| {
+                        if strip_spelling_prefix(&path, root).is_none()
+                            && strip_possible_alias_prefix(&path, root).is_some()
+                        {
+                            repository_relative_path(root, &path)
+                                .map(|relative| root.join(relative))
+                        } else {
+                            None
+                        }
+                    })
             {
                 return Some(verified);
             }
@@ -256,8 +307,18 @@ pub(super) fn collect(
     cancel: &CancellationToken,
     include_untracked: bool,
 ) -> Vec<Scan> {
-    collect_with_paths(discovery, roots, changed.map(|paths| WorktreeEvents { paths, revalidate: false }), workspace, cancel, include_untracked,
-        |path| path.to_string_lossy().into_owned())
+    collect_with_paths(
+        discovery,
+        roots,
+        changed.map(|paths| WorktreeEvents {
+            paths,
+            revalidate: false,
+        }),
+        workspace,
+        cancel,
+        include_untracked,
+        |path| path.to_string_lossy().into_owned(),
+    )
 }
 
 pub(crate) fn collect_with_paths<P: Ord>(
@@ -284,7 +345,9 @@ pub(crate) fn collect_with_paths<P: Ord>(
         // it again, or traverse the repository without a valid ignore context.
         if discovery.errors.iter().any(|error| {
             error.root == workdir && error.kind != crate::git_trust::FailureKind::Discovery
-        }) { continue; }
+        }) {
+            continue;
+        }
         let mut paths = if let Some(changed) = &changed {
             let mut prefixes = Vec::new();
             let mut full = false;
@@ -359,7 +422,9 @@ pub(crate) fn collect_with_paths<P: Ord>(
         }
         if !snapshot.repository_found || snapshot.workdir.as_ref() != Some(&workdir) {
             discovery.roots.retain(|root| root != &workdir);
-            if discovery.parent.as_ref() == Some(&workdir) { discovery.parent = None; }
+            if discovery.parent.as_ref() == Some(&workdir) {
+                discovery.parent = None;
+            }
             continue;
         }
         scans.push(Scan {

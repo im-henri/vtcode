@@ -56,16 +56,25 @@ fn cursor_word_cache_invalidates_edits_undo_and_equal_version_sources() {
 fn occurrence_targets_share_the_render_word_through_motion_edits_and_split_views() {
     let mut app = crate::app::App::test_new();
     app.status_bar_pins.insert("word_occ".into(), true);
-    app.tabs = vec![Tab::new_file(Editor::test_with_text("long_界_identifier next\r\nother"))];
+    app.tabs = vec![Tab::new_file(Editor::test_with_text(
+        "long_界_identifier next\r\nother",
+    ))];
     app.active_tab = 0;
     let original = app.word_occurrence_target().unwrap().word;
     for col in 0..17 {
         app.tabs[0].editor.cursor_col = col;
         let target = app.word_occurrence_target().unwrap();
-        refresh_cursor_word(&app.tabs[0].editor, &mut app.cached_cursor_word_key,
-            &mut app.cached_cursor_word, app.editor_cursor_word_cache.get_mut());
+        refresh_cursor_word(
+            &app.tabs[0].editor,
+            &mut app.cached_cursor_word_key,
+            &mut app.cached_cursor_word,
+            app.editor_cursor_word_cache.get_mut(),
+        );
         assert!(Arc::ptr_eq(&original, &target.word));
-        assert!(Arc::ptr_eq(&original, app.cached_cursor_word.as_ref().unwrap()));
+        assert!(Arc::ptr_eq(
+            &original,
+            app.cached_cursor_word.as_ref().unwrap()
+        ));
         assert!(Arc::ptr_eq(&target.word, &target.clone().word));
     }
     for step in 0..7 {
@@ -75,21 +84,44 @@ fn occurrence_targets_share_the_render_word_through_motion_edits_and_split_views
             1 => editor.undo(),
             2 => editor.redo(),
             3 => editor.rope = ropey::Rope::from_str("replaced_word entirely_different"),
-            4 => { editor.cursor_col = 0; editor.selection_anchor = Some((0, 5)); }
-            5 => { editor.selection_anchor = None; editor.cursor_line = 1; }
-            _ => { editor.cursor_line = 0; editor.large_file_mode = true; }
+            4 => {
+                editor.cursor_col = 0;
+                editor.selection_anchor = Some((0, 5));
+            }
+            5 => {
+                editor.selection_anchor = None;
+                editor.cursor_line = 1;
+            }
+            _ => {
+                editor.cursor_line = 0;
+                editor.large_file_mode = true;
+            }
         }
-        let expected = app.editor().filter(|ed| !ed.has_selection() && !ed.large_file_mode)
+        let expected = app
+            .editor()
+            .filter(|ed| !ed.has_selection() && !ed.large_file_mode)
             .and_then(Editor::word_at_cursor);
-        assert_eq!(app.word_occurrence_target().map(|target| target.word).as_deref(), expected.as_deref());
+        assert_eq!(
+            app.word_occurrence_target()
+                .map(|target| target.word)
+                .as_deref(),
+            expected.as_deref()
+        );
     }
     app.tabs[0].editor.large_file_mode = false;
     let first = app.word_occurrence_target().unwrap().word;
-    app.tabs.push(Tab::new_file(Editor::test_with_text("other_view")));
+    app.tabs
+        .push(Tab::new_file(Editor::test_with_text("other_view")));
     app.active_tab = 1;
-    assert_eq!(app.word_occurrence_target().unwrap().word.as_ref(), "other_view");
+    assert_eq!(
+        app.word_occurrence_target().unwrap().word.as_ref(),
+        "other_view"
+    );
     app.active_tab = 0;
-    assert!(Arc::ptr_eq(&first, &app.word_occurrence_target().unwrap().word));
+    assert!(Arc::ptr_eq(
+        &first,
+        &app.word_occurrence_target().unwrap().word
+    ));
     app.search_active = true;
     assert!(app.word_occurrence_target().is_none());
 }
@@ -100,7 +132,9 @@ fn benchmark_basic_occurrence_targets() {
     for length in [32, 4096] {
         let mut app = crate::app::App::test_new();
         app.status_bar_pins.insert("word_occ".into(), true);
-        app.tabs = vec![Tab::new_file(Editor::test_with_text(&("界".repeat(length) + "\n")))];
+        app.tabs = vec![Tab::new_file(Editor::test_with_text(
+            &("界".repeat(length) + "\n"),
+        ))];
         app.active_tab = 0;
         let expected = app.word_occurrence_target().unwrap();
         let mut before = Vec::new();
@@ -115,17 +149,28 @@ fn benchmark_basic_occurrence_targets() {
                     } else {
                         // The previous target owned a String, with no Arc conversion.
                         black_box(app.editor_analysis_target().and_then(|editor| {
-                            app.editor().unwrap().word_at_cursor().map(|word| (editor, word))
+                            app.editor()
+                                .unwrap()
+                                .word_at_cursor()
+                                .map(|word| (editor, word))
                         }));
                     }
                 }
                 let elapsed = start.elapsed() / 2000;
-                if optimized { after.push(elapsed); } else { before.push(elapsed); }
+                if optimized {
+                    after.push(elapsed);
+                } else {
+                    before.push(elapsed);
+                }
             }
         }
         assert_eq!(app.word_occurrence_target(), Some(expected));
-        before.sort(); after.sort();
-        eprintln!("basic occurrence targets {length} Unicode chars: before={:?} after={:?}", before[3], after[3]);
+        before.sort();
+        after.sort();
+        eprintln!(
+            "basic occurrence targets {length} Unicode chars: before={:?} after={:?}",
+            before[3], after[3]
+        );
     }
 }
 

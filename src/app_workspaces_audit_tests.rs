@@ -207,10 +207,13 @@ fn reusing_a_live_headless_watcher_acknowledges_readiness_without_rescanning() {
     // This is the wire sequence after a quick hide/show coalesces away PauseWatch.
     remote.client.call(Command::Watch).unwrap();
     until(|| {
-        remote
-            .client
-            .take_workspace_changes()
-            .is_some_and(|batch| batch.active == Some(true) && !batch.rescan && batch.states.is_empty() && !batch.git && !batch.structural)
+        remote.client.take_workspace_changes().is_some_and(|batch| {
+            batch.active == Some(true)
+                && !batch.rescan
+                && batch.states.is_empty()
+                && !batch.git
+                && !batch.structural
+        })
     });
     remote.disconnect();
 }

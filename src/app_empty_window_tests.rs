@@ -134,11 +134,14 @@ fn empty_folder_panels_offer_only_relevant_controls_and_a_working_open_button() 
                     );
                     assert!(app.search_control_regions.is_empty());
                     let activity = app.activity_bar_area.unwrap();
-                    let source = crate::ui_chrome::activity_item_regions(activity, app.activity_bar_position)
-                        .into_iter()
-                        .find(|(_, index)| *index == 2)
-                        .unwrap()
-                        .0;
+                    let source = crate::ui_chrome::activity_item_regions(
+                        activity,
+                        app.activity_bar_position,
+                    )
+                    .into_iter()
+                    .find(|(_, index)| *index == 2)
+                    .unwrap()
+                    .0;
                     let buffer = terminal.backend().buffer();
                     assert!((source.y..source.bottom()).all(|y| {
                         (source.x..source.right()).all(|x| buffer[(x, y)].symbol() != "?")
@@ -174,7 +177,10 @@ fn empty_folder_panels_offer_only_relevant_controls_and_a_working_open_button() 
                             modifiers: KeyModifiers::NONE,
                         },
                     );
-                    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder);
+                    assert!(
+                        app.change_dir_active
+                            && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder
+                    );
                     assert!(!app.has_open_folder());
                 }
             }
@@ -507,7 +513,9 @@ fn empty_editor_offers_open_folder_without_close_or_save_workspace() {
             modifiers: crossterm::event::KeyModifiers::NONE,
         },
     );
-    assert!(app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder);
+    assert!(
+        app.change_dir_active && app.folder_browser.mode == crate::folder_browser::Mode::OpenFolder
+    );
     assert!(!app.has_open_folder());
 }
 
@@ -625,7 +633,11 @@ fn loose_file_opening_and_completion_do_not_attach_or_scan_a_folder() {
     }
     app.update_vtcomplete_explicit();
     settle(&mut app, |app| app.vtcomplete_cancel_token.is_none());
-    assert!(app.vtcomplete_suggestions.iter().any(|word| word == "windowOnlyIdentifier"));
+    assert!(
+        app.vtcomplete_suggestions
+            .iter()
+            .any(|word| word == "windowOnlyIdentifier")
+    );
     assert!(!app.has_open_folder());
     assert!(!app.workspace_watcher_active);
     assert_eq!(app.open_folder_count(), 0);

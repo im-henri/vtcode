@@ -1,7 +1,7 @@
 use crate::app::{App, Tab};
 use crate::background::BackgroundResult;
 use crate::editor::Editor;
-use ratatui::{backend::TestBackend, style::Color, Terminal};
+use ratatui::{Terminal, backend::TestBackend, style::Color};
 use std::{path::PathBuf, time::Duration};
 
 fn startup_file() -> (tempfile::TempDir, App, PathBuf, String) {
@@ -93,7 +93,9 @@ fn changed_unselected_theme(app: &App) -> crate::app_theme::ThemeFile {
         .unwrap()
         .clone();
     theme.name = "Updated unselected theme".into();
-    theme.textmate_theme=Some(crate::textmate::Theme::new("updated","#0c2238","#272822",&theme.token_colors).unwrap());
+    theme.textmate_theme = Some(
+        crate::textmate::Theme::new("updated", "#0c2238", "#272822", &theme.token_colors).unwrap(),
+    );
     theme
 }
 
@@ -108,22 +110,28 @@ fn opening_a_c_file_and_manually_selecting_c_produce_identical_highlight_caches(
     settle(&mut app);
     assert_eq!(app.editor().unwrap().language_name(), "C");
     assert!(app.editor().unwrap().language_override.is_none());
-    let snapshot = |app: &mut App| {
-        let editor = app.editor().unwrap();
-        let language = editor.syntax_language_token().map(str::to_owned);
-        let version = editor.content_version;
-        (0..text.lines().count()).map(|line| {
-            let (spans, _) = app.highlighter.highlighted_line_by_index_if_cached(line,
+    let snapshot =
+        |app: &mut App| {
+            let editor = app.editor().unwrap();
+            let language = editor.syntax_language_token().map(str::to_owned);
+            let version = editor.content_version;
+            (0..text.lines().count())
+                .map(|line| {
+                    let (spans, _) = app.highlighter.highlighted_line_by_index_if_cached(line,
                 Some(&path), language.as_deref(), &app.syntax_theme, version)
                 .expect("the loaded document must be highlighted without reselecting its language");
-            spans.as_ref().clone()
-        }).collect::<Vec<_>>()
-    };
+                    spans.as_ref().clone()
+                })
+                .collect::<Vec<_>>()
+        };
     let detected = snapshot(&mut app);
     app.execute_editor_command(&crate::app_menu::language_command_id("C"));
     app.refresh_visible_highlights_async();
     settle(&mut app);
-    assert_eq!(app.editor().unwrap().language_override.as_deref(), Some("C"));
+    assert_eq!(
+        app.editor().unwrap().language_override.as_deref(),
+        Some("C")
+    );
     assert_eq!(detected, snapshot(&mut app));
 }
 

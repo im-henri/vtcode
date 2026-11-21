@@ -4,7 +4,9 @@ use super::*;
 fn cancelled_or_expired_diffs_never_publish_partial_change_markers() {
     let saved = Rope::from_str(&"before\n".repeat(1_000));
     let current = Rope::from_str(&"after\n".repeat(1_000));
-    assert!(compute_unsaved_diff_markers_cancellable(&saved, &current, &[], None, &|| true).is_none());
+    assert!(
+        compute_unsaved_diff_markers_cancellable(&saved, &current, &[], None, &|| true).is_none()
+    );
     assert!(
         compute_unsaved_diff_markers_cancellable(
             &saved,
@@ -93,19 +95,25 @@ fn reference_diff(saved: &Rope, current: &Rope) -> UnsavedDiff {
             }
         }
     }
-    let mut removed_lines: Vec<_> = diff.ops().iter().filter_map(|op| {
-        match *op {
-            similar::DiffOp::Delete { new_index, .. } => Some(new_index.min(new_lines.len().saturating_sub(1))),
+    let mut removed_lines: Vec<_> = diff
+        .ops()
+        .iter()
+        .filter_map(|op| match *op {
+            similar::DiffOp::Delete { new_index, .. } => {
+                Some(new_index.min(new_lines.len().saturating_sub(1)))
+            }
             _ => None,
-        }
-    }).collect();
+        })
+        .collect();
     removed_lines.dedup();
     UnsavedDiff {
         line_count: current.len_lines(),
         changed_ranges,
-        added_ranges: diff.ops().iter().filter_map(|op| {
-            matches!(op, similar::DiffOp::Insert { .. }).then(|| op.new_range())
-        }).collect(),
+        added_ranges: diff
+            .ops()
+            .iter()
+            .filter_map(|op| matches!(op, similar::DiffOp::Insert { .. }).then(|| op.new_range()))
+            .collect(),
         removed_lines,
     }
 }
@@ -114,7 +122,13 @@ fn assert_same(saved: &Rope, current: &Rope) {
     assert_eq!(crate::rope_changes::equal(saved, current), saved == current);
     let expected = reference_diff(saved, current);
     let actual = compute_unsaved_diff_markers(saved, current);
-    assert_eq!(actual, expected, "old={:?}, new={:?}", saved.to_string(), current.to_string());
+    assert_eq!(
+        actual,
+        expected,
+        "old={:?}, new={:?}",
+        saved.to_string(),
+        current.to_string()
+    );
     if let Some(live) = unsaved_diff::compute_live_unsaved_diff(saved, current, &[]) {
         assert_eq!(live, actual);
     }

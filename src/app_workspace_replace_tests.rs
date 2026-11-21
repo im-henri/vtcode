@@ -59,22 +59,33 @@ fn workspace_replace_saves_clean_open_files_and_keeps_existing_edits_unsaved() {
         let replaced = "猫\r\nkeep trailing spaces  \nlast 猫";
         std::fs::write(&clean, format!("\u{feff}{original}")).unwrap();
         std::fs::write(&dirty, "foo").unwrap();
-        let workspace = remote.then(|| remote::workspace::Workspace::new(remote::tests::connection(
-            root.path(), Arc::default(), Arc::default(),
-        )));
+        let workspace = remote.then(|| {
+            remote::workspace::Workspace::new(remote::tests::connection(
+                root.path(),
+                Arc::default(),
+                Arc::default(),
+            ))
+        });
         let mut app = App::new_deferred(workspace.as_ref().map_or_else(
-            || root.path().to_owned(), |workspace| workspace.view_root.clone(),
+            || root.path().to_owned(),
+            |workspace| workspace.view_root.clone(),
         ));
         app.remote_workspace = workspace.clone();
         app.source_control_enabled = false;
         app.auto_save = crate::app::AutoSaveMode::Off;
         let open = |app: &mut App, path: &std::path::Path| {
-            let key = workspace.as_ref().map_or_else(|| path.to_owned(), |workspace| {
-                workspace.target_key(path.file_name().unwrap().to_str().unwrap()).unwrap()
-            });
+            let key = workspace.as_ref().map_or_else(
+                || path.to_owned(),
+                |workspace| {
+                    workspace
+                        .target_key(path.file_name().unwrap().to_str().unwrap())
+                        .unwrap()
+                },
+            );
             app.open_file(&key);
             app.wait_for_background(Duration::from_secs(10), |app| {
-                app.editor().is_some_and(|editor| editor.saved_rope.is_some() && !editor.bg_loading)
+                app.editor()
+                    .is_some_and(|editor| editor.saved_rope.is_some() && !editor.bg_loading)
             });
         };
         open(&mut app, &clean);
@@ -102,8 +113,13 @@ fn workspace_replace_saves_clean_open_files_and_keeps_existing_edits_unsaved() {
         editor.undo();
         assert_eq!(editor.rope, original);
         assert!(editor.modified);
-        assert_eq!(std::fs::read_to_string(&clean).unwrap(), format!("\u{feff}{replaced}"));
-        if let Some(workspace) = &workspace { workspace.client.call(remote::Command::Shutdown).unwrap(); }
+        assert_eq!(
+            std::fs::read_to_string(&clean).unwrap(),
+            format!("\u{feff}{replaced}")
+        );
+        if let Some(workspace) = &workspace {
+            workspace.client.call(remote::Command::Shutdown).unwrap();
+        }
     }
 }
 
@@ -130,19 +146,36 @@ fn workspace_replace_autosave_keeps_later_edits_and_checks_the_disk_baseline() {
         app.bg_global_replace_running = true;
         let workspace = app.workspace_generation;
         let generation = app.global_replace_generation;
-        if external { std::fs::write(&path, "foo changed on disk").unwrap(); }
+        if external {
+            std::fs::write(&path, "foo changed on disk").unwrap();
+        }
         assert!(app.apply_workspace_replace_prepared(workspace, generation, vec![result], 0));
         assert!(app.pending_file_saves.contains_key(&path));
         let editor = app.editor_mut().unwrap();
         editor.set_cursor(0, 3);
         editor.insert_char('!');
-        assert!(app.finish_workspace_replace(workspace, generation, Default::default(), Default::default(), None));
-        assert!(app.bg_global_replace_running, "replacement is active until its save completes");
-        app.wait_for_background(Duration::from_secs(10), |app| !app.bg_global_replace_running);
+        assert!(app.finish_workspace_replace(
+            workspace,
+            generation,
+            Default::default(),
+            Default::default(),
+            None
+        ));
+        assert!(
+            app.bg_global_replace_running,
+            "replacement is active until its save completes"
+        );
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            !app.bg_global_replace_running
+        });
         assert_eq!(app.editor().unwrap().rope, "bar!");
         assert!(app.editor().unwrap().modified);
         assert_eq!(app.save_conflict.is_some(), external);
-        let expected = if external { "foo changed on disk" } else { "bar" };
+        let expected = if external {
+            "foo changed on disk"
+        } else {
+            "bar"
+        };
         assert_eq!(std::fs::read_to_string(&path).unwrap(), expected);
     }
 }

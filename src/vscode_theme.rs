@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
 use crate::textmate::{Color as SyntaxColor, Theme};
+use serde_json::{Map, Value};
 
 use crate::app_theme_loader::{ThemeColorsFile, ThemeFile};
 
@@ -57,13 +57,17 @@ fn finish_theme(
         });
     let config_key = format!("vscode-{}", slug(&name));
     let high_contrast = ui_theme.is_some_and(|kind| kind.starts_with("hc"))
-        || resolved.kind.as_deref().is_some_and(|kind| kind == "hcDark" || kind == "hcLight");
+        || resolved
+            .kind
+            .as_deref()
+            .is_some_and(|kind| kind == "hcDark" || kind == "hcLight");
     let mut theme_file = base_theme(is_light, high_contrast)?;
     theme_file.name = name.clone();
     theme_file.config_key = config_key.clone();
     theme_file.syntax_theme = config_key;
     theme_file.gradients = None;
-    let effective_colors = crate::vscode_color_registry::resolve(&resolved.colors, is_light, high_contrast);
+    let effective_colors =
+        crate::vscode_color_registry::resolve(&resolved.colors, is_light, high_contrast);
     apply_editor_defaults(&mut theme_file.colors, &effective_colors);
     apply_workbench_colors(
         &mut theme_file.colors,
@@ -78,9 +82,13 @@ fn finish_theme(
     } else {
         resolved.semantic_colors
     };
-    theme_file.semantic_colors = (resolved.semantic_highlighting != Some(false)).then(||
-        crate::semantic_theme::SemanticTheme::new(&resolved.token_rules,
-            &theme_file.semantic_color_rules, &theme_file.colors.bg_editor));
+    theme_file.semantic_colors = (resolved.semantic_highlighting != Some(false)).then(|| {
+        crate::semantic_theme::SemanticTheme::new(
+            &resolved.token_rules,
+            &theme_file.semantic_color_rules,
+            &theme_file.colors.bg_editor,
+        )
+    });
     theme_file.workbench_colors = resolved.colors;
     theme_file.token_colors = resolved.token_rules;
     Ok(theme_file)
@@ -91,15 +99,25 @@ pub(crate) fn load_extension_themes(extension_root: &Path) -> Vec<ThemeFile> {
 }
 
 /// Read manifests to locate a saved variant, without parsing every other theme.
-pub(crate) fn load_extension_themes_matching(extension_root: &Path, key: Option<&str>) -> Vec<ThemeFile> {
+pub(crate) fn load_extension_themes_matching(
+    extension_root: &Path,
+    key: Option<&str>,
+) -> Vec<ThemeFile> {
     load_extension_themes_filtered(extension_root, key, &Default::default())
 }
 
-pub(crate) fn load_extension_themes_excluding(extension_root: &Path, removed: &std::collections::BTreeSet<String>) -> Vec<ThemeFile> {
+pub(crate) fn load_extension_themes_excluding(
+    extension_root: &Path,
+    removed: &std::collections::BTreeSet<String>,
+) -> Vec<ThemeFile> {
     load_extension_themes_filtered(extension_root, None, removed)
 }
 
-fn load_extension_themes_filtered(extension_root: &Path, key: Option<&str>, removed: &std::collections::BTreeSet<String>) -> Vec<ThemeFile> {
+fn load_extension_themes_filtered(
+    extension_root: &Path,
+    key: Option<&str>,
+    removed: &std::collections::BTreeSet<String>,
+) -> Vec<ThemeFile> {
     let Ok(entries) = std::fs::read_dir(extension_root) else {
         return Vec::new();
     };
@@ -149,8 +167,15 @@ fn load_extension_themes_filtered(extension_root: &Path, key: Option<&str>, remo
                 .or_else(|| contribution.get("id").and_then(Value::as_str))
                 .unwrap_or("VS Code Theme");
             let label = localize_manifest_value(raw_label, &package_messages);
-            let config_key = format!("vscode-{}-{}-{}", slug(publisher), slug(extension_name), slug(&label));
-            if removed.contains(&config_key) || key.is_some_and(|key| key != config_key) { continue; }
+            let config_key = format!(
+                "vscode-{}-{}-{}",
+                slug(publisher),
+                slug(extension_name),
+                slug(&label)
+            );
+            if removed.contains(&config_key) || key.is_some_and(|key| key != config_key) {
+                continue;
+            }
             let ui_theme = contribution.get("uiTheme").and_then(Value::as_str);
             let theme_path = extension_dir.join(relative_path);
             // Manually removed variants can remain in package.json. Discovery
@@ -261,9 +286,12 @@ fn resolve_with(
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("tmTheme"))
             {
-                let value=crate::textmate_grammar::parse_value(&std::fs::read(&token_path).map_err(|e|e.to_string())?)?;
-                if let Some(rules)=value["settings"].as_array() {resolved.token_rules.extend(rules.iter().cloned());}
-
+                let value = crate::textmate_grammar::parse_value(
+                    &std::fs::read(&token_path).map_err(|e| e.to_string())?,
+                )?;
+                if let Some(rules) = value["settings"].as_array() {
+                    resolved.token_rules.extend(rules.iter().cloned());
+                }
             } else {
                 let text =
                     std::fs::read_to_string(&token_path).map_err(|error| error.to_string())?;
@@ -286,8 +314,11 @@ pub(crate) fn load_embedded_theme(
     label: &str,
     kind: &str,
 ) -> Result<ThemeFile, String> {
-    let read = |path: &Path| crate::builtin_themes::source(path).map(str::to_owned)
-        .ok_or_else(|| format!("Unknown embedded theme: {}", path.display()));
+    let read = |path: &Path| {
+        crate::builtin_themes::source(path)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("Unknown embedded theme: {}", path.display()))
+    };
     let path = Path::new(file);
     finish_theme(path, Some(label), Some(kind), resolve_with(path, 0, &read)?)
 }
@@ -303,7 +334,10 @@ pub(crate) fn customized_theme(
         crate::theme_customizations::resolve(&theme.workbench_colors, overrides, &theme.name);
     let effective_colors = if theme.textmate_theme.is_some() {
         std::borrow::Cow::Owned(crate::vscode_color_registry::resolve(
-            &selected.workbench_colors, selected.is_light, selected.high_contrast))
+            &selected.workbench_colors,
+            selected.is_light,
+            selected.high_contrast,
+        ))
     } else {
         std::borrow::Cow::Borrowed(&selected.workbench_colors)
     };
@@ -313,10 +347,7 @@ pub(crate) fn customized_theme(
         selected.colors = base_theme(theme.is_light, theme.high_contrast)
             .expect("the built-in workbench defaults are valid")
             .colors;
-        apply_editor_defaults(
-            &mut selected.colors,
-            &effective_colors,
-        );
+        apply_editor_defaults(&mut selected.colors, &effective_colors);
     }
     apply_workbench_colors(
         &mut selected.colors,
@@ -328,12 +359,22 @@ pub(crate) fn customized_theme(
         apply_imported_annotation_colors(&mut selected.colors, &effective_colors);
     }
     if theme.textmate_theme.is_some() {
-        selected.textmate_theme=Some(Theme::new(&selected.name,&selected.colors.fg_text,&selected.colors.bg_editor,&theme.token_colors)
-            .expect("validated VS Code token rules"));
+        selected.textmate_theme = Some(
+            Theme::new(
+                &selected.name,
+                &selected.colors.fg_text,
+                &selected.colors.bg_editor,
+                &theme.token_colors,
+            )
+            .expect("validated VS Code token rules"),
+        );
     }
     if theme.semantic_colors.is_some() {
         selected.semantic_colors = Some(crate::semantic_theme::SemanticTheme::new(
-            &theme.token_colors, &theme.semantic_color_rules, &selected.colors.bg_editor));
+            &theme.token_colors,
+            &theme.semantic_color_rules,
+            &selected.colors.bg_editor,
+        ));
     }
     selected
 }
@@ -507,10 +548,7 @@ fn base_theme(light: bool, high_contrast: bool) -> Result<ThemeFile, String> {
 
 /// Null decoration defaults mean no paint. Start those legacy scalar fields on
 /// the owning editor; registered, possibly translucent, colors are applied next.
-fn apply_editor_defaults(
-    target: &mut ThemeColorsFile,
-    colors: &Map<String, Value>,
-) {
+fn apply_editor_defaults(target: &mut ThemeColorsFile, colors: &Map<String, Value>) {
     let editor = resolved_color(colors, "editor.background", &target.bg_editor)
         .unwrap_or_else(|| target.bg_editor.clone());
     target.bg_line_highlight = editor.clone();
@@ -518,11 +556,16 @@ fn apply_editor_defaults(
     target.bg_explorer_selected = Some(target.bg_sidebar.clone());
     target.bg_hover = Some(target.bg_sidebar.clone());
     for field in [
-        &mut target.bg_diff_added, &mut target.bg_diff_removed,
-        &mut target.bg_diff_added_highlight, &mut target.bg_diff_removed_highlight,
-        &mut target.bg_search_match, &mut target.bg_word_highlight,
-        &mut target.bg_bracket_match, &mut target.bg_search_range,
-        &mut target.bg_fold_indicator, &mut target.bg_md_code,
+        &mut target.bg_diff_added,
+        &mut target.bg_diff_removed,
+        &mut target.bg_diff_added_highlight,
+        &mut target.bg_diff_removed_highlight,
+        &mut target.bg_search_match,
+        &mut target.bg_word_highlight,
+        &mut target.bg_bracket_match,
+        &mut target.bg_search_range,
+        &mut target.bg_fold_indicator,
+        &mut target.bg_md_code,
     ] {
         *field = Some(editor.clone());
     }
@@ -579,17 +622,29 @@ pub(crate) fn apply_workbench_colors(
     let fallback_sidebar = target.bg_sidebar.clone();
     required!(bg_sidebar, "sideBar.background", &fallback_sidebar);
     let sidebar = target.bg_sidebar.clone();
-    if colors.get("list.activeSelectionBackground").is_some_and(Value::is_null) {
+    if colors
+        .get("list.activeSelectionBackground")
+        .is_some_and(Value::is_null)
+    {
         target.bg_selected = sidebar.clone();
     }
-    if colors.get("list.inactiveSelectionBackground").is_some_and(Value::is_null) {
+    if colors
+        .get("list.inactiveSelectionBackground")
+        .is_some_and(Value::is_null)
+    {
         target.bg_explorer_selected = Some(sidebar.clone());
     }
-    if colors.get("list.hoverBackground").is_some_and(Value::is_null) {
+    if colors
+        .get("list.hoverBackground")
+        .is_some_and(Value::is_null)
+    {
         target.bg_hover = Some(sidebar.clone());
     }
     optional!(fg_workbench, "foreground", &sidebar);
-    let workbench_fg = target.fg_workbench.clone().unwrap_or_else(|| target.fg_text.clone());
+    let workbench_fg = target
+        .fg_workbench
+        .clone()
+        .unwrap_or_else(|| target.fg_text.clone());
     target.fg_folder_icon = Some(workbench_fg.clone());
     optional!(fg_folder_icon, "icon.foreground", &sidebar);
     target.fg_input = Some(workbench_fg);
@@ -745,11 +800,22 @@ pub(crate) fn apply_workbench_colors(
     );
 }
 
-fn build_textmate_theme(name: &str, colors: &ThemeColorsFile, resolved: &ResolvedTheme) -> Result<Theme,String> {
-    Theme::new(name,&colors.fg_text,&colors.bg_editor,&resolved.token_rules)
+fn build_textmate_theme(
+    name: &str,
+    colors: &ThemeColorsFile,
+    resolved: &ResolvedTheme,
+) -> Result<Theme, String> {
+    Theme::new(
+        name,
+        &colors.fg_text,
+        &colors.bg_editor,
+        &resolved.token_rules,
+    )
 }
 
-pub(crate) fn parse_syntax_color(value: &str) -> Option<SyntaxColor> { SyntaxColor::parse(value) }
+pub(crate) fn parse_syntax_color(value: &str) -> Option<SyntaxColor> {
+    SyntaxColor::parse(value)
+}
 
 pub(crate) fn resolved_color(
     colors: &Map<String, Value>,
@@ -946,42 +1012,75 @@ mod tests {
             {"scope":"punctuation.definition.decorator.python","settings":{"foreground":"#f92672"}},
             {"scope":"entity.name.function.decorator.python","settings":{"foreground":"#66d9ef"}}
         ]}).to_string()).unwrap();
-        let theme = crate::vscode_theme::load_theme_file(&path,None,None).unwrap().textmate_theme.unwrap();
+        let theme = crate::vscode_theme::load_theme_file(&path, None, None)
+            .unwrap()
+            .textmate_theme
+            .unwrap();
         assert_python_preview_colors(&theme);
     }
 
     #[test]
     #[ignore = "requires the user's installed Monokai ST3 package; read-only comparison"]
     fn installed_monokai_st3_matches_screenshot_tokens() {
-        let path = crate::portable::theme_extensions_dir().join("AndreyVolosovich.monokai-st3/themes/Monokai-ST3-color-theme.json");
-        let theme = load_theme_file(&path, None, None).unwrap().textmate_theme.unwrap();
+        let path = crate::portable::theme_extensions_dir()
+            .join("AndreyVolosovich.monokai-st3/themes/Monokai-ST3-color-theme.json");
+        let theme = load_theme_file(&path, None, None)
+            .unwrap()
+            .textmate_theme
+            .unwrap();
         assert_python_preview_colors(&theme);
     }
 
     fn assert_python_preview_colors(theme: &Theme) {
-        use crate::textmate_backend::HighlightLines; use crate::textmate::{Color, FontStyle};
-        let set = crate::syntax_assets::build_syntax_set(&[Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars/Python")]).unwrap();
+        use crate::textmate::{Color, FontStyle};
+        use crate::textmate_backend::HighlightLines;
+        let set = crate::syntax_assets::build_syntax_set(&[
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars/Python")
+        ])
+        .unwrap();
         let syntax = set.find_syntax_by_extension("py").unwrap();
         assert_eq!(syntax.name, "Python");
         let mut parser = HighlightLines::new(syntax, theme);
         let source = "class Foo(object):\n    def __init__(self):\n        print(42)\n\n    @property\n    def foo(self):\n        return 'bar'\ntext = \"\"\"\nclass Hidden\n\"\"\"\nclass Visible:\n";
         let checks = [
-            (0,"class",[102,217,239],true), (0,"Foo",[166,226,46],false),
-            (0,"object",[166,226,46],true), (0,"(",[248,248,242],false),
-            (1,"def",[102,217,239],true), (1,"__init__",[102,217,239],false),
-            (1,"self",[253,151,31],true), (4,"@",[249,38,114],false),
-            (4,"property",[102,217,239],true), (5,"foo",[166,226,46],false),
-            (8,"class",[230,219,116],false), (10,"class",[102,217,239],true)
+            (0, "class", [102, 217, 239], true),
+            (0, "Foo", [166, 226, 46], false),
+            (0, "object", [166, 226, 46], true),
+            (0, "(", [248, 248, 242], false),
+            (1, "def", [102, 217, 239], true),
+            (1, "__init__", [102, 217, 239], false),
+            (1, "self", [253, 151, 31], true),
+            (4, "@", [249, 38, 114], false),
+            (4, "property", [102, 217, 239], true),
+            (5, "foo", [166, 226, 46], false),
+            (8, "class", [230, 219, 116], false),
+            (10, "class", [102, 217, 239], true),
         ];
-        for (line_index,line) in source.lines().enumerate() {
+        for (line_index, line) in source.lines().enumerate() {
             let line = format!("{line}\n");
             let spans = parser.highlight_line(&line);
-            let per_byte: Vec<_> = spans.iter().flat_map(|(s,t)| std::iter::repeat_n(*s,t.len())).collect();
-            for (_,token,rgb,italic) in checks.iter().filter(|c| c.0 == line_index) {
+            let per_byte: Vec<_> = spans
+                .iter()
+                .flat_map(|(s, t)| std::iter::repeat_n(*s, t.len()))
+                .collect();
+            for (_, token, rgb, italic) in checks.iter().filter(|c| c.0 == line_index) {
                 let offset = line.find(token).unwrap();
                 let actual = per_byte[offset];
-                assert_eq!(actual.foreground, Color{r:rgb[0],g:rgb[1],b:rgb[2],a:255}, "{token}: {spans:?}");
-                assert_eq!(actual.font_style.contains(FontStyle::ITALIC), *italic, "{token}: font style");
+                assert_eq!(
+                    actual.foreground,
+                    Color {
+                        r: rgb[0],
+                        g: rgb[1],
+                        b: rgb[2],
+                        a: 255
+                    },
+                    "{token}: {spans:?}"
+                );
+                assert_eq!(
+                    actual.font_style.contains(FontStyle::ITALIC),
+                    *italic,
+                    "{token}: font style"
+                );
             }
         }
     }
@@ -1033,7 +1132,9 @@ mod tests {
             "editor.findMatchBackground":"#e6b4500d", "editor.findMatchBorder":"#e6b450",
             "editor.findMatchHighlightBackground":"#e6b4500d", "editor.findMatchHighlightBorder":"#e6b45059"
         }}"##).unwrap();
-        let c = load_theme_file(&path, None, None).unwrap().to_theme_colors();
+        let c = load_theme_file(&path, None, None)
+            .unwrap()
+            .to_theme_colors();
         use ratatui::style::{Color::Rgb, Modifier, Style};
         assert_eq!(c.ui.bg_quick_input, Rgb(13, 16, 22));
         assert_eq!(c.ui.fg_quick_input, Rgb(203, 204, 198));
@@ -1042,12 +1143,18 @@ mod tests {
         assert_eq!(c.ui.fg_quick_match, Rgb(230, 180, 80));
         assert_eq!(c.fg_input, Rgb(179, 177, 173));
         assert_eq!(c.ui.bg_find_current, Rgb(19, 21, 20));
-        let token = Style::default().fg(Rgb(255, 143, 64)).add_modifier(Modifier::ITALIC);
+        let token = Style::default()
+            .fg(Rgb(255, 143, 64))
+            .add_modifier(Modifier::ITALIC);
         for (current, border) in [(true, Rgb(230, 180, 80)), (false, Rgb(85, 71, 39))] {
             let style = c.ui.find_style(token, current, c.bg_search_match);
             assert_eq!(style.fg, token.fg);
             assert_eq!(style.underline_color, Some(border));
-            assert!(style.add_modifier.contains(Modifier::ITALIC | Modifier::UNDERLINED));
+            assert!(
+                style
+                    .add_modifier
+                    .contains(Modifier::ITALIC | Modifier::UNDERLINED)
+            );
         }
     }
 
@@ -1062,10 +1169,21 @@ mod tests {
             std::fs::write(&path, serde_json::json!({"type":kind, "colors": {
                 "editor.foreground":"#abcdef", "menu.background":"#ff0000", "menu.foreground":"#00ff00"
             }}).to_string()).unwrap();
-            let c = load_theme_file(&path, None, None).unwrap().to_theme_colors();
-            assert_eq!(c.ui.bg_quick_input, crate::app_theme_loader::hex_to_color(widget));
-            assert_eq!(c.ui.fg_quick_input, crate::app_theme_loader::hex_to_color(foreground));
-            assert_eq!(c.ui.bg_find_current, crate::app_theme_loader::hex_to_color(current));
+            let c = load_theme_file(&path, None, None)
+                .unwrap()
+                .to_theme_colors();
+            assert_eq!(
+                c.ui.bg_quick_input,
+                crate::app_theme_loader::hex_to_color(widget)
+            );
+            assert_eq!(
+                c.ui.fg_quick_input,
+                crate::app_theme_loader::hex_to_color(foreground)
+            );
+            assert_eq!(
+                c.ui.bg_find_current,
+                crate::app_theme_loader::hex_to_color(current)
+            );
             assert_eq!(c.ui.fg_find, None);
             assert_eq!(c.ui.border_find, None);
         }
@@ -1076,24 +1194,60 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("theme.json");
         let mut colors = serde_json::Map::new();
-        for (group, prefix) in ["editorIndentGuide.background", "editorIndentGuide.activeBackground", "editorBracketPairGuide.background", "editorBracketPairGuide.activeBackground"].iter().enumerate() {
+        for (group, prefix) in [
+            "editorIndentGuide.background",
+            "editorIndentGuide.activeBackground",
+            "editorBracketPairGuide.background",
+            "editorBracketPairGuide.activeBackground",
+        ]
+        .iter()
+        .enumerate()
+        {
             for level in 1..=6 {
-                colors.insert(format!("{prefix}{level}"), Value::String(format!("#{:02x}{level:02x}00", group + 1)));
+                colors.insert(
+                    format!("{prefix}{level}"),
+                    Value::String(format!("#{:02x}{level:02x}00", group + 1)),
+                );
             }
         }
-        colors.insert("editorCodeLens.foreground".into(), Value::String("#112233".into()));
-        colors.insert("editorRuler.foreground".into(), Value::String("#445566".into()));
-        colors.insert("editorGutter.foldingControlForeground".into(), Value::String("#778899".into()));
+        colors.insert(
+            "editorCodeLens.foreground".into(),
+            Value::String("#112233".into()),
+        );
+        colors.insert(
+            "editorRuler.foreground".into(),
+            Value::String("#445566".into()),
+        );
+        colors.insert(
+            "editorGutter.foldingControlForeground".into(),
+            Value::String("#778899".into()),
+        );
         std::fs::write(&path, serde_json::json!({"colors": colors}).to_string()).unwrap();
-        let c = load_theme_file(&path, None, None).unwrap().to_theme_colors();
+        let c = load_theme_file(&path, None, None)
+            .unwrap()
+            .to_theme_colors();
         use ratatui::style::Color::Rgb;
-        for (group, resolved) in [c.ui.indent_guides, c.ui.indent_guides_active, c.ui.bracket_guides, c.ui.bracket_guides_active].iter().enumerate() {
+        for (group, resolved) in [
+            c.ui.indent_guides,
+            c.ui.indent_guides_active,
+            c.ui.bracket_guides,
+            c.ui.bracket_guides_active,
+        ]
+        .iter()
+        .enumerate()
+        {
             for (level, color) in resolved.iter().enumerate() {
                 assert_eq!(*color, Rgb(group as u8 + 1, level as u8 + 1, 0));
             }
         }
-        assert_eq!(c.ui.codelens_foreground.over(c.bg_editor), Some(Rgb(17, 34, 51)));
-        assert_eq!(c.ui.ruler_foreground.over(c.bg_editor), Some(Rgb(68, 85, 102)));
+        assert_eq!(
+            c.ui.codelens_foreground.over(c.bg_editor),
+            Some(Rgb(17, 34, 51))
+        );
+        assert_eq!(
+            c.ui.ruler_foreground.over(c.bg_editor),
+            Some(Rgb(68, 85, 102))
+        );
         assert_eq!(c.ui.fg_folding, Rgb(119, 136, 153));
     }
 
@@ -1105,7 +1259,12 @@ mod tests {
                 let first = colors.ui.indent_guide_color(0, active);
                 assert_ne!(first, colors.bg_editor, "{} active={active}", theme.name);
                 for depth in 1..18 {
-                    assert_eq!(colors.ui.indent_guide_color(depth, active), first, "{} depth={depth} active={active}", theme.name);
+                    assert_eq!(
+                        colors.ui.indent_guide_color(depth, active),
+                        first,
+                        "{} depth={depth} active={active}",
+                        theme.name
+                    );
                 }
             }
         }
@@ -1126,19 +1285,32 @@ mod tests {
             colors[format!("editorIndentGuide.background{}", index + 1)] = (*color).into();
         }
         std::fs::write(&path, serde_json::json!({"colors": colors}).to_string()).unwrap();
-        let theme = load_theme_file(&path, None, None).unwrap().to_theme_colors();
+        let theme = load_theme_file(&path, None, None)
+            .unwrap()
+            .to_theme_colors();
         for depth in 0..19 {
-            assert_eq!(theme.ui.indent_guide_color(depth, false), crate::app_theme_loader::hex_to_color(palette[depth % 5]));
-            assert_eq!(theme.ui.indent_guide_color(depth, true), ratatui::style::Color::Rgb(171, 205, 239));
+            assert_eq!(
+                theme.ui.indent_guide_color(depth, false),
+                crate::app_theme_loader::hex_to_color(palette[depth % 5])
+            );
+            assert_eq!(
+                theme.ui.indent_guide_color(depth, true),
+                ratatui::style::Color::Rgb(171, 205, 239)
+            );
         }
         // Transparent, null and background-matched slots must never create gaps.
         colors["editorIndentGuide.background2"] = "#00aa0000".into();
         colors["editorIndentGuide.background3"] = Value::Null;
         colors["editorIndentGuide.background4"] = "#111111".into();
         std::fs::write(&path, serde_json::json!({"colors": colors}).to_string()).unwrap();
-        let theme = load_theme_file(&path, None, None).unwrap().to_theme_colors();
+        let theme = load_theme_file(&path, None, None)
+            .unwrap()
+            .to_theme_colors();
         for depth in 0..12 {
-            assert_eq!(theme.ui.indent_guide_color(depth, false), crate::app_theme_loader::hex_to_color(palette[if depth % 2 == 0 { 0 } else { 4 }]));
+            assert_eq!(
+                theme.ui.indent_guide_color(depth, false),
+                crate::app_theme_loader::hex_to_color(palette[if depth % 2 == 0 { 0 } else { 4 }])
+            );
         }
     }
 
@@ -1204,9 +1376,17 @@ mod tests {
         assert_eq!(theme.colors.bg_editor, "#102030");
         assert_eq!(theme.colors.bg_sidebar, "#203040");
         assert_eq!(theme.colors.bg_input.as_deref(), Some("#304050"));
-        assert_eq!(theme.textmate_theme.as_ref().unwrap().token_rules().len(), 1);
         assert_eq!(
-            theme.semantic_colors.as_ref().unwrap().color("type").unwrap(),
+            theme.textmate_theme.as_ref().unwrap().token_rules().len(),
+            1
+        );
+        assert_eq!(
+            theme
+                .semantic_colors
+                .as_ref()
+                .unwrap()
+                .color("type")
+                .unwrap(),
             (17, 34, 51)
         );
     }
@@ -1296,5 +1476,4 @@ mod tests {
         assert_eq!(themes[0].name, "Dark+");
         assert!(themes[0].config_key.ends_with("-dark"));
     }
-
 }

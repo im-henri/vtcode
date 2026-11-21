@@ -4,8 +4,8 @@ use ratatui::style::Color;
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 #[path = "terminal_resize.rs"]
@@ -46,12 +46,33 @@ pub struct TermCell {
 
 impl Default for TermCell {
     fn default() -> Self {
-        Self { ch: ' ', fg: Color::Reset, bg: Color::Reset, bold: false, underline: false, dim: false, italic: false, strikethrough: false, inverted: false }
+        Self {
+            ch: ' ',
+            fg: Color::Reset,
+            bg: Color::Reset,
+            bold: false,
+            underline: false,
+            dim: false,
+            italic: false,
+            strikethrough: false,
+            inverted: false,
+        }
     }
 }
 
 /// Saved cursor state: (row, col, fg, bg, bold, underline, dim, italic, strikethrough, inverted).
-pub(crate) type SavedCursorState = (usize, usize, Color, Color, bool, bool, bool, bool, bool, bool);
+pub(crate) type SavedCursorState = (
+    usize,
+    usize,
+    Color,
+    Color,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+    bool,
+);
 
 struct AltScreenState {
     cells: Vec<TermRow>,
@@ -208,8 +229,14 @@ impl TermGrid {
         if self.cursor_col < self.width && self.cursor_row < self.height {
             self.invalidate_selection_rows(self.cursor_row, self.cursor_row);
             self.cells[self.cursor_row][self.cursor_col] = TermCell {
-                ch: c, fg: self.fg, bg: self.bg, bold: self.bold, underline: self.underline,
-                dim: self.dim, italic: self.italic, strikethrough: self.strikethrough,
+                ch: c,
+                fg: self.fg,
+                bg: self.bg,
+                bold: self.bold,
+                underline: self.underline,
+                dim: self.dim,
+                italic: self.italic,
+                strikethrough: self.strikethrough,
                 inverted: self.inverted,
             };
             self.cursor_col += 1;
@@ -236,8 +263,11 @@ impl TermGrid {
         let save_history = self.alt_saved.is_none() && self.scroll_top == 0;
         let full_screen = save_history && self.scroll_bottom == self.height.saturating_sub(1);
         if !full_screen {
-            if save_history { self.clear_selection(); }
-            else { self.invalidate_selection_rows(self.scroll_top, self.scroll_bottom); }
+            if save_history {
+                self.clear_selection();
+            } else {
+                self.invalidate_selection_rows(self.scroll_top, self.scroll_bottom);
+            }
         }
         if self.scroll_top > self.scroll_bottom || self.scroll_bottom >= self.cells.len() {
             return;
@@ -249,7 +279,8 @@ impl TermGrid {
         self.wrapped[self.scroll_top..=self.scroll_bottom].rotate_left(n);
         for index in self.scroll_bottom + 1 - n..=self.scroll_bottom {
             if save_history {
-                self.scrollback.push_back(std::mem::take(&mut self.cells[index]));
+                self.scrollback
+                    .push_back(std::mem::take(&mut self.cells[index]));
                 self.scrollback_wrapped.push_back(self.wrapped[index]);
                 if full_screen && (self.scroll_view > 0 || self.has_selection()) {
                     self.scroll_view = (self.scroll_view + 1).min(self.scrollback.len());
@@ -320,18 +351,27 @@ impl TermGrid {
             0 => {
                 self.erase_in_line(0);
                 for row in (self.cursor_row + 1)..self.height {
-                    if row < self.cells.len() { self.cells[row].fill(TermCell::default()); self.wrapped[row] = false; }
+                    if row < self.cells.len() {
+                        self.cells[row].fill(TermCell::default());
+                        self.wrapped[row] = false;
+                    }
                 }
             }
             1 => {
                 for row in 0..self.cursor_row {
-                    if row < self.cells.len() { self.cells[row].fill(TermCell::default()); self.wrapped[row] = false; }
+                    if row < self.cells.len() {
+                        self.cells[row].fill(TermCell::default());
+                        self.wrapped[row] = false;
+                    }
                 }
                 self.erase_in_line(1);
             }
             2 => {
                 for row in 0..self.height {
-                    if row < self.cells.len() { self.cells[row].fill(TermCell::default()); self.wrapped[row] = false; }
+                    if row < self.cells.len() {
+                        self.cells[row].fill(TermCell::default());
+                        self.wrapped[row] = false;
+                    }
                 }
             }
             _ => {}
@@ -339,8 +379,12 @@ impl TermGrid {
     }
 
     fn erase_in_line(&mut self, mode: u16) {
-        if self.cursor_row >= self.cells.len() { return; }
-        if mode <= 2 { self.invalidate_selection_rows(self.cursor_row, self.cursor_row); }
+        if self.cursor_row >= self.cells.len() {
+            return;
+        }
+        if mode <= 2 {
+            self.invalidate_selection_rows(self.cursor_row, self.cursor_row);
+        }
         match mode {
             0 => {
                 self.wrapped[self.cursor_row] = false;
@@ -357,7 +401,10 @@ impl TermGrid {
                     }
                 }
             }
-            2 => { self.cells[self.cursor_row].fill(TermCell::default()); self.wrapped[self.cursor_row] = false; }
+            2 => {
+                self.cells[self.cursor_row].fill(TermCell::default());
+                self.wrapped[self.cursor_row] = false;
+            }
             _ => {}
         }
     }
@@ -389,7 +436,11 @@ impl TermGrid {
                         _ => None,
                     };
                     if let Some(color) = color {
-                        if group[0] == 38 { self.fg = color; } else { self.bg = color; }
+                        if group[0] == 38 {
+                            self.fg = color;
+                        } else {
+                            self.bg = color;
+                        }
                     }
                 }
                 4 => self.underline = group.get(1).is_none_or(|&style| style != 0),
@@ -397,11 +448,16 @@ impl TermGrid {
                 _ => {}
             }
         }
-        if !run.is_empty() { self.set_sgr(&run); }
+        if !run.is_empty() {
+            self.set_sgr(&run);
+        }
     }
 
     fn set_sgr(&mut self, params: &[u16]) {
-        if params.is_empty() { self.reset_attrs(); return; }
+        if params.is_empty() {
+            self.reset_attrs();
+            return;
+        }
         let mut i = 0;
         while i < params.len() {
             match params[i] {
@@ -414,7 +470,10 @@ impl TermGrid {
                 // theme's default foreground and background while painting.
                 7 => self.inverted = true,
                 9 => self.strikethrough = true,
-                22 => { self.bold = false; self.dim = false; }
+                22 => {
+                    self.bold = false;
+                    self.dim = false;
+                }
                 23 => self.italic = false,
                 24 => self.underline = false,
                 27 => self.inverted = false,
@@ -433,7 +492,11 @@ impl TermGrid {
                             self.fg = Color::Indexed(params[i + 2] as u8);
                             i += 2;
                         } else if params[i + 1] == 2 && i + 4 < params.len() {
-                            self.fg = Color::Rgb(params[i + 2] as u8, params[i + 3] as u8, params[i + 4] as u8);
+                            self.fg = Color::Rgb(
+                                params[i + 2] as u8,
+                                params[i + 3] as u8,
+                                params[i + 4] as u8,
+                            );
                             i += 4;
                         }
                     }
@@ -453,7 +516,11 @@ impl TermGrid {
                             self.bg = Color::Indexed(params[i + 2] as u8);
                             i += 2;
                         } else if params[i + 1] == 2 && i + 4 < params.len() {
-                            self.bg = Color::Rgb(params[i + 2] as u8, params[i + 3] as u8, params[i + 4] as u8);
+                            self.bg = Color::Rgb(
+                                params[i + 2] as u8,
+                                params[i + 3] as u8,
+                                params[i + 4] as u8,
+                            );
                             i += 4;
                         }
                     }
@@ -493,16 +560,21 @@ impl TermGrid {
     }
 
     pub(crate) fn resize(&mut self, width: usize, height: usize) {
-        if width == 0 || height == 0 || (width, height) == (self.width, self.height) { return; }
+        if width == 0 || height == 0 || (width, height) == (self.width, self.height) {
+            return;
+        }
         self.text_changed();
         self.clear_selection();
         if self.alt_saved.is_some() {
             // Full-screen applications redraw at fixed coordinates after SIGWINCH.
             // Their output must never be mixed into the shell's scrollback.
             for row in &mut self.cells {
-                if row.len() != width { row.resize(width, TermCell::default()); }
+                if row.len() != width {
+                    row.resize(width, TermCell::default());
+                }
             }
-            self.cells.resize_with(height, || vec![TermCell::default(); width].into());
+            self.cells
+                .resize_with(height, || vec![TermCell::default(); width].into());
             self.wrapped = vec![false; height];
             self.pending_wrap = false;
         } else {
@@ -512,8 +584,12 @@ impl TermGrid {
         self.height = height;
         self.scroll_top = 0;
         self.scroll_bottom = height.saturating_sub(1);
-        if self.cursor_row >= height { self.cursor_row = height - 1; }
-        if self.cursor_col >= width { self.cursor_col = width - 1; }
+        if self.cursor_row >= height {
+            self.cursor_row = height - 1;
+        }
+        if self.cursor_col >= width {
+            self.cursor_col = width - 1;
+        }
         if let Some(saved) = &mut self.saved_cursor {
             saved.0 = saved.0.min(height - 1);
             saved.1 = saved.1.min(width - 1);
@@ -525,11 +601,16 @@ impl TermGrid {
     }
 
     fn enter_alt_screen(&mut self) {
-        if self.alt_saved.is_some() { return; }
+        if self.alt_saved.is_some() {
+            return;
+        }
         self.conpty_resize = None;
         self.clear_selection();
         self.alt_saved = Some(AltScreenState {
-            cells: std::mem::replace(&mut self.cells, vec![TermRow::from(vec![TermCell::default(); self.width]); self.height]),
+            cells: std::mem::replace(
+                &mut self.cells,
+                vec![TermRow::from(vec![TermCell::default(); self.width]); self.height],
+            ),
             wrapped: std::mem::replace(&mut self.wrapped, vec![false; self.height]),
             scrollback: std::mem::take(&mut self.scrollback),
             scrollback_wrapped: std::mem::take(&mut self.scrollback_wrapped),
@@ -573,7 +654,8 @@ impl TermGrid {
     /// Get a displayable row, accounting for scrollback viewing offset.
     #[cfg(test)]
     pub(crate) fn display_line(&self, visual_row: usize) -> &[TermCell] {
-        self.display_row(visual_row).map_or(&[], |row| row.as_slice())
+        self.display_row(visual_row)
+            .map_or(&[], |row| row.as_slice())
     }
 
     pub(crate) fn display_row(&self, visual_row: usize) -> Option<&TermRow> {
@@ -600,20 +682,26 @@ impl vte::Perform for TermGrid {
 
     fn execute(&mut self, byte: u8) {
         match byte {
-            0x08 => { // BS
-                if self.cursor_col > 0 { self.cursor_col -= 1; }
+            0x08 => {
+                // BS
+                if self.cursor_col > 0 {
+                    self.cursor_col -= 1;
+                }
                 self.pending_wrap = false;
             }
-            0x09 => { // HT
+            0x09 => {
+                // HT
                 let next = (self.cursor_col / 8 + 1) * 8;
                 self.cursor_col = next.min(self.width.saturating_sub(1));
                 self.pending_wrap = false;
             }
-            0x0A..=0x0C => { // LF, VT, FF
+            0x0A..=0x0C => {
+                // LF, VT, FF
                 self.linefeed();
                 self.pending_wrap = false;
             }
-            0x0D => { // CR
+            0x0D => {
+                // CR
                 self.cursor_col = 0;
                 self.pending_wrap = false;
             }
@@ -621,13 +709,21 @@ impl vte::Perform for TermGrid {
         }
     }
 
-    fn csi_dispatch(&mut self, params: &vte::Params, intermediates: &[u8], _ignore: bool, action: char) {
+    fn csi_dispatch(
+        &mut self,
+        params: &vte::Params,
+        intermediates: &[u8],
+        _ignore: bool,
+        action: char,
+    ) {
         // vte currently caps parameters (including subparameters) at 32.
         // Keep the fallback for future parser versions with a larger limit.
         let mut inline = [0u16; 32];
         let overflow: Vec<u16>;
         let ps = if params.len() <= inline.len() {
-            for (slot, value) in inline.iter_mut().zip(params.iter().flatten()) { *slot = *value; }
+            for (slot, value) in inline.iter_mut().zip(params.iter().flatten()) {
+                *slot = *value;
+            }
             &inline[..params.len()]
         } else {
             overflow = params.iter().flatten().copied().collect();
@@ -704,7 +800,8 @@ impl vte::Perform for TermGrid {
                 // IL/DL outside the scrolling region are no-ops. Restrict both
                 // the mutation and selection invalidation to that region.
                 if (self.scroll_top..=self.scroll_bottom).contains(&self.cursor_row)
-                    && self.scroll_bottom < self.cells.len() {
+                    && self.scroll_bottom < self.cells.len()
+                {
                     self.invalidate_selection_rows(self.cursor_row, self.scroll_bottom);
                     let rows = &mut self.cells[self.cursor_row..=self.scroll_bottom];
                     let wrapped = &mut self.wrapped[self.cursor_row..=self.scroll_bottom];
@@ -718,14 +815,19 @@ impl vte::Perform for TermGrid {
                         wrapped.rotate_left(n);
                         rows.len() - n..rows.len()
                     };
-                    for row in &mut rows[blank.clone()] { row.fill(TermCell::default()); }
+                    for row in &mut rows[blank.clone()] {
+                        row.fill(TermCell::default());
+                    }
                     wrapped[blank].fill(false);
                 }
             }
             'P' => {
                 let n = p0.max(1) as usize;
-                if let Some(tail) = self.cells.get_mut(self.cursor_row)
-                    .and_then(|row| row.get_mut(self.cursor_col..)) {
+                if let Some(tail) = self
+                    .cells
+                    .get_mut(self.cursor_row)
+                    .and_then(|row| row.get_mut(self.cursor_col..))
+                {
                     let n = n.min(tail.len());
                     tail.rotate_left(n);
                     let kept = tail.len() - n;
@@ -738,9 +840,15 @@ impl vte::Perform for TermGrid {
                 // ECH erases with the current background (xterm BCE), which
                 // the advertised xterm-256color terminfo promises.
                 let n = p0.max(1) as usize;
-                let blank = TermCell { bg: self.bg, ..TermCell::default() };
-                if let Some(tail) = self.cells.get_mut(self.cursor_row)
-                    .and_then(|row| row.get_mut(self.cursor_col..)) {
+                let blank = TermCell {
+                    bg: self.bg,
+                    ..TermCell::default()
+                };
+                if let Some(tail) = self
+                    .cells
+                    .get_mut(self.cursor_row)
+                    .and_then(|row| row.get_mut(self.cursor_col..))
+                {
                     let n = n.min(tail.len());
                     tail[..n].fill(blank);
                 }
@@ -797,7 +905,11 @@ impl vte::Perform for TermGrid {
             'm' => self.set_sgr(ps),
             'r' => {
                 let top = (p0.max(1) as usize).saturating_sub(1);
-                let bot = if p1 > 0 { (p1 as usize).saturating_sub(1) } else { self.height.saturating_sub(1) };
+                let bot = if p1 > 0 {
+                    (p1 as usize).saturating_sub(1)
+                } else {
+                    self.height.saturating_sub(1)
+                };
                 self.scroll_top = top.min(self.height.saturating_sub(1));
                 self.scroll_bottom = bot.min(self.height.saturating_sub(1));
                 if self.scroll_top > self.scroll_bottom {
@@ -807,10 +919,23 @@ impl vte::Perform for TermGrid {
                 self.cursor_col = 0;
             }
             's' if intermediates.is_empty() => {
-                self.saved_cursor = Some((self.cursor_row, self.cursor_col, self.fg, self.bg, self.bold, self.underline, self.dim, self.italic, self.strikethrough, self.inverted));
+                self.saved_cursor = Some((
+                    self.cursor_row,
+                    self.cursor_col,
+                    self.fg,
+                    self.bg,
+                    self.bold,
+                    self.underline,
+                    self.dim,
+                    self.italic,
+                    self.strikethrough,
+                    self.inverted,
+                ));
             }
             'u' if intermediates.is_empty() => {
-                if let Some((r, c, fg, bg, bold, ul, dim, italic, strikethrough, inverted)) = self.saved_cursor {
+                if let Some((r, c, fg, bg, bold, ul, dim, italic, strikethrough, inverted)) =
+                    self.saved_cursor
+                {
                     self.cursor_row = r;
                     self.cursor_col = c;
                     self.fg = fg;
@@ -825,8 +950,11 @@ impl vte::Perform for TermGrid {
             }
             '@' => {
                 let n = p0.max(1) as usize;
-                if let Some(tail) = self.cells.get_mut(self.cursor_row)
-                    .and_then(|row| row.get_mut(self.cursor_col..)) {
+                if let Some(tail) = self
+                    .cells
+                    .get_mut(self.cursor_row)
+                    .and_then(|row| row.get_mut(self.cursor_col..))
+                {
                     let n = n.min(tail.len());
                     tail.rotate_right(n);
                     tail[..n].fill(TermCell::default());
@@ -843,10 +971,23 @@ impl vte::Perform for TermGrid {
     fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
         match byte {
             b'7' => {
-                self.saved_cursor = Some((self.cursor_row, self.cursor_col, self.fg, self.bg, self.bold, self.underline, self.dim, self.italic, self.strikethrough, self.inverted));
+                self.saved_cursor = Some((
+                    self.cursor_row,
+                    self.cursor_col,
+                    self.fg,
+                    self.bg,
+                    self.bold,
+                    self.underline,
+                    self.dim,
+                    self.italic,
+                    self.strikethrough,
+                    self.inverted,
+                ));
             }
             b'8' => {
-                if let Some((r, c, fg, bg, bold, ul, dim, italic, strikethrough, inverted)) = self.saved_cursor {
+                if let Some((r, c, fg, bg, bold, ul, dim, italic, strikethrough, inverted)) =
+                    self.saved_cursor
+                {
                     self.cursor_row = r;
                     self.cursor_col = c;
                     self.fg = fg;
@@ -860,7 +1001,10 @@ impl vte::Perform for TermGrid {
                 }
             }
             b'D' => self.linefeed(),
-            b'E' => { self.cursor_col = 0; self.linefeed(); }
+            b'E' => {
+                self.cursor_col = 0;
+                self.linefeed();
+            }
             b'M' => {
                 if self.cursor_row == self.scroll_top {
                     self.scroll_down(1);
@@ -891,17 +1035,29 @@ impl vte::Perform for TermGrid {
                 self.title = Some(title.to_string());
             }
         }
-        if params.len() >= 2 && params[0] == b"7"
-            && params[1..].iter().fold(params.len() - 2, |size, part| size.saturating_add(part.len())) <= 4096
+        if params.len() >= 2
+            && params[0] == b"7"
+            && params[1..].iter().fold(params.len() - 2, |size, part| {
+                size.saturating_add(part.len())
+            }) <= 4096
         {
             let mut value = String::new();
             let mut valid = true;
             for (index, part) in params[1..].iter().enumerate() {
-                let Ok(part) = std::str::from_utf8(part) else { valid = false; break; };
-                if index > 0 { value.push(';'); }
+                let Ok(part) = std::str::from_utf8(part) else {
+                    valid = false;
+                    break;
+                };
+                if index > 0 {
+                    value.push(';');
+                }
                 value.push_str(part);
             }
-            if valid && url::Url::parse(&value).is_ok_and(|url| url.scheme() == "file" && url.query().is_none() && url.fragment().is_none()) {
+            if valid
+                && url::Url::parse(&value).is_ok_and(|url| {
+                    url.scheme() == "file" && url.query().is_none() && url.fragment().is_none()
+                })
+            {
                 self.cwd_uri = Some(value);
             }
         }
@@ -938,7 +1094,9 @@ fn publish_output(
     wake: &crate::background::UiWake,
     bytes: &[u8],
 ) {
-    if bytes.is_empty() { return; }
+    if bytes.is_empty() {
+        return;
+    }
     let notify = if let Ok(mut queue) = incoming.lock() {
         let was_empty = queue.is_empty();
         queue_output(&mut queue, bytes);
@@ -946,8 +1104,12 @@ fn publish_output(
         // newly arriving output cannot lose its wakeup during a drain.
         ready.store(true, Ordering::Release);
         was_empty
-    } else { false };
-    if notify { wake.notify(); }
+    } else {
+        false
+    };
+    if notify {
+        wake.notify();
+    }
 }
 
 pub struct TerminalEmulator {
@@ -969,7 +1131,10 @@ pub struct TerminalEmulator {
     master: Option<Box<dyn portable_pty::MasterPty + Send>>,
     last_size: (usize, usize),
     wake: crate::background::UiWake,
-    remote: Option<(crate::remote::process::Reader, crate::remote::process::Killer)>,
+    remote: Option<(
+        crate::remote::process::Reader,
+        crate::remote::process::Killer,
+    )>,
     remote_input_pending: bool,
 }
 
@@ -1033,16 +1198,35 @@ impl TerminalEmulator {
         terminal
     }
 
-    pub(crate) fn from_remote(process: crate::remote::process::RemoteProcess, width: usize, height: usize, wake: crate::background::UiWake) -> std::io::Result<Self> {
+    pub(crate) fn from_remote(
+        process: crate::remote::process::RemoteProcess,
+        width: usize,
+        height: usize,
+        wake: crate::background::UiWake,
+    ) -> std::io::Result<Self> {
         let (reader, writer, killer) = process.split();
         let writer = crate::remote::process::QueuedWriter::new(writer)?;
         let (_, exit_events) = mpsc::channel();
         Ok(Self {
-            grid: TermGrid::new(width.max(2), height.max(2)), render_rows: Default::default(), profile_name: "Remote terminal".into(), parser: vte::Parser::new(),
-            incoming: Arc::default(), incoming_ready: Arc::new(AtomicBool::new(false)), output_batch: Vec::new(), output_offset: 0,
-            writer: Arc::new(Mutex::new(Some(Box::new(writer)))), _alive: Arc::new(AtomicBool::new(true)),
-            _reader_thread: None, child_killer: None, exit_events, _wait_thread: None, master: None,
-            last_size: (width, height), wake, remote: Some((reader, killer)), remote_input_pending: false,
+            grid: TermGrid::new(width.max(2), height.max(2)),
+            render_rows: Default::default(),
+            profile_name: "Remote terminal".into(),
+            parser: vte::Parser::new(),
+            incoming: Arc::default(),
+            incoming_ready: Arc::new(AtomicBool::new(false)),
+            output_batch: Vec::new(),
+            output_offset: 0,
+            writer: Arc::new(Mutex::new(Some(Box::new(writer)))),
+            _alive: Arc::new(AtomicBool::new(true)),
+            _reader_thread: None,
+            child_killer: None,
+            exit_events,
+            _wait_thread: None,
+            master: None,
+            last_size: (width, height),
+            wake,
+            remote: Some((reader, killer)),
+            remote_input_pending: false,
         })
     }
 
@@ -1164,7 +1348,8 @@ impl TerminalEmulator {
         let mut cmd = portable_pty::CommandBuilder::new(program);
         // Completion hooks are optional; an unwritable data directory must not
         // prevent opening the user's ordinary shell and profile.
-        let integration = crate::terminal_shell::Integration::prepare(program, args).unwrap_or_default();
+        let integration =
+            crate::terminal_shell::Integration::prepare(program, args).unwrap_or_default();
         for arg in args {
             cmd.arg(arg);
         }
@@ -1252,12 +1437,18 @@ impl TerminalEmulator {
     }
 
     pub(crate) fn remote_input_progress(&self) -> crate::remote::process::InputProgress {
-        self.remote.as_ref().map_or_else(Default::default, |(reader, _)| reader.input_progress())
+        self.remote
+            .as_ref()
+            .map_or_else(Default::default, |(reader, _)| reader.input_progress())
     }
 
     pub(crate) fn has_pending_output(&self) -> bool {
-        self.output_offset < self.output_batch.len() || self.incoming_ready.load(Ordering::Acquire)
-            || self.remote.as_ref().is_some_and(|(reader, _)| self._alive.load(Ordering::Relaxed) && reader.ready())
+        self.output_offset < self.output_batch.len()
+            || self.incoming_ready.load(Ordering::Acquire)
+            || self
+                .remote
+                .as_ref()
+                .is_some_and(|(reader, _)| self._alive.load(Ordering::Relaxed) && reader.ready())
     }
 
     pub(crate) fn process_until(&mut self, deadline: Instant) -> bool {
@@ -1270,48 +1461,70 @@ impl TerminalEmulator {
         let pending = self.remote_input_progress().pending;
         let input_changed = pending != self.remote_input_pending;
         self.remote_input_pending = pending;
-        if !self.has_pending_output() { return input_changed; }
+        if !self.has_pending_output() {
+            return input_changed;
+        }
         if self.output_offset == self.output_batch.len() {
             self.output_batch.clear();
             self.output_offset = 0;
             if let Some((reader, _)) = &mut self.remote {
                 let mut bytes = [0; 32 * 1024];
                 while self.output_batch.len() < MAX_PTY_BYTES_PER_TICK {
-                    let take = bytes.len().min(MAX_PTY_BYTES_PER_TICK - self.output_batch.len());
+                    let take = bytes
+                        .len()
+                        .min(MAX_PTY_BYTES_PER_TICK - self.output_batch.len());
                     match reader.try_read(&mut bytes[..take]) {
-                        Ok(0) => { self._alive.store(false, Ordering::Relaxed); break; }
+                        Ok(0) => {
+                            self._alive.store(false, Ordering::Relaxed);
+                            break;
+                        }
                         Ok(count) => self.output_batch.extend_from_slice(&bytes[..count]),
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
                         Err(error) => {
-                            self.output_batch.extend_from_slice(format!("\r\nVTCode: {error}\r\n").as_bytes());
-                            self._alive.store(false, Ordering::Relaxed); break;
+                            self.output_batch
+                                .extend_from_slice(format!("\r\nVTCode: {error}\r\n").as_bytes());
+                            self._alive.store(false, Ordering::Relaxed);
+                            break;
                         }
                     }
                 }
             }
             if let Ok(mut queue) = self.incoming.lock() {
-                let take = queue.len().min(MAX_PTY_BYTES_PER_TICK.saturating_sub(self.output_batch.len()));
+                let take = queue
+                    .len()
+                    .min(MAX_PTY_BYTES_PER_TICK.saturating_sub(self.output_batch.len()));
                 // A ring has at most two contiguous spans. Copy them in bulk:
                 // extending from Drain copies byte by byte on this hot path.
                 self.output_batch.reserve(take);
                 let (first, second) = queue.as_slices();
                 let leading = first.len().min(take);
                 self.output_batch.extend_from_slice(&first[..leading]);
-                self.output_batch.extend_from_slice(&second[..take - leading]);
+                self.output_batch
+                    .extend_from_slice(&second[..take - leading]);
                 queue.drain(..take);
-                self.incoming_ready.store(!queue.is_empty(), Ordering::Release);
+                self.incoming_ready
+                    .store(!queue.is_empty(), Ordering::Release);
             }
         }
-        if self.output_batch.is_empty() { return input_changed; }
+        if self.output_batch.is_empty() {
+            return input_changed;
+        }
         loop {
             let end = (self.output_offset + PTY_PARSE_QUANTUM).min(self.output_batch.len());
-            self.grid.advance_output(&mut self.parser, &self.output_batch[self.output_offset..end]);
+            self.grid.advance_output(
+                &mut self.parser,
+                &self.output_batch[self.output_offset..end],
+            );
             self.output_offset = end;
-            if end == self.output_batch.len() || !continue_processing() { break; }
+            if end == self.output_batch.len() || !continue_processing() {
+                break;
+            }
         }
         // Unparsed bytes stay in this bounded buffer, ahead of newer input.
         // The UI must wake again even if the reader has already gone quiet.
-        if self.has_pending_output() { self.wake.notify(); }
+        if self.has_pending_output() {
+            self.wake.notify();
+        }
         true
     }
 
@@ -1319,9 +1532,13 @@ impl TerminalEmulator {
     /// Once received, detach all live PTY handles so cleanup remains harmless.
     pub(crate) fn take_exit_event(&mut self) -> bool {
         if self.remote.is_some() {
-            if self._alive.load(Ordering::Relaxed) || self.has_pending_output() { return false; }
+            if self._alive.load(Ordering::Relaxed) || self.has_pending_output() {
+                return false;
+            }
             self.remote.take();
-            if let Ok(mut writer) = self.writer.lock() { writer.take(); }
+            if let Ok(mut writer) = self.writer.lock() {
+                writer.take();
+            }
             return true;
         }
         match self.exit_events.try_recv() {
@@ -1344,7 +1561,12 @@ impl TerminalEmulator {
             if let Some(ref mut wr) = *w {
                 if let Err(error) = wr.write_all(data) {
                     if let Some((_, remote)) = &self.remote {
-                        publish_output(&self.incoming, &self.incoming_ready, &self.wake, format!("\r\nVTCode: input was not sent: {error}\r\n").as_bytes());
+                        publish_output(
+                            &self.incoming,
+                            &self.incoming_ready,
+                            &self.wake,
+                            format!("\r\nVTCode: input was not sent: {error}\r\n").as_bytes(),
+                        );
                         remote.kill();
                     }
                 }
@@ -1355,8 +1577,12 @@ impl TerminalEmulator {
 
     /// Resize the terminal.
     pub(crate) fn resize(&mut self, width: usize, height: usize) {
-        if width == 0 || height == 0 { return; }
-        if (width, height) == self.last_size { return; }
+        if width == 0 || height == 0 {
+            return;
+        }
+        if (width, height) == self.last_size {
+            return;
+        }
         // Queued output belongs to the old viewport: a trailing line feed
         // may need to archive its top row before the resize repaint arrives.
         self.process();
@@ -1373,17 +1599,20 @@ impl TerminalEmulator {
         };
         self.last_size = (width, height);
         self.grid.resize(width, height);
-        self.grid.conpty_resize = (self.grid.is_conpty
-            && self.grid.alt_saved.is_none()
-            && self.grid.cursor_visible)
-            .then_some(ConptyResize::AwaitingPaint);
+        self.grid.conpty_resize =
+            (self.grid.is_conpty && self.grid.alt_saved.is_none() && self.grid.cursor_visible)
+                .then_some(ConptyResize::AwaitingPaint);
         if let Some(ref master) = self.master {
             // A single request avoids redraws at an intermediate geometry.
             // Error OK: PTY resize is best-effort
             let _ = master.resize(size);
         }
         if let Some((_, remote)) = &self.remote {
-            let _ = remote.client.notify(crate::remote::Command::ProcessResize { process: remote.id, width: width as u16, height: height as u16 });
+            let _ = remote.client.notify(crate::remote::Command::ProcessResize {
+                process: remote.id,
+                width: width as u16,
+                height: height as u16,
+            });
         }
     }
 
@@ -1424,10 +1653,7 @@ impl Drop for TerminalEmulator {
 }
 
 fn shell_profile_name(program: &str) -> String {
-    let file_name = program
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(program);
+    let file_name = program.rsplit(['/', '\\']).next().unwrap_or(program);
     let stem = file_name
         .strip_suffix(".exe")
         .unwrap_or(file_name)
@@ -1446,9 +1672,19 @@ fn shell_profile_name(program: &str) -> String {
 #[cfg(test)]
 pub(crate) fn test_child_command() -> (String, Vec<String>) {
     (
-        std::env::current_exe().unwrap().to_string_lossy().into_owned(),
-        ["--ignored", "--exact", "terminal::tests::pty_test_child", "--nocapture"]
-            .into_iter().map(String::from).collect(),
+        std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        [
+            "--ignored",
+            "--exact",
+            "terminal::tests::pty_test_child",
+            "--nocapture",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
     )
 }
 
@@ -1491,7 +1727,10 @@ mod tests {
     #[test]
     fn shell_profile_names_match_common_vscode_profiles() {
         assert_eq!(shell_profile_name("pwsh.exe"), "PowerShell");
-        assert_eq!(shell_profile_name("C:\\Windows\\System32\\cmd.exe"), "Command Prompt");
+        assert_eq!(
+            shell_profile_name("C:\\Windows\\System32\\cmd.exe"),
+            "Command Prompt"
+        );
         assert_eq!(shell_profile_name("/bin/bash"), "Bash");
     }
 
@@ -1500,14 +1739,8 @@ mod tests {
         let (program, args) = crate::terminal::test_child_command();
 
         let cwd = std::env::current_dir().expect("current directory");
-        let mut terminal = TerminalEmulator::spawn_command_in_dir(
-            &program,
-            &args,
-            80,
-            24,
-            &cwd,
-        )
-        .expect("spawn PTY command");
+        let mut terminal = TerminalEmulator::spawn_command_in_dir(&program, &args, 80, 24, &cwd)
+            .expect("spawn PTY command");
         let mut found = false;
         for _ in 0..100 {
             terminal.process();
@@ -1556,8 +1789,8 @@ mod tests {
 
     #[test]
     fn child_input_modes_are_local_and_reset_on_exit_or_terminal_reset() {
-        let mut child = TerminalEmulator::test_with_output(20, 3,
-            "\x1b[?1049;9001;2004;1003;1006;1004h");
+        let mut child =
+            TerminalEmulator::test_with_output(20, 3, "\x1b[?1049;9001;2004;1003;1006;1004h");
         let sibling = TermGrid::new(20, 3);
         assert!(child.grid.is_alt_screen());
         assert!(child.grid.win32_input_mode);
@@ -1632,7 +1865,16 @@ mod tests {
     fn scroll_view_display_line() {
         let mut grid = TermGrid::new(5, 2);
         // Add scrollback
-        grid.scrollback.push_back(vec![TermCell { ch: 'S', ..TermCell::default() }; 5].into());
+        grid.scrollback.push_back(
+            vec![
+                TermCell {
+                    ch: 'S',
+                    ..TermCell::default()
+                };
+                5
+            ]
+            .into(),
+        );
         grid.scroll_view = 1;
         let line = grid.display_line(0);
         assert_eq!(line[0].ch, 'S');

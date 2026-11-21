@@ -131,9 +131,13 @@ pub(crate) fn controls(app: &App, area: Rect, group: usize) -> Controls {
     if group != app.desks.host || area.is_empty() || app.detached_window_id().is_some() {
         return controls;
     }
-    let toggle_width = if !app.zen_mode && app.activity_bar_position == crate::settings::ActivityBarPosition::Top {
+    let toggle_width = if !app.zen_mode
+        && app.activity_bar_position == crate::settings::ActivityBarPosition::Top
+    {
         if area.width >= 44 { 3 } else { 1 }
-    } else { 0 };
+    } else {
+        0
+    };
     controls.sidebar_toggle = Rect::new(area.x, area.y, toggle_width, 1);
     // The compact toggle uses the separator's cell budget in narrow strips.
     let separator_width = u16::from(toggle_width != 1);
@@ -156,14 +160,21 @@ pub(crate) fn controls(app: &App, area: Rect, group: usize) -> Controls {
 }
 
 pub(crate) fn sidebar_toggle_area(app: &App) -> Option<Rect> {
-    if app.change_dir_active || !app.show_tab_bar { return None; }
+    if app.change_dir_active || !app.show_tab_bar {
+        return None;
+    }
     let area = controls(app, host_area(app)?, app.desks.host).sidebar_toggle;
     (!area.is_empty()).then_some(area)
 }
 
 pub(crate) fn group_color(app: &App, color: u8) -> Color {
     let color = match color % 6 {
-        0 => app.colors.ui.focus_border.over(app.colors.bg_tabbar).unwrap_or(app.colors.fg_accent),
+        0 => app
+            .colors
+            .ui
+            .focus_border
+            .over(app.colors.bg_tabbar)
+            .unwrap_or(app.colors.fg_accent),
         1 => app.colors.ui.chart_color(1, app.colors.bg_tabbar),
         2 => app.colors.ui.chart_color(0, app.colors.bg_tabbar),
         3 => app.colors.ui.chart_color(2, app.colors.bg_tabbar),
@@ -176,7 +187,12 @@ pub(crate) fn group_color(app: &App, color: u8) -> Color {
 }
 
 pub(crate) fn draw_controls(f: &mut Frame, app: &App, area: Rect, group: usize) {
-    let Controls { new_desk: plus, desk_picker: pick, sidebar_toggle, width } = controls(app, area, group);
+    let Controls {
+        new_desk: plus,
+        desk_picker: pick,
+        sidebar_toggle,
+        width,
+    } = controls(app, area, group);
     let bg = app.colors.bg_tabbar;
     let hovered = |r: Rect| r.contains((app.mouse_col, app.mouse_row).into());
     let style = |r| {
@@ -192,7 +208,9 @@ pub(crate) fn draw_controls(f: &mut Frame, app: &App, area: Rect, group: usize) 
             (true, true) => "◨",
         };
         f.render_widget(
-            Paragraph::new(icon).alignment(ratatui::layout::Alignment::Center).style(style(sidebar_toggle)),
+            Paragraph::new(icon)
+                .alignment(ratatui::layout::Alignment::Center)
+                .style(style(sidebar_toggle)),
             sidebar_toggle,
         );
     }
@@ -239,13 +257,7 @@ fn entries(app: &App, label_width: usize) -> Vec<(String, Action)> {
                     .chain(app.tabs.iter().filter(|_| app.desks.active == d.id))
                     .any(|t| t.has_unsaved_changes());
                 (
-                    desk_label(
-                        &d.name,
-                        panes,
-                        dirty,
-                        d.id == app.desks.active,
-                        label_width,
-                    ),
+                    desk_label(&d.name, panes, dirty, d.id == app.desks.active, label_width),
                     Action::Switch(d.id),
                 )
             })
@@ -253,7 +265,12 @@ fn entries(app: &App, label_width: usize) -> Vec<(String, Action)> {
                 ("Add New Desk".into(), Action::New),
                 ("Rename desk…".into(), Action::Rename),
                 (
-                    if app.current_desk_is_empty() { "Close desk" } else { "Close desk…" }.into(),
+                    if app.current_desk_is_empty() {
+                        "Close desk"
+                    } else {
+                        "Close desk…"
+                    }
+                    .into(),
                     Action::Close,
                 ),
             ])
@@ -494,17 +511,31 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 }
 
 pub(crate) fn focused_input(app: &App) -> Option<crate::text_input::TextInputId> {
-    app.desks.popup.mode.as_ref().filter(|mode| **mode != Mode::Close)
+    app.desks
+        .popup
+        .mode
+        .as_ref()
+        .filter(|mode| **mode != Mode::Close)
         .map(|_| crate::text_input::TextInputId::DeskPopup)
 }
 
-pub(crate) fn edit_input(app: &mut App, code: KeyCode, modifiers: KeyModifiers, paste: Option<&str>) -> crate::text_input::TextInputResult {
+pub(crate) fn edit_input(
+    app: &mut App,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    paste: Option<&str>,
+) -> crate::text_input::TextInputResult {
     let popup = &mut app.desks.popup;
     let result = popup.history.edit(
         crate::text_input::TextInput::new(&mut popup.text, &mut popup.cursor, &mut popup.anchor),
-        code, modifiers, paste,
+        code,
+        modifiers,
+        paste,
     );
-    if result.changed { popup.selected = 0; popup.scroll = 0; }
+    if result.changed {
+        popup.selected = 0;
+        popup.scroll = 0;
+    }
     result
 }
 
@@ -534,12 +565,23 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         app.mouse_row = mouse.row;
     }
     if app.desks.popup.mode.is_some() {
-        if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)
-            | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-            | MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight)
-            && app.text_input_area(crate::text_input::TextInputId::DeskPopup)
-                .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
-            && app.handle_overlay_text_input_mouse(mouse.kind, mouse.column, mouse.row, mouse.modifiers) {
+        if matches!(
+            mouse.kind,
+            MouseEventKind::Down(MouseButton::Right)
+                | MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollDown
+                | MouseEventKind::ScrollLeft
+                | MouseEventKind::ScrollRight
+        ) && app
+            .text_input_area(crate::text_input::TextInputId::DeskPopup)
+            .is_some_and(|area| area.contains((mouse.column, mouse.row).into()))
+            && app.handle_overlay_text_input_mouse(
+                mouse.kind,
+                mouse.column,
+                mouse.row,
+                mouse.modifiers,
+            )
+        {
             return true;
         }
         match mouse.kind {
@@ -582,8 +624,8 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             }
             MouseEventKind::Up(MouseButton::Left) => app.desks.popup.input_drag = false,
             MouseEventKind::ScrollDown => {
-                app.desks.popup.selected =
-                    (app.desks.popup.selected + 1).min(entries(app, usize::MAX).len().saturating_sub(1))
+                app.desks.popup.selected = (app.desks.popup.selected + 1)
+                    .min(entries(app, usize::MAX).len().saturating_sub(1))
             }
             MouseEventKind::ScrollUp => {
                 app.desks.popup.selected = app.desks.popup.selected.saturating_sub(1)
@@ -606,7 +648,11 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     let Some(area) = host_area(app) else {
         return false;
     };
-    let Controls { new_desk: plus, desk_picker: pick, .. } = controls(app, area, app.desks.host);
+    let Controls {
+        new_desk: plus,
+        desk_picker: pick,
+        ..
+    } = controls(app, area, app.desks.host);
     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
         && (plus.contains(pos) || pick.contains(pos))
     {
@@ -676,9 +722,7 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         if let Some(&(id, _)) = hits.groups.iter().find(|(_, r)| r.contains(pos)) {
             // An individual tab keeps its drag capture while crossing a group
             // header, even if its next event is a release over empty space.
-            if mouse.kind == MouseEventKind::Drag(MouseButton::Left)
-                && app.dragging_tab.is_some()
-            {
+            if mouse.kind == MouseEventKind::Drag(MouseButton::Left) && app.dragging_tab.is_some() {
                 return false;
             }
             if mouse.kind == MouseEventKind::Up(MouseButton::Left)
@@ -772,7 +816,11 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
                 crate::ui_chrome_tabs::TabBarHits::new(app, area).tab_at(mouse.column)
         {
             app.tabs[source].preview = false;
-            if let Some(&group) = app.desks.membership.get(&app.tabs[index].editor.navigation_id) {
+            if let Some(&group) = app
+                .desks
+                .membership
+                .get(&app.tabs[index].editor.navigation_id)
+            {
                 app.desks.membership.insert(view, group);
             } else {
                 app.desks.membership.remove(&view);
@@ -908,7 +956,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         return;
     }
     let surface = crate::ui_widgets::surface_background(f, area, app.colors.bg_editor);
-    let bg = app.colors.ui.quick_background.over(surface).unwrap_or(surface);
+    let bg = app
+        .colors
+        .ui
+        .quick_background
+        .over(surface)
+        .unwrap_or(surface);
     let fg = app.colors.ui.quick_text_color(bg, false);
     f.render_widget(Clear, area);
     f.render_widget(
@@ -916,14 +969,20 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             .borders(Borders::ALL)
             .title(format!(" {title} "))
             .style(Style::default().fg(fg).bg(bg))
-            .border_style(Style::default().fg(app.colors.ui.widget_border.border(bg).unwrap_or(bg))),
+            .border_style(
+                Style::default().fg(app.colors.ui.widget_border.border(bg).unwrap_or(bg)),
+            ),
         area,
     );
     let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
     p.input = Rect::new(inner.x, inner.y, inner.width, 1);
     if mode == Mode::Close {
         f.render_widget(
-            Paragraph::new(placeholder).style(Style::default().fg(app.colors.ui.description_color(bg)).bg(bg)),
+            Paragraph::new(placeholder).style(
+                Style::default()
+                    .fg(app.colors.ui.description_color(bg))
+                    .bg(bg),
+            ),
             p.input,
         );
         p.input_map = None;
@@ -949,8 +1008,14 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     for (i, (label, action)) in rows.into_iter().enumerate().skip(p.scroll).take(visible) {
         let rect = Rect::new(inner.x, inner.y + 1 + (i - p.scroll) as u16, inner.width, 1);
         let selected = i == p.selected;
-        let row_bg = if selected { app.colors.ui.quick_focus_background.over(bg).unwrap_or(bg) } else { bg };
-        let style = Style::default().fg(app.colors.ui.quick_text_color(row_bg, selected)).bg(row_bg);
+        let row_bg = if selected {
+            app.colors.ui.quick_focus_background.over(bg).unwrap_or(bg)
+        } else {
+            bg
+        };
+        let style = Style::default()
+            .fg(app.colors.ui.quick_text_color(row_bg, selected))
+            .bg(row_bg);
         f.render_widget(Paragraph::new(format!(" {}", label)).style(style), rect);
         p.hits.push((rect, action));
     }
@@ -1049,14 +1114,26 @@ fn draw_control_hint(f: &mut Frame, app: &App) {
     let Some(area) = host_area(app) else {
         return;
     };
-    let Controls { new_desk: plus, desk_picker: pick, sidebar_toggle, .. } = controls(app, area, app.desks.host);
+    let Controls {
+        new_desk: plus,
+        desk_picker: pick,
+        sidebar_toggle,
+        ..
+    } = controls(app, area, app.desks.host);
     let pos = (app.mouse_col, app.mouse_row).into();
     let (button, label) = if plus.contains(pos) {
         (plus, "New Desk")
     } else if pick.contains(pos) {
         (pick, "Switch Desk")
     } else if sidebar_toggle.contains(pos) {
-        (sidebar_toggle, if app.sidebar_is_visible() { "Hide Sidebar" } else { "Show Sidebar" })
+        (
+            sidebar_toggle,
+            if app.sidebar_is_visible() {
+                "Hide Sidebar"
+            } else {
+                "Show Sidebar"
+            },
+        )
     } else {
         return;
     };

@@ -57,9 +57,21 @@ pub(crate) fn layout(app: &App, area: Rect) -> Layout {
         Rect::default()
     };
     let scope_height = u16::from(!scope_row.is_empty());
-    let workspace_width = scope_row.width.min(if scope_row.width >= 27 { 11 } else { 3 });
-    let scope = Rect::new(scope_row.x, scope_row.y, scope_row.width - workspace_width, scope_row.height);
-    let workspace = Rect::new(scope.right(), scope_row.y, workspace_width, scope_row.height);
+    let workspace_width = scope_row
+        .width
+        .min(if scope_row.width >= 27 { 11 } else { 3 });
+    let scope = Rect::new(
+        scope_row.x,
+        scope_row.y,
+        scope_row.width - workspace_width,
+        scope_row.height,
+    );
+    let workspace = Rect::new(
+        scope.right(),
+        scope_row.y,
+        workspace_width,
+        scope_row.height,
+    );
     // In short panels, keep the hidden-files notice visible.
     // Options remain reachable through their keyboard shortcuts.
     let bottom = if inner.height <= 2 + scope_height {
@@ -104,7 +116,11 @@ pub(crate) fn layout(app: &App, area: Rect) -> Layout {
             .min(if compact { 4 } else { 8 }),
         bottom.height,
     );
-    let status = row(if inner.height <= 2 + scope_height { 1 } else { 2 } + scope_height);
+    let status = row(if inner.height <= 2 + scope_height {
+        1
+    } else {
+        2
+    } + scope_height);
     let error = if error_text(&app.explorer.find).is_some() {
         row(3 + scope_height)
     } else {
@@ -139,7 +155,10 @@ impl App {
     }
 
     pub(crate) fn open_explorer_find(&mut self) {
-        if !self.has_open_folder() { crate::ui_workspaces::open_folder(self); return; }
+        if !self.has_open_folder() {
+            crate::ui_workspaces::open_folder(self);
+            return;
+        }
         self.show_explorer = true;
         self.sidebar_view = SidebarView::Explorer;
         self.global_search_active = false;
@@ -180,7 +199,12 @@ impl App {
         self.explorer.find.focus = Focus::Tree;
         self.update_explorer_find();
         self.set_explorer_single_selection(self.explorer.selected);
-        self.remove_text_input_regions(|id| matches!(id, TextInputId::ExplorerFind | TextInputId::ExplorerFindPath));
+        self.remove_text_input_regions(|id| {
+            matches!(
+                id,
+                TextInputId::ExplorerFind | TextInputId::ExplorerFindPath
+            )
+        });
     }
 }
 
@@ -306,7 +330,12 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     }
     if matches!(
         focus,
-        Focus::Filter | Focus::Fuzzy | Focus::Regex | Focus::Collapse | Focus::Workspace | Focus::Close
+        Focus::Filter
+            | Focus::Fuzzy
+            | Focus::Regex
+            | Focus::Collapse
+            | Focus::Workspace
+            | Focus::Close
     ) {
         if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
             activate(app, focus);
@@ -318,8 +347,11 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.apply_explorer_find_path();
             return true;
         }
-        let result = app.edit_text_input(TextInputId::ExplorerFindPath, key.code, key.modifiers, None);
-        if result.changed { app.text_input_changed(TextInputId::ExplorerFindPath); }
+        let result =
+            app.edit_text_input(TextInputId::ExplorerFindPath, key.code, key.modifiers, None);
+        if result.changed {
+            app.text_input_changed(TextInputId::ExplorerFindPath);
+        }
         return result.consumed || matches!(key.code, KeyCode::Up | KeyCode::Down);
     }
     let from_input =
@@ -448,9 +480,16 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .theme_control(&app.colors, app.colors.ui.input_colors, bg)
         .prefix("In: ", app.colors.ui.description_color(bg))
         .placeholder_text("Workspace")
-        .cursor_marker(if path_focused && app.cursor_visible { "│" } else { "" })
+        .cursor_marker(if path_focused && app.cursor_visible {
+            "│"
+        } else {
+            ""
+        })
         .cursor_pos(find.path_cursor)
-        .selection_range(App::inline_selection_range(find.path_cursor, find.path_anchor))
+        .selection_range(App::inline_selection_range(
+            find.path_cursor,
+            find.path_anchor,
+        ))
         .render(f, layout.scope);
     app.register_text_input(TextInputId::ExplorerFindPath, hit_map);
     let find = &app.explorer.find;
@@ -494,7 +533,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         (layout.collapse, " ⊟ ", Focus::Collapse, false),
         (
             layout.workspace,
-            if layout.workspace.width < 11 { " ↗ " } else { " Workspace " },
+            if layout.workspace.width < 11 {
+                " ↗ "
+            } else {
+                " Workspace "
+            },
             Focus::Workspace,
             false,
         ),
@@ -566,7 +609,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 fn scope_text(app: &App) -> Option<String> {
     let directory = app.explorer.find.directory.as_deref()?;
     let label = crate::remote::workspace::display_key(directory).unwrap_or_else(|| {
-        app.display_path_label(directory.strip_prefix(&app.explorer.root).unwrap_or(directory))
+        app.display_path_label(
+            directory
+                .strip_prefix(&app.explorer.root)
+                .unwrap_or(directory),
+        )
     });
     Some(format!("In: {label}"))
 }
@@ -576,8 +623,11 @@ fn status_text(find: &crate::explorer_find::State) -> Cow<'static, str> {
         return "Folder path not applied".into();
     }
     if find.path_dirty {
-        return Cow::Borrowed(if find.focus == Focus::Path { "Enter to apply folder path" }
-            else { "Folder path not applied" });
+        return Cow::Borrowed(if find.focus == Focus::Path {
+            "Enter to apply folder path"
+        } else {
+            "Folder path not applied"
+        });
     }
     if find.filtering() {
         if find.loading {
@@ -654,7 +704,9 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
         let mut lines = vec![Line::raw(status_text(&app.explorer.find))];
         if let Some(scope) = scope_text(app) {
             lines.push(Line::raw(scope));
-            lines.push(Line::raw("Search Workspace (Alt+W) removes the folder scope."));
+            lines.push(Line::raw(
+                "Search Workspace (Alt+W) removes the folder scope.",
+            ));
         }
         if app.explorer.find.filtering() {
             lines.push(Line::raw("Show All or Escape restores the full Explorer."));
@@ -667,13 +719,19 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
         return;
     }
     if layout.scope.contains((app.mouse_col, app.mouse_row).into()) {
-        let mut lines = vec![Line::raw("Folder path (Alt+P). Press Enter to apply."),
-            Line::raw("Use a workspace-relative or absolute path. Empty searches the workspace.")];
+        let mut lines = vec![
+            Line::raw("Folder path (Alt+P). Press Enter to apply."),
+            Line::raw("Use a workspace-relative or absolute path. Empty searches the workspace."),
+        ];
         if let Some(directory) = &app.explorer.find.directory {
-            lines.push(Line::raw(format!("Applied: {}", app.display_path_label(directory))));
+            lines.push(Line::raw(format!(
+                "Applied: {}",
+                app.display_path_label(directory)
+            )));
         }
         Tooltip::hover(lines, &app.colors)
-            .prefer_below().render(f, layout.scope.x, layout.scope.y);
+            .prefer_below()
+            .render(f, layout.scope.x, layout.scope.y);
         return;
     }
     for (rect, text) in [
@@ -727,7 +785,10 @@ pub(crate) fn highlighted_name<'a>(
         let matched = indices.get(matched_index).is_some_and(|&index| index < end);
         if matched != was_match {
             if byte > start {
-                spans.push(Span::styled(&name[start..byte], if was_match { highlight } else { style }));
+                spans.push(Span::styled(
+                    &name[start..byte],
+                    if was_match { highlight } else { style },
+                ));
             }
             start = byte;
             was_match = matched;

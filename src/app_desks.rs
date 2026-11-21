@@ -63,14 +63,20 @@ impl DeskLayout {
         swap(&mut self.panel_maximized, &mut app.panel_chrome.maximized);
         swap(&mut self.terminal, &mut app.active_terminal);
         swap(&mut self.terminal_sidebar, &mut app.show_terminal_sidebar);
-        swap(&mut self.terminal_revealed, &mut app.terminal_sidebar_revealed);
+        swap(
+            &mut self.terminal_revealed,
+            &mut app.terminal_sidebar_revealed,
+        );
         swap(&mut self.terminal_width, &mut app.terminal_sidebar.width);
         swap(&mut self.chat, &mut app.chat.layout.dock_visible);
         swap(&mut self.chat_visible, &mut app.chat.visible);
         swap(&mut self.chat_width, &mut app.chat.width);
         swap(&mut self.chat_agent, &mut app.chat.layout.dock_agent);
         swap(&mut self.search, &mut app.global_search_query);
-        swap(&mut self.search_replace, &mut app.global_search_replace_query);
+        swap(
+            &mut self.search_replace,
+            &mut app.global_search_replace_query,
+        );
         swap(&mut self.search_include, &mut app.search_include_pattern);
         swap(&mut self.search_exclude, &mut app.search_exclude_pattern);
     }
@@ -673,15 +679,17 @@ impl App {
     }
 
     pub(crate) fn desk_count(&self) -> usize {
-        self.desks.items.iter().filter(|desk| !desk.closed && desk.window.is_none()).count()
+        self.desks
+            .items
+            .iter()
+            .filter(|desk| !desk.closed && desk.window.is_none())
+            .count()
     }
 
     pub(crate) fn current_desk_is_empty(&self) -> bool {
         self.tabs.is_empty()
             && self.groups.iter().enumerate().all(|(index, pane)| {
-                index == self.active_group
-                    || pane.desk != self.desks.active
-                    || pane.tabs.is_empty()
+                index == self.active_group || pane.desk != self.desks.active || pane.tabs.is_empty()
             })
     }
 
@@ -762,7 +770,9 @@ impl App {
         self.replace_cursor = self.replace_query.len();
         self.replace_selection_anchor = None;
         self.global_search_query = layout.search;
-        for field in 0..4 { self.global_search_field_history_mut(field).edited(); }
+        for field in 0..4 {
+            self.global_search_field_history_mut(field).edited();
+        }
         self.global_search_replace_query = layout.search_replace;
         self.search_include_pattern = layout.search_include;
         self.search_exclude_pattern = layout.search_exclude;
@@ -839,11 +849,21 @@ impl App {
         self.save_active_group();
         self.desks.active = id;
         if self.detached_window_id().is_none() {
-            if !self.desks.items.iter().any(|desk| desk.id == old && desk.window.is_some()) {
+            if !self
+                .desks
+                .items
+                .iter()
+                .any(|desk| desk.id == old && desk.window.is_some())
+            {
                 self.desks.previous = Some(old);
             }
             self.desks.main_window_desk = id;
-        } else if self.desks.items.iter().any(|desk| desk.id == old && desk.window.is_none()) {
+        } else if self
+            .desks
+            .items
+            .iter()
+            .any(|desk| desk.id == old && desk.window.is_none())
+        {
             self.desks.main_window_desk = old;
         }
         self.desks.selected_tabs.clear();
@@ -1063,7 +1083,8 @@ impl App {
     /// Keep groups contiguous while preserving each group's internal order and
     /// tracking selection by stable view identity rather than a moving index.
     pub(crate) fn normalize_tab_groups(&mut self) {
-        let scroll_anchor = self.tab_scroll_manual_anchor
+        let scroll_anchor = self
+            .tab_scroll_manual_anchor
             .and_then(|index| self.tabs.get(index))
             .map(|tab| tab.editor.navigation_id);
         let active = self
@@ -1091,7 +1112,10 @@ impl App {
             });
         }
         if let Some(id) = active {
-            self.animations.tab_reorder.borrow_mut().request(self.active_group, id);
+            self.animations
+                .tab_reorder
+                .borrow_mut()
+                .request(self.active_group, id);
         }
         self.tabs.sort_by_key(|tab| {
             let key = self
@@ -1134,11 +1158,9 @@ impl App {
         }
         let mut moving = Vec::new();
         if copy {
-            for tab in self
-                .tabs
-                .iter()
-                .filter(|t| t.kind != TabKind::SourceControl && ids.contains(&t.editor.navigation_id))
-            {
+            for tab in self.tabs.iter().filter(|t| {
+                t.kind != TabKind::SourceControl && ids.contains(&t.editor.navigation_id)
+            }) {
                 moving.push(self.clone_desk_tab(tab));
             }
         } else {

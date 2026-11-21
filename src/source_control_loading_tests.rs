@@ -13,7 +13,8 @@ fn read_result(result: &BackgroundResult) -> &BackgroundResult {
 }
 
 fn change() -> GitFileChange {
-    GitFileChange { directory: false,
+    GitFileChange {
+        directory: false,
         path: "new.txt".into(),
         original_path: None,
         status: '?',
@@ -89,14 +90,22 @@ fn disabling_after_discovery_skips_worktree_status_scan() {
     drop(git2::Repository::init(dir.path()).unwrap());
     std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
     let cancel = crate::background::CancellationToken::new();
-    let snapshot = super::collect_source_control_status_cancellable(dir.path().into(), || {
-        cancel.cancel();
-    }, &cancel);
+    let snapshot = super::collect_source_control_status_cancellable(
+        dir.path().into(),
+        || {
+            cancel.cancel();
+        },
+        &cancel,
+    );
     assert!(snapshot.repository_found);
     assert!(snapshot.files.is_empty());
-    let cancelled = super::collect_source_control_status_cancellable(dir.path().into(), || {
-        panic!("a cancelled scan must not discover a repository");
-    }, &cancel);
+    let cancelled = super::collect_source_control_status_cancellable(
+        dir.path().into(),
+        || {
+            panic!("a cancelled scan must not discover a repository");
+        },
+        &cancel,
+    );
     assert!(!cancelled.repository_found);
 }
 
@@ -130,11 +139,18 @@ fn git_worker_sends_discovery_before_status_and_keeps_refreshes_quiet() {
         matches!(read_result(&status), BackgroundResult::GitRepositories { complete: false, scans, .. }
         if scans.len() == 1 && scans[0].root == root && scans[0].files.len() == 1)
     );
-    let complete = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(matches!(
-        read_result(&complete), BackgroundResult::GitRepositories { complete: true, scans, .. }
-        if scans.len() == 1 && scans[0].root == nested
-    ), "the final scan must only read the remaining projects");
+    let complete = app
+        .background
+        .receiver
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    assert!(
+        matches!(
+            read_result(&complete), BackgroundResult::GitRepositories { complete: true, scans, .. }
+            if scans.len() == 1 && scans[0].root == nested
+        ),
+        "the final scan must only read the remaining projects"
+    );
 
     app.background.sender.send(found).unwrap();
     app.poll_background_results();
@@ -142,7 +158,9 @@ fn git_worker_sends_discovery_before_status_and_keeps_refreshes_quiet() {
     assert!(app.source_control_files.is_empty());
     let area = Rect::new(0, 0, 60, 18);
     let mut terminal = Terminal::new(TestBackend::new(area.width, area.height)).unwrap();
-    terminal.draw(|frame| crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)).unwrap();
+    terminal
+        .draw(|frame| crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area))
+        .unwrap();
     assert!(text(terminal.backend().buffer(), area).contains("startup-project"));
     assert!(app.source_control_commit_area.is_none());
 
@@ -151,12 +169,18 @@ fn git_worker_sends_discovery_before_status_and_keeps_refreshes_quiet() {
     assert_eq!(app.source_control_repository_state, State::Available);
     assert!(app.bg_git_status_running && !app.repositories.discovered);
     assert_eq!(app.source_control_files[0].path, "new.txt");
-    assert!(app.repository_hint_for_path(&nested.join("file.txt")).is_none());
+    assert!(
+        app.repository_hint_for_path(&nested.join("file.txt"))
+            .is_none()
+    );
 
     app.background.sender.send(complete).unwrap();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_status_running);
     assert_eq!(app.source_control_repository_state, State::Available);
-    assert_eq!(app.repository_hint_for_path(&nested.join("file.txt")), Some(nested));
+    assert_eq!(
+        app.repository_hint_for_path(&nested.join("file.txt")),
+        Some(nested)
+    );
 
     app.refresh_source_control_async();
     assert_eq!(app.source_control_repository_state, State::Available);
@@ -169,12 +193,29 @@ fn git_worker_sends_discovery_before_status_and_keeps_refreshes_quiet() {
     // The refresh itself must not announce discovery again.
     let mut other_reads = Vec::new();
     let status = loop {
-        let result = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert!(!matches!(read_result(&result), BackgroundResult::GitRepositoryFound { .. }), "no redundant discovery event");
-        if matches!(read_result(&result), BackgroundResult::GitRepositories { complete: true, .. }) { break result; }
+        let result = app
+            .background
+            .receiver
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(
+            !matches!(
+                read_result(&result),
+                BackgroundResult::GitRepositoryFound { .. }
+            ),
+            "no redundant discovery event"
+        );
+        if matches!(
+            read_result(&result),
+            BackgroundResult::GitRepositories { complete: true, .. }
+        ) {
+            break result;
+        }
         other_reads.push(result);
     };
-    for result in other_reads { app.background.sender.send(result).unwrap(); }
+    for result in other_reads {
+        app.background.sender.send(result).unwrap();
+    }
     app.background.sender.send(status).unwrap();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_status_running);
 }
@@ -191,19 +232,46 @@ fn restored_nested_repository_publishes_changes_before_the_final_discovery_resul
     let mut app = App::new(root.clone());
     app.repositories.preferred = Some(nested.clone());
     app.refresh_source_control_async();
-    let found = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(matches!(read_result(&found), BackgroundResult::GitRepositoryFound { repository, .. } if repository == &nested));
-    let initial = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(matches!(read_result(&initial), BackgroundResult::GitRepositories { complete: false, scans, .. }
-        if scans.len() == 1 && scans[0].root == nested && scans[0].files.len() == 1));
-    let final_result = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(matches!(read_result(&final_result), BackgroundResult::GitRepositories { complete: true, scans, .. }
-        if scans.len() == 1 && scans[0].root == root));
-    for result in [found, initial, final_result] { app.background.sender.send(result).unwrap(); }
+    let found = app
+        .background
+        .receiver
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    assert!(
+        matches!(read_result(&found), BackgroundResult::GitRepositoryFound { repository, .. } if repository == &nested)
+    );
+    let initial = app
+        .background
+        .receiver
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    assert!(
+        matches!(read_result(&initial), BackgroundResult::GitRepositories { complete: false, scans, .. }
+        if scans.len() == 1 && scans[0].root == nested && scans[0].files.len() == 1)
+    );
+    let final_result = app
+        .background
+        .receiver
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    assert!(
+        matches!(read_result(&final_result), BackgroundResult::GitRepositories { complete: true, scans, .. }
+        if scans.len() == 1 && scans[0].root == root)
+    );
+    for result in [found, initial, final_result] {
+        app.background.sender.send(result).unwrap();
+    }
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_status_running);
     assert_eq!(app.source_control_repository_state, State::Available);
     assert_eq!(app.repositories.active.as_deref(), Some(nested.as_path()));
-    assert_eq!(app.repositories.entries.iter().map(|repo| &repo.root).collect::<Vec<_>>(), vec![&root, &nested]);
+    assert_eq!(
+        app.repositories
+            .entries
+            .iter()
+            .map(|repo| &repo.root)
+            .collect::<Vec<_>>(),
+        vec![&root, &nested]
+    );
     assert_eq!(app.source_control_files[0].path, "new.txt");
 }
 
@@ -212,10 +280,12 @@ fn assert_missing_repository_ui(app: &mut App) {
     let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
     let bar = Rect::new(0, 0, 100, 1);
     let panel = Rect::new(0, 1, 100, 17);
-    terminal.draw(|frame| {
-        crate::ui_chrome::draw_activity_bar(frame, app, bar);
-        crate::ui_source_control::draw_source_control_sidebar(frame, app, panel);
-    }).unwrap();
+    terminal
+        .draw(|frame| {
+            crate::ui_chrome::draw_activity_bar(frame, app, bar);
+            crate::ui_source_control::draw_source_control_sidebar(frame, app, panel);
+        })
+        .unwrap();
     let buffer = terminal.backend().buffer();
     let source_control = text(buffer, panel);
     assert!(source_control.contains("No Git repository"));
@@ -263,14 +333,23 @@ fn navigation_and_file_watcher_refreshes_do_not_flash_repository_detection() {
     app.refresh_source_control_for_navigation();
     assert_missing_repository_ui(&mut app);
     for _ in 0..3 {
-        app.background.sender.send(BackgroundResult::FilesChanged {
-            root: app.explorer.root.clone(),
-            changes: vec![crate::background::WorkspacePathChange { is_dir: false,
-                observed_at: std::time::Instant::now(), path: path.clone(),
-                exists: true, modified: None, len: Some(5),
-            }],
-            structure_changed: false, rescan: false, git_metadata_changed: false,
-        }).unwrap();
+        app.background
+            .sender
+            .send(BackgroundResult::FilesChanged {
+                root: app.explorer.root.clone(),
+                changes: vec![crate::background::WorkspacePathChange {
+                    is_dir: false,
+                    observed_at: std::time::Instant::now(),
+                    path: path.clone(),
+                    exists: true,
+                    modified: None,
+                    len: Some(5),
+                }],
+                structure_changed: false,
+                rescan: false,
+                git_metadata_changed: false,
+            })
+            .unwrap();
         app.poll_background_results();
         assert_missing_repository_ui(&mut app);
     }
@@ -289,10 +368,23 @@ fn a_new_repository_transitions_from_missing_to_loading_after_discovery() {
     std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
     app.refresh_source_control_async();
     assert_missing_repository_ui(&mut app);
-    let found = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-    let status = app.background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(matches!(read_result(&found), BackgroundResult::GitRepositoryFound { .. }));
-    assert!(matches!(read_result(&status), BackgroundResult::GitRepositories { scans, .. } if scans.len() == 1));
+    let found = app
+        .background
+        .receiver
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    let status = app
+        .background
+        .receiver
+        .recv_timeout(Duration::from_secs(5))
+        .unwrap();
+    assert!(matches!(
+        read_result(&found),
+        BackgroundResult::GitRepositoryFound { .. }
+    ));
+    assert!(
+        matches!(read_result(&status), BackgroundResult::GitRepositories { scans, .. } if scans.len() == 1)
+    );
     // Hold the scan result back to observe the loading phase deterministically.
     app.background.sender.send(found).unwrap();
     app.poll_background_results();
@@ -318,8 +410,11 @@ fn removing_a_repository_does_not_leave_later_refreshes_in_detection_mode() {
     loop {
         match std::fs::rename(dir.path().join(".git"), dir.path().join("former-git")) {
             Ok(()) => break,
-            Err(error) if cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32 | 33))
-                && rename_started.elapsed() < Duration::from_secs(5) => {
+            Err(error)
+                if cfg!(windows)
+                    && matches!(error.raw_os_error(), Some(5 | 32 | 33))
+                    && rename_started.elapsed() < Duration::from_secs(5) =>
+            {
                 std::thread::sleep(Duration::from_millis(5));
             }
             Err(error) => panic!("Cannot remove the fixture's Git directory: {error}"),
@@ -341,13 +436,14 @@ fn progress_changes_the_loading_phase_without_publishing_a_zero_count() {
     std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
     let mut app = App::new_deferred(dir.path().into());
     app.bg_git_status_running = true;
-    let found = |root: std::path::PathBuf, workspace_generation| BackgroundResult::GitRepositoryFound {
-        repository: root.clone(),
-        branch: String::new(),
-        root,
-        workspace_generation,
-        repository_generation: 0,
-    };
+    let found =
+        |root: std::path::PathBuf, workspace_generation| BackgroundResult::GitRepositoryFound {
+            repository: root.clone(),
+            branch: String::new(),
+            root,
+            workspace_generation,
+            repository_generation: 0,
+        };
     for stale in [
         found(app.explorer.root.join("other"), app.workspace_generation),
         found(
@@ -452,9 +548,19 @@ fn loading_labels_and_unknown_badges_distinguish_detection_scan_and_completion()
         let badge_text = text(
             buffer,
             if source_control.height >= 3 {
-                Rect::new(source_control.x + 1, source_control.bottom() - 1, source_control.width - 2, 1)
+                Rect::new(
+                    source_control.x + 1,
+                    source_control.bottom() - 1,
+                    source_control.width - 2,
+                    1,
+                )
             } else {
-                Rect::new(source_control.right() - 1, source_control.bottom() - 1, 1, 1)
+                Rect::new(
+                    source_control.right() - 1,
+                    source_control.bottom() - 1,
+                    1,
+                    1,
+                )
             },
         );
         assert_eq!(badge_text.trim(), badge, "{state:?}");
@@ -488,7 +594,13 @@ fn activity_badge_respects_untracked_filter_without_hiding_collapsed_changes() {
         .0;
     let badge = Rect::new(region.x + 1, region.bottom() - 1, 4, 1);
     let mut terminal = Terminal::new(TestBackend::new(6, 21)).unwrap();
-    for counts in [[1, 1, 1, 1], [1, 1, 1, 150], [0, 0, 0, 3], [1, 0, 0, 0], [0, 0, 0, 0]] {
+    for counts in [
+        [1, 1, 1, 1],
+        [1, 1, 1, 150],
+        [0, 0, 0, 3],
+        [1, 0, 0, 0],
+        [0, 0, 0, 0],
+    ] {
         for collapsed in [false, true] {
             let mut app = App::test_new();
             app.execute_palette_command("toggle_activity_bar_position");
@@ -496,10 +608,17 @@ fn activity_badge_respects_untracked_filter_without_hiding_collapsed_changes() {
             app.source_control_files = Group::ALL
                 .into_iter()
                 .flat_map(|group| {
-                    (0..counts[group as usize]).map(move |index| GitFileChange { directory: false,
+                    (0..counts[group as usize]).map(move |index| GitFileChange {
+                        directory: false,
                         path: format!("{group:?}-{index}.txt"),
                         staged: group == Group::Staged,
-                        status: if group == Group::Merge { '!' } else if group == Group::Untracked { '?' } else { 'M' },
+                        status: if group == Group::Merge {
+                            '!'
+                        } else if group == Group::Untracked {
+                            '?'
+                        } else {
+                            'M'
+                        },
                         original_path: None,
                     })
                 })
@@ -576,8 +695,15 @@ fn compact_activity_bars_keep_the_unknown_count_beside_the_label() {
         }
         for count in [1, 10] {
             app.source_control_repository_state = State::Available;
-            app.source_control_files = (0..count).map(|index| GitFileChange { path: format!("file-{index}"), ..change() }).collect();
-            terminal.draw(|frame| crate::ui_chrome::draw_activity_bar(frame, &app, bar)).unwrap();
+            app.source_control_files = (0..count)
+                .map(|index| GitFileChange {
+                    path: format!("file-{index}"),
+                    ..change()
+                })
+                .collect();
+            terminal
+                .draw(|frame| crate::ui_chrome::draw_activity_bar(frame, &app, bar))
+                .unwrap();
             let expected = if region.height < 3 && count > 9 {
                 "+".into()
             } else {

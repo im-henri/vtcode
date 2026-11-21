@@ -6,7 +6,8 @@ impl TermGrid {
             cells,
             wrapped,
             scrolled_rows,
-        }) = self.conpty_resize.take() else {
+        }) = self.conpty_resize.take()
+        else {
             return;
         };
         // ConPTY can combine input/output and a resize into one full repaint.
@@ -24,7 +25,9 @@ impl TermGrid {
                 .iter()
                 .zip(self.scrollback.iter().skip(paint_start).chain(&self.cells))
                 .take_while(|(old, new)| {
-                    old.iter().map(|cell| cell.ch).eq(new.iter().map(|cell| cell.ch))
+                    old.iter()
+                        .map(|cell| cell.ch)
+                        .eq(new.iter().map(|cell| cell.ch))
                 })
                 .count();
             // Require overlap across a row boundary and prefer the earliest
@@ -48,7 +51,10 @@ impl TermGrid {
     }
 
     pub(super) fn trim_scrollback(&mut self) {
-        let excess = self.scrollback.len().saturating_sub(super::MAX_SCROLLBACK_LINES);
+        let excess = self
+            .scrollback
+            .len()
+            .saturating_sub(super::MAX_SCROLLBACK_LINES);
         self.trim_selection(excess);
         self.scrollback.drain(..excess);
         self.scrollback_wrapped.drain(..excess);
@@ -102,7 +108,8 @@ impl TermGrid {
             if let Some(saved) = &mut self.saved_cursor {
                 saved.0 += restored;
             }
-            self.cells.resize_with(height, || vec![TermCell::default(); width].into());
+            self.cells
+                .resize_with(height, || vec![TermCell::default(); width].into());
             self.wrapped.resize(height, false);
         }
         if self.scroll_view > 0 {
@@ -225,7 +232,8 @@ impl TermGrid {
         self.wrapped = output_wrapped.split_off(live_start);
         self.scrollback = output.into();
         self.scrollback_wrapped = output_wrapped.into();
-        self.cells.resize_with(height, || vec![TermCell::default(); width].into());
+        self.cells
+            .resize_with(height, || vec![TermCell::default(); width].into());
         self.wrapped.resize(height, false);
         self.cursor_row = mapped[0].0.saturating_sub(live_start);
         self.cursor_col = mapped[0].1;

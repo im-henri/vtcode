@@ -416,9 +416,14 @@ impl DiffScopePaintState {
             .diff_projection
             .unwrap_or((options.source.horizontal_scroll, false));
         let origin = if geometry.wrap_width.is_some() {
-            let index = geometry.scope_rows.partition_point(|&(line, col, _)| (line, col) <= endpoint.attachment);
-            let start = geometry.scope_rows.get(index.wrapping_sub(1))
-                .filter(|row| row.0 == position.0).map_or(0, |row| row.1);
+            let index = geometry
+                .scope_rows
+                .partition_point(|&(line, col, _)| (line, col) <= endpoint.attachment);
+            let start = geometry
+                .scope_rows
+                .get(index.wrapping_sub(1))
+                .filter(|row| row.0 == position.0)
+                .map_or(0, |row| row.1);
             self.cell_column(options, (position.0, start))?
         } else if inline {
             pan
@@ -761,25 +766,48 @@ impl Geometry {
     }
     /// The text renderer has already checked this run's one-column
     /// glyphs. Validate clipping, row safety and derived caches once per run.
-    pub(crate) fn push_unit_width_run(&mut self, line: usize, col: usize, chars: &[char], row: usize, column: usize) {
+    pub(crate) fn push_unit_width_run(
+        &mut self,
+        line: usize,
+        col: usize,
+        chars: &[char],
+        row: usize,
+        column: usize,
+    ) {
         if !self.enabled || row >= self.area.height as usize || column >= self.area.width as usize {
             return;
         }
         let y = self.area.y.saturating_add(row as u16);
-        if self.unsafe_rows.contains(&y) { return; }
-        let count = chars.len().min(self.area.width as usize - column)
+        if self.unsafe_rows.contains(&y) {
+            return;
+        }
+        let count = chars
+            .len()
+            .min(self.area.width as usize - column)
             .min(MAX_ANCHORS.saturating_sub(self.anchors.len()));
-        if count == 0 { return; }
+        if count == 0 {
+            return;
+        }
         self.invalidate_rows();
-        self.ordered &= self.anchors.last().is_none_or(|last| (last.line, last.col) <= (line, col));
-        self.anchors.extend(chars[..count].iter().enumerate().map(|(offset, &ch)| {
-            debug_assert!(unicode_width::UnicodeWidthChar::width(ch) == Some(1)
-                && !('\u{1f1e6}'..='\u{1f1ff}').contains(&ch));
-            Anchor {
-                line, col: col + offset, ch,
-                x: self.area.x.saturating_add((column + offset) as u16), y, width: 1,
-            }
-        }));
+        self.ordered &= self
+            .anchors
+            .last()
+            .is_none_or(|last| (last.line, last.col) <= (line, col));
+        self.anchors
+            .extend(chars[..count].iter().enumerate().map(|(offset, &ch)| {
+                debug_assert!(
+                    unicode_width::UnicodeWidthChar::width(ch) == Some(1)
+                        && !('\u{1f1e6}'..='\u{1f1ff}').contains(&ch)
+                );
+                Anchor {
+                    line,
+                    col: col + offset,
+                    ch,
+                    x: self.area.x.saturating_add((column + offset) as u16),
+                    y,
+                    width: 1,
+                }
+            }));
     }
 
     fn at(&self, position: (usize, usize)) -> Option<Anchor> {
@@ -830,7 +858,9 @@ impl Geometry {
 
     fn is_retained(&self) -> bool {
         #[cfg(test)]
-        if REFERENCE_RETAINED_GEOMETRY.get() { return false; }
+        if REFERENCE_RETAINED_GEOMETRY.get() {
+            return false;
+        }
         self.retained
     }
 
@@ -843,9 +873,11 @@ impl Geometry {
             // cloning all anchors, masks, and paint scratch when one glyph was
             // clipped or covered by an annotation. Keep recycled allocations.
             let previous = (self.anchors.len(), self.scope_rows.len());
-            self.anchors.retain(|anchor| Self::anchor_is_visible(anchor, buffer));
+            self.anchors
+                .retain(|anchor| Self::anchor_is_visible(anchor, buffer));
             let area = self.area;
-            self.scope_rows.retain(|row| row.2 >= area.y && row.2 < area.bottom());
+            self.scope_rows
+                .retain(|row| row.2 >= area.y && row.2 < area.bottom());
             if previous != (self.anchors.len(), self.scope_rows.len()) {
                 self.invalidate_rows();
             }
@@ -858,13 +890,23 @@ impl Geometry {
     /// Exact comparisons avoid a hash collision or a missed edit reusing routes.
     pub(crate) fn reuse_projection(&mut self, old: &mut Self) -> bool {
         #[cfg(test)]
-        if REFERENCE_RETAINED_GEOMETRY.get() { return false; }
-        if !self.retained || !old.retained || !self.enabled || !old.enabled
-            || self.area != old.area || self.ordered != old.ordered
-            || self.wrap_width != old.wrap_width || self.bounded_source != old.bounded_source
-            || self.color_preview != old.color_preview || self.diff_projection != old.diff_projection
-            || self.anchors != old.anchors || self.scope_rows != old.scope_rows
-            || self.omitted_lines != old.omitted_lines || self.unsafe_rows != old.unsafe_rows
+        if REFERENCE_RETAINED_GEOMETRY.get() {
+            return false;
+        }
+        if !self.retained
+            || !old.retained
+            || !self.enabled
+            || !old.enabled
+            || self.area != old.area
+            || self.ordered != old.ordered
+            || self.wrap_width != old.wrap_width
+            || self.bounded_source != old.bounded_source
+            || self.color_preview != old.color_preview
+            || self.diff_projection != old.diff_projection
+            || self.anchors != old.anchors
+            || self.scope_rows != old.scope_rows
+            || self.omitted_lines != old.omitted_lines
+            || self.unsafe_rows != old.unsafe_rows
             || self.obstacles != old.obstacles
         {
             return false;
@@ -883,20 +925,26 @@ impl Geometry {
         let reuse = !REFERENCE_RETAINED_GEOMETRY.get();
         #[cfg(not(test))]
         let reuse = true;
-        if reuse && let Some((old, offsets)) = self.offsets.borrow().as_ref()
+        if reuse
+            && let Some((old, offsets)) = self.offsets.borrow().as_ref()
             && old.is_instance(rope)
         {
             return Rc::clone(offsets);
         }
         let mut cached_line = usize::MAX;
         let mut line_start = 0;
-        let offsets = Rc::new(self.anchors.iter().map(|anchor| {
-            if anchor.line != cached_line {
-                cached_line = anchor.line;
-                line_start = rope.line_to_char(cached_line);
-            }
-            (line_start.saturating_add(anchor.col), *anchor)
-        }).collect());
+        let offsets = Rc::new(
+            self.anchors
+                .iter()
+                .map(|anchor| {
+                    if anchor.line != cached_line {
+                        cached_line = anchor.line;
+                        line_start = rope.line_to_char(cached_line);
+                    }
+                    (line_start.saturating_add(anchor.col), *anchor)
+                })
+                .collect(),
+        );
         *self.offsets.borrow_mut() = Some((rope.clone(), Rc::clone(&offsets)));
         offsets
     }
@@ -910,7 +958,10 @@ impl Geometry {
         style: Style,
     ) {
         if row < self.area.height as usize && column < self.area.width as usize {
-            crate::vim::ui::note_caret(self.area.x.saturating_add(column as u16), self.area.y.saturating_add(row as u16));
+            crate::vim::ui::note_caret(
+                self.area.x.saturating_add(column as u16),
+                self.area.y.saturating_add(row as u16),
+            );
         }
         if !self.enabled || row >= self.area.height as usize || column >= self.area.width as usize {
             return;
@@ -949,7 +1000,9 @@ impl Geometry {
     }
 
     fn validated<'a>(&'a self, buffer: &Buffer) -> Cow<'a, Self> {
-        if self.is_retained() { return Cow::Borrowed(self); }
+        if self.is_retained() {
+            return Cow::Borrowed(self);
+        }
         let valid = |a: &Anchor| Self::anchor_is_visible(a, buffer);
         let row_valid =
             |row: &(usize, usize, u16)| row.2 >= self.area.y && row.2 < self.area.bottom();
@@ -986,13 +1039,27 @@ struct OverlayProtection {
 #[cfg(test)]
 impl OverlayProtection {
     fn protected_cells(&self) -> HashSet<(u16, u16)> {
-        self.protected.iter().copied().chain(self.mask.iter()
-            .flat_map(|mask| mask.cells(animation_layers::PROTECTED))).collect()
+        self.protected
+            .iter()
+            .copied()
+            .chain(
+                self.mask
+                    .iter()
+                    .flat_map(|mask| mask.cells(animation_layers::PROTECTED)),
+            )
+            .collect()
     }
 
     fn caret_cells(&self) -> HashSet<(u16, u16)> {
-        self.carets.iter().copied().chain(self.mask.iter()
-            .flat_map(|mask| mask.cells(animation_layers::CARET))).collect()
+        self.carets
+            .iter()
+            .copied()
+            .chain(
+                self.mask
+                    .iter()
+                    .flat_map(|mask| mask.cells(animation_layers::CARET)),
+            )
+            .collect()
     }
 }
 
@@ -1050,18 +1117,26 @@ impl Geometry {
         let mut protected = HashSet::new();
         let mut carets = HashSet::new();
         let mut protect = |position, flags| {
-            if mask.as_mut().is_some_and(|mask| mask.insert(position, flags)) {
+            if mask
+                .as_mut()
+                .is_some_and(|mask| mask.insert(position, flags))
+            {
                 return;
             }
             protected.insert(position);
-            if flags & animation_layers::CARET != 0 { carets.insert(position); }
+            if flags & animation_layers::CARET != 0 {
+                carets.insert(position);
+            }
         };
         for &position in self.protected.iter().chain(&self.obstacles) {
             protect(position, animation_layers::PROTECTED);
         }
         if let Some((area, _)) = self.primary_cursor {
             for x in area.x..area.right() {
-                protect((x, area.y), animation_layers::PROTECTED | animation_layers::CARET);
+                protect(
+                    (x, area.y),
+                    animation_layers::PROTECTED | animation_layers::CARET,
+                );
             }
         }
         // Ordinary editor projections follow source order. A caret or a small
@@ -1070,14 +1145,26 @@ impl Geometry {
         let anchors = if self.ordered && self.diff_projection.is_none() {
             let mut lines = None::<(usize, usize)>;
             let mut include = |line: usize| {
-                lines = Some(lines.map_or((line, line), |(first, last)| (first.min(line), last.max(line))));
+                lines = Some(lines.map_or((line, line), |(first, last)| {
+                    (first.min(line), last.max(line))
+                }));
             };
             if self.primary_cursor.is_some() {
-                if let Some(line) = cursor_line { include(line); }
+                if let Some(line) = cursor_line {
+                    include(line);
+                }
             }
-            if let Some((sl, _, el, _)) = selection { include(sl); include(el); }
-            for &(line, _) in extra_cursors { include(line); }
-            for &((start, _), (end, _)) in &merged { include(start); include(end); }
+            if let Some((sl, _, el, _)) = selection {
+                include(sl);
+                include(el);
+            }
+            for &(line, _) in extra_cursors {
+                include(line);
+            }
+            for &((start, _), (end, _)) in &merged {
+                include(start);
+                include(end);
+            }
             lines.map_or(&self.anchors[..0], |(first, last)| {
                 let start = self.anchors.partition_point(|anchor| anchor.line < first);
                 let end = self.anchors.partition_point(|anchor| anchor.line <= last);
@@ -1098,14 +1185,22 @@ impl Geometry {
             }
             for dx in 0..anchor.width {
                 let cell = (anchor.x.saturating_add(dx), anchor.y);
-                protect(cell, animation_layers::PROTECTED | if caret { animation_layers::CARET } else { 0 });
+                protect(
+                    cell,
+                    animation_layers::PROTECTED | if caret { animation_layers::CARET } else { 0 },
+                );
             }
         }
         if let Some(mask) = &mut mask {
-            for &position in &self.overlays { mask.insert(position, animation_layers::EXCLUDED); }
+            for &position in &self.overlays {
+                mask.insert(position, animation_layers::EXCLUDED);
+            }
             for &row in &self.unsafe_rows {
                 for x in self.area.left()..self.area.right() {
-                    mask.insert((x, row), animation_layers::EXCLUDED | animation_layers::BLOCKED_ROW);
+                    mask.insert(
+                        (x, row),
+                        animation_layers::EXCLUDED | animation_layers::BLOCKED_ROW,
+                    );
                 }
             }
         }
@@ -1290,12 +1385,16 @@ impl<'a> Painter<'a> {
             && (self.layers.len() < MAX_ANCHORS || self.layers.contains_key(&(x, y)))
     }
     fn is_protected(&self, position: (u16, u16)) -> bool {
-        self.mask.and_then(|mask| mask.get(position)).map_or_else(|| self.protected.contains(&position),
-            |flags| flags & animation_layers::PROTECTED != 0)
+        self.mask.and_then(|mask| mask.get(position)).map_or_else(
+            || self.protected.contains(&position),
+            |flags| flags & animation_layers::PROTECTED != 0,
+        )
     }
     fn is_caret(&self, position: (u16, u16)) -> bool {
-        self.mask.and_then(|mask| mask.get(position)).map_or_else(|| self.carets.contains(&position),
-            |flags| flags & animation_layers::CARET != 0)
+        self.mask.and_then(|mask| mask.get(position)).map_or_else(
+            || self.carets.contains(&position),
+            |flags| flags & animation_layers::CARET != 0,
+        )
     }
     fn set_area(&mut self, area: Rect) {
         // Scope connectors briefly paint in the gutter outside the code
@@ -1447,12 +1546,25 @@ impl<'a> Painter<'a> {
             };
             let original_fg = cell.fg;
             let original_bg = cell.bg;
-            let key = (original_fg, original_bg,
-                layer.background.map(|(color, amount)| (color, amount.to_bits())),
-                layer.symbol.as_ref().map(|(_, color, amount)| (*color, amount.to_bits())));
-            if reuse && let Some((old_key, fg, bg)) = previous && key == old_key {
+            let key = (
+                original_fg,
+                original_bg,
+                layer
+                    .background
+                    .map(|(color, amount)| (color, amount.to_bits())),
+                layer
+                    .symbol
+                    .as_ref()
+                    .map(|(_, color, amount)| (*color, amount.to_bits())),
+            );
+            if reuse
+                && let Some((old_key, fg, bg)) = previous
+                && key == old_key
+            {
                 cell.set_fg(fg).set_bg(bg);
-                if let Some((symbol, _, _)) = &layer.symbol { cell.set_symbol(symbol); }
+                if let Some((symbol, _, _)) = &layer.symbol {
+                    cell.set_symbol(symbol);
+                }
                 continue;
             }
             if let Some((color, amount)) = layer.background {
@@ -1469,7 +1581,9 @@ impl<'a> Painter<'a> {
                     let color = preserve_contrast(&self.colors, original_fg, original_bg, cell.bg);
                     // Gradients can generate a unique color at every cell;
                     // bound memory and hashing cost for those frames.
-                    if reuse && self.contrast.len() < 256 { self.contrast.insert(key, color); }
+                    if reuse && self.contrast.len() < 256 {
+                        self.contrast.insert(key, color);
+                    }
                     color
                 };
                 cell.set_fg(foreground);
@@ -1481,11 +1595,17 @@ impl<'a> Painter<'a> {
     }
 }
 
-fn preserve_contrast(colors: &ThemeColors, foreground: Color, old_bg: Color, background: Color) -> Color {
+fn preserve_contrast(
+    colors: &ThemeColors,
+    foreground: Color,
+    old_bg: Color,
+    background: Color,
+) -> Color {
     // Keep the source theme's contrast without a sudden jump to a palette
     // color when a faint highlight crosses a threshold.
     let floor = crate::ui_colors::contrast_ratio(foreground, old_bg)
-        .unwrap_or(4.5).clamp(1.0, 4.5);
+        .unwrap_or(4.5)
+        .clamp(1.0, 4.5);
     if !crate::ui_colors::contrast_ratio(foreground, background).is_some_and(|r| r < floor) {
         return foreground;
     }
@@ -1646,11 +1766,7 @@ fn draw_fire(
         // Selections are a surface to blend over, rather than a hole in the
         // particle field. Keep their highlight visible beneath the same flame
         // silhouette; only carets and the solid cursor core block particles.
-        let strength = if protected {
-            0.6
-        } else {
-            1.0
-        };
+        let strength = if protected { 0.6 } else { 1.0 };
         let opacity = pixel.opacity.clamp(0.0, 0.96) * strength;
         let glow = pixel.glow * strength;
         if cell.symbol() == " " && !wide.contains(&position) {
@@ -2182,16 +2298,20 @@ fn draw_overlays_at(
     let reuse_scratch = !REFERENCE_PAINT.get();
     #[cfg(not(test))]
     let reuse_scratch = true;
-    if reuse_scratch { painter.take_scratch(&mut scratch); }
+    if reuse_scratch {
+        painter.take_scratch(&mut scratch);
+    }
     let mut pairs = std::mem::take(&mut scratch.pairs);
     pairs.clear();
-    pairs.extend(events
-        .iter()
-        .filter_map(|event| match event.trigger {
-            Trigger::Scope { pair, .. } => Some(pair),
-            _ => None,
-        })
-        .chain(pair));
+    pairs.extend(
+        events
+            .iter()
+            .filter_map(|event| match event.trigger {
+                Trigger::Scope { pair, .. } => Some(pair),
+                _ => None,
+            })
+            .chain(pair),
+    );
     pairs.sort_unstable();
     pairs.dedup();
     let source = match &options.projection {
@@ -2324,7 +2444,9 @@ fn draw_overlays_at(
     if !fire_particles.is_empty() {
         draw_fire(&mut painter, geometry, &fire_particles, smear);
     }
-    if reuse_scratch { painter.recycle(&mut scratch); }
+    if reuse_scratch {
+        painter.recycle(&mut scratch);
+    }
     animations.restore_fire_particles(fire_particles);
     animations.restore_events(id, events);
 }
@@ -2340,9 +2462,16 @@ mod tests {
 
     #[test]
     fn unit_width_geometry_runs_match_single_glyphs_with_clipping_and_unsafe_rows() {
-        let chars: Vec<_> = "éλЯ ordinary code with spaces + numbers_123".chars().collect();
-        let anchors = |geometry: &Geometry| geometry.anchors.iter().map(|a|
-            (a.line, a.col, a.ch, a.x, a.y, a.width)).collect::<Vec<_>>();
+        let chars: Vec<_> = "éλЯ ordinary code with spaces + numbers_123"
+            .chars()
+            .collect();
+        let anchors = |geometry: &Geometry| {
+            geometry
+                .anchors
+                .iter()
+                .map(|a| (a.line, a.col, a.ch, a.x, a.y, a.width))
+                .collect::<Vec<_>>()
+        };
         for enabled in [false, true] {
             for width in [0, 1, 7, 60] {
                 for column in [0, 1, 5, 60] {
@@ -2353,7 +2482,9 @@ mod tests {
                             let mut expected = Geometry::new(area, enabled);
                             for geometry in [&mut actual, &mut expected] {
                                 geometry.push(8, 2, 'x', 0, 0, 1);
-                                if unsafe_row { geometry.push(3, 0, '\u{301}', row, 0, 0); }
+                                if unsafe_row {
+                                    geometry.push(3, 0, '\u{301}', row, 0, 0);
+                                }
                             }
                             actual.push_unit_width_run(3, 4, &chars, row, column);
                             for (offset, &ch) in chars.iter().enumerate() {
@@ -2368,7 +2499,9 @@ mod tests {
             }
         }
         let mut actual = Geometry::new(Rect::new(0, 0, u16::MAX, 1), true);
-        for col in 0..MAX_ANCHORS - 2 { actual.push(0, col, 'x', 0, col, 1); }
+        for col in 0..MAX_ANCHORS - 2 {
+            actual.push(0, col, 'x', 0, col, 1);
+        }
         actual.push_unit_width_run(0, MAX_ANCHORS - 2, &chars, 0, MAX_ANCHORS - 2);
         assert_eq!(actual.anchors.len(), MAX_ANCHORS);
         assert_eq!(actual.anchors.last().unwrap().ch, chars[1]);

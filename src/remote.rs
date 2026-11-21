@@ -19,11 +19,11 @@ mod cache;
 pub(crate) mod client;
 #[path = "remote_context.rs"]
 pub(crate) mod context;
-#[path = "remote_diagnostics.rs"]
-pub(crate) mod diagnostics;
 #[cfg(test)]
 #[path = "remote_core_workflow_tests.rs"]
 mod core_workflow_tests;
+#[path = "remote_diagnostics.rs"]
+pub(crate) mod diagnostics;
 #[path = "remote_explorer.rs"]
 pub(crate) mod explorer;
 #[path = "remote_fs.rs"]
@@ -330,14 +330,26 @@ pub(crate) struct Request {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum WatchState { Active, Paused, Closed }
+pub(crate) enum WatchState {
+    Active,
+    Paused,
+    Closed,
+}
 impl WatchState {
     fn from_command(command: &Command) -> Self {
-        match command { Command::Watch => Self::Active, Command::PauseWatch => Self::Paused,
-            Command::Unwatch => Self::Closed, _ => unreachable!("not a watcher control") }
+        match command {
+            Command::Watch => Self::Active,
+            Command::PauseWatch => Self::Paused,
+            Command::Unwatch => Self::Closed,
+            _ => unreachable!("not a watcher control"),
+        }
     }
     fn command(self) -> Command {
-        match self { Self::Active => Command::Watch, Self::Paused => Command::PauseWatch, Self::Closed => Command::Unwatch }
+        match self {
+            Self::Active => Command::Watch,
+            Self::Paused => Command::PauseWatch,
+            Self::Closed => Command::Unwatch,
+        }
     }
 }
 
@@ -364,7 +376,11 @@ pub(crate) enum Command {
     },
     /// Validate bytes against the client's saved revision. Dirty models need
     /// only the verdict; clean models may receive changed text in this reply.
-    Reload { path: RemotePath, known: Option<Revision>, read_changed: bool },
+    Reload {
+        path: RemotePath,
+        known: Option<Revision>,
+        read_changed: bool,
+    },
     /// Resolve an arbitrary link and open its file in the same transaction.
     OpenLocation {
         path: RemotePath,
@@ -546,7 +562,9 @@ pub(crate) enum Command {
         request: u64,
     },
     /// Legacy protocol-20 request. Current clients never send idle probes.
-    Heartbeat { nonce: u64 },
+    Heartbeat {
+        nonce: u64,
+    },
     Ping,
     Shutdown,
 }
@@ -674,7 +692,9 @@ impl Failure {
 pub(crate) enum Reply {
     PerformanceSnapshot(observability::Snapshot),
     /// Retained for protocol compatibility with older clients.
-    Heartbeat { nonce: u64 },
+    Heartbeat {
+        nonce: u64,
+    },
     Context(context::Reply),
     Agent(agent::Reply),
     AgentEvent(agent::Delivery),
@@ -695,8 +715,15 @@ pub(crate) enum Reply {
     Directory {
         identity: RemotePath,
     },
-    Unchanged { identity: RemotePath, size: u64, modified: Option<std::time::SystemTime> },
-    Changed { size: u64, modified: Option<std::time::SystemTime> },
+    Unchanged {
+        identity: RemotePath,
+        size: u64,
+        modified: Option<std::time::SystemTime>,
+    },
+    Changed {
+        size: u64,
+        modified: Option<std::time::SystemTime>,
+    },
     Opened {
         text: String,
         encoding: String,
@@ -728,7 +755,10 @@ pub(crate) enum Reply {
         discovery: git::Discovery,
         scans: Vec<git::Scan>,
     },
-    GitStatusProgress { request: u64, progress: git::StatusProgress },
+    GitStatusProgress {
+        request: u64,
+        progress: git::StatusProgress,
+    },
     GitAction(crate::background::GitActionOutcome),
     GitSources(git::Sources),
     GitDiffSources(crate::git_diff_sources::Sources),
@@ -755,7 +785,10 @@ pub(crate) enum Reply {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         draft_aliases: Vec<usize>,
     },
-    SearchProgress { request: u64, hits: Vec<search::Hit> },
+    SearchProgress {
+        request: u64,
+        hits: Vec<search::Hit>,
+    },
     SearchScope {
         indices: Vec<usize>,
         /// Old nodes do not report whether the decision is purely lexical.

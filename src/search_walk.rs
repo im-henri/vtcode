@@ -46,7 +46,9 @@ impl MatchedFiles {
             return true;
         };
         if !self.parents.contains_key(parent) {
-            let actual = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+            let actual = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
             self.parents.insert(parent.to_path_buf(), actual);
         }
         self.seen.insert(self.parents[parent].join(name))
@@ -54,7 +56,8 @@ impl MatchedFiles {
 }
 
 pub(crate) fn has_parent_traversal(path: &Path) -> bool {
-    path.components().any(|component| component == Component::ParentDir)
+    path.components()
+        .any(|component| component == Component::ParentDir)
 }
 
 /// Project live files into the roots and followed links that can
@@ -76,18 +79,24 @@ impl OpenFileAliases {
         let mut aliases = Self::default();
         let mut open_paths = open_paths
             .filter(|(_, path)| {
-                follow_links || cfg!(windows) || includes.has_path_scopes() || !path.is_absolute()
+                follow_links
+                    || cfg!(windows)
+                    || includes.has_path_scopes()
+                    || !path.is_absolute()
                     || has_parent_traversal(path)
             })
             .peekable();
         open_paths.peek()?;
 
-        let roots: Vec<_> = includes.roots()
+        let roots: Vec<_> = includes
+            .roots()
             .take_while(|_| !cancel.is_cancelled())
             .filter_map(|root| root.canonicalize().ok().map(|actual| (root, actual)))
             .collect();
         for (index, path) in open_paths.take_while(|_| !cancel.is_cancelled()) {
-            let Ok(actual) = path.canonicalize() else { continue; };
+            let Ok(actual) = path.canonicalize() else {
+                continue;
+            };
             for (root, actual_root) in &roots {
                 if let Some(relative) = strip_spelling_prefix(&actual, actual_root) {
                     let walked = root.join(relative);
@@ -104,21 +113,31 @@ impl OpenFileAliases {
     }
 
     pub(crate) fn get(&self, path: &Path) -> Option<usize> {
-        self.roots.get(path).copied().or_else(|| {
-            self.linked.get()?.read().unwrap().get(path).copied()
-        })
+        self.roots
+            .get(path)
+            .copied()
+            .or_else(|| self.linked.get()?.read().unwrap().get(path).copied())
     }
 
     fn register_link(&self, path: &Path) {
         if self.actual.is_empty() {
             return;
         }
-        let Ok(target) = path.canonicalize() else { return; };
+        let Ok(target) = path.canonicalize() else {
+            return;
+        };
         // Canonical descendants are contiguous in component order.
-        let mut descendants = self.actual.range(target.clone()..).map_while(|(file, &index)| {
-            file.strip_prefix(&target).ok().map(|relative| (relative, index))
-        });
-        let Some(first) = descendants.next() else { return; };
+        let mut descendants = self
+            .actual
+            .range(target.clone()..)
+            .map_while(|(file, &index)| {
+                file.strip_prefix(&target)
+                    .ok()
+                    .map(|relative| (relative, index))
+            });
+        let Some(first) = descendants.next() else {
+            return;
+        };
         let mut linked = self.linked.get_or_init(RwLock::default).write().unwrap();
         for (relative, index) in std::iter::once(first).chain(descendants) {
             linked.entry(path.join(relative)).or_insert(index);
@@ -140,7 +159,11 @@ impl OverlappingAliases {
         }
 
         let mut by_actual: BTreeMap<PathBuf, Vec<&Path>> = BTreeMap::new();
-        for root in first.into_iter().chain(roots).take_while(|_| !cancel.is_cancelled()) {
+        for root in first
+            .into_iter()
+            .chain(roots)
+            .take_while(|_| !cancel.is_cancelled())
+        {
             if let Ok(actual) = root.canonicalize() {
                 by_actual.entry(actual).or_default().push(root);
             }
@@ -149,7 +172,9 @@ impl OverlappingAliases {
         for (actual, spellings) in &by_actual {
             let mut overlaps = spellings.len() > 1;
             for parent in actual.ancestors().skip(1) {
-                let Some(outer_spellings) = by_actual.get(parent) else { continue; };
+                let Some(outer_spellings) = by_actual.get(parent) else {
+                    continue;
+                };
                 let relative = actual.strip_prefix(parent).expect("canonical ancestor");
                 for outer in outer_spellings {
                     let walked = outer.join(relative);
@@ -160,7 +185,11 @@ impl OverlappingAliases {
                 }
             }
             if overlaps {
-                aliases.extend(spellings.iter().map(|root| (root.to_path_buf(), actual.clone())));
+                aliases.extend(
+                    spellings
+                        .iter()
+                        .map(|root| (root.to_path_buf(), actual.clone())),
+                );
             }
         }
         let mut aliases: Vec<_> = aliases.into_iter().collect();
@@ -243,7 +272,9 @@ pub(crate) fn visit(
         if cancel.is_cancelled() {
             break;
         }
-        if crate::fs_ops::is_copy_temporary_path(folder) || settings.excludes_tree(folder, workspace) {
+        if crate::fs_ops::is_copy_temporary_path(folder)
+            || settings.excludes_tree(folder, workspace)
+        {
             continue;
         }
         builder(
@@ -261,10 +292,16 @@ pub(crate) fn visit(
                     && (entry.depth() != 0 || {
                         let candidate = Candidate::new(entry.path());
                         includes.includes(&candidate)
-                            && !excludes.excludes_with_aliases(&candidate, workspace, &options.path_aliases)
+                            && !excludes.excludes_with_aliases(
+                                &candidate,
+                                workspace,
+                                &options.path_aliases,
+                            )
                             && !settings.excludes_tree(entry.path(), workspace)
                     })
-                    && aliases.key(entry.path()).is_none_or(|key| seen.lock().unwrap().insert(key))
+                    && aliases
+                        .key(entry.path())
+                        .is_none_or(|key| seen.lock().unwrap().insert(key))
                 {
                     visit(entry.path(), entry.path_is_symlink());
                 }
@@ -320,7 +357,8 @@ fn builder(
             let included = in_scope
                 && !settings.excludes(&candidate, &workspace)
                 && !excludes.excludes_with_aliases(&candidate, &workspace, &path_aliases);
-            if included && entry.path_is_symlink()
+            if included
+                && entry.path_is_symlink()
                 && let Some(aliases) = &open_aliases
             {
                 // The walker applies this filter before scheduling the entry.

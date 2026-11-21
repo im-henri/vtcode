@@ -67,7 +67,10 @@ fn typing_requests_a_prediction_and_tab_inserts_it() {
         app.inline_ghost_visible()
     });
     assert_eq!(app.inline_ghost_text(), Some("right = right;"));
-    assert!(text(&app).ends_with("self."), "prediction must not edit the buffer");
+    assert!(
+        text(&app).ends_with("self."),
+        "prediction must not edit the buffer"
+    );
     press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
     assert!(text(&app).ends_with("        self.right = right;"));
     app.editor_mut().unwrap().undo();
@@ -129,8 +132,16 @@ fn accept_next_word_can_be_reassigned_and_ctrl_right_moves_again() {
     show(&mut moving, "project_value.len();");
     moving.keybindings[binding].assign(KeyModifiers::ALT, KeyCode::Char('k'), None);
     press(&mut moving, KeyCode::Right, KeyModifiers::CONTROL);
-    assert_eq!(text(&moving), "let value = \nnext", "Ctrl+Right no longer accepts");
-    assert_eq!(moving.editor().unwrap().cursor_line, 1, "Ctrl+Right moves by a word again");
+    assert_eq!(
+        text(&moving),
+        "let value = \nnext",
+        "Ctrl+Right no longer accepts"
+    );
+    assert_eq!(
+        moving.editor().unwrap().cursor_line,
+        1,
+        "Ctrl+Right moves by a word again"
+    );
     let mut app = with_ghost();
     app.keybindings[binding].assign(KeyModifiers::ALT, KeyCode::Char('k'), None);
     press(&mut app, KeyCode::Char('k'), KeyModifiers::ALT);
@@ -207,7 +218,9 @@ fn overlays_reject_ghost_text_and_acceptance() {
         ("hunk popup", |app| app.hunk_popup_active = true),
         ("code actions", |app| app.lsp_code_action_active = true),
         ("command chord", |app| app.chord_pending = true),
-        ("read-only", |app| app.editor_mut().unwrap().read_only = true),
+        ("read-only", |app| {
+            app.editor_mut().unwrap().read_only = true
+        }),
         ("explicit popup", |app| app.vtcomplete_explicit = true),
         ("navigated popup", |app| app.vtcomplete_navigated = true),
     ];
@@ -232,7 +245,10 @@ fn the_word_popup_is_hidden_behind_a_prediction_and_returns_after_escape() {
     app.vtcomplete_active = true;
     app.vtcomplete_suggestions = vec!["indexed_value".into()];
     press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-    assert!(app.vtcomplete_active, "the first Esc hides only the prediction");
+    assert!(
+        app.vtcomplete_active,
+        "the first Esc hides only the prediction"
+    );
     press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
     assert_eq!(text(&app), "let value = indexed_value");
 }
@@ -243,11 +259,21 @@ fn stale_answers_are_ignored() {
     let target = app.inline_target().unwrap();
     let rope = app.editor().unwrap().rope.clone();
     let generation = app.vtcomplete_inline.generation;
-    assert!(!app.receive_inline(generation + 1, target.clone(), rope.clone(), Some("a();".into())));
+    assert!(!app.receive_inline(
+        generation + 1,
+        target.clone(),
+        rope.clone(),
+        Some("a();".into())
+    ));
     let other = ropey::Rope::from_str("let value = ");
     assert!(!app.receive_inline(generation, target.clone(), other, Some("a();".into())));
     assert!(!app.inline_ghost_visible());
-    assert!(app.receive_inline(generation, target.clone(), rope.clone(), Some("a();".into())));
+    assert!(app.receive_inline(
+        generation,
+        target.clone(),
+        rope.clone(),
+        Some("a();".into())
+    ));
     assert_eq!(app.inline_ghost_text(), Some("a();"));
     // An abstaining answer leaves what is shown.
     assert!(!app.receive_inline(generation, target, rope, None));
@@ -266,7 +292,10 @@ fn large_documents_are_windowed_at_line_boundaries() {
     assert_eq!(below, "");
     assert!(window > 0);
     let (before, rest, below, window) = split(&rope, (1, 4)).unwrap();
-    assert_eq!((before.as_str(), rest.as_str(), window), (&*format!("{line}let "), "value = compute(input);", 0));
+    assert_eq!(
+        (before.as_str(), rest.as_str(), window),
+        (&*format!("{line}let "), "value = compute(input);", 0)
+    );
     assert!(below.len() <= MAX_BELOW_BYTES && below.starts_with("let value"));
     assert!(split(&rope, (rope.len_lines(), 0)).is_none());
 }
@@ -279,14 +308,20 @@ fn oversized_suffix_is_skipped_before_copying_it() {
     assert_eq!(rest.len(), MAX_DOCUMENT_BYTES);
 }
 
-fn render(app: &mut App, width: u16, height: u16) -> ratatui::Terminal<ratatui::backend::TestBackend> {
+fn render(
+    app: &mut App,
+    width: u16,
+    height: u16,
+) -> ratatui::Terminal<ratatui::backend::TestBackend> {
     use ratatui::{Terminal, backend::TestBackend, style::Color};
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
         .draw(|frame| {
             for y in 0..height {
                 for x in 0..width {
-                    frame.buffer_mut()[(x, y)].set_symbol(".").set_bg(Color::Black);
+                    frame.buffer_mut()[(x, y)]
+                        .set_symbol(".")
+                        .set_bg(Color::Black);
                 }
             }
             draw_ghost(frame, app);
@@ -295,7 +330,12 @@ fn render(app: &mut App, width: u16, height: u16) -> ratatui::Terminal<ratatui::
     terminal
 }
 
-fn row(terminal: &ratatui::Terminal<ratatui::backend::TestBackend>, y: u16, from: u16, to: u16) -> String {
+fn row(
+    terminal: &ratatui::Terminal<ratatui::backend::TestBackend>,
+    y: u16,
+    from: u16,
+    to: u16,
+) -> String {
     (from..to)
         .map(|x| terminal.backend().buffer()[(x, y)].symbol())
         .collect()
@@ -332,12 +372,20 @@ fn further_predicted_lines_push_the_rows_below_down() {
     terminal
         .draw(|frame| {
             // Each rendered row: its line number, then its code.
-            for (y, (number, code)) in [("1 ", "    if ready {"), ("2 ", "next();"), ("3 ", "after")]
-                .into_iter()
-                .enumerate()
+            for (y, (number, code)) in
+                [("1 ", "    if ready {"), ("2 ", "next();"), ("3 ", "after")]
+                    .into_iter()
+                    .enumerate()
             {
-                frame.buffer_mut().set_string(0, y as u16, number, ratatui::style::Style::default());
-                frame.buffer_mut().set_string(3, y as u16, code, ratatui::style::Style::default());
+                frame.buffer_mut().set_string(
+                    0,
+                    y as u16,
+                    number,
+                    ratatui::style::Style::default(),
+                );
+                frame
+                    .buffer_mut()
+                    .set_string(3, y as u16, code, ratatui::style::Style::default());
             }
             draw_ghost(frame, &mut app);
         })
@@ -364,8 +412,7 @@ fn an_offscreen_caret_draws_nothing() {
 }
 
 fn screen(app: &mut App) -> (Vec<String>, ratatui::buffer::Buffer) {
-    let mut terminal =
-        ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
     terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
     let buffer = terminal.backend().buffer().clone();
     let rows = (0..30)
@@ -392,13 +439,22 @@ fn the_full_editor_frame_shows_the_prediction_dimmed_and_then_the_accepted_text(
     let (y, x) = rows
         .iter()
         .enumerate()
-        .find_map(|(y, row)| row.find("self.right = right;").map(|x| (y, row[..x].chars().count())))
+        .find_map(|(y, row)| {
+            row.find("self.right = right;")
+                .map(|x| (y, row[..x].chars().count()))
+        })
         .expect("the prediction is on screen");
     // `self.` is the document's own text; the rest is the italic prediction.
-    assert!(!buffer[(x as u16, y as u16)].modifier.contains(Modifier::ITALIC));
+    assert!(
+        !buffer[(x as u16, y as u16)]
+            .modifier
+            .contains(Modifier::ITALIC)
+    );
     for offset in 5..19 {
         assert!(
-            buffer[((x + offset) as u16, y as u16)].modifier.contains(Modifier::ITALIC),
+            buffer[((x + offset) as u16, y as u16)]
+                .modifier
+                .contains(Modifier::ITALIC),
             "{offset}"
         );
     }
@@ -410,9 +466,16 @@ fn the_full_editor_frame_shows_the_prediction_dimmed_and_then_the_accepted_text(
     let (y, x) = rows
         .iter()
         .enumerate()
-        .find_map(|(y, row)| row.find("self.right = right;").map(|x| (y, row[..x].chars().count())))
+        .find_map(|(y, row)| {
+            row.find("self.right = right;")
+                .map(|x| (y, row[..x].chars().count()))
+        })
         .expect("the accepted text is on screen");
-    assert!(!buffer[((x + 8) as u16, y as u16)].modifier.contains(Modifier::ITALIC));
+    assert!(
+        !buffer[((x + 8) as u16, y as u16)]
+            .modifier
+            .contains(Modifier::ITALIC)
+    );
 }
 
 #[test]
@@ -422,12 +485,20 @@ fn the_predict_here_shortcut_asks_at_the_caret_without_typing() {
     assert_eq!(app.vtcomplete_inline.submissions, 0);
     press(&mut app, KeyCode::Char('i'), KeyModifiers::ALT);
     assert_eq!(app.vtcomplete_inline.submissions, 1);
-    assert!(text(&app).ends_with("        self"), "the shortcut must not type");
+    assert!(
+        text(&app).ends_with("        self"),
+        "the shortcut must not type"
+    );
     // Turning off suggestions while typing still allows manual predictions.
     app.quick_suggestions = false;
     press(&mut app, KeyCode::Char('i'), KeyModifiers::ALT);
     assert_eq!(app.vtcomplete_inline.submissions, 2);
-    assert!(app.vtcomplete_inline.cancel.as_ref().is_some_and(|cancel| !cancel.is_cancelled()));
+    assert!(
+        app.vtcomplete_inline
+            .cancel
+            .as_ref()
+            .is_some_and(|cancel| !cancel.is_cancelled())
+    );
     app.set_inline_predictions_enabled(false);
     app.execute_palette_command("vtcomplete_inline_request");
     assert_eq!(app.vtcomplete_inline.submissions, 2);
@@ -506,20 +577,32 @@ fn eagerness_is_a_saved_setting_that_lowers_the_confidence_needed() {
         "Eager (25% to start)",
         "Always (10% to start)",
     ];
-    assert_eq!(app.completion_preferences.inline_eagerness, InlineEagerness::Balanced);
+    assert_eq!(
+        app.completion_preferences.inline_eagerness,
+        InlineEagerness::Balanced
+    );
     assert_eq!(app.setting_dropdown_options(setting).unwrap(), labels);
     for (index, level) in InlineEagerness::ALL.into_iter().enumerate() {
-        let current = app.completion_setting_items().into_iter()
+        let current = app
+            .completion_setting_items()
+            .into_iter()
             .find_map(|(_, value, id)| (id == setting).then_some(value))
             .unwrap();
         app.open_settings_dropdown(setting, &current);
-        assert_eq!(app.settings_dropdown_options[app.settings_dropdown_selected], current);
+        assert_eq!(
+            app.settings_dropdown_options[app.settings_dropdown_selected],
+            current
+        );
         app.select_settings_dropdown_option(index);
         assert_eq!(app.completion_preferences.inline_eagerness, level);
     }
     assert!(app.set_completion_dropdown(setting, "Always"));
     app.apply_settings_dropdown_value(setting, "Reckless");
-    assert_eq!(app.completion_preferences.inline_eagerness, InlineEagerness::Always, "an unknown choice changes nothing");
+    assert_eq!(
+        app.completion_preferences.inline_eagerness,
+        InlineEagerness::Always,
+        "an unknown choice changes nothing"
+    );
     // Each step is more willing to show a guess than the one before.
     let levels = InlineEagerness::ALL.map(InlineEagerness::options);
     for pair in levels.windows(2) {
@@ -576,18 +659,35 @@ impl Rectangle {
     app.wait_for_background(std::time::Duration::from_secs(240), |app| {
         app.inline_ghost_visible()
     });
-    let ghost = app.inline_ghost_text().expect("a prediction inside the comment").to_owned();
+    let ghost = app
+        .inline_ghost_text()
+        .expect("a prediction inside the comment")
+        .to_owned();
     assert!(ghost.starts_with("angle"), "{ghost:?}");
-    assert!(text(&app).ends_with("of the rect"), "prediction must not edit the buffer");
+    assert!(
+        text(&app).ends_with("of the rect"),
+        "prediction must not edit the buffer"
+    );
     let (rows, buffer) = screen(&mut app);
     let (y, x) = rows
         .iter()
         .enumerate()
-        .find_map(|(y, row)| row.find("of the rectangle").map(|x| (y, row[..x].chars().count())))
+        .find_map(|(y, row)| {
+            row.find("of the rectangle")
+                .map(|x| (y, row[..x].chars().count()))
+        })
         .expect("the prediction is on screen");
     // `rect` was typed; `angle` is the dimmed prediction.
-    assert!(!buffer[((x + 9) as u16, y as u16)].modifier.contains(Modifier::ITALIC));
-    assert!(buffer[((x + 11) as u16, y as u16)].modifier.contains(Modifier::ITALIC));
+    assert!(
+        !buffer[((x + 9) as u16, y as u16)]
+            .modifier
+            .contains(Modifier::ITALIC)
+    );
+    assert!(
+        buffer[((x + 11) as u16, y as u16)]
+            .modifier
+            .contains(Modifier::ITALIC)
+    );
     press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
     assert!(text(&app).contains("/// Returns the area of the rectangle"));
 }
@@ -613,9 +713,16 @@ fn third() -> layout",
     });
     let ghost = app.inline_ghost_text().expect("a prediction").to_owned();
     assert!(ghost.starts_with("enderers"), "{ghost:?}");
-    assert!(text(&app).ends_with("-> layoutr"), "nothing is respelled before accepting");
+    assert!(
+        text(&app).ends_with("-> layoutr"),
+        "nothing is respelled before accepting"
+    );
     press(&mut app, KeyCode::Tab, KeyModifiers::NONE);
-    assert!(text(&app).contains("fn third() -> LayoutRenderers"), "{}", text(&app));
+    assert!(
+        text(&app).contains("fn third() -> LayoutRenderers"),
+        "{}",
+        text(&app)
+    );
     app.editor_mut().unwrap().undo();
     assert!(text(&app).ends_with("fn third() -> layoutr"));
 }

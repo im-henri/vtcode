@@ -4,48 +4,76 @@ use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Color};
 
 #[test]
 fn pane_separators_use_their_own_theme_roles_without_covering_editor_content() {
-    for direction in [crate::app::SplitDirection::Horizontal, crate::app::SplitDirection::Vertical] {
+    for direction in [
+        crate::app::SplitDirection::Horizontal,
+        crate::app::SplitDirection::Vertical,
+    ] {
         let mut app = App::test_new();
         app.activity_bar_position = crate::settings::ActivityBarPosition::Left;
-        app.settings_effective.workbench_color_customizations = serde_json::from_value(serde_json::json!({
-            "editor.background":"#102030", "panel.background":"#304050",
-            "panel.border":"#e0204080", "editorGroup.border":"#ff0000",
-            "sideBySideEditor.verticalBorder":"#40e06080",
-            "sideBySideEditor.horizontalBorder":"#4060e080",
-            "activityBar.border":"#40c0e080",
-            "sideBar.border":"#e0c04080", "sash.hoverBorder":"#00ffcc"
-        })).unwrap();
+        app.settings_effective.workbench_color_customizations =
+            serde_json::from_value(serde_json::json!({
+                "editor.background":"#102030", "panel.background":"#304050",
+                "panel.border":"#e0204080", "editorGroup.border":"#ff0000",
+                "sideBySideEditor.verticalBorder":"#40e06080",
+                "sideBySideEditor.horizontalBorder":"#4060e080",
+                "activityBar.border":"#40c0e080",
+                "sideBar.border":"#e0c04080", "sash.hoverBorder":"#00ffcc"
+            }))
+            .unwrap();
         app.set_theme_by_key("dark");
-        app.tabs = vec![crate::app::Tab::new_file(crate::editor::Editor::new()),
-            crate::app::Tab::new_file(crate::editor::Editor::new())];
+        app.tabs = vec![
+            crate::app::Tab::new_file(crate::editor::Editor::new()),
+            crate::app::Tab::new_file(crate::editor::Editor::new()),
+        ];
         app.create_split_group_dir(1, direction);
         app.show_panel = true;
         app.mouse_col = u16::MAX;
         app.mouse_row = u16::MAX;
         let mut terminal = Terminal::new(TestBackend::new(120, 36)).unwrap();
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
         let panel = app.panel_area.unwrap();
         let body = app.workbench_body_area.unwrap();
         let rail = app.activity_bar_area.unwrap();
         let rail_border = &terminal.backend().buffer()[(rail.right() - 1, rail.y)];
-        assert_eq!(rail_border.fg, crate::theme_workbench::ColorLayer::rgba(64, 192, 224, 128).over(rail_border.bg).unwrap());
+        assert_eq!(
+            rail_border.fg,
+            crate::theme_workbench::ColorLayer::rgba(64, 192, 224, 128)
+                .over(rail_border.bg)
+                .unwrap()
+        );
         assert_eq!(body.bottom() + 1, panel.y);
         let border = &terminal.backend().buffer()[(panel.x, panel.y - 1)];
         assert_eq!(border.symbol(), "─");
-        assert_eq!(border.fg, crate::theme_workbench::ColorLayer::rgba(224, 32, 64, 128).over(border.bg).unwrap());
+        assert_eq!(
+            border.fg,
+            crate::theme_workbench::ColorLayer::rgba(224, 32, 64, 128)
+                .over(border.bg)
+                .unwrap()
+        );
         let (divider, _, _, _, _) = app.split_dividers.first().unwrap();
         let cell = &terminal.backend().buffer()[(divider.x, divider.y)];
         let layer = match direction {
-            crate::app::SplitDirection::Horizontal => crate::theme_workbench::ColorLayer::rgba(64, 224, 96, 128),
-            crate::app::SplitDirection::Vertical => crate::theme_workbench::ColorLayer::rgba(64, 96, 224, 128),
+            crate::app::SplitDirection::Horizontal => {
+                crate::theme_workbench::ColorLayer::rgba(64, 224, 96, 128)
+            }
+            crate::app::SplitDirection::Vertical => {
+                crate::theme_workbench::ColorLayer::rgba(64, 96, 224, 128)
+            }
         };
         assert_eq!(cell.bg, app.colors.bg_editor);
         assert_eq!(cell.fg, layer.over(cell.bg).unwrap());
         snapshot(&terminal, &format!("pane-separators-{direction:?}"));
         app.mouse_col = panel.x;
         app.mouse_row = panel.y - 1;
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-        assert_eq!(terminal.backend().buffer()[(panel.x, panel.y - 1)].fg, Color::Rgb(0, 255, 204));
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(panel.x, panel.y - 1)].fg,
+            Color::Rgb(0, 255, 204)
+        );
     }
 }
 
@@ -62,7 +90,9 @@ fn transparent_panel_and_chat_borders_are_preserved() {
     app.mouse_col = u16::MAX;
     app.mouse_row = u16::MAX;
     let mut terminal = Terminal::new(TestBackend::new(140, 34)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let panel = app.panel_area.unwrap();
     let rail = app.activity_bar_area.unwrap();
     let rail_border = &terminal.backend().buffer()[(rail.right() - 1, rail.y)];
@@ -155,8 +185,17 @@ pub(crate) fn snapshot(terminal: &Terminal<TestBackend>, name: &str) {
     .unwrap();
 }
 
-fn assert_theme_text_contrast(foreground: Color, background: Color, colors: &crate::app_theme::ThemeColors) {
-    let achievable = colors.ui.contrast_palette.into_iter().filter_map(|color| crate::ui_colors::contrast_ratio(color, background)).fold(0.0f32, f32::max);
+fn assert_theme_text_contrast(
+    foreground: Color,
+    background: Color,
+    colors: &crate::app_theme::ThemeColors,
+) {
+    let achievable = colors
+        .ui
+        .contrast_palette
+        .into_iter()
+        .filter_map(|color| crate::ui_colors::contrast_ratio(color, background))
+        .fold(0.0f32, f32::max);
     assert_contrast(foreground, background, 4.5f32.min(achievable));
 }
 
@@ -261,13 +300,15 @@ fn native_shared_inputs_keep_carets_selections_and_text_readable() {
         let mut terminal = Terminal::new(TestBackend::new(12, 2)).unwrap();
         terminal
             .draw(|frame| {
-                crate::ui_widgets::InputField::new("abc").theme_colors(&colors)
+                crate::ui_widgets::InputField::new("abc")
+                    .theme_colors(&colors)
                     .prefix("", background)
                     .cursor_marker("│")
                     .cursor_pos(1)
                     .selection_range(Some((0, 1)))
                     .render(frame, Rect::new(0, 0, 12, 1));
-                crate::ui_widgets::InputField::new("").theme_colors(&colors)
+                crate::ui_widgets::InputField::new("")
+                    .theme_colors(&colors)
                     .prefix("", background)
                     .placeholder_text("Search")
                     .render(frame, Rect::new(0, 1, 12, 1));
@@ -555,7 +596,15 @@ fn native_enabled_buttons_and_hovered_toggles_remain_readable() {
         }
     }
     for active in [false, true] {
-        let style = crate::ui_widgets::toggle_button_style(active, true, pale, pale, pale, pale, &colors.ui.contrast_palette);
+        let style = crate::ui_widgets::toggle_button_style(
+            active,
+            true,
+            pale,
+            pale,
+            pale,
+            pale,
+            &colors.ui.contrast_palette,
+        );
         assert_contrast(style.fg.unwrap(), style.bg.unwrap(), 4.5);
     }
 }
@@ -587,7 +636,8 @@ fn native_source_control_actions_follow_hover_with_readable_colors() {
                 app.colors.ui.primary_button_hover = app.colors.ui.primary_button.background;
                 app.colors.ui.primary_button.foreground = app.colors.ui.primary_button.background;
                 app.colors.ui.secondary_button_hover = app.colors.ui.secondary_button.background;
-                app.colors.ui.secondary_button.foreground = app.colors.ui.secondary_button.background;
+                app.colors.ui.secondary_button.foreground =
+                    app.colors.ui.secondary_button.background;
             }
             app.sidebar_view = crate::app::SidebarView::SourceControl;
             app.source_control_repository_state =
@@ -646,10 +696,21 @@ fn native_source_control_actions_follow_hover_with_readable_colors() {
                 for x in button.x..button.right() {
                     let cell = &buffer[(x, button.y)];
                     assert_theme_text_contrast(cell.fg, cell.bg, &app.colors);
-                    assert_eq!(cell.bg, (if index == 0 { app.colors.ui.primary_button_hover }
-                        else { app.colors.ui.secondary_button_hover })
-                        .or(if index == 0 { app.colors.ui.primary_button.background } else { app.colors.ui.secondary_button.background })
-                        .over(app.colors.bg_sidebar).unwrap_or(app.colors.bg_sidebar));
+                    assert_eq!(
+                        cell.bg,
+                        (if index == 0 {
+                            app.colors.ui.primary_button_hover
+                        } else {
+                            app.colors.ui.secondary_button_hover
+                        })
+                        .or(if index == 0 {
+                            app.colors.ui.primary_button.background
+                        } else {
+                            app.colors.ui.secondary_button.background
+                        })
+                        .over(app.colors.bg_sidebar)
+                        .unwrap_or(app.colors.bg_sidebar)
+                    );
                 }
                 let other = buttons[1 - index];
                 assert!(!label(&terminal, other).contains('['));
@@ -750,8 +811,14 @@ fn theme_visibility_menu_enabled_selected_and_disabled_commands_are_distinct() {
         assert_eq!(enabled.fg, app.colors.fg_menu);
         assert_eq!(selected.fg, app.colors.ui.fg_menu_selected);
         assert_eq!(selected.bg, app.colors.bg_menu_selected);
-        assert!(selected.bg != enabled.bg || selected.modifier.contains(ratatui::style::Modifier::UNDERLINED),
-            "{}: selection needs its registered fill or outline", theme.name);
+        assert!(
+            selected.bg != enabled.bg
+                || selected
+                    .modifier
+                    .contains(ratatui::style::Modifier::UNDERLINED),
+            "{}: selection needs its registered fill or outline",
+            theme.name
+        );
         assert_eq!(disabled.bg, enabled.bg);
         assert_eq!(disabled.fg, app.colors.ui.fg_menu_disabled);
         let disabled_style = disabled.style();
@@ -816,8 +883,10 @@ fn native_menu_shortcuts_icons_and_disabled_buttons_follow_their_state() {
     colors.fg_menu = Color::Rgb(140, 140, 140);
     colors.fg_dim = Color::Rgb(255, 255, 255);
     colors.ui.fg_menu_selected = colors.bg_menu_selected;
-    colors.ui.secondary_button.foreground = crate::theme_workbench::ColorLayer::opaque(Color::Rgb(140, 140, 140));
-    colors.ui.secondary_button.background = crate::theme_workbench::ColorLayer::opaque(Color::Rgb(17, 17, 17));
+    colors.ui.secondary_button.foreground =
+        crate::theme_workbench::ColorLayer::opaque(Color::Rgb(140, 140, 140));
+    colors.ui.secondary_button.background =
+        crate::theme_workbench::ColorLayer::opaque(Color::Rgb(17, 17, 17));
     colors.bg_sc_button_secondary = Color::Rgb(17, 17, 17);
     let items = [
         DropdownItem::new("Open")
@@ -925,7 +994,13 @@ fn theme_visibility_menu_explicit_colors_override_dropdown_defaults_on_their_own
     assert_eq!(colors.bg_menu_selected, Color::Rgb(136, 144, 152));
     assert_eq!(colors.ui.fg_menu_selected, Color::Rgb(68, 72, 76));
     assert_eq!(colors.ui.fg_menu_disabled, Color::Rgb(136, 144, 152));
-    assert_eq!(colors.ui.disabled_foreground.over(colors.bg_sc_button_secondary), Some(Color::Rgb(128, 128, 128)));
+    assert_eq!(
+        colors
+            .ui
+            .disabled_foreground
+            .over(colors.bg_sc_button_secondary),
+        Some(Color::Rgb(128, 128, 128))
+    );
     assert_eq!(colors.ui.fg_menu_separator, Color::Rgb(136, 16, 24));
     assert_eq!(colors.ui.border_menu, Color::Rgb(171, 205, 239));
 
@@ -992,7 +1067,9 @@ fn theme_visibility_status_bar_branch_and_hover_preserve_status_roles() {
     let mut app = App::test_new();
     app.cached_git_branch = "master".into();
     let area = Rect::new(0, 1, 160, 1);
-    app.tabs = vec![crate::app::Tab::new_file(crate::editor::Editor::test_with_text("status\n"))];
+    app.tabs = vec![crate::app::Tab::new_file(
+        crate::editor::Editor::test_with_text("status\n"),
+    )];
     app.active_tab = 0;
     app.status_bar_area = Some(area);
     let mut terminal = Terminal::new(TestBackend::new(160, 2)).unwrap();
@@ -1012,12 +1089,17 @@ fn theme_visibility_status_bar_branch_and_hover_preserve_status_roles() {
             let cell = &terminal.backend().buffer()[(x, area.y)];
             assert_eq!(
                 cell.bg, app.colors.bg_statusbar,
-                "{}: branch background", theme.name
+                "{}: branch background",
+                theme.name
             );
             assert_eq!(cell.fg, app.colors.fg_statusbar);
             // Authored status colors may intentionally be dim (e.g. Palenight).
             // Preserve them exactly; apply our readability floor to fallbacks.
-            if !theme.workbench_colors.get("statusBar.foreground").is_some_and(serde_json::Value::is_string) {
+            if !theme
+                .workbench_colors
+                .get("statusBar.foreground")
+                .is_some_and(serde_json::Value::is_string)
+            {
                 assert_contrast(cell.fg, cell.bg, 3.0);
             }
         }
@@ -1039,8 +1121,20 @@ fn theme_visibility_status_bar_branch_and_hover_preserve_status_roles() {
                 .draw(|frame| crate::ui_panels::draw_status_bar(frame, &mut app, area))
                 .unwrap();
             let cell = &terminal.backend().buffer()[(x, area.y)];
-            assert_eq!(cell.bg, app.colors.bg_statusbar_item, "{}: hover fill", theme.name);
-            assert_eq!(cell.fg, app.colors.ui.fg_statusbar_hover.unwrap_or(app.colors.fg_statusbar), "{}: hover text", theme.name);
+            assert_eq!(
+                cell.bg, app.colors.bg_statusbar_item,
+                "{}: hover fill",
+                theme.name
+            );
+            assert_eq!(
+                cell.fg,
+                app.colors
+                    .ui
+                    .fg_statusbar_hover
+                    .unwrap_or(app.colors.fg_statusbar),
+                "{}: hover text",
+                theme.name
+            );
             if theme.name == "Syntax Cyber" {
                 assert_eq!(cell.bg, Color::Rgb(17, 17, 17));
             }
@@ -1069,10 +1163,14 @@ fn theme_visibility_status_bar_branch_and_hover_preserve_status_roles() {
 fn theme_visibility_status_bar_preserves_explicit_hover_colors_and_gradients() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("status-bar.json");
-    std::fs::write(&path, r##"{"colors": {
+    std::fs::write(
+        &path,
+        r##"{"colors": {
         "statusBar.background": "#e0c080", "statusBar.foreground": "#000000",
         "statusBarItem.hoverBackground": "#00000080", "statusBarItem.hoverForeground": "#ffffff"
-    }}"##).unwrap();
+    }}"##,
+    )
+    .unwrap();
     let mut app = App::test_new();
     app.colors = crate::vscode_theme::load_theme_file(&path, None, None)
         .unwrap()
@@ -1084,8 +1182,14 @@ fn theme_visibility_status_bar_preserves_explicit_hover_colors_and_gradients() {
     terminal
         .draw(|frame| crate::ui_panels::draw_status_bar(frame, &mut app, area))
         .unwrap();
-    assert_eq!(terminal.backend().buffer()[(0, 0)].bg, app.colors.bg_statusbar);
-    assert_ne!(terminal.backend().buffer()[(7, 0)].bg, app.colors.bg_statusbar);
+    assert_eq!(
+        terminal.backend().buffer()[(0, 0)].bg,
+        app.colors.bg_statusbar
+    );
+    assert_ne!(
+        terminal.backend().buffer()[(7, 0)].bg,
+        app.colors.bg_statusbar
+    );
 
     app.hovered_status_item = Some(0);
     terminal

@@ -104,7 +104,9 @@ fn paint_row(
                 for &byte in text.as_bytes().iter().take(visible) {
                     row[x].set_char(char::from(byte)).set_style(style);
                     x += 1;
-                    if x == row.len() { break 'spans; }
+                    if x == row.len() {
+                        break 'spans;
+                    }
                 }
             }
         } else if let Some(ch) = text.chars().next().filter(|ch| ch.len_utf8() == text.len()) {

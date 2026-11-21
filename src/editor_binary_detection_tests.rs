@@ -37,8 +37,10 @@ impl Read for Source {
             .min(output.len() as u64)) as usize;
         // Fail a regression before a virtual multi-gigabyte file can allocate
         // a multi-gigabyte text model in the test process.
-        assert!(self.read_bytes + count as u64 <= 8 * PROBE_THRESHOLD,
-            "unexpected full read of the virtual binary test file");
+        assert!(
+            self.read_bytes + count as u64 <= 8 * PROBE_THRESHOLD,
+            "unexpected full read of the virtual binary test file"
+        );
         output[..count].fill(self.fill);
         if let Some(binary) = self
             .binary

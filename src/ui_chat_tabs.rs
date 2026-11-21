@@ -49,8 +49,8 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .map(|(_, title, _, _)| (title.width() + 7).clamp(12, 26) as u16)
         .collect();
     let new_width = if app.chat.connected() { 3 } else { 0 };
-    let overflow =
-        sizes.iter().map(|&w| w as usize).sum::<usize>() > area.width.saturating_sub(new_width) as usize;
+    let overflow = sizes.iter().map(|&w| w as usize).sum::<usize>()
+        > area.width.saturating_sub(new_width) as usize;
     let paging = overflow && area.width >= 15;
     let controls = new_width + if paging { 8 } else { 0 };
     let available = area.width.saturating_sub(controls);
@@ -97,7 +97,9 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             (app.colors.ui.fg_tab_inactive, app.colors.bg_tab_inactive)
         };
-        let mut style = Style::default().fg(app.colors.ui.readable_foreground(fg, bg, 4.5)).bg(bg);
+        let mut style = Style::default()
+            .fg(app.colors.ui.readable_foreground(fg, bg, 4.5))
+            .bg(bg);
         if selected {
             style = style.add_modifier(Modifier::BOLD);
         }
@@ -118,7 +120,14 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             f,
             app,
             close,
-            if selected || hovered || app.chat.focus.as_ref() == Some(&ChatAction::CloseTab(id.clone())) { " × " } else { "   " },
+            if selected
+                || hovered
+                || app.chat.focus.as_ref() == Some(&ChatAction::CloseTab(id.clone()))
+            {
+                " × "
+            } else {
+                "   "
+            },
             ChatAction::CloseTab(id.clone()),
             true,
             false,
@@ -127,12 +136,36 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         end = index + 1;
     }
     if app.chat.connected() {
-        small_button(f, app, &mut x, area, " + ", ChatAction::New, !app.chat.control_busy);
+        small_button(
+            f,
+            app,
+            &mut x,
+            area,
+            " + ",
+            ChatAction::New,
+            !app.chat.control_busy,
+        );
     }
     if paging {
         let mut x = area.right() - 7;
-        small_button(f, app, &mut x, area, " ‹ ", ChatAction::TabPage(true), app.chat.tab_offset > 0);
-        small_button(f, app, &mut x, area, " › ", ChatAction::TabPage(false), end < tabs.len());
+        small_button(
+            f,
+            app,
+            &mut x,
+            area,
+            " ‹ ",
+            ChatAction::TabPage(true),
+            app.chat.tab_offset > 0,
+        );
+        small_button(
+            f,
+            app,
+            &mut x,
+            area,
+            " › ",
+            ChatAction::TabPage(false),
+            end < tabs.len(),
+        );
     }
 }
 
@@ -167,7 +200,11 @@ pub(super) fn draw_tooltip(f: &mut Frame, app: &App, body: Rect) {
     } else if session.busy {
         "Working…"
     } else if app.chat.unread_tabs.contains(id) {
-        if session.stop_reason.is_some() { "Finished · unread" } else { "New activity" }
+        if session.stop_reason.is_some() {
+            "Finished · unread"
+        } else {
+            "New activity"
+        }
     } else {
         "Ready"
     };
@@ -196,7 +233,14 @@ pub(super) fn draw_tooltip(f: &mut Frame, app: &App, body: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(c.ui.hover_colors.border.border(style.bg.unwrap()).unwrap_or(style.bg.unwrap()))),
+                .border_style(
+                    Style::default().fg(c
+                        .ui
+                        .hover_colors
+                        .border
+                        .border(style.bg.unwrap())
+                        .unwrap_or(style.bg.unwrap())),
+                ),
         ),
         area,
     );

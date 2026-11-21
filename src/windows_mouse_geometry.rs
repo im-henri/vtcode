@@ -181,7 +181,9 @@ impl Tracker {
         }
         let grid = grid.filter(|grid| grid.host == host)?;
         if window_bounds(host) != Some(grid.window) {
-            if refresh { self.refresh(); }
+            if refresh {
+                self.refresh();
+            }
             return None;
         }
         Some(grid)
@@ -200,7 +202,11 @@ impl PaneBinding {
         if self.host == host && self.generation == generation {
             self.clone()
         } else {
-            Self { host, generation, identity: None }
+            Self {
+                host,
+                generation,
+                identity: None,
+            }
         }
     }
 
@@ -279,9 +285,8 @@ fn run(focus: Weak<super::MouseFocus>, receiver: mpsc::Receiver<bool>) {
                     // A provider can finish after a pane/size change. Commit
                     // identity together with valid geometry, never from a
                     // discarded or partially failed asynchronous read.
-                    let mut candidate_owner = owner.for_pane(
-                        host, focus.geometry.pane_generation.load(Ordering::Acquire),
-                    );
+                    let mut candidate_owner = owner
+                        .for_pane(host, focus.geometry.pane_generation.load(Ordering::Acquire));
                     let grid = if host != 0 && super::foreground_terminal() == host {
                         read_grid(
                             &automation,
@@ -301,7 +306,10 @@ fn run(focus: Weak<super::MouseFocus>, receiver: mpsc::Receiver<bool>) {
                         if grid.is_some() {
                             owner = candidate_owner;
                         }
-                        focus.geometry.pane_valid.store(grid.is_some(), Ordering::Release);
+                        focus
+                            .geometry
+                            .pane_valid
+                            .store(grid.is_some(), Ordering::Release);
                         *cached = grid;
                     }
                     focus.geometry.pending.store(false, Ordering::Release);
@@ -373,7 +381,9 @@ fn read_grid(
                 SafeArrayGetElement(ids.0, &index, (&mut value as *mut i32).cast()).ok()?;
                 identity.push(value);
             }
-            if !owner.accepts(identity) { return None; }
+            if !owner.accepts(identity) {
+                return None;
+            }
         }
         let pattern: IUIAutomationTextPattern =
             element.GetCurrentPatternAs(UIA_TextPatternId).ok()?;
@@ -445,11 +455,20 @@ mod tests {
 
         tracker.confirm_current_pane();
         let mut restored = owner.for_pane(12, generation());
-        assert!(restored.accepts(vec![4, 5, 6]), "a recreated UIA provider must recover");
-        assert!(!restored.accepts(vec![7, 8, 9]), "the replacement remains pinned");
+        assert!(
+            restored.accepts(vec![4, 5, 6]),
+            "a recreated UIA provider must recover"
+        );
+        assert!(
+            !restored.accepts(vec![7, 8, 9]),
+            "the replacement remains pinned"
+        );
 
         let mut rehosted = owner.for_pane(34, generation());
-        assert!(rehosted.accepts(vec![7, 8, 9]), "moving the pane to a new window can rebind");
+        assert!(
+            rehosted.accepts(vec![7, 8, 9]),
+            "moving the pane to a new window can rebind"
+        );
         assert!(!rehosted.accepts(vec![1, 2, 3]));
     }
 
@@ -556,11 +575,25 @@ mod tests {
 
             let (refresh, requests) = mpsc::sync_channel(1);
             tracker.sender.set(refresh).unwrap();
-            tracker.grid.lock().unwrap().as_mut().unwrap().updated = Instant::now() - Duration::from_secs(1);
-            assert!(super::super::with_physical_coordinates(|| tracker.cached(window.0 as isize)).is_some());
-            assert!(requests.try_recv().is_err(), "an ordinary press never requests stale-geometry UIA work");
-            assert!(super::super::with_physical_coordinates(|| tracker.current(window.0 as isize)).is_some());
-            assert_eq!(requests.try_recv().unwrap(), true, "special gestures retain explicit geometry refresh");
+            tracker.grid.lock().unwrap().as_mut().unwrap().updated =
+                Instant::now() - Duration::from_secs(1);
+            assert!(
+                super::super::with_physical_coordinates(|| tracker.cached(window.0 as isize))
+                    .is_some()
+            );
+            assert!(
+                requests.try_recv().is_err(),
+                "an ordinary press never requests stale-geometry UIA work"
+            );
+            assert!(
+                super::super::with_physical_coordinates(|| tracker.current(window.0 as isize))
+                    .is_some()
+            );
+            assert_eq!(
+                requests.try_recv().unwrap(),
+                true,
+                "special gestures retain explicit geometry refresh"
+            );
         })
         .join()
         .unwrap();

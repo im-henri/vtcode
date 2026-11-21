@@ -345,7 +345,9 @@ impl ActivityMonitor {
     #[cfg(test)]
     pub(crate) fn active_labels(&self) -> impl Iterator<Item = (&'static str, Duration)> + '_ {
         let now = Instant::now();
-        self.active.iter().map(move |task| (task.label, now.saturating_duration_since(task.started)))
+        self.active
+            .iter()
+            .map(move |task| (task.label, now.saturating_duration_since(task.started)))
     }
 
     pub(crate) fn busy_since(&self, now: Instant) -> Option<Instant> {
@@ -439,9 +441,11 @@ pub(crate) fn worker_label(name: &'static str) -> &'static str {
         "bg-save" => "Saving",
         "explorer-refresh" => "Refreshing explorer",
         "git-status" | "git-branch" => "Refreshing Git",
-        "git-line-diff" | "git-compare" | "source-control-diffs" | "diff-refresh" | "git-file-stats" => {
-            "Comparing files"
-        }
+        "git-line-diff"
+        | "git-compare"
+        | "source-control-diffs"
+        | "diff-refresh"
+        | "git-file-stats" => "Comparing files",
         "git-fetch" => "Fetching Git",
         "git-trust" => "Trusting repository",
         "hunk-preview" => "Loading change preview",

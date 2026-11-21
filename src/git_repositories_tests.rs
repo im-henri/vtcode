@@ -5,10 +5,10 @@ use crate::{
 };
 use std::time::{Duration, Instant};
 
-#[path = "git_repository_reopen_tests.rs"]
-mod reopen;
 #[path = "git_repository_headers_tests.rs"]
 mod headers;
+#[path = "git_repository_reopen_tests.rs"]
+mod reopen;
 
 fn init(root: &Path, text: &str) {
     std::fs::create_dir_all(root).unwrap();
@@ -180,10 +180,21 @@ fn cached_discovery_preserves_nested_and_global_ignore_scopes_and_case_policy() 
         let repo = git2::Repository::open(&root).unwrap();
         let excludes = root.join(".git/discovery-excludes");
         std::fs::write(&excludes, "global-output/\n").unwrap();
-        repo.config().unwrap().set_str("core.excludesfile", excludes.to_str().unwrap()).unwrap();
-        repo.config().unwrap().set_bool("core.ignorecase", insensitive).unwrap();
+        repo.config()
+            .unwrap()
+            .set_str("core.excludesfile", excludes.to_str().unwrap())
+            .unwrap();
+        repo.config()
+            .unwrap()
+            .set_bool("core.ignorecase", insensitive)
+            .unwrap();
         std::fs::write(root.join(".gitignore"), "generated/\nUPPER/\n").unwrap();
-        for name in ["generated/deep/project", "global-output/deep/project", "upper/deep/project", "source/kept"] {
+        for name in [
+            "generated/deep/project",
+            "global-output/deep/project",
+            "upper/deep/project",
+            "source/kept",
+        ] {
             init(&root.join(name), "nested\n");
         }
         std::fs::write(root.join("source/.gitignore"), "local-output/\n").unwrap();
@@ -195,14 +206,18 @@ fn cached_discovery_preserves_nested_and_global_ignore_scopes_and_case_policy() 
         assert_eq!(cached.errors, previous.errors);
         assert!(cached.roots.contains(&root.join("source/kept")));
         assert!(!cached.roots.contains(&root.join("generated/deep/project")));
-        assert_eq!(cached.roots.contains(&root.join("upper/deep/project")), !insensitive);
+        assert_eq!(
+            cached.roots.contains(&root.join("upper/deep/project")),
+            !insensitive
+        );
     }
 }
 
 #[test]
 #[ignore = "read-only discovery benchmark: set VTCODE_GIT_BENCH_REPO"]
 fn benchmark_repository_discovery() {
-    let root = PathBuf::from(std::env::var_os("VTCODE_GIT_BENCH_REPO").expect("VTCODE_GIT_BENCH_REPO"));
+    let root =
+        PathBuf::from(std::env::var_os("VTCODE_GIT_BENCH_REPO").expect("VTCODE_GIT_BENCH_REPO"));
     let cancel = CancellationToken::new();
     let mut times = [Vec::new(), Vec::new(), Vec::new()];
     let mut expected = None;
@@ -212,14 +227,26 @@ fn benchmark_repository_discovery() {
             let discovery = discover_scan(&root, &cancel, |_, _, _| {}, mode > 0, mode == 2);
             let elapsed = start.elapsed();
             assert!(discovery.errors.is_empty(), "{:?}", discovery.errors);
-            if let Some(expected) = &expected { assert_eq!(&discovery.roots, expected); }
-            else { expected = Some(discovery.roots); }
-            if sample > 0 { times[mode].push(elapsed); }
+            if let Some(expected) = &expected {
+                assert_eq!(&discovery.roots, expected);
+            } else {
+                expected = Some(discovery.roots);
+            }
+            if sample > 0 {
+                times[mode].push(elapsed);
+            }
         }
     }
-    for times in &mut times { times.sort(); }
-    eprintln!("repository discovery: before={:?} cached={:?} listings={:?}; roots={}",
-        times[0][times[0].len()/2], times[1][times[1].len()/2], times[2][times[2].len()/2], expected.unwrap().len());
+    for times in &mut times {
+        times.sort();
+    }
+    eprintln!(
+        "repository discovery: before={:?} cached={:?} listings={:?}; roots={}",
+        times[0][times[0].len() / 2],
+        times[1][times[1].len() / 2],
+        times[2][times[2].len() / 2],
+        expected.unwrap().len()
+    );
 }
 
 #[test]
@@ -247,7 +274,10 @@ fn directory_listings_avoid_per_directory_git_probes_and_keep_ignored_repositori
     assert_eq!(after.errors, before.errors);
     assert!(after.roots.contains(&root.join("ignored")));
     assert!(probes_before > 128);
-    assert!(probes_after < 4, "existing listings replace metadata probes: {probes_before} -> {probes_after}");
+    assert!(
+        probes_after < 4,
+        "existing listings replace metadata probes: {probes_before} -> {probes_after}"
+    );
 }
 
 #[cfg(windows)]
@@ -439,12 +469,10 @@ fn stale_repository_reads_and_commit_completion_cannot_modify_another_repository
         .unwrap();
     app.poll_background_results();
     assert_ne!(app.cached_git_branch, "must not appear");
-    app.finish_repository_commit(
-        &crate::app_git::GitCommitRequest {
-            root: fixture.root.clone(),
-            message: "outer commit".into(),
-        },
-    );
+    app.finish_repository_commit(&crate::app_git::GitCommitRequest {
+        root: fixture.root.clone(),
+        message: "outer commit".into(),
+    });
     assert_eq!(app.source_control_commit_msg, "inner draft");
     app.select_source_control_repository(&fixture.root);
     assert!(app.source_control_commit_msg.is_empty());
@@ -686,12 +714,10 @@ fn late_reads_and_commit_completion_remain_safe_after_closing_every_repository()
     app.poll_background_results();
     assert!(app.cached_git_branch.is_empty());
     assert!(!app.bg_git_branch_running);
-    app.finish_repository_commit(
-        &crate::app_git::GitCommitRequest {
-            root: fixture.root.clone(),
-            message: "completed commit".into(),
-        },
-    );
+    app.finish_repository_commit(&crate::app_git::GitCommitRequest {
+        root: fixture.root.clone(),
+        message: "completed commit".into(),
+    });
     app.open_repository_picker();
     app.context_menu_selected = app
         .repositories
@@ -745,8 +771,15 @@ fn discovery_keeps_repositories_in_all_project_directory_names() {
     init(&root.join("target/cache/repository"), "cache\n");
     init(&root.join("build/nested"), "project\n");
     let discovery = discover(&root, &CancellationToken::new());
-    assert_eq!(discovery.roots, vec![root.join("build/nested"), root.join("node_modules/package/repository"),
-        root.join("src/project"), root.join("target/cache/repository")]);
+    assert_eq!(
+        discovery.roots,
+        vec![
+            root.join("build/nested"),
+            root.join("node_modules/package/repository"),
+            root.join("src/project"),
+            root.join("target/cache/repository")
+        ]
+    );
 }
 
 #[test]
@@ -844,7 +877,8 @@ fn status_and_progress_from_before_close_or_reopen_cannot_restore_an_obsolete_re
                 branch: "obsolete".into(),
                 worktree_paths: None,
                 include_untracked: true,
-                files: vec![crate::app::GitFileChange { directory: false,
+                files: vec![crate::app::GitFileChange {
+                    directory: false,
                     path: "ghost.txt".into(),
                     original_path: None,
                     status: 'M',

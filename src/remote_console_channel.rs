@@ -288,7 +288,10 @@ pub(crate) fn run_host(args: &[OsString]) -> io::Result<i32> {
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
-            let _ = writeln!(status_output, "\nVTCode local transport launch failed: {error}");
+            let _ = writeln!(
+                status_output,
+                "\nVTCode local transport launch failed: {error}"
+            );
             return Err(error);
         }
     };
@@ -380,7 +383,10 @@ pub(crate) fn run_host(args: &[OsString]) -> io::Result<i32> {
         return Err(error);
     }
     let code = child.wait()?.code().unwrap_or(1);
-    writeln!(status_output, "\nVTCode local transport exited with code {code}")?;
+    writeln!(
+        status_output,
+        "\nVTCode local transport exited with code {code}"
+    )?;
     status_output.flush()?;
     Ok(code)
 }

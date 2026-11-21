@@ -188,7 +188,9 @@ impl State {
                 if rect.is_empty() {
                     continue;
                 }
-                let close = label.close.map_or_else(Rect::default, |close| close.rect(rect, inset));
+                let close = label
+                    .close
+                    .map_or_else(Rect::default, |close| close.rect(rect, inset));
                 self.presented.push(Presented {
                     id: label.id,
                     rect,
@@ -444,7 +446,9 @@ impl State {
                     .style(label.style),
                 rect,
             );
-            let close = label.close.map_or_else(Rect::default, |button| button.rect(rect, inset));
+            let close = label
+                .close
+                .map_or_else(Rect::default, |button| button.rect(rect, inset));
             close_button::paint(frame, app, close);
             let icon = label
                 .icon

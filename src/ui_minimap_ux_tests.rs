@@ -149,8 +149,12 @@ fn viewport_stays_inside_the_preview_at_file_edges_and_small_heights() {
                         assert!(layout.view_end <= height);
                         for row in 0..height {
                             let (start, end) = minimap_source_range(layout.window, row, height);
-                            let overlaps = start < scroll + layout.visible && scroll < end && start < end;
-                            assert_eq!((layout.view_start..layout.view_end).contains(&row), overlaps);
+                            let overlaps =
+                                start < scroll + layout.visible && scroll < end && start < end;
+                            assert_eq!(
+                                (layout.view_start..layout.view_end).contains(&row),
+                                overlaps
+                            );
                         }
                         previous = layout.window.start;
                     }

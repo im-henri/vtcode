@@ -17,7 +17,8 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let Some(queue) = app
-        .chat.connection
+        .chat
+        .connection
         .selected
         .as_ref()
         .and_then(|id| app.chat.connection.queues.get_mut(id))

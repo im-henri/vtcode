@@ -80,19 +80,31 @@ impl<T> LineLru<T> {
 
     /// A single lookup for warm rows, with storage from the oldest row passed
     /// to the builder on eviction. Entry-limited caches can reuse allocations.
-    pub(crate) fn get_or_insert_recycled(&mut self, key: usize, limit: usize,
-        build: impl FnOnce(Option<T>) -> T) -> &T
-    {
+    pub(crate) fn get_or_insert_recycled(
+        &mut self,
+        key: usize,
+        limit: usize,
+        build: impl FnOnce(Option<T>) -> T,
+    ) -> &T {
         self.get_or_insert_recycled_mut(key, limit, build)
     }
 
     /// Updating an existing generation retains its slot and backing storage.
-    pub(crate) fn get_or_insert_recycled_mut(&mut self, key: usize, limit: usize,
-        build: impl FnOnce(Option<T>) -> T) -> &mut T
-    {
+    pub(crate) fn get_or_insert_recycled_mut(
+        &mut self,
+        key: usize,
+        limit: usize,
+        build: impl FnOnce(Option<T>) -> T,
+    ) -> &mut T {
         debug_assert!(limit > 0);
-        let slot = if let Some(&slot) = self.indices.get(&key) { slot } else {
-            let recycled = if self.len() >= limit { self.pop_front().map(|(_, value)| value) } else { None };
+        let slot = if let Some(&slot) = self.indices.get(&key) {
+            slot
+        } else {
+            let recycled = if self.len() >= limit {
+                self.pop_front().map(|(_, value)| value)
+            } else {
+                None
+            };
             self.push_back((key, build(recycled)));
             self.indices[&key]
         };

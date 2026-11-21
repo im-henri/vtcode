@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::fs_ops::open_lock_file;
+use serde::{Deserialize, Serialize};
 use std::fs::TryLockError;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -240,10 +240,18 @@ pub struct Session {
     pub show_status_bar: bool,
 }
 
-fn default_panel_height() -> u16 { 10 }
-fn default_sc_graph_height() -> u16 { 10 }
-fn default_true() -> bool { true }
-fn default_split_ratio() -> f32 { 0.5 }
+fn default_panel_height() -> u16 {
+    10
+}
+fn default_sc_graph_height() -> u16 {
+    10
+}
+fn default_true() -> bool {
+    true
+}
+fn default_split_ratio() -> f32 {
+    0.5
+}
 
 /// Path to the session file for a given directory.
 pub(crate) fn session_path(project_root: &Path) -> PathBuf {
@@ -259,7 +267,9 @@ fn is_recovery_filename(name: &str) -> bool {
     // Both the current and legacy writers use the tab_ prefix and portable
     // names. Reject paths, alternate data streams and device names on load.
     name.starts_with(RECOVERY_FILE_PREFIX)
-        && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
         && matches!(name.rsplit_once('.'), Some((_, "txt" | "json" | "bin")))
 }
 
@@ -281,7 +291,10 @@ fn recovery_filename(name: &str) -> io::Result<&str> {
     if is_recovery_filename(name) {
         Ok(name)
     } else {
-        Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid recovery filename"))
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid recovery filename",
+        ))
     }
 }
 
@@ -313,8 +326,12 @@ fn acquire_recovery_lease(manifest: &Path) -> io::Result<Arc<FileLock>> {
         .join(RECOVERY_READER_LOCK);
     let file = match open_recovery_file(&path) {
         Ok(file) => file,
-        Err(error) if error.kind() == io::ErrorKind::NotFound
-            && manifest.symlink_metadata().is_ok_and(|metadata| metadata.is_file()) => {
+        Err(error)
+            if error.kind() == io::ErrorKind::NotFound
+                && manifest
+                    .symlink_metadata()
+                    .is_ok_and(|metadata| metadata.is_file()) =>
+        {
             // Older manifests predate the lock. Create it only when there is
             // an existing session to migrate, including on startup.
             open_lock_file(&path)?
@@ -347,7 +364,11 @@ fn save_recovery_file(
     }
     temporary.as_file().sync_all()?;
     let (_, path) = temporary.keep().map_err(|error| error.error)?;
-    Ok(path.file_name().expect("temporary recovery filename").to_string_lossy().into_owned())
+    Ok(path
+        .file_name()
+        .expect("temporary recovery filename")
+        .to_string_lossy()
+        .into_owned())
 }
 
 /// Roll back only this transaction's new sidecars when any later write fails.
@@ -359,9 +380,17 @@ struct RecoveryWrites<'a> {
 }
 
 impl<'a> RecoveryWrites<'a> {
-    fn new(root: &'a Path) -> Self { Self { root, created: Vec::new(), committed: false } }
+    fn new(root: &'a Path) -> Self {
+        Self {
+            root,
+            created: Vec::new(),
+            committed: false,
+        }
+    }
 
-    fn write(&mut self, suffix: &str,
+    fn write(
+        &mut self,
+        suffix: &str,
         write: impl FnOnce(&mut std::io::BufWriter<&mut std::fs::File>) -> std::io::Result<()>,
     ) -> std::io::Result<String> {
         let name = save_recovery_file(self.root, suffix, write)?;
@@ -395,14 +424,17 @@ fn load_unsaved_content(project_root: &Path, filename: &str) -> Option<Recovered
     let load = || -> io::Result<_> {
         let path = recovery_path(&unsaved_dir(project_root), filename)?;
         let file = open_recovery_file(&path)?;
-        let (content, sha256) = history::read_base(std::io::BufReader::with_capacity(64 * 1024, file))?;
+        let (content, sha256) =
+            history::read_base(std::io::BufReader::with_capacity(64 * 1024, file))?;
         Ok(RecoveredText { content, sha256 })
     };
-    load().map_err(|e| {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            log_warn!("failed to read unsaved content {filename:?}: {e}");
-        }
-    }).ok()
+    load()
+        .map_err(|e| {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log_warn!("failed to read unsaved content {filename:?}: {e}");
+            }
+        })
+        .ok()
 }
 
 /// Remove obsolete sidecars only after the new manifest is committed. Pending
@@ -418,7 +450,10 @@ fn cleanup_unsaved_dir(project_root: &Path, retained: &std::collections::HashSet
             }) && entry.file_type().is_ok_and(|kind| kind.is_file())
                 && let Err(error) = std::fs::remove_file(entry.path())
             {
-                log_warn!("failed to remove obsolete session recovery file '{}': {error}", entry.path().display());
+                log_warn!(
+                    "failed to remove obsolete session recovery file '{}': {error}",
+                    entry.path().display()
+                );
             }
         }
     }
@@ -441,13 +476,20 @@ fn save_undo_history(
 ) -> std::io::Result<String> {
     let undo = &undo_entries[undo_entries.len().saturating_sub(MAX_UNDO_ENTRIES)..];
     let redo = &redo_entries[redo_entries.len().saturating_sub(MAX_UNDO_ENTRIES)..];
-    let metadata = |entries: &[crate::editor::UndoSnapshot]| entries.iter()
-        .map(|(content, cl, cc, ec, eca, sa, modified)| SavedUndoEntry {
-            content_bytes: Some(content.len_bytes()),
-            cursor_line: *cl, cursor_col: *cc,
-            extra_cursors: ec.clone(), extra_cursor_anchors: eca.clone(), selection_anchor: *sa,
-            modified: *modified,
-        }).collect();
+    let metadata = |entries: &[crate::editor::UndoSnapshot]| {
+        entries
+            .iter()
+            .map(|(content, cl, cc, ec, eca, sa, modified)| SavedUndoEntry {
+                content_bytes: Some(content.len_bytes()),
+                cursor_line: *cl,
+                cursor_col: *cc,
+                extra_cursors: ec.clone(),
+                extra_cursor_anchors: eca.clone(),
+                selection_anchor: *sa,
+                modified: *modified,
+            })
+            .collect()
+    };
     let mut digest = [0; 32];
     let contents = writes.write("_history.bin", |writer| {
         digest = if let Some(base) = &base {
@@ -476,13 +518,17 @@ fn save_undo_history(
     // These sidecars were just durably written. Do not reopen and parse them
     // to rediscover their names (particularly costly on shared storage).
     retained.extend([filename.clone(), contents]);
-    if let Some(base) = base { retained.insert(base.filename.to_owned()); }
+    if let Some(base) = base {
+        retained.insert(base.filename.to_owned());
+    }
     Ok(filename)
 }
 
 #[cfg(test)]
 fn save_test_undo_history(
-    root: &Path, undo: &[crate::editor::UndoSnapshot], redo: &[crate::editor::UndoSnapshot],
+    root: &Path,
+    undo: &[crate::editor::UndoSnapshot],
+    redo: &[crate::editor::UndoSnapshot],
     retained: &mut std::collections::HashSet<String>,
 ) -> std::io::Result<String> {
     let mut writes = RecoveryWrites::new(root);
@@ -514,18 +560,32 @@ struct SavedUndoHistory {
 
 impl SavedUndoHistory {
     fn content_files(&self) -> std::io::Result<Vec<&str>> {
-        let invalid = || std::io::Error::new(
-            std::io::ErrorKind::InvalidData, "invalid session undo recovery manifest");
+        let invalid = || {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "invalid session undo recovery manifest",
+            )
+        };
         let files = match self.version {
-            0 => vec![self.undo_contents_file.as_str(), self.redo_contents_file.as_str()],
-            2 | 3 if self.undo.len() <= MAX_UNDO_ENTRIES
-                && self.redo.len() <= MAX_UNDO_ENTRIES
-                && self.contents_sha256.is_some()
-                && self.undo.iter().chain(&self.redo)
-                    .all(|entry| entry.content_bytes.is_some()) => {
+            0 => vec![
+                self.undo_contents_file.as_str(),
+                self.redo_contents_file.as_str(),
+            ],
+            2 | 3
+                if self.undo.len() <= MAX_UNDO_ENTRIES
+                    && self.redo.len() <= MAX_UNDO_ENTRIES
+                    && self.contents_sha256.is_some()
+                    && self
+                        .undo
+                        .iter()
+                        .chain(&self.redo)
+                        .all(|entry| entry.content_bytes.is_some()) =>
+            {
                 let mut files = vec![self.contents_file.as_deref().ok_or_else(invalid)?];
                 if self.version == 3 {
-                    if self.base_sha256.is_none() { return Err(invalid()); }
+                    if self.base_sha256.is_none() {
+                        return Err(invalid());
+                    }
                     files.push(self.base_file.as_deref().ok_or_else(invalid)?);
                 }
                 files
@@ -541,44 +601,74 @@ impl SavedUndoHistory {
 
 fn load_undo_stack(path: &Path, metadata: Vec<SavedUndoEntry>) -> std::io::Result<UndoStack> {
     let mut reader = std::io::BufReader::with_capacity(64 * 1024, open_recovery_file(path)?);
-    let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid undo recovery content");
+    let invalid = || {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid undo recovery content",
+        )
+    };
     let mut contents = Vec::with_capacity(metadata.len());
     if metadata.iter().all(|entry| entry.content_bytes.is_some()) {
         for (index, entry) in metadata.iter().enumerate() {
             if index > 0 {
                 let mut separator = [0; UNDO_SEPARATOR.len()];
                 reader.read_exact(&mut separator)?;
-                if separator != UNDO_SEPARATOR { return Err(invalid()); }
+                if separator != UNDO_SEPARATOR {
+                    return Err(invalid());
+                }
             }
             let len = entry.content_bytes.unwrap();
             let content = ropey::Rope::from_reader(reader.by_ref().take(len as u64))?;
-            if content.len_bytes() != len { return Err(invalid()); }
+            if content.len_bytes() != len {
+                return Err(invalid());
+            }
             contents.push(content);
         }
-        if reader.read(&mut [0])? != 0 { return Err(invalid()); }
+        if reader.read(&mut [0])? != 0 {
+            return Err(invalid());
+        }
     } else {
         // Existing installations have separator-delimited history without
         // lengths. Keep reading it, but never turn a missing file into empty
         // undo states that would erase recovered text.
-        if metadata.iter().any(|entry| entry.content_bytes.is_some()) { return Err(invalid()); }
+        if metadata.iter().any(|entry| entry.content_bytes.is_some()) {
+            return Err(invalid());
+        }
         let mut text = String::new();
         reader.read_to_string(&mut text)?;
-        contents.extend(text.split(std::str::from_utf8(UNDO_SEPARATOR).unwrap()).map(ropey::Rope::from_str));
-        if contents.len() != metadata.len() { return Err(invalid()); }
+        contents.extend(
+            text.split(std::str::from_utf8(UNDO_SEPARATOR).unwrap())
+                .map(ropey::Rope::from_str),
+        );
+        if contents.len() != metadata.len() {
+            return Err(invalid());
+        }
     }
-    Ok(contents.into_iter().zip(metadata).map(|(content, entry)| (
-        content, entry.cursor_line, entry.cursor_col, entry.extra_cursors,
-        entry.extra_cursor_anchors, entry.selection_anchor, entry.modified,
-    )).collect())
+    Ok(contents
+        .into_iter()
+        .zip(metadata)
+        .map(|(content, entry)| {
+            (
+                content,
+                entry.cursor_line,
+                entry.cursor_col,
+                entry.extra_cursors,
+                entry.extra_cursor_anchors,
+                entry.selection_anchor,
+                entry.modified,
+            )
+        })
+        .collect())
 }
 
 /// Load undo history from files. Returns (undo_entries, redo_entries).
 #[cfg(test)]
-fn load_undo_history(
-    project_root: &Path,
-    filename: &str,
-) -> Option<(UndoStack, UndoStack)> {
-    load_undo_history_cached(project_root, filename, &mut std::collections::HashMap::new())
+fn load_undo_history(project_root: &Path, filename: &str) -> Option<(UndoStack, UndoStack)> {
+    load_undo_history_cached(
+        project_root,
+        filename,
+        &mut std::collections::HashMap::new(),
+    )
 }
 
 fn load_undo_history_cached(
@@ -594,31 +684,58 @@ fn load_undo_history_cached(
         if parsed.version == 2 || parsed.version == 3 {
             let base = if parsed.version == 3 {
                 let name = parsed.base_file.as_ref().unwrap();
-                let content = contents.entry(name.clone())
-                    .or_insert_with(|| load_unsaved_content(project_root, name)).clone()
-                    .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "missing undo recovery base"))?;
+                let content = contents
+                    .entry(name.clone())
+                    .or_insert_with(|| load_unsaved_content(project_root, name))
+                    .clone()
+                    .ok_or_else(|| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "missing undo recovery base",
+                        )
+                    })?;
                 if content.sha256 != parsed.base_sha256.unwrap() {
-                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "undo recovery base checksum mismatch"));
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "undo recovery base checksum mismatch",
+                    ));
                 }
                 Some(content.content)
-            } else { None };
+            } else {
+                None
+            };
             let file = open_recovery_file(&dir.join(parsed.contents_file.unwrap()))?;
             let reader = std::io::BufReader::with_capacity(64 * 1024, file);
             if base.is_some() {
-                history::read_with_base(reader, parsed.undo, parsed.redo, parsed.contents_sha256.unwrap(), base)
+                history::read_with_base(
+                    reader,
+                    parsed.undo,
+                    parsed.redo,
+                    parsed.contents_sha256.unwrap(),
+                    base,
+                )
             } else {
-                history::read(reader, parsed.undo, parsed.redo, parsed.contents_sha256.unwrap())
+                history::read(
+                    reader,
+                    parsed.undo,
+                    parsed.redo,
+                    parsed.contents_sha256.unwrap(),
+                )
             }
         } else {
-            Ok((load_undo_stack(&dir.join(parsed.undo_contents_file), parsed.undo)?,
-                load_undo_stack(&dir.join(parsed.redo_contents_file), parsed.redo)?))
+            Ok((
+                load_undo_stack(&dir.join(parsed.undo_contents_file), parsed.undo)?,
+                load_undo_stack(&dir.join(parsed.redo_contents_file), parsed.redo)?,
+            ))
         }
     };
-    load().map_err(|error| {
-        if error.kind() != io::ErrorKind::NotFound {
-            log_warn!("failed to read undo history {filename:?}: {error}");
-        }
-    }).ok()
+    load()
+        .map_err(|error| {
+            if error.kind() != io::ErrorKind::NotFound {
+                log_warn!("failed to read undo history {filename:?}: {error}");
+            }
+        })
+        .ok()
 }
 
 fn check_manifest_size(size: u64) -> io::Result<()> {
@@ -678,7 +795,10 @@ pub(crate) fn save_session(project_root: &Path, session: &Session) -> std::io::R
     {
         return Err(io::Error::new(
             error.kind(),
-            format!("Cannot replace session manifest '{}': {error}", path.display()),
+            format!(
+                "Cannot replace session manifest '{}': {error}",
+                path.display()
+            ),
         ));
     }
     let mut writes = RecoveryWrites::new(project_root);
@@ -686,16 +806,45 @@ pub(crate) fn save_session(project_root: &Path, session: &Session) -> std::io::R
     // Keep every referenced file until the new manifest is durable. This also
     // handles a folder switch while recovery hydration is still in progress.
     let mut retained = std::collections::HashSet::new();
-    let document_ids:std::collections::HashMap<_,_>=session_out.desks.as_ref().map(|d|d.documents.iter().map(|&(pane,tab,id)|((pane,tab),id)).collect()).unwrap_or_default();
-    let mut documents:std::collections::HashMap<u64,(Option<String>,Option<String>)>=std::collections::HashMap::new();
-    let active_group=session_out.active_group;
-    for (pane,index,tab) in session_out.tabs.iter_mut().enumerate().map(|(i,t)|(active_group,i,t)).chain(
-        session_out.groups.iter_mut().enumerate().flat_map(|(pane,group)|group.tabs.iter_mut().enumerate().map(move |(i,t)|(pane,i,t))),
-    ) {
-        let document=document_ids.get(&(pane,index)).copied();
-        if let Some((text,history))=document.and_then(|id|documents.get(&id)) {
-            tab.unsaved_file=text.clone();tab.undo_history_file=history.clone();
-            tab.pending_unsaved_content=None;tab.undo_entries=None;tab.redo_entries=None;
+    let document_ids: std::collections::HashMap<_, _> = session_out
+        .desks
+        .as_ref()
+        .map(|d| {
+            d.documents
+                .iter()
+                .map(|&(pane, tab, id)| ((pane, tab), id))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut documents: std::collections::HashMap<u64, (Option<String>, Option<String>)> =
+        std::collections::HashMap::new();
+    let active_group = session_out.active_group;
+    for (pane, index, tab) in session_out
+        .tabs
+        .iter_mut()
+        .enumerate()
+        .map(|(i, t)| (active_group, i, t))
+        .chain(
+            session_out
+                .groups
+                .iter_mut()
+                .enumerate()
+                .flat_map(|(pane, group)| {
+                    group
+                        .tabs
+                        .iter_mut()
+                        .enumerate()
+                        .map(move |(i, t)| (pane, i, t))
+                }),
+        )
+    {
+        let document = document_ids.get(&(pane, index)).copied();
+        if let Some((text, history)) = document.and_then(|id| documents.get(&id)) {
+            tab.unsaved_file = text.clone();
+            tab.undo_history_file = history.clone();
+            tab.pending_unsaved_content = None;
+            tab.undo_entries = None;
+            tab.redo_entries = None;
             continue;
         }
         let content = tab.pending_unsaved_content.take();
@@ -706,14 +855,24 @@ pub(crate) fn save_session(project_root: &Path, session: &Session) -> std::io::R
                 Ok(())
             })?);
             true
-        } else { false };
+        } else {
+            false
+        };
         let mut wrote_history = false;
         if let (Some(undo), Some(redo)) = (&tab.undo_entries, &tab.redo_entries) {
             if !undo.is_empty() || !redo.is_empty() {
                 let base = content.as_ref().map(|content| RecoveryBase {
-                    filename: tab.unsaved_file.as_deref().unwrap(), content, sha256: base_digest,
+                    filename: tab.unsaved_file.as_deref().unwrap(),
+                    content,
+                    sha256: base_digest,
                 });
-                tab.undo_history_file = Some(save_undo_history(&mut writes, undo, redo, &mut retained, base)?);
+                tab.undo_history_file = Some(save_undo_history(
+                    &mut writes,
+                    undo,
+                    redo,
+                    &mut retained,
+                    base,
+                )?);
                 wrote_history = true;
             } else {
                 tab.undo_history_file = None;
@@ -721,14 +880,24 @@ pub(crate) fn save_session(project_root: &Path, session: &Session) -> std::io::R
         }
         tab.undo_entries = None;
         tab.redo_entries = None;
-        if let Some(id)=document {documents.insert(id,(tab.unsaved_file.clone(),tab.undo_history_file.clone()));}
+        if let Some(id) = document {
+            documents.insert(
+                id,
+                (tab.unsaved_file.clone(), tab.undo_history_file.clone()),
+            );
+        }
         if let Some(filename) = &tab.unsaved_file {
-            if !wrote_unsaved { open_recovery_file(&recovery_path(&recovery_dir, filename)?)?; }
+            if !wrote_unsaved {
+                open_recovery_file(&recovery_path(&recovery_dir, filename)?)?;
+            }
             retained.insert(filename.clone());
         }
         if let Some(filename) = &tab.undo_history_file {
-            if wrote_history { continue; }
-            let history: SavedUndoHistory = read_manifest(&recovery_path(&recovery_dir, filename)?)?;
+            if wrote_history {
+                continue;
+            }
+            let history: SavedUndoHistory =
+                read_manifest(&recovery_path(&recovery_dir, filename)?)?;
             retained.insert(filename.clone());
             for content_file in history.content_files()? {
                 open_recovery_file(&recovery_dir.join(content_file))?;
@@ -814,7 +983,9 @@ fn load_session_inner(
 
 impl Session {
     pub(crate) fn has_recovery_sidecars(&self) -> bool {
-        self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
+        self.tabs
+            .iter()
+            .chain(self.groups.iter().flat_map(|group| &group.tabs))
             .any(SavedTab::has_recovery_sidecars)
     }
 }
@@ -848,14 +1019,20 @@ pub(crate) fn hydrate_saved_tabs<'a>(
     let mut contents = std::collections::HashMap::new();
     let mut histories = std::collections::HashMap::new();
     for tab in tabs {
-        if tab.pending_unsaved_content.is_none() && let Some(filename) = &tab.unsaved_file {
-            tab.pending_unsaved_content = contents.entry(filename.clone())
+        if tab.pending_unsaved_content.is_none()
+            && let Some(filename) = &tab.unsaved_file
+        {
+            tab.pending_unsaved_content = contents
+                .entry(filename.clone())
                 .or_insert_with(|| load_unsaved_content(project_root, filename))
-                .as_ref().map(|text| text.content.clone());
+                .as_ref()
+                .map(|text| text.content.clone());
         }
-        if tab.undo_entries.is_none() && tab.redo_entries.is_none()
+        if tab.undo_entries.is_none()
+            && tab.redo_entries.is_none()
             && let Some(filename) = &tab.undo_history_file
-            && let Some((undo, redo)) = histories.entry(filename.clone())
+            && let Some((undo, redo)) = histories
+                .entry(filename.clone())
                 .or_insert_with(|| load_undo_history_cached(project_root, filename, &mut contents))
         {
             tab.undo_entries = Some(undo.clone());
@@ -872,15 +1049,22 @@ pub(crate) fn share_recovered_disk_snapshot<'a>(
 ) {
     let mut checked: Vec<(ropey::Rope, bool)> = Vec::new();
     for tab in tabs {
-        let Some(content) = &mut tab.pending_unsaved_content else { continue; };
-        let equal = if let Some((_, equal)) = checked.iter().find(|(source, _)| source.is_instance(content)) {
+        let Some(content) = &mut tab.pending_unsaved_content else {
+            continue;
+        };
+        let equal = if let Some((_, equal)) = checked
+            .iter()
+            .find(|(source, _)| source.is_instance(content))
+        {
             *equal
         } else {
             let equal = crate::rope_changes::equal(content, disk);
             checked.push((content.clone(), equal));
             equal
         };
-        if equal { *content = disk.clone(); }
+        if equal {
+            *content = disk.clone();
+        }
     }
 }
 
@@ -901,7 +1085,10 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos();
-        path.push(format!("vtcode-session-test-{}-{stamp}-{sequence}", std::process::id()));
+        path.push(format!(
+            "vtcode-session-test-{}-{stamp}-{sequence}",
+            std::process::id()
+        ));
         path
     }
 
@@ -953,8 +1140,14 @@ mod tests {
         };
 
         assert!(save_session(&project_root, &session).is_err());
-        assert_eq!(std::fs::read(session_path(&project_root)).unwrap(), previous_manifest);
-        assert_eq!(session.tabs[0].pending_unsaved_content.as_ref().unwrap(), "unsaved edits");
+        assert_eq!(
+            std::fs::read(session_path(&project_root)).unwrap(),
+            previous_manifest
+        );
+        assert_eq!(
+            session.tabs[0].pending_unsaved_content.as_ref().unwrap(),
+            "unsaved edits"
+        );
 
         std::fs::remove_dir_all(vtcode_dir).unwrap();
         let _ = std::fs::remove_dir_all(&project_root); // Error OK: dir may not exist
@@ -963,15 +1156,21 @@ mod tests {
     pub(super) fn recovery_test_tab(content: &str) -> SavedTab {
         SavedTab {
             file_path: Some("test.txt".into()),
-            cursor_line: 0, cursor_col: 0, scroll_offset: 0,
-            horizontal_scroll: 0, pinned: false, preview: false,
+            cursor_line: 0,
+            cursor_col: 0,
+            scroll_offset: 0,
+            horizontal_scroll: 0,
+            pinned: false,
+            preview: false,
             text_color: None,
             unsaved_file: None,
             pending_unsaved_content: Some(content.into()),
-            undo_history_file: None, language_override: None,
+            undo_history_file: None,
+            language_override: None,
             undo_entries: Some(vec![("before".into(), 0, 0, vec![], vec![], None, false)]),
             redo_entries: Some(vec![("after".into(), 0, 0, vec![], vec![], None, true)]),
-            bookmarks: Vec::new(), folded_ranges: Vec::new(),
+            bookmarks: Vec::new(),
+            folded_ranges: Vec::new(),
         }
     }
 
@@ -979,9 +1178,14 @@ mod tests {
     fn recovery_manifest_rejects_paths_outside_its_sidecar_directory() {
         let root = tempfile::tempdir().unwrap();
         let project = root.path();
-        save_session(project, &Session {
-            tabs: vec![recovery_test_tab("original")], ..Session::default()
-        }).unwrap();
+        save_session(
+            project,
+            &Session {
+                tabs: vec![recovery_test_tab("original")],
+                ..Session::default()
+            },
+        )
+        .unwrap();
         let manifest = fs::read(session_path(project)).unwrap();
         let mut session = load_session(project).unwrap();
         let dir = unsaved_dir(project);
@@ -996,7 +1200,10 @@ mod tests {
         hydrate_saved_tab(project, tab);
         assert!(tab.pending_unsaved_content.is_none());
         assert!(tab.undo_entries.is_none());
-        assert_eq!(save_session(project, &session).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            save_session(project, &session).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
         assert_eq!(fs::read(session_path(project)).unwrap(), manifest);
         fs::remove_dir_all(parent).unwrap();
     }
@@ -1028,9 +1235,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let project = root.path();
         let dir = unsaved_dir(project);
-        save_session(project, &Session {
-            tabs: vec![recovery_test_tab("old")], ..Session::default()
-        }).unwrap();
+        save_session(
+            project,
+            &Session {
+                tabs: vec![recovery_test_tab("old")],
+                ..Session::default()
+            },
+        )
+        .unwrap();
         let unrelated = ["keep.txt", "tab_project_notes.txt", "tab_aBc123_report.bin"];
         for name in unrelated {
             fs::write(dir.join(name), "unrelated file").unwrap();
@@ -1038,7 +1250,10 @@ mod tests {
         save_session(project, &Session::default()).unwrap();
         assert_eq!(fs::read_dir(&dir).unwrap().count(), unrelated.len());
         for name in unrelated {
-            assert_eq!(fs::read_to_string(dir.join(name)).unwrap(), "unrelated file");
+            assert_eq!(
+                fs::read_to_string(dir.join(name)).unwrap(),
+                "unrelated file"
+            );
         }
         fs::remove_dir_all(dir.parent().unwrap()).unwrap();
     }
@@ -1099,7 +1314,10 @@ mod tests {
             global_search_query: "a".repeat(MAX_MANIFEST_BYTES as usize),
             ..Session::default()
         };
-        assert_eq!(save_session(project, &oversized).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            save_session(project, &oversized).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
         assert_eq!(fs::read(&path).unwrap(), previous);
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
@@ -1112,7 +1330,10 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let filename = "tab_123456_history.json";
         for path in [session_path(project), dir.join(filename)] {
-            File::create(path).unwrap().set_len(MAX_MANIFEST_BYTES + 1).unwrap();
+            File::create(path)
+                .unwrap()
+                .set_len(MAX_MANIFEST_BYTES + 1)
+                .unwrap();
         }
         assert!(load_session(project).is_none());
         assert!(load_undo_history(project, filename).is_none());
@@ -1123,9 +1344,14 @@ mod tests {
     fn save_preserves_unreadable_manifest_and_its_recovery_files() {
         let root = tempfile::tempdir().unwrap();
         let project = root.path();
-        save_session(project, &Session {
-            tabs: vec![recovery_test_tab("recover this")], ..Session::default()
-        }).unwrap();
+        save_session(
+            project,
+            &Session {
+                tabs: vec![recovery_test_tab("recover this")],
+                ..Session::default()
+            },
+        )
+        .unwrap();
         let mut saved = load_session(project).unwrap();
         let text = unsaved_dir(project).join(saved.tabs.remove(0).unsaved_file.unwrap());
         drop(saved);
@@ -1133,7 +1359,12 @@ mod tests {
         let manifest = session_path(project);
         fs::write(&manifest, b"{truncated").unwrap();
         assert!(load_session(project).is_none());
-        assert_eq!(save_session(project, &Session::default()).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            save_session(project, &Session::default())
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
         assert_eq!(fs::read(&manifest).unwrap(), b"{truncated");
         assert_eq!(fs::read_to_string(&text).unwrap(), "recover this");
         fs::remove_dir_all(manifest.parent().unwrap()).unwrap();
@@ -1153,7 +1384,10 @@ mod tests {
             tabs: vec![recovery_test_tab("another window")],
             ..Session::default()
         };
-        assert_eq!(save_session(project, &new).unwrap_err().kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(
+            save_session(project, &new).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
         assert_eq!(fs::read(&manifest).unwrap(), original);
         assert!(!unsaved_dir(project).exists());
 
@@ -1169,7 +1403,14 @@ mod tests {
         let project = root.path();
         let mut tab = recovery_test_tab("older unsaved buffer");
         tab.file_path = None;
-        save_session(project, &Session { tabs: vec![tab], ..Session::default() }).unwrap();
+        save_session(
+            project,
+            &Session {
+                tabs: vec![tab],
+                ..Session::default()
+            },
+        )
+        .unwrap();
         let original = load_session(project).unwrap();
         let dir = unsaved_dir(project);
         let content = dir.join(original.tabs[0].unsaved_file.as_deref().unwrap());
@@ -1226,52 +1467,98 @@ mod tests {
     fn duplicate_recovery_views_share_one_decoded_buffer_and_history() {
         let root = tempfile::tempdir().unwrap();
         let source = recovery_test_tab(&"λ log output\n".repeat(20_000));
-        save_session(root.path(), &Session { tabs: vec![source], ..Default::default() }).unwrap();
+        save_session(
+            root.path(),
+            &Session {
+                tabs: vec![source],
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let saved = load_session(root.path()).unwrap().tabs.remove(0);
-        let mut views: Vec<_> = (0..12).map(|index| {
-            let mut tab = saved.clone();
-            tab.cursor_line = index;
-            tab
-        }).collect();
-        hydrate_saved_tabs(root.path(), views.iter_mut().enumerate().map(|(index, tab)| {
-            if index == 1 {
-                // Later views must use this job's decoded objects, even if
-                // another session write has removed the old sidecars.
-                fs::remove_file(unsaved_dir(root.path()).join(saved.unsaved_file.as_ref().unwrap())).unwrap();
-                fs::remove_file(unsaved_dir(root.path()).join(saved.undo_history_file.as_ref().unwrap())).unwrap();
-            }
-            tab
-        }));
+        let mut views: Vec<_> = (0..12)
+            .map(|index| {
+                let mut tab = saved.clone();
+                tab.cursor_line = index;
+                tab
+            })
+            .collect();
+        hydrate_saved_tabs(
+            root.path(),
+            views.iter_mut().enumerate().map(|(index, tab)| {
+                if index == 1 {
+                    // Later views must use this job's decoded objects, even if
+                    // another session write has removed the old sidecars.
+                    fs::remove_file(
+                        unsaved_dir(root.path()).join(saved.unsaved_file.as_ref().unwrap()),
+                    )
+                    .unwrap();
+                    fs::remove_file(
+                        unsaved_dir(root.path()).join(saved.undo_history_file.as_ref().unwrap()),
+                    )
+                    .unwrap();
+                }
+                tab
+            }),
+        );
         for (index, tab) in views.iter().enumerate() {
             assert_eq!(tab.cursor_line, index);
-            assert!(tab.pending_unsaved_content.as_ref().unwrap()
-                .is_instance(views[0].pending_unsaved_content.as_ref().unwrap()));
-            assert!(tab.undo_entries.as_ref().unwrap()[0].0
-                .is_instance(&views[0].undo_entries.as_ref().unwrap()[0].0));
-            assert!(tab.redo_entries.as_ref().unwrap()[0].0
-                .is_instance(&views[0].redo_entries.as_ref().unwrap()[0].0));
+            assert!(
+                tab.pending_unsaved_content
+                    .as_ref()
+                    .unwrap()
+                    .is_instance(views[0].pending_unsaved_content.as_ref().unwrap())
+            );
+            assert!(
+                tab.undo_entries.as_ref().unwrap()[0]
+                    .0
+                    .is_instance(&views[0].undo_entries.as_ref().unwrap()[0].0)
+            );
+            assert!(
+                tab.redo_entries.as_ref().unwrap()[0]
+                    .0
+                    .is_instance(&views[0].redo_entries.as_ref().unwrap()[0].0)
+            );
         }
     }
 
     #[test]
     fn recovery_sharing_preserves_transient_edits_and_expires_after_each_job() {
         let root = tempfile::tempdir().unwrap();
-        save_session(root.path(), &Session {
-            tabs: vec![recovery_test_tab("original")], ..Default::default()
-        }).unwrap();
+        save_session(
+            root.path(),
+            &Session {
+                tabs: vec![recovery_test_tab("original")],
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let saved = load_session(root.path()).unwrap().tabs.remove(0);
         let mut views = vec![saved.clone(); 3];
         views[0].pending_unsaved_content = Some("newer edit".into());
         views[0].undo_entries = Some(Vec::new());
         views[0].redo_entries = Some(Vec::new());
         hydrate_saved_tabs(root.path(), &mut views);
-        assert_eq!(views[0].pending_unsaved_content.as_ref().unwrap(), "newer edit");
+        assert_eq!(
+            views[0].pending_unsaved_content.as_ref().unwrap(),
+            "newer edit"
+        );
         assert!(views[0].undo_entries.as_ref().unwrap().is_empty());
-        assert_eq!(views[1].pending_unsaved_content.as_ref().unwrap(), "original");
-        fs::write(unsaved_dir(root.path()).join(saved.unsaved_file.as_ref().unwrap()), "later disk recovery").unwrap();
+        assert_eq!(
+            views[1].pending_unsaved_content.as_ref().unwrap(),
+            "original"
+        );
+        fs::write(
+            unsaved_dir(root.path()).join(saved.unsaved_file.as_ref().unwrap()),
+            "later disk recovery",
+        )
+        .unwrap();
         let mut next_job = saved;
         hydrate_saved_tab(root.path(), &mut next_job);
-        assert_eq!(next_job.pending_unsaved_content.as_ref().unwrap(), "later disk recovery");
+        assert_eq!(
+            next_job.pending_unsaved_content.as_ref().unwrap(),
+            "later disk recovery"
+        );
     }
 
     #[test]
@@ -1279,14 +1566,27 @@ mod tests {
         let disk = ropey::Rope::from_str(&"λ log output\n".repeat(20_000));
         let recovered = ropey::Rope::from_str(&disk.to_string());
         let mut tabs = vec![recovery_test_tab(""); 6];
-        for tab in &mut tabs[..4] { tab.pending_unsaved_content = Some(recovered.clone()); }
+        for tab in &mut tabs[..4] {
+            tab.pending_unsaved_content = Some(recovered.clone());
+        }
         let mut edited = recovered.clone();
         edited.insert_char(edited.len_chars() - 3, '!');
         tabs[4].pending_unsaved_content = Some(edited.clone());
         tabs[5].pending_unsaved_content = None;
         share_recovered_disk_snapshot(&mut tabs, &disk);
-        assert!(tabs[..4].iter().all(|tab| tab.pending_unsaved_content.as_ref().unwrap().is_instance(&disk)));
-        assert!(tabs[4].pending_unsaved_content.as_ref().unwrap().is_instance(&edited));
+        assert!(tabs[..4].iter().all(|tab| {
+            tab.pending_unsaved_content
+                .as_ref()
+                .unwrap()
+                .is_instance(&disk)
+        }));
+        assert!(
+            tabs[4]
+                .pending_unsaved_content
+                .as_ref()
+                .unwrap()
+                .is_instance(&edited)
+        );
         assert!(tabs[5].pending_unsaved_content.is_none());
     }
 
@@ -1295,7 +1595,10 @@ mod tests {
         let project_root = unique_temp_project_root();
         let session = Session {
             tabs: vec![recovery_test_tab("pending tab")],
-            groups: vec![SavedGroup { tabs: vec![recovery_test_tab("pending group")], active_tab: 0 }],
+            groups: vec![SavedGroup {
+                tabs: vec![recovery_test_tab("pending group")],
+                active_tab: 0,
+            }],
             ..Session::default()
         };
         save_session(&project_root, &session).unwrap();
@@ -1307,7 +1610,10 @@ mod tests {
         pending.tabs.insert(0, recovery_test_tab("new tab"));
         save_session(&project_root, &pending).unwrap();
         let mut loaded = load_session(&project_root).unwrap();
-        assert_eq!(loaded.tabs[1].unsaved_file.as_deref(), Some(retained_name.as_str()));
+        assert_eq!(
+            loaded.tabs[1].unsaved_file.as_deref(),
+            Some(retained_name.as_str())
+        );
         for (tab, expected) in loaded.tabs.iter_mut().zip(["new tab", "pending tab"]) {
             hydrate_saved_tab(&project_root, tab);
             assert_eq!(tab.pending_unsaved_content.as_ref().unwrap(), expected);
@@ -1315,35 +1621,66 @@ mod tests {
             assert_eq!(tab.redo_entries.as_ref().unwrap()[0].0, "after");
         }
         hydrate_saved_tab(&project_root, &mut loaded.groups[0].tabs[0]);
-        assert_eq!(loaded.groups[0].tabs[0].pending_unsaved_content.as_ref().unwrap(), "pending group");
-        assert_eq!(loaded.groups[0].tabs[0].undo_entries.as_ref().unwrap()[0].0, "before");
+        assert_eq!(
+            loaded.groups[0].tabs[0]
+                .pending_unsaved_content
+                .as_ref()
+                .unwrap(),
+            "pending group"
+        );
+        assert_eq!(
+            loaded.groups[0].tabs[0].undo_entries.as_ref().unwrap()[0].0,
+            "before"
+        );
         let manifest = std::fs::read_to_string(session_path(&project_root)).unwrap();
         assert!(!manifest.contains("pending tab"));
         drop(loaded);
         drop(pending);
         save_session(&project_root, &Session::default()).unwrap();
-        assert_eq!(std::fs::read_dir(unsaved_dir(&project_root)).unwrap().count(), 0);
+        assert_eq!(
+            std::fs::read_dir(unsaved_dir(&project_root))
+                .unwrap()
+                .count(),
+            0
+        );
         std::fs::remove_dir_all(crate::portable::workspace_dir(&project_root)).unwrap();
     }
 
     #[test]
     fn failed_manifest_commit_preserves_previous_recovery() {
         let project_root = unique_temp_project_root();
-        let mut session = Session { tabs: vec![recovery_test_tab("original")], ..Session::default() };
+        let mut session = Session {
+            tabs: vec![recovery_test_tab("original")],
+            ..Session::default()
+        };
         save_session(&project_root, &session).unwrap();
         let mut pending = load_session(&project_root).unwrap();
-        let files = || std::fs::read_dir(unsaved_dir(&project_root)).unwrap()
-            .map(|entry| entry.unwrap().file_name()).collect::<std::collections::BTreeSet<_>>();
+        let files = || {
+            std::fs::read_dir(unsaved_dir(&project_root))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
         let committed_files = files();
         // Make the final rename fail after the new sidecars were written.
         std::fs::remove_file(session_path(&project_root)).unwrap();
         std::fs::create_dir(session_path(&project_root)).unwrap();
         session.tabs[0].pending_unsaved_content = Some("replacement".into());
         assert!(save_session(&project_root, &session).is_err());
-        assert_eq!(files(), committed_files, "a failed backup must not leave large orphan sidecars");
+        assert_eq!(
+            files(),
+            committed_files,
+            "a failed backup must not leave large orphan sidecars"
+        );
         hydrate_saved_tab(&project_root, &mut pending.tabs[0]);
-        assert_eq!(pending.tabs[0].pending_unsaved_content.as_ref().unwrap(), "original");
-        assert_eq!(pending.tabs[0].undo_entries.as_ref().unwrap()[0].0, "before");
+        assert_eq!(
+            pending.tabs[0].pending_unsaved_content.as_ref().unwrap(),
+            "original"
+        );
+        assert_eq!(
+            pending.tabs[0].undo_entries.as_ref().unwrap()[0].0,
+            "before"
+        );
         std::fs::remove_dir_all(crate::portable::workspace_dir(&project_root)).unwrap();
     }
 
@@ -1359,11 +1696,30 @@ mod tests {
     #[test]
     fn streaming_history_round_trips_empty_unicode_and_separator_content() {
         let root = unique_temp_project_root();
-        let texts = ["".to_owned(), "é😀\r\n".repeat(12_000),
-            format!("before{}after", std::str::from_utf8(UNDO_SEPARATOR).unwrap()), "".to_owned()];
-        let snapshots: UndoStack = texts.iter().enumerate().map(|(index, text)| (
-            ropey::Rope::from_str(text), index, 2, vec![(1, 3)], vec![Some((1, 1))], Some((0, 0)), index != 0,
-        )).collect();
+        let texts = [
+            "".to_owned(),
+            "é😀\r\n".repeat(12_000),
+            format!(
+                "before{}after",
+                std::str::from_utf8(UNDO_SEPARATOR).unwrap()
+            ),
+            "".to_owned(),
+        ];
+        let snapshots: UndoStack = texts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| {
+                (
+                    ropey::Rope::from_str(text),
+                    index,
+                    2,
+                    vec![(1, 3)],
+                    vec![Some((1, 1))],
+                    Some((0, 0)),
+                    index != 0,
+                )
+            })
+            .collect();
         let mut retained = std::collections::HashSet::new();
         let name = save_test_undo_history(&root, &snapshots, &snapshots, &mut retained).unwrap();
         assert_eq!(retained.len(), 2);
@@ -1378,7 +1734,9 @@ mod tests {
         let root = unique_temp_project_root();
         let entries = vec![("é😀\n".into(), 0, 0, vec![], vec![], None, false)];
         let name = save_test_undo_history(&root, &entries, &[], &mut Default::default()).unwrap();
-        let history: SavedUndoHistory = serde_json::from_slice(&std::fs::read(unsaved_dir(&root).join(&name)).unwrap()).unwrap();
+        let history: SavedUndoHistory =
+            serde_json::from_slice(&std::fs::read(unsaved_dir(&root).join(&name)).unwrap())
+                .unwrap();
         let path = unsaved_dir(&root).join(history.contents_file.unwrap());
         for contents in ["é", "", "é😀\nextra"] {
             std::fs::write(&path, contents).unwrap();
@@ -1393,15 +1751,31 @@ mod tests {
     fn streaming_history_accepts_legacy_snapshots_and_empty_stacks() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("history.txt");
-        let entry = SavedUndoEntry { content_bytes: None, cursor_line: 1, cursor_col: 3,
-            extra_cursors: vec![], extra_cursor_anchors: vec![], selection_anchor: None, modified: true };
+        let entry = SavedUndoEntry {
+            content_bytes: None,
+            cursor_line: 1,
+            cursor_col: 3,
+            extra_cursors: vec![],
+            extra_cursor_anchors: vec![],
+            selection_anchor: None,
+            modified: true,
+        };
         let text = ["", "old é😀 text", ""].join(std::str::from_utf8(UNDO_SEPARATOR).unwrap());
         std::fs::write(&path, text).unwrap();
         let entries = load_undo_stack(&path, vec![entry.clone(); 3]).unwrap();
-        assert_eq!(entries.iter().map(|entry| entry.0.to_string()).collect::<Vec<_>>(), ["", "old é😀 text", ""]);
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.0.to_string())
+                .collect::<Vec<_>>(),
+            ["", "old é😀 text", ""]
+        );
         std::fs::write(&path, "").unwrap();
         assert!(load_undo_stack(&path, vec![]).unwrap().is_empty());
-        assert_eq!(load_undo_stack(&path, vec![entry.clone()]).unwrap()[0].0, "");
+        assert_eq!(
+            load_undo_stack(&path, vec![entry.clone()]).unwrap()[0].0,
+            ""
+        );
         assert!(load_undo_stack(&path, vec![entry; 2]).is_err());
     }
 
@@ -1458,23 +1832,39 @@ mod tests {
             tabs: vec![
                 SavedTab {
                     file_path: Some("a.rs".into()),
-                    cursor_line: 0, cursor_col: 0, scroll_offset: 0,
-                    horizontal_scroll: 0, pinned: false, preview: false,
+                    cursor_line: 0,
+                    cursor_col: 0,
+                    scroll_offset: 0,
+                    horizontal_scroll: 0,
+                    pinned: false,
+                    preview: false,
                     text_color: None,
-                    unsaved_file: None, pending_unsaved_content: None,
-                    undo_history_file: None, language_override: None,
-                    undo_entries: None, redo_entries: None,
-                    bookmarks: Vec::new(), folded_ranges: Vec::new(),
+                    unsaved_file: None,
+                    pending_unsaved_content: None,
+                    undo_history_file: None,
+                    language_override: None,
+                    undo_entries: None,
+                    redo_entries: None,
+                    bookmarks: Vec::new(),
+                    folded_ranges: Vec::new(),
                 },
                 SavedTab {
                     file_path: Some("b.rs".into()),
-                    cursor_line: 100, cursor_col: 50, scroll_offset: 80,
-                    horizontal_scroll: 20, pinned: true, preview: false,
+                    cursor_line: 100,
+                    cursor_col: 50,
+                    scroll_offset: 80,
+                    horizontal_scroll: 20,
+                    pinned: true,
+                    preview: false,
                     text_color: None,
-                    unsaved_file: None, pending_unsaved_content: None,
-                    undo_history_file: None, language_override: None,
-                    undo_entries: None, redo_entries: None,
-                    bookmarks: vec![1], folded_ranges: Vec::new(),
+                    unsaved_file: None,
+                    pending_unsaved_content: None,
+                    undo_history_file: None,
+                    language_override: None,
+                    undo_entries: None,
+                    redo_entries: None,
+                    bookmarks: vec![1],
+                    folded_ranges: Vec::new(),
                 },
             ],
             active_tab: 1,
@@ -1500,14 +1890,21 @@ mod tests {
         let session = Session {
             tabs: vec![SavedTab {
                 file_path: Some("main.rs".into()),
-                cursor_line: 1, cursor_col: 4, scroll_offset: 0,
-                horizontal_scroll: 0, pinned: false, preview: false,
+                cursor_line: 1,
+                cursor_col: 4,
+                scroll_offset: 0,
+                horizontal_scroll: 0,
+                pinned: false,
+                preview: false,
                 text_color: None,
                 unsaved_file: None,
                 pending_unsaved_content: Some(content.into()),
-                undo_history_file: None, language_override: None,
-                undo_entries: None, redo_entries: None,
-                bookmarks: Vec::new(), folded_ranges: Vec::new(),
+                undo_history_file: None,
+                language_override: None,
+                undo_entries: None,
+                redo_entries: None,
+                bookmarks: Vec::new(),
+                folded_ranges: Vec::new(),
             }],
             ..Session::default()
         };
@@ -1562,24 +1959,40 @@ mod tests {
         let session = Session {
             tabs: vec![SavedTab {
                 file_path: Some("main.rs".into()),
-                cursor_line: 0, cursor_col: 0, scroll_offset: 0,
-                horizontal_scroll: 0, pinned: false, preview: false,
+                cursor_line: 0,
+                cursor_col: 0,
+                scroll_offset: 0,
+                horizontal_scroll: 0,
+                pinned: false,
+                preview: false,
                 text_color: None,
-                unsaved_file: None, pending_unsaved_content: None,
-                undo_history_file: None, language_override: None,
-                undo_entries: None, redo_entries: None,
-                bookmarks: Vec::new(), folded_ranges: Vec::new(),
+                unsaved_file: None,
+                pending_unsaved_content: None,
+                undo_history_file: None,
+                language_override: None,
+                undo_entries: None,
+                redo_entries: None,
+                bookmarks: Vec::new(),
+                folded_ranges: Vec::new(),
             }],
             groups: vec![SavedGroup {
                 tabs: vec![SavedTab {
                     file_path: Some("lib.rs".into()),
-                    cursor_line: 10, cursor_col: 5, scroll_offset: 0,
-                    horizontal_scroll: 0, pinned: false, preview: false,
+                    cursor_line: 10,
+                    cursor_col: 5,
+                    scroll_offset: 0,
+                    horizontal_scroll: 0,
+                    pinned: false,
+                    preview: false,
                     text_color: None,
-                    unsaved_file: None, pending_unsaved_content: None,
-                    undo_history_file: None, language_override: None,
-                    undo_entries: None, redo_entries: None,
-                    bookmarks: Vec::new(), folded_ranges: Vec::new(),
+                    unsaved_file: None,
+                    pending_unsaved_content: None,
+                    undo_history_file: None,
+                    language_override: None,
+                    undo_entries: None,
+                    redo_entries: None,
+                    bookmarks: Vec::new(),
+                    folded_ranges: Vec::new(),
                 }],
                 active_tab: 0,
             }],
@@ -1591,7 +2004,10 @@ mod tests {
         save_session(&project_root, &session).unwrap();
         let loaded = load_session(&project_root).expect("session should load");
         assert_eq!(loaded.groups.len(), 1);
-        assert_eq!(loaded.groups[0].tabs[0].file_path.as_deref(), Some(Path::new("lib.rs")));
+        assert_eq!(
+            loaded.groups[0].tabs[0].file_path.as_deref(),
+            Some(Path::new("lib.rs"))
+        );
         assert_eq!(loaded.groups[0].tabs[0].cursor_line, 10);
 
         let _ = std::fs::remove_dir_all(&project_root); // Error OK: dir may not exist
@@ -1702,16 +2118,21 @@ mod tests {
     fn saved_tab_serde_skips_transient_fields() {
         let tab = SavedTab {
             file_path: Some("test.rs".into()),
-            cursor_line: 0, cursor_col: 0,
-            scroll_offset: 0, horizontal_scroll: 0,
+            cursor_line: 0,
+            cursor_col: 0,
+            scroll_offset: 0,
+            horizontal_scroll: 0,
             pinned: false,
             preview: false,
             text_color: None,
-            unsaved_file: None, pending_unsaved_content: None,
-            undo_history_file: None, language_override: None,
+            unsaved_file: None,
+            pending_unsaved_content: None,
+            undo_history_file: None,
+            language_override: None,
             undo_entries: Some(vec![("content".into(), 0, 0, vec![], vec![], None, true)]),
             redo_entries: Some(vec![("redo".into(), 1, 1, vec![], vec![], None, true)]),
-            bookmarks: Vec::new(), folded_ranges: Vec::new(),
+            bookmarks: Vec::new(),
+            folded_ranges: Vec::new(),
         };
         let json = serde_json::to_string(&tab).unwrap();
         let loaded: SavedTab = serde_json::from_str(&json).unwrap();

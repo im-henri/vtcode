@@ -30,13 +30,23 @@ fn workspace_switch_keeps_queued_hex_edits_undo_and_close_recovery() {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         for service in [Service::Workers, Service::Extensions] {
-            app.service_workspaces_until(service, Instant::now() + Duration::from_millis(20), || true);
+            app.service_workspaces_until(
+                service,
+                Instant::now() + Duration::from_millis(20),
+                || true,
+            );
         }
         let hidden = &app.workspaces.parked[0].app;
         if !hidden.extension_manager.has_busy_runtimes()
             && hidden.extension_manager.pending_view_events.is_empty()
-            && text(hidden).contains("CA FE") { break; }
-        assert!(Instant::now() < deadline, "parked custom-editor input must drain");
+            && text(hidden).contains("CA FE")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "parked custom-editor input must drain"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(app.switch_workspace(0));
@@ -82,16 +92,23 @@ fn remote_hex_wasm_keeps_edits_and_undo_local_and_saves_at_remote_node() {
     let file = remote_dir.path().join("sample.bin");
     std::fs::write(&file, [0u8; 16]).unwrap();
     let workspace = crate::remote::workspace::Workspace::new(crate::remote::tests::connection(
-        remote_dir.path(), Default::default(), Default::default(),
+        remote_dir.path(),
+        Default::default(),
+        Default::default(),
     ));
     let mut app = app(local.path());
     app.remote_workspace = Some(workspace.clone());
     let key_path = workspace.target_key("sample.bin").unwrap();
     open(&mut app, &key_path);
-    for ch in "CAFEBABE".chars() { key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE); }
+    for ch in "CAFEBABE".chars() {
+        key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE);
+    }
     key(&mut app, KeyCode::Char('s'), KeyModifiers::CONTROL);
     drain(&mut app);
-    assert_eq!(&std::fs::read(&file).unwrap()[..4], [0xCA, 0xFE, 0xBA, 0xBE]);
+    assert_eq!(
+        &std::fs::read(&file).unwrap()[..4],
+        [0xCA, 0xFE, 0xBA, 0xBE]
+    );
     assert!(!app.tabs[app.active_tab].has_unsaved_changes());
     key(&mut app, KeyCode::Char('z'), KeyModifiers::CONTROL);
     drain(&mut app);
@@ -103,13 +120,19 @@ fn remote_hex_wasm_keeps_edits_and_undo_local_and_saves_at_remote_node() {
     app.save_as_query = "copy.bin".into();
     app.execute_save_as();
     drain(&mut app);
-    assert_eq!(std::fs::read(remote_dir.path().join("copy.bin")).unwrap(), std::fs::read(&file).unwrap());
+    assert_eq!(
+        std::fs::read(remote_dir.path().join("copy.bin")).unwrap(),
+        std::fs::read(&file).unwrap()
+    );
 }
 
 #[test]
 fn large_remote_binary_can_open_as_information_or_in_hex_viewer_without_a_full_transfer() {
     use std::io::Write;
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     let local = tempfile::tempdir().unwrap();
     let remote_dir = tempfile::tempdir().unwrap();
     let path = remote_dir.path().join("large.bin");
@@ -119,9 +142,14 @@ fn large_remote_binary_can_open_as_information_or_in_hex_viewer_without_a_full_t
     file.write_all(&vec![b'x'; 32 * 1024]).unwrap();
     drop(file);
     let downloaded = Arc::new(AtomicUsize::new(0));
-    let workspace = crate::remote::workspace::Workspace::new(crate::remote::tests::connection_with_traffic(
-        remote_dir.path(), Arc::default(), Arc::default(), Arc::default(), downloaded.clone(),
-    ));
+    let workspace =
+        crate::remote::workspace::Workspace::new(crate::remote::tests::connection_with_traffic(
+            remote_dir.path(),
+            Arc::default(),
+            Arc::default(),
+            Arc::default(),
+            downloaded.clone(),
+        ));
     let key_path = workspace.target_key("large.bin").unwrap();
     for hex in [false, true] {
         let mut app = app(local.path());
@@ -129,27 +157,42 @@ fn large_remote_binary_can_open_as_information_or_in_hex_viewer_without_a_full_t
         app.open_file(&key_path);
         app.wait_for_background(Duration::from_secs(15), |app| app.binary_open_prompt_active);
         assert!(!app.binary_open_prompt_open_normally);
-        let command = app.binary_open_prompt_commands.iter().position(|command|
-            command.extension_id == "vtcode.hex-editor" && command.command_id == "hex.open")
+        let command = app
+            .binary_open_prompt_commands
+            .iter()
+            .position(|command| {
+                command.extension_id == "vtcode.hex-editor" && command.command_id == "hex.open"
+            })
             .expect("Hex Viewer remains an available open option");
         app.execute_binary_open_prompt_choice(if hex { command + 1 } else { 0 });
         if hex {
             drain(&mut app);
             assert!(app.active_extension_view().is_some());
-            assert!(text(&app).contains("78 78 78"), "the viewer reads the actual binary bytes");
+            assert!(
+                text(&app).contains("78 78 78"),
+                "the viewer reads the actual binary bytes"
+            );
         } else {
-            app.wait_for_background(Duration::from_secs(15), |app|
-                app.editor().is_some_and(|editor| !editor.bg_loading));
+            app.wait_for_background(Duration::from_secs(15), |app| {
+                app.editor().is_some_and(|editor| !editor.bg_loading)
+            });
             let editor = app.editor().unwrap();
             assert_eq!(editor.encoding, "Binary");
             assert_eq!(editor.file_size, size);
             assert!(editor.read_only);
             assert!(editor.rope.len_bytes() < 1024);
-            assert!(editor.rope.to_string().contains("Binary file - cannot display"));
+            assert!(
+                editor
+                    .rope
+                    .to_string()
+                    .contains("Binary file - cannot display")
+            );
         }
     }
-    assert!(downloaded.load(Ordering::Relaxed) < 1024 * 1024,
-        "neither the information tab nor Hex Viewer downloads the whole binary file");
+    assert!(
+        downloaded.load(Ordering::Relaxed) < 1024 * 1024,
+        "neither the information tab nor Hex Viewer downloads the whole binary file"
+    );
 }
 
 fn app(root: &Path) -> App {

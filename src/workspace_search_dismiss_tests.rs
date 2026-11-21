@@ -258,7 +258,10 @@ fn delete_dismisses_only_focused_search_results_and_keeps_text_editing_and_docum
     });
     key(&mut app, KeyCode::Delete);
     assert_eq!(app.global_search_results.len(), 2);
-    assert_eq!(app.global_search_results[1].file_path, root.path().join("b"));
+    assert_eq!(
+        app.global_search_results[1].file_path,
+        root.path().join("b")
+    );
     key(&mut app, KeyCode::Delete);
     key(&mut app, KeyCode::Delete);
     assert!(app.global_search_results.is_empty());
@@ -273,7 +276,12 @@ fn delete_dismisses_only_focused_search_results_and_keeps_text_editing_and_docum
     app.global_search_field_cursors[0] = 0;
     key(&mut app, KeyCode::Delete);
     assert_eq!(app.global_search_query, "eedle");
-    let editor = &app.tabs.iter().find(|tab| tab.editor.navigation_id == document).unwrap().editor;
+    let editor = &app
+        .tabs
+        .iter()
+        .find(|tab| tab.editor.navigation_id == document)
+        .unwrap()
+        .editor;
     assert_eq!(editor.rope.to_string(), "keep this document");
     assert!(!editor.modified);
 }

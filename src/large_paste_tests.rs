@@ -22,7 +22,14 @@ fn every_paste_route_preserves_literal_indentation_for_small_and_background_past
     for repeats in [1, 128, BACKGROUND_BYTES / body.len() + 1] {
         let payload = body.repeat(repeats);
         let normalized = payload.replace("\r\n", "\n");
-        for route in ["paste", "ctrl_v", "shift_insert", "terminal", "history", "paste_plain"] {
+        for route in [
+            "paste",
+            "ctrl_v",
+            "shift_insert",
+            "terminal",
+            "history",
+            "paste_plain",
+        ] {
             for replace in [false, true] {
                 let original = "before\n \t  old\nkeep";
                 let mut app = app_with_text(original);
@@ -33,33 +40,66 @@ fn every_paste_route_preserves_literal_indentation_for_small_and_background_past
                 crate::clipboard::receive_terminal_paste(&payload);
                 crate::clipboard::remember_line_copy(&payload, false);
                 match route {
-                    "ctrl_v" => { crate::input_keyboard::handle_keyboard_event(&mut app,
-                        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL)); }
-                    "shift_insert" => { crate::input_keyboard::handle_keyboard_event(&mut app,
-                        KeyEvent::new(KeyCode::Insert, KeyModifiers::SHIFT)); }
+                    "ctrl_v" => {
+                        crate::input_keyboard::handle_keyboard_event(
+                            &mut app,
+                            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::CONTROL),
+                        );
+                    }
+                    "shift_insert" => {
+                        crate::input_keyboard::handle_keyboard_event(
+                            &mut app,
+                            KeyEvent::new(KeyCode::Insert, KeyModifiers::SHIFT),
+                        );
+                    }
                     "terminal" => crate::app_event_loop::handle_paste_input(&mut app, &payload),
                     "history" => {
                         app.push_clipboard_history(&payload);
-                        crate::input_keyboard::handle_keyboard_event(&mut app,
-                            KeyEvent::new(KeyCode::Char('V'), KeyModifiers::CONTROL | KeyModifiers::SHIFT));
+                        crate::input_keyboard::handle_keyboard_event(
+                            &mut app,
+                            KeyEvent::new(
+                                KeyCode::Char('V'),
+                                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                            ),
+                        );
                     }
-                    command => { app.execute_palette_command(command); }
+                    command => {
+                        app.execute_palette_command(command);
+                    }
                 }
-                assert_eq!(app.paste_in_progress(), payload.len() >= BACKGROUND_BYTES,
-                    "{route}, repeats={repeats}, replace={replace}");
+                assert_eq!(
+                    app.paste_in_progress(),
+                    payload.len() >= BACKGROUND_BYTES,
+                    "{route}, repeats={repeats}, replace={replace}"
+                );
                 finish(&mut app);
                 let editor = app.editor_mut().unwrap();
-                let expected = format!("before\n \t  {normalized}{}\nkeep", if replace { "" } else { "old" });
-                assert!(editor.rope == expected.as_str(), "{route}, repeats={repeats}, replace={replace}: {:?}",
-                    editor.rope.slice(..editor.rope.len_chars().min(80)).to_string());
+                let expected = format!(
+                    "before\n \t  {normalized}{}\nkeep",
+                    if replace { "" } else { "old" }
+                );
+                assert!(
+                    editor.rope == expected.as_str(),
+                    "{route}, repeats={repeats}, replace={replace}: {:?}",
+                    editor
+                        .rope
+                        .slice(..editor.rope.len_chars().min(80))
+                        .to_string()
+                );
                 let end = "before\n \t  ".chars().count() + normalized.chars().count();
                 let line = editor.rope.char_to_line(end);
-                assert_eq!((editor.cursor_line, editor.cursor_col), (line, end - editor.rope.line_to_char(line)));
+                assert_eq!(
+                    (editor.cursor_line, editor.cursor_col),
+                    (line, end - editor.rope.line_to_char(line))
+                );
                 assert_eq!(editor.clipboard, payload);
                 assert_eq!(editor.undo_stack.len(), 1);
                 editor.undo();
                 assert_eq!(editor.rope, original);
-                assert_eq!((editor.cursor_line, editor.cursor_col), (1, if replace { 7 } else { 4 }));
+                assert_eq!(
+                    (editor.cursor_line, editor.cursor_col),
+                    (1, if replace { 7 } else { 4 })
+                );
                 assert_eq!(editor.selection_anchor, replace.then_some((1, 4)));
                 editor.redo();
                 assert!(editor.rope == expected.as_str());
@@ -231,8 +271,17 @@ fn large_paste_at_column_zero_preserves_copied_indentation() {
         finish(&mut app);
         let editor = app.editor_mut().unwrap();
         let expected = format!("before\n{normalized}\nafter");
-        assert!(editor.rope == expected.as_str(), "background paste must preserve copied indentation at column zero");
-        assert_eq!((editor.cursor_line, editor.cursor_col), (1 + normalized.bytes().filter(|&byte| byte == b'\n').count(), 0));
+        assert!(
+            editor.rope == expected.as_str(),
+            "background paste must preserve copied indentation at column zero"
+        );
+        assert_eq!(
+            (editor.cursor_line, editor.cursor_col),
+            (
+                1 + normalized.bytes().filter(|&byte| byte == b'\n').count(),
+                0
+            )
+        );
         assert_eq!(editor.undo_stack.len(), 1);
         editor.undo();
         assert_eq!(editor.rope.to_string(), original);

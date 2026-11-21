@@ -1,18 +1,26 @@
 use super::*;
 
 fn split(text: &str) -> Vec<&str> {
-    pieces(text).into_iter().map(|(start, end)| &text[start..end]).collect()
+    pieces(text)
+        .into_iter()
+        .map(|(start, end)| &text[start..end])
+        .collect()
 }
 
 #[test]
 fn text_is_cut_into_words_digits_signs_and_line_starts() {
     assert_eq!(
         split("let myVar_2 = foo(x);\n    return 10"),
-        ["let", " myVar_", "2", " =", " foo", "(", "x", ");", "\n    ", "return", " 1", "0"]
+        [
+            "let", " myVar_", "2", " =", " foo", "(", "x", ");", "\n    ", "return", " 1", "0"
+        ]
     );
     // Runs of spaces keep their last space for the next piece; trailing
     // spaces stay alone; blank lines are line ends of their own.
-    assert_eq!(split("a   b  \n\n  c"), ["a", "  ", " b", "  ", "\n", "\n  ", "c"]);
+    assert_eq!(
+        split("a   b  \n\n  c"),
+        ["a", "  ", " b", "  ", "\n", "\n  ", "c"]
+    );
     // Any text at all, every byte covered once.
     let text = "naïve // ünïcödé 日本 ☃\t\tx";
     assert_eq!(split(text).concat(), text);
@@ -21,7 +29,12 @@ fn text_is_cut_into_words_digits_signs_and_line_starts() {
 #[test]
 fn learned_merges_spell_frequent_pieces_as_one_token_and_anything_else_by_bytes() {
     let mut counts: FxHashMap<Box<[u8]>, u64> = FxHashMap::default();
-    for (piece, times) in [(" count", 50u64), (" counter", 20), ("count", 30), (" total", 10)] {
+    for (piece, times) in [
+        (" count", 50u64),
+        (" counter", 20),
+        ("count", 30),
+        (" total", 10),
+    ] {
         counts.insert(piece.as_bytes().into(), times);
     }
     let merges = learn(&counts, 40);
@@ -41,6 +54,11 @@ fn learned_merges_spell_frequent_pieces_as_one_token_and_anything_else_by_bytes(
     let again = Subwords::decode_merges(&mut bytes).unwrap();
     assert!(bytes.is_empty());
     let mut other = Vec::new();
-    again.encode(" count counter Zq9", &mut Cache::default(), &mut other, &mut Vec::new());
+    again.encode(
+        " count counter Zq9",
+        &mut Cache::default(),
+        &mut other,
+        &mut Vec::new(),
+    );
     assert_eq!(other, tokens);
 }

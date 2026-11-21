@@ -2,7 +2,9 @@
 //! client, with changed disk content fetched for clean views as needed.
 use super::*;
 use crate::{
-    app::App, app_global_search::GlobalSearchSpec, background::CancellationToken,
+    app::App,
+    app_global_search::GlobalSearchSpec,
+    background::CancellationToken,
     search_regex::SearchRegex,
     search_walk::{MatchedFiles, OpenFileAliases},
 };
@@ -68,18 +70,26 @@ pub(crate) struct Scope {
 pub(super) struct ScopeCache(Option<(Scope, Vec<usize>)>);
 
 pub(crate) fn scope(root: &Path, query: Scope, cancel: &CancellationToken) -> io::Result<Reply> {
-    if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+    if cancel.is_cancelled() {
+        return Err(io::ErrorKind::Interrupted.into());
+    }
     let include = crate::search_paths::SearchPaths::cached(root, &query.include);
     let exclude = crate::search_paths::SearchPaths::cached(root, &query.exclude);
-    let settings = crate::search_paths::ExcludeRules::new(&query.files_exclude, &query.search_exclude);
+    let settings =
+        crate::search_paths::ExcludeRules::new(&query.files_exclude, &query.search_exclude);
     let aliases = crate::search_paths::PathAliases::default();
     let mut indices = Vec::new();
     for (index, path) in query.open_files.iter().enumerate() {
-        if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+        if cancel.is_cancelled() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
         let native = path.resolve(root)?;
         let candidate = crate::search_paths::Candidate::new(&native);
-        let excluded = if query.history { settings.excludes(&candidate, Path::new("")) }
-            else { settings.excludes_tree(&native, root) };
+        let excluded = if query.history {
+            settings.excludes(&candidate, Path::new(""))
+        } else {
+            settings.excludes_tree(&native, root)
+        };
         if include.includes_open_with_aliases(&candidate, &aliases)
             && !exclude.excludes_with_aliases(&candidate, root, &aliases)
             && !excluded
@@ -94,32 +104,68 @@ pub(crate) fn scope(root: &Path, query: Scope, cancel: &CancellationToken) -> io
 
 impl workspace::Workspace {
     #[cfg(test)]
-    pub(crate) fn search_scope(&self, paths: &[PathBuf], include: &str, exclude: &str,
-        cancel: &CancellationToken) -> io::Result<Vec<usize>> {
-        self.search_scope_with_settings(paths, include, exclude, &Default::default(), &Default::default(), cancel)
+    pub(crate) fn search_scope(
+        &self,
+        paths: &[PathBuf],
+        include: &str,
+        exclude: &str,
+        cancel: &CancellationToken,
+    ) -> io::Result<Vec<usize>> {
+        self.search_scope_with_settings(
+            paths,
+            include,
+            exclude,
+            &Default::default(),
+            &Default::default(),
+            cancel,
+        )
     }
 
-    pub(crate) fn search_scope_with_settings(&self, paths: &[PathBuf], include: &str, exclude: &str,
-        files_exclude: &crate::settings::ExcludePatterns, search_exclude: &crate::settings::ExcludePatterns,
-        cancel: &CancellationToken) -> io::Result<Vec<usize>> {
-        if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
-        if paths.is_empty() || (include.trim().is_empty() && exclude.trim().is_empty()
-            && files_exclude.is_empty() && search_exclude.is_empty()) {
+    pub(crate) fn search_scope_with_settings(
+        &self,
+        paths: &[PathBuf],
+        include: &str,
+        exclude: &str,
+        files_exclude: &crate::settings::ExcludePatterns,
+        search_exclude: &crate::settings::ExcludePatterns,
+        cancel: &CancellationToken,
+    ) -> io::Result<Vec<usize>> {
+        if cancel.is_cancelled() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
+        if paths.is_empty()
+            || (include.trim().is_empty()
+                && exclude.trim().is_empty()
+                && files_exclude.is_empty()
+                && search_exclude.is_empty())
+        {
             return Ok((0..paths.len()).collect());
         }
-        let query = Scope { include: include.into(), exclude: exclude.into(),
-            files_exclude: files_exclude.clone(), search_exclude: search_exclude.clone(),
+        let query = Scope {
+            include: include.into(),
+            exclude: exclude.into(),
+            files_exclude: files_exclude.clone(),
+            search_exclude: search_exclude.clone(),
             history: false,
-            open_files: paths.iter().map(|path| self.remote_path(path)).collect::<io::Result<_>>()? };
+            open_files: paths
+                .iter()
+                .map(|path| self.remote_path(path))
+                .collect::<io::Result<_>>()?,
+        };
         if let Some((previous, indices)) = &self.search_scope_cache.lock().unwrap().0
-            && previous == &query {
+            && previous == &query
+        {
             return Ok(indices.clone());
         }
-        let Reply::SearchScope { indices, cacheable } = self.client.call_cancellable(Command::SearchScope(query.clone()), cancel)? else {
+        let Reply::SearchScope { indices, cacheable } = self
+            .client
+            .call_cancellable(Command::SearchScope(query.clone()), cancel)?
+        else {
             return Err(io::Error::other("Invalid remote search scope reply"));
         };
         if indices.iter().any(|&index| index >= paths.len())
-            || indices.windows(2).any(|pair| pair[0] >= pair[1]) {
+            || indices.windows(2).any(|pair| pair[0] >= pair[1])
+        {
             return Err(io::Error::other("Invalid remote search scope indices"));
         }
         // Query text and content versions do not affect a pure path filter.
@@ -128,27 +174,54 @@ impl workspace::Workspace {
         Ok(indices)
     }
 
-    pub(crate) fn search_history_scope(&self, paths: &[PathBuf], excludes: &crate::settings::ExcludePatterns,
-        cancel: &CancellationToken) -> io::Result<Vec<usize>> {
-        if cancel.is_cancelled() { return Err(io::ErrorKind::Interrupted.into()); }
+    pub(crate) fn search_history_scope(
+        &self,
+        paths: &[PathBuf],
+        excludes: &crate::settings::ExcludePatterns,
+        cancel: &CancellationToken,
+    ) -> io::Result<Vec<usize>> {
+        if cancel.is_cancelled() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
         // Recent history can also contain entries from another workspace.
         // Only this node's identities can be evaluated against its native paths.
-        let native = paths.iter().enumerate().filter_map(|(i,path)| self.remote_path(path).ok().map(|path| (i,path)))
+        let native = paths
+            .iter()
+            .enumerate()
+            .filter_map(|(i, path)| self.remote_path(path).ok().map(|path| (i, path)))
             .collect::<Vec<_>>();
-        if native.is_empty() { return Ok((0..paths.len()).collect()); }
-        let query = Scope { include: String::new(), exclude: String::new(), files_exclude: excludes.clone(),
-            search_exclude: Default::default(), history: true,
-            open_files: native.iter().map(|(_,path)| path.clone()).collect() };
-        let Reply::SearchScope { indices, .. } = self.client.call_cancellable(Command::SearchScope(query), cancel)? else {
+        if native.is_empty() {
+            return Ok((0..paths.len()).collect());
+        }
+        let query = Scope {
+            include: String::new(),
+            exclude: String::new(),
+            files_exclude: excludes.clone(),
+            search_exclude: Default::default(),
+            history: true,
+            open_files: native.iter().map(|(_, path)| path.clone()).collect(),
+        };
+        let Reply::SearchScope { indices, .. } = self
+            .client
+            .call_cancellable(Command::SearchScope(query), cancel)?
+        else {
             return Err(io::Error::other("Invalid remote history scope reply"));
         };
         if indices.iter().any(|&i| i >= native.len()) || indices.windows(2).any(|p| p[0] >= p[1]) {
             return Err(io::Error::other("Invalid remote history scope indices"));
         }
         let mut included = vec![true; paths.len()];
-        for (index, _) in &native { included[*index] = false; }
-        for index in indices { included[native[index].0] = true; }
-        Ok(included.into_iter().enumerate().filter_map(|(i,yes)| yes.then_some(i)).collect())
+        for (index, _) in &native {
+            included[*index] = false;
+        }
+        for index in indices {
+            included[native[index].0] = true;
+        }
+        Ok(included
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, yes)| yes.then_some(i))
+            .collect())
     }
 }
 
@@ -252,11 +325,14 @@ pub(crate) fn replace(
 
 pub(crate) fn execute(root: &Path, query: Query, cancel: &CancellationToken) -> io::Result<Reply> {
     let mut collected = Vec::new();
-    let Reply::Search { hits, truncated, draft_aliases } =
-        execute_with_workers(root, query, cancel, 1, |hits| {
-            collected.extend(hits);
-            Ok(())
-        })?
+    let Reply::Search {
+        hits,
+        truncated,
+        draft_aliases,
+    } = execute_with_workers(root, query, cancel, 1, |hits| {
+        collected.extend(hits);
+        Ok(())
+    })?
     else {
         unreachable!()
     };
@@ -524,7 +600,12 @@ fn execute_with_workers(
                             &scan_cancel_worker,
                         );
                         if !results.is_empty() || truncated {
-                            let _ = sender.send(Ok((path.to_path_buf(), is_symlink, results, truncated)));
+                            let _ = sender.send(Ok((
+                                path.to_path_buf(),
+                                is_symlink,
+                                results,
+                                truncated,
+                            )));
                         }
                     },
                 );

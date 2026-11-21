@@ -105,7 +105,11 @@ impl State {
         let external = self.provider == Provider::Command;
         Config {
             provider: self.provider,
-            mode: if external { self.mode } else { CommandMode::default() },
+            mode: if external {
+                self.mode
+            } else {
+                CommandMode::default()
+            },
             command: if external {
                 self.fields[1].text.trim().into()
             } else {
@@ -290,7 +294,10 @@ pub(crate) fn activate(app: &mut App, action: Action) {
         return;
     }
     app.formatter_settings.reveal_focus = true;
-    if !matches!(action, Action::ChooseLanguage | Action::ChooseProvider | Action::ChooseMode) {
+    if !matches!(
+        action,
+        Action::ChooseLanguage | Action::ChooseProvider | Action::ChooseMode
+    ) {
         app.formatter_settings.menu = None;
     }
     match action {
@@ -378,7 +385,10 @@ pub(crate) fn activate(app: &mut App, action: Action) {
                     .iter()
                     .position(|&p| p == state.provider)
                     .unwrap_or(0),
-                Menu::Mode => modes().iter().position(|&mode| mode == state.mode).unwrap_or(0),
+                Menu::Mode => modes()
+                    .iter()
+                    .position(|&mode| mode == state.mode)
+                    .unwrap_or(0),
             };
             state.focus = if menu == Menu::Language {
                 Action::Field(0)
@@ -413,7 +423,11 @@ pub(crate) fn activate(app: &mut App, action: Action) {
                     .map(|(_, _, config)| config.clone())
                     .unwrap_or(Config {
                         provider,
-                        args: if provider == Provider::Command { vec!["{file}".into()] } else { Vec::new() },
+                        args: if provider == Provider::Command {
+                            vec!["{file}".into()]
+                        } else {
+                            Vec::new()
+                        },
                         ..Default::default()
                     });
                 clear_inputs(app);
@@ -463,7 +477,11 @@ fn providers() -> [Provider; 3] {
 }
 
 fn modes() -> [CommandMode; 3] {
-    [CommandMode::File, CommandMode::Stdin, CommandMode::FileStdout]
+    [
+        CommandMode::File,
+        CommandMode::Stdin,
+        CommandMode::FileStdout,
+    ]
 }
 
 fn language_matches(state: &State) -> Vec<usize> {

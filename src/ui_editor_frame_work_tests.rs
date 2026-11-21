@@ -24,25 +24,59 @@ fn cursor_word_changes_invalidate_lazily_without_dropping_offscreen_rows() {
     let count = cache.occurrence_builds;
     for query in ["beta", "TODO", "a", "界", "", "alpha"] {
         cache.prepare_occurrences((0, 0, 4), &rope, query, query.chars().count(), true, true);
-        assert!(retained.upgrade().is_some(), "changing the caret word swept offscreen rows");
-        assert!(cache.cached_occurrences(200).is_none(), "a stale query must never match");
+        assert!(
+            retained.upgrade().is_some(),
+            "changing the caret word swept offscreen rows"
+        );
+        assert!(
+            cache.cached_occurrences(200).is_none(),
+            "a stale query must never match"
+        );
         let occurrences = cache.occurrences(0, "alpha beta TODO alpha beta");
         let mut expected = Vec::new();
-        word_occurrences_for_line("alpha beta TODO alpha beta", query, query.chars().count(), true, true, &mut expected);
+        word_occurrences_for_line(
+            "alpha beta TODO alpha beta",
+            query,
+            query.chars().count(),
+            true,
+            true,
+            &mut expected,
+        );
         let mut cursor = WordOccurrenceCursor::new(&occurrences, 0);
         for col in 0..30 {
-            assert_eq!(cursor.contains(col), expected.iter().any(|&(a, b)| a <= col && col < b));
+            assert_eq!(
+                cursor.contains(col),
+                expected.iter().any(|&(a, b)| a <= col && col < b)
+            );
         }
-        assert_eq!(cache.decoration_bytes, cache.decorations.values().map(LineDecorations::bytes).sum::<usize>()
-            + cache.occurrence_query.as_ref().unwrap().0.capacity());
+        assert_eq!(
+            cache.decoration_bytes,
+            cache
+                .decorations
+                .values()
+                .map(LineDecorations::bytes)
+                .sum::<usize>()
+                + cache.occurrence_query.as_ref().unwrap().0.capacity()
+        );
         assert!(cache.storage_bytes + cache.decoration_bytes <= RenderLineCache::MAX_BYTES);
     }
     assert_eq!(cache.occurrence_builds, count + 6);
     cache.occurrence_generation = u64::MAX;
     cache.prepare_occurrences((0, 0, 4), &rope, "beta", 4, true, true);
     assert!(cache.cached_occurrences(200).is_none());
-    assert!(retained.upgrade().is_none(), "epoch wrap must retire old query stamps");
-    assert_eq!(cache.decoration_bytes, cache.decorations.values().map(LineDecorations::bytes).sum::<usize>() + 4);
+    assert!(
+        retained.upgrade().is_none(),
+        "epoch wrap must retire old query stamps"
+    );
+    assert_eq!(
+        cache.decoration_bytes,
+        cache
+            .decorations
+            .values()
+            .map(LineDecorations::bytes)
+            .sum::<usize>()
+            + 4
+    );
 }
 
 #[test]
@@ -57,13 +91,25 @@ fn benchmark_cursor_word_query_invalidation() {
             let started = Instant::now();
             for index in 0..10_000 {
                 let query = if index % 2 == 0 { "beta" } else { "alpha" };
-                cache.prepare_occurrences((0, 0, 4), &rope, black_box(query), query.len(), true, true);
+                cache.prepare_occurrences(
+                    (0, 0, 4),
+                    &rope,
+                    black_box(query),
+                    query.len(),
+                    true,
+                    true,
+                );
             }
             samples[usize::from(reference)].push(started.elapsed() / 10_000);
         }
     }
-    for sample in &mut samples { sample.sort(); }
-    eprintln!("cursor word cache invalidation: old={:?}, new={:?}", samples[1][4], samples[0][4]);
+    for sample in &mut samples {
+        sample.sort();
+    }
+    eprintln!(
+        "cursor word cache invalidation: old={:?}, new={:?}",
+        samples[1][4], samples[0][4]
+    );
 }
 
 fn cached_width(editor: &Editor, first: usize, end: usize, cursor: usize) -> usize {

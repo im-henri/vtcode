@@ -163,7 +163,9 @@ impl ExtensionManager {
 
     pub(crate) fn view_input_pending(&self, extension_id: &str, view_id: &str) -> bool {
         self.busy_extension_ids.contains(extension_id)
-            || self.get_view(extension_id, view_id).is_some_and(|view| view.input_pending)
+            || self
+                .get_view(extension_id, view_id)
+                .is_some_and(|view| view.input_pending)
             || self
                 .pending_view_events
                 .iter()
@@ -235,8 +237,12 @@ impl ExtensionManager {
                         .ok_or("Custom editor has no file document")?;
                     // Flush staged input before Save, Save As, recovery, or discard.
                     if let Some(code) = call_noarg_export(
-                        &mut guest.store, &guest.instance, "vtcode_prepare_document_action", false,
-                    )? && code != 0 {
+                        &mut guest.store,
+                        &guest.instance,
+                        "vtcode_prepare_document_action",
+                        false,
+                    )? && code != 0
+                    {
                         return Err("The custom editor could not finish its pending edits".into());
                     }
                     let recovery_dir = guest
@@ -321,7 +327,11 @@ impl ExtensionManager {
                     for document in &mut guest.store.data_mut().documents {
                         document.abort_transaction();
                     }
-                    guest.store.data_mut().status = document_result.as_ref().err().or(render_result.as_ref().err()).cloned();
+                    guest.store.data_mut().status = document_result
+                        .as_ref()
+                        .err()
+                        .or(render_result.as_ref().err())
+                        .cloned();
                 }
                 let result = if workbench_action {
                     document_result
@@ -759,7 +769,9 @@ impl ExtensionManager {
             self.busy_extension_ids.remove(&record.manifest.id);
             if let Some(rt) = runtime_box.take() {
                 let host = rt.store.data();
-                let changed = host.status.as_ref()
+                let changed = host
+                    .status
+                    .as_ref()
                     .is_some_and(|status| *status != record.status_text)
                     || !host.logs.is_empty()
                     || record.views.len() != host.views.len()
@@ -963,38 +975,55 @@ mod tests {
         use crate::extension_manifest::ExtensionView;
         use crate::extension_surface::ViewFrame;
         let mut record = test_record("ext1");
-        record.views.insert("plot".into(), ExtensionView {
-            id: "plot".into(),
-            title: "Plot".into(),
-            content: String::new(),
-            key_handler: None,
-            mouse_handler: None,
-            scroll_handler: None,
-            resize_handler: Some("resize".into()),
-            close_handler: None,
-            hover_handler: None,
-            context_menu_handler: None,
-            pointer_capture: false,
-            input_pending: false,
-            frame: Some(Arc::new(ViewFrame::default())),
-        });
+        record.views.insert(
+            "plot".into(),
+            ExtensionView {
+                id: "plot".into(),
+                title: "Plot".into(),
+                content: String::new(),
+                key_handler: None,
+                mouse_handler: None,
+                scroll_handler: None,
+                resize_handler: Some("resize".into()),
+                close_handler: None,
+                hover_handler: None,
+                context_menu_handler: None,
+                pointer_capture: false,
+                input_pending: false,
+                frame: Some(Arc::new(ViewFrame::default())),
+            },
+        );
         let mut manager = test_manager_with(vec![record]);
         let resize = |manager: &mut ExtensionManager, width| {
-            manager.queue_view_event("ext1", "plot", ViewEventHandlerKind::Resize,
+            manager.queue_view_event(
+                "ext1",
+                "plot",
+                ViewEventHandlerKind::Resize,
                 serde_json::json!({ "width": width, "height": 240 }).to_string(),
-                EditorContextSnapshot::default(), String::new())
+                EditorContextSnapshot::default(),
+                String::new(),
+            )
         };
         assert!(resize(&mut manager, 600));
-        manager.pending_view_events.pop_front().expect("initial resize is delivered");
+        manager
+            .pending_view_events
+            .pop_front()
+            .expect("initial resize is delivered");
         manager.records[0].views.get_mut("plot").unwrap().frame = Some(Arc::new(ViewFrame {
-            width: 512, height: 200, ..ViewFrame::default()
+            width: 512,
+            height: 200,
+            ..ViewFrame::default()
         }));
         for _ in 0..20 {
             assert!(resize(&mut manager, 600));
             assert!(manager.pending_view_events.is_empty());
         }
         assert!(resize(&mut manager, 601));
-        assert_eq!(manager.pending_view_events.len(), 1, "a changed viewport is delivered");
+        assert_eq!(
+            manager.pending_view_events.len(),
+            1,
+            "a changed viewport is delivered"
+        );
     }
 
     #[test]

@@ -165,9 +165,15 @@ fn filesystem_notifications_store_bounded_metadata_without_file_contents_or_path
         root_uri: "file:///project\nforged-event".into(),
         states: vec![remote::watch::State {
             is_dir: false,
-            path: path("PRIVATE-file-name"), exists: true, modified: None, size: Some(123),
+            path: path("PRIVATE-file-name"),
+            exists: true,
+            modified: None,
+            size: Some(123),
         }],
-        structural: true, git: true, rescan: false, active: Some(true),
+        structural: true,
+        git: true,
+        rescan: false,
+        active: Some(true),
     });
     let snapshot = log.since(before);
     assert_eq!(snapshot.entries.len(), 1);
@@ -175,7 +181,12 @@ fn filesystem_notifications_store_bounded_metadata_without_file_contents_or_path
     assert!(line.contains("1 paths; structure=true; Git=true; rescan=false; watcher=active"));
     assert!(line.contains(r"file:///project\nforged-event"));
     assert!(!line.contains('\n') && !line.contains("PRIVATE"));
-    assert!(trace.request(1, &Command::PerformanceSnapshot, "/project").is_none(), "capture never recursively logs its own requests");
+    assert!(
+        trace
+            .request(1, &Command::PerformanceSnapshot, "/project")
+            .is_none(),
+        "capture never recursively logs its own requests"
+    );
 }
 
 #[test]
@@ -313,17 +324,29 @@ fn git_output_routes_remote_git_requests_without_extra_wire_bytes() {
         let ssh = Log::default();
         let git = Log::default();
         let (client, counter) = super::tests::connect(root.path(), Some(ssh.begin("ssh".as_ref())));
-        if enabled { client.set_git_output(&git); }
-        client.call(Command::GitBranches { repo: path("") }).unwrap();
-        let result = client.call(Command::GitNetwork {
-            repo: path(""), args: vec!["pull".into()], push: false,
-        }).unwrap();
+        if enabled {
+            client.set_git_output(&git);
+        }
+        client
+            .call(Command::GitBranches { repo: path("") })
+            .unwrap();
+        let result = client
+            .call(Command::GitNetwork {
+                repo: path(""),
+                args: vec!["pull".into()],
+                push: false,
+            })
+            .unwrap();
         assert!(matches!(result, Reply::GitNetwork(ref output) if !output.success));
         client.call(Command::List { path: path("") }).unwrap();
         if enabled {
             let report = git.report();
             assert!(report.contains("Git branches") && report.contains("Completed"));
-            assert!(report.contains("Git pull") && report.contains("stderr") && report.contains("Failed"));
+            assert!(
+                report.contains("Git pull")
+                    && report.contains("stderr")
+                    && report.contains("Failed")
+            );
             assert!(!report.contains("Read directory"));
             let report = ssh.report();
             assert!(!report.contains("Git branches") && !report.contains("Git pull"));

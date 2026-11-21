@@ -6,15 +6,24 @@ fn full_wrap_cache_preserves_nearby_rows_in_both_browsing_directions() {
     for ascending in [true, false] {
         let mut editor = Editor::test_with_text(&"value words / other\n".repeat(10001));
         let start = usize::from(!ascending);
-        for line in start..start + 10000 { editor.wrap_ranges_for_line(line, 12); }
+        for line in start..start + 10000 {
+            editor.wrap_ranges_for_line(line, 12);
+        }
         let requested = if ascending { 10000 } else { 0 };
         let nearby = if ascending { 9999 } else { 1 };
         let old = editor.wrap_ranges_for_line(nearby, 12);
         editor.wrap_ranges_for_line(requested, 12);
         assert_eq!(editor.wrap_cache.len(), MAX_CACHED_WRAP_LINES);
-        assert!(std::rc::Rc::ptr_eq(&old, &editor.wrap_ranges_for_line(nearby, 12)));
+        assert!(std::rc::Rc::ptr_eq(
+            &old,
+            &editor.wrap_ranges_for_line(nearby, 12)
+        ));
         let distant = if ascending { 0 } else { 10000 };
-        assert!(!editor.wrap_cache.contains_key(&(distant, 12, editor.tab_size)));
+        assert!(
+            !editor
+                .wrap_cache
+                .contains_key(&(distant, 12, editor.tab_size))
+        );
         for line in if ascending { 5000..=9999 } else { 1..=5000 } {
             assert!(editor.wrap_cache.contains_key(&(line, 12, editor.tab_size)));
         }
@@ -34,14 +43,30 @@ fn local_wrap_invalidation_seeks_all_width_variants_and_keeps_distant_rows() {
     editor.insert_char('界');
     for (line, width, old) in before {
         let current = editor.wrap_ranges_for_line(line, width);
-        assert_eq!(std::rc::Rc::ptr_eq(&old, &current), !(1199..=1201).contains(&line));
+        assert_eq!(
+            std::rc::Rc::ptr_eq(&old, &current),
+            !(1199..=1201).contains(&line)
+        );
         if line == 1200 {
-            assert_eq!(*current, Editor::wrap_ranges_for_line_text_tabbed(
-                editor.rope.line(line).to_string().trim_end(), width, editor.tab_size));
+            assert_eq!(
+                *current,
+                Editor::wrap_ranges_for_line_text_tabbed(
+                    editor.rope.line(line).to_string().trim_end(),
+                    width,
+                    editor.tab_size
+                )
+            );
         }
     }
     editor.undo();
-    assert_eq!(*editor.wrap_ranges_for_line(1200, 12), Editor::wrap_ranges_for_line_text_tabbed("value words / other界 value", 12, editor.tab_size));
+    assert_eq!(
+        *editor.wrap_ranges_for_line(1200, 12),
+        Editor::wrap_ranges_for_line_text_tabbed(
+            "value words / other界 value",
+            12,
+            editor.tab_size
+        )
+    );
 }
 
 #[test]
@@ -50,28 +75,43 @@ fn benchmark_indexed_wrap_invalidation() {
     use std::{collections::BTreeMap, hint::black_box, time::Instant};
     let data = std::rc::Rc::new(vec![(0usize, 10usize)]);
     let mut indexed: BTreeMap<_, _> = (0..9000).map(|i| ((i, 80, 4), data.clone())).collect();
-    let mut scanned: rustc_hash::FxHashMap<_, _> = (0..9000).map(|i| ((i, 80, 4), data.clone())).collect();
+    let mut scanned: rustc_hash::FxHashMap<_, _> =
+        (0..9000).map(|i| ((i, 80, 4), data.clone())).collect();
     let mut samples = [Vec::new(), Vec::new()];
     for round in 0..7 {
         for direct in [round % 2 == 0, round % 2 != 0] {
             let start = Instant::now();
             for _ in 0..1000 {
                 if direct {
-                    let keys: Vec<_> = indexed.range((4499, 0, 0)..=(4501, usize::MAX, usize::MAX)).map(|(&key, _)| key).collect();
-                    for key in keys { indexed.remove(&key); }
-                    for line in 4499..=4501 { indexed.insert((line, 80, 4), data.clone()); }
+                    let keys: Vec<_> = indexed
+                        .range((4499, 0, 0)..=(4501, usize::MAX, usize::MAX))
+                        .map(|(&key, _)| key)
+                        .collect();
+                    for key in keys {
+                        indexed.remove(&key);
+                    }
+                    for line in 4499..=4501 {
+                        indexed.insert((line, 80, 4), data.clone());
+                    }
                     black_box(&indexed);
                 } else {
                     scanned.retain(|&(line, _, _), _| line < 4499 || line > 4501);
-                    for line in 4499..=4501 { scanned.insert((line, 80, 4), data.clone()); }
+                    for line in 4499..=4501 {
+                        scanned.insert((line, 80, 4), data.clone());
+                    }
                     black_box(&scanned);
                 }
             }
             samples[usize::from(direct)].push(start.elapsed() / 1000);
         }
     }
-    for sample in &mut samples { sample.sort(); }
-    eprintln!("9000 cached wrap lines: scan={:?} indexed={:?}", samples[0][3], samples[1][3]);
+    for sample in &mut samples {
+        sample.sort();
+    }
+    eprintln!(
+        "9000 cached wrap lines: scan={:?} indexed={:?}",
+        samples[0][3], samples[1][3]
+    );
 }
 
 fn original_range_map(text: &str, width: usize) -> Vec<(usize, usize)> {
@@ -130,14 +170,25 @@ fn unicode_map_windows_preserve_whitespace_lookahead_and_fallback_boundaries() {
     for width in [31, 32, 33, 80, 4_094, 4_095] {
         for leading in [0, 1, width - 2, width - 1, width] {
             for spaces in [1, 2, 3, width + 5] {
-                let whitespace = ['\u{85}', '\u{a0}', '\u{1680}', '\u{2003}', '\u{2028}', '\u{2029}', '\u{202f}', '\u{205f}', '\u{3000}'];
+                let whitespace = [
+                    '\u{85}', '\u{a0}', '\u{1680}', '\u{2003}', '\u{2028}', '\u{2029}', '\u{202f}',
+                    '\u{205f}', '\u{3000}',
+                ];
                 let whitespace: String = whitespace.into_iter().cycle().take(spaces).collect();
-                let text = format!("{}{whitespace}界;{}", "界".repeat(leading), "尾".repeat(width + 3));
+                let text = format!(
+                    "{}{whitespace}界;{}",
+                    "界".repeat(leading),
+                    "尾".repeat(width + 3)
+                );
                 let expected = super::tests::reference_wrap(&text, width);
                 let mut ranges = Vec::new();
-                visit_unicode_wrap_map(text.chars(), text.chars().count(), width,
-                    |start, end| ranges.push((start, end)));
-                assert_eq!(ranges, expected, "width={width}, leading={leading}, spaces={spaces}");
+                visit_unicode_wrap_map(text.chars(), text.chars().count(), width, |start, end| {
+                    ranges.push((start, end))
+                });
+                assert_eq!(
+                    ranges, expected,
+                    "width={width}, leading={leading}, spaces={spaces}"
+                );
                 assert_eq!(Editor::wrap_ranges_for_line_text(&text, width), expected);
                 let mut editor = Editor::test_with_text(&format!("{text}\r\n"));
                 assert_eq!(*editor.wrap_ranges_for_line(0, width), expected);

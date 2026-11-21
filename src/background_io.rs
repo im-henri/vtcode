@@ -1,9 +1,18 @@
 //! Reads and filesystem metadata work are independent of the CPU and save
 //! pools. Opening/restoring tabs or browsing folders must not create a thread
 //! per file or occupy syntax slots.
-use super::{ActiveJobGuard, PoolJobGuard, PoolLoad, PoolTask, PoolThreadGuard, QueuedTask, UiWake};
+use super::{
+    ActiveJobGuard, PoolJobGuard, PoolLoad, PoolTask, PoolThreadGuard, QueuedTask, UiWake,
+};
 use std::path::{Path, PathBuf};
-use std::{collections::VecDeque, sync::{Arc, Condvar, Mutex, atomic::{AtomicUsize, Ordering}}, thread};
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    thread,
+};
 
 const FOREGROUND_BURST: usize = 8;
 
@@ -41,28 +50,43 @@ pub(super) struct ReadPool {
 impl ReadPool {
     pub(super) fn new(size: usize, active: Arc<AtomicUsize>, wake: UiWake) -> Self {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
-        let load = Arc::new(PoolLoad { live: AtomicUsize::new(size), ..PoolLoad::default() });
+        let load = Arc::new(PoolLoad {
+            live: AtomicUsize::new(size),
+            ..PoolLoad::default()
+        });
         for index in 0..size {
             let queue = queue.clone();
             let load = load.clone();
-            thread::Builder::new().name(format!("file-read-{index}")).spawn(move || {
-                let _thread_guard = PoolThreadGuard(load);
-                crate::worker_priority::lower_current_thread();
-                loop {
-                    let task = {
-                        let (lock, ready) = &*queue;
-                        let mut queue = lock.lock().expect("file read queue poisoned");
-                        loop {
-                            if queue.stopped { return; }
-                            if let Some(task) = queue.pop() { break task; }
-                            queue = ready.wait(queue).expect("file read queue poisoned");
-                        }
-                    };
-                    task.run();
-                }
-            }).expect("failed to spawn file read worker");
+            thread::Builder::new()
+                .name(format!("file-read-{index}"))
+                .spawn(move || {
+                    let _thread_guard = PoolThreadGuard(load);
+                    crate::worker_priority::lower_current_thread();
+                    loop {
+                        let task = {
+                            let (lock, ready) = &*queue;
+                            let mut queue = lock.lock().expect("file read queue poisoned");
+                            loop {
+                                if queue.stopped {
+                                    return;
+                                }
+                                if let Some(task) = queue.pop() {
+                                    break task;
+                                }
+                                queue = ready.wait(queue).expect("file read queue poisoned");
+                            }
+                        };
+                        task.run();
+                    }
+                })
+                .expect("failed to spawn file read worker");
         }
-        Self { queue, load, active, wake }
+        Self {
+            queue,
+            load,
+            active,
+            wake,
+        }
     }
 
     #[cfg(test)]
@@ -75,13 +99,17 @@ impl ReadPool {
         self.load.queued.fetch_add(1, Ordering::Relaxed);
         let guard = PoolJobGuard {
             _active: ActiveJobGuard(self.active.clone(), self.wake.clone()),
-            load: self.load.clone(), running: false,
+            load: self.load.clone(),
+            running: false,
         };
         let task = QueuedTask { task, guard };
         let (lock, ready) = &*self.queue;
         let mut queue = lock.lock().expect("file read queue poisoned");
-        if foreground { queue.foreground.push_back(task); }
-        else { queue.background.push_back((path.to_path_buf(), task)); }
+        if foreground {
+            queue.foreground.push_back(task);
+        } else {
+            queue.background.push_back((path.to_path_buf(), task));
+        }
         drop(queue);
         ready.notify_one();
     }
@@ -89,7 +117,11 @@ impl ReadPool {
     pub(super) fn prioritize(&self, path: &Path) {
         let (lock, ready) = &*self.queue;
         let mut queue = lock.lock().expect("file read queue poisoned");
-        if let Some(index) = queue.background.iter().position(|(queued, _)| queued == path) {
+        if let Some(index) = queue
+            .background
+            .iter()
+            .position(|(queued, _)| queued == path)
+        {
             let (_, task) = queue.background.remove(index).unwrap();
             queue.foreground.push_back(task);
             drop(queue);
@@ -125,20 +157,43 @@ mod tests {
         let pool = ReadPool::new(1, active.clone(), UiWake::default());
         let (started, running) = mpsc::channel();
         let (release, resume) = mpsc::channel();
-        pool.send(false, Box::new(move || { started.send(()).unwrap(); resume.recv().unwrap(); }));
+        pool.send(
+            false,
+            Box::new(move || {
+                started.send(()).unwrap();
+                resume.recv().unwrap();
+            }),
+        );
         running.recv_timeout(WAIT).unwrap();
         let (completed, results) = mpsc::channel();
-        for (foreground, id) in [(false, 0), (false, 1)].into_iter().chain((2..14).map(|id| (true, id))) {
+        for (foreground, id) in [(false, 0), (false, 1)]
+            .into_iter()
+            .chain((2..14).map(|id| (true, id)))
+        {
             let completed = completed.clone();
-            pool.send(foreground, Box::new(move || completed.send((id, thread::current().id())).unwrap()));
+            pool.send(
+                foreground,
+                Box::new(move || completed.send((id, thread::current().id())).unwrap()),
+            );
         }
         assert_eq!(pool.load.running.load(Ordering::Relaxed), 1);
         assert_eq!(pool.load.queued.load(Ordering::Relaxed), 14);
         release.send(()).unwrap();
-        let values: Vec<_> = (0..14).map(|_| results.recv_timeout(WAIT).unwrap()).collect();
-        assert_eq!(values.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-            (2..10).chain([0]).chain(10..14).chain([1]).collect::<Vec<_>>());
-        assert!(values.iter().all(|(_, id)| *id == values[0].1), "reuse one worker");
+        let values: Vec<_> = (0..14)
+            .map(|_| results.recv_timeout(WAIT).unwrap())
+            .collect();
+        assert_eq!(
+            values.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            (2..10)
+                .chain([0])
+                .chain(10..14)
+                .chain([1])
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            values.iter().all(|(_, id)| *id == values[0].1),
+            "reuse one worker"
+        );
     }
 
     #[test]
@@ -149,9 +204,17 @@ mod tests {
         let load = pool.load.clone();
         let (started, running) = mpsc::channel();
         let (release, resume) = mpsc::channel();
-        pool.send(false, Box::new(move || { started.send(()).unwrap(); resume.recv().unwrap(); }));
+        pool.send(
+            false,
+            Box::new(move || {
+                started.send(()).unwrap();
+                resume.recv().unwrap();
+            }),
+        );
         running.recv_timeout(WAIT).unwrap();
-        for _ in 0..20 { pool.send(false, Box::new(|| panic!("cancelled read ran"))); }
+        for _ in 0..20 {
+            pool.send(false, Box::new(|| panic!("cancelled read ran")));
+        }
         assert_eq!(active.load(Ordering::Relaxed), 21);
         drop(pool);
         assert_eq!(active.load(Ordering::Relaxed), 1);
@@ -170,20 +233,43 @@ mod tests {
         for _ in 0..20 {
             let started = started.clone();
             let gate = gate.clone();
-            workers.read_for_file("file-load", std::path::Path::new("fixture"), true, move || {
-                let _ = started.send(());
-                let guard = gate.0.lock().unwrap();
-                drop(gate.1.wait_while(guard, |ready| !*ready).unwrap());
-            });
+            workers.read_for_file(
+                "file-load",
+                std::path::Path::new("fixture"),
+                true,
+                move || {
+                    let _ = started.send(());
+                    let guard = gate.0.lock().unwrap();
+                    drop(gate.1.wait_while(guard, |ready| !*ready).unwrap());
+                },
+            );
         }
-        let size = thread::available_parallelism().map_or(1, |n| super::super::save_pool_size(n.get()));
-        for _ in 0..size { running.recv_timeout(WAIT).unwrap(); }
+        let size =
+            thread::available_parallelism().map_or(1, |n| super::super::save_pool_size(n.get()));
+        for _ in 0..size {
+            running.recv_timeout(WAIT).unwrap();
+        }
         let (cpu, done) = mpsc::channel();
-        workers.pool_sender().send(Box::new(move || cpu.send(()).unwrap())).unwrap();
+        workers
+            .pool_sender()
+            .send(Box::new(move || cpu.send(()).unwrap()))
+            .unwrap();
         // Always release readers before an assertion can fail.
         let cpu_result = done.recv_timeout(WAIT);
-        let running_count = workers.read_pool.as_ref().unwrap().load.running.load(Ordering::Relaxed);
-        let queued = workers.read_pool.as_ref().unwrap().load.queued.load(Ordering::Relaxed);
+        let running_count = workers
+            .read_pool
+            .as_ref()
+            .unwrap()
+            .load
+            .running
+            .load(Ordering::Relaxed);
+        let queued = workers
+            .read_pool
+            .as_ref()
+            .unwrap()
+            .load
+            .queued
+            .load(Ordering::Relaxed);
         *gate.0.lock().unwrap() = true;
         gate.1.notify_all();
         assert!(cpu_result.is_ok());

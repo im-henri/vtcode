@@ -208,9 +208,13 @@ impl ExtensionManager {
         // Empty workspaces and LSP-only extensions never need a Wasm engine.
         let engine = engine.get_or_init(|| {
             #[cfg(not(test))]
-            { crate::extensions::new_extension_engine() }
+            {
+                crate::extensions::new_extension_engine()
+            }
             #[cfg(test)]
-            { crate::extensions::test_extension_engine().clone() }
+            {
+                crate::extensions::test_extension_engine().clone()
+            }
         });
         #[cfg(not(test))]
         let module = Module::from_file(engine, &record.wasm_path);

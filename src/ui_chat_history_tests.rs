@@ -323,7 +323,8 @@ fn history_until(app: &mut App, done: impl Fn(&App) -> bool) {
 fn history_agent(root: &std::path::Path) -> vtcode::acp::AgentConfig {
     let mut config = vtcode::acp::AgentConfig::new(
         "Persistent SDK history peer",
-        std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
+        std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
     );
     config.args = vec![
         "-u".into(),
@@ -528,7 +529,8 @@ fn acp_chat_sdk_round_trip_history_deletion_and_empty_cleanup() {
     app.explorer.root = root.path().into();
     let mut config = vtcode::acp::AgentConfig::new(
         "Official SDK scenario agent",
-        std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
+        std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
     );
     config.args = vec![
         "-u".into(),
@@ -639,7 +641,8 @@ fn acp_chat_sdk_round_trip_history_removal_without_delete_capability_survives_re
     let log = root.path().join("deleted.txt");
     let mut config = vtcode::acp::AgentConfig::new(
         "Official SDK scenario agent",
-        std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
+        std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
     );
     config.args = vec![
         "-u".into(),

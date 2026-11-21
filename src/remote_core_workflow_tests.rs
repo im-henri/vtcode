@@ -44,8 +44,8 @@ fn index(workspace: &workspace::Workspace, name: &str) -> String {
             file: path(name),
             repository: Some(path("core-workflow")),
             staged: false,
-                known: None,
-                max_bytes: None,
+            known: None,
+            max_bytes: None,
         })
         .unwrap()
     else {
@@ -99,7 +99,9 @@ pub(super) fn run(workspace: &workspace::Workspace) -> serde_json::Value {
     let discovery_start = Instant::now();
     let Reply::GitStatus { discovery, scans } = workspace
         .client
-        .call(Command::GitStatus { progress: None, revalidate: false,
+        .call(Command::GitStatus {
+            progress: None,
+            revalidate: false,
             changed: None,
             include_untracked: true,
             known: None,
@@ -269,14 +271,16 @@ pub(super) fn run(workspace: &workspace::Workspace) -> serde_json::Value {
                     ExplorerSortMode::Name,
                     None,
                     true,
-            &crate::settings::default_files_exclude(),
+                    &crate::settings::default_files_exclude(),
                     &CancellationToken::new(),
                 )
                 .unwrap();
             assert!(tree.iter().any(|entry| entry.name == "cache.rs"));
             background_workspace
                 .client
-                .call(Command::GitStatus { progress: None, revalidate: false,
+                .call(Command::GitStatus {
+                    progress: None,
+                    revalidate: false,
                     changed: None,
                     include_untracked: true,
                     known: Some(discovery.clone()),
@@ -308,7 +312,10 @@ pub(super) fn run(workspace: &workspace::Workspace) -> serde_json::Value {
     scans.join().unwrap();
     assert_eq!(app.editor().unwrap().rope.to_string(), discarded);
     assert!(!app.editor().unwrap().modified);
-    assert!(app.git_output().report().contains("Stage hunk"), "Remote hunk actions belong in Git output");
+    assert!(
+        app.git_output().report().contains("Stage hunk"),
+        "Remote hunk actions belong in Git output"
+    );
     samples.sort_by(f64::total_cmp);
     serde_json::json!({"discovery_ms": discovery_ms, "explorer_ms": explorer_ms, "input_draw_p95_ms": samples[samples.len()*95/100], "input_draw_max_ms": samples[samples.len()-1], "samples": samples.len(), "wall_ms": started.elapsed().as_secs_f64()*1000.})
 }
@@ -375,8 +382,12 @@ pub(super) fn raw_git_paths(workspace: &workspace::Workspace) {
         // to its workspace before applying status and choosing a repository.
         app.repositories.rescan = true;
         app.refresh_source_control_async();
-        wait(app, |app| app.repositories.discovered && !app.bg_git_status_running && !app.bg_git_status_pending);
-        if app.repositories.active.as_deref() != Some(root.as_path()) { app.select_source_control_repository(&root); }
+        wait(app, |app| {
+            app.repositories.discovered && !app.bg_git_status_running && !app.bg_git_status_pending
+        });
+        if app.repositories.active.as_deref() != Some(root.as_path()) {
+            app.select_source_control_repository(&root);
+        }
         assert_eq!(app.source_control_root(), root);
     };
     let change = |app: &App, key: &Path, staged: bool| -> GitFileChange {
@@ -417,7 +428,13 @@ pub(super) fn raw_git_paths(workspace: &workspace::Workspace) {
     let raw = change(&app, &keys[0], false);
     app.git_stage_changes(vec![raw.clone()]);
     wait(&mut app, |app| !app.bg_git_action_running);
-    assert_eq!(indexed(&keys[0]).as_deref(), Some("original 0\n"), "{:?}; root={:?}; expected={root:?}", app.notification_history, app.source_control_root());
+    assert_eq!(
+        indexed(&keys[0]).as_deref(),
+        Some("original 0\n"),
+        "{:?}; root={:?}; expected={root:?}",
+        app.notification_history,
+        app.source_control_root()
+    );
     for key in keys.iter().skip(1) {
         assert!(
             indexed(key).is_none(),
@@ -511,7 +528,10 @@ pub(super) fn raw_git_paths(workspace: &workspace::Workspace) {
     wait(&mut app, |app| !app.bg_git_action_running);
     assert!(indexed(&renamed_key).is_none());
     assert_eq!(indexed(&keys[0]).as_deref(), Some("original 0\n"));
-    assert!(app.git_output().report().contains("Git stage files"), "Remote staging belongs in Git output");
+    assert!(
+        app.git_output().report().contains("Git stage files"),
+        "Remote staging belongs in Git output"
+    );
     println!(
         "VTCODE_RAW_GIT_PATHS: distinct raw/Unicode names, stage/unstage, staged and untracked discard, rename and neighbouring file preservation passed"
     );

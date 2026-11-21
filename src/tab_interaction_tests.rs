@@ -560,7 +560,10 @@ fn dragging_an_ellipsized_long_tab_can_reach_its_hidden_neighbors() {
         !hits.right.is_empty(),
         "overflow remains reachable beside the ellipsized title"
     );
-    assert!(hits.tabs.len() > 1, "the long title leaves its neighbour visible");
+    assert!(
+        hits.tabs.len() > 1,
+        "the long title leaves its neighbour visible"
+    );
     let moving = app.tabs[0].editor.navigation_id;
     mouse(
         &mut app,

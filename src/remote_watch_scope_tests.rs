@@ -12,18 +12,30 @@ fn external_directory_links_are_not_workspace_subscriptions_and_defaults_still_f
     std::os::unix::fs::symlink(outside.path(), &link).unwrap();
     for follow in [true, false] {
         let (send, receive) = mpsc::channel();
-        let config = notify::Config::default().with_open_events(false).with_follow_symlinks(follow);
-        let mut watcher = notify::INotifyWatcher::new(move |event| { let _ = send.send(event); }, config).unwrap();
-        watcher.watch(root.path(), RecursiveMode::Recursive).unwrap();
+        let config = notify::Config::default()
+            .with_open_events(false)
+            .with_follow_symlinks(follow);
+        let mut watcher = notify::INotifyWatcher::new(
+            move |event| {
+                let _ = send.send(event);
+            },
+            config,
+        )
+        .unwrap();
+        watcher
+            .watch(root.path(), RecursiveMode::Recursive)
+            .unwrap();
         std::fs::write(&outside_file, "activity").unwrap();
         if follow {
-            let event: notify::Result<notify::Event> = receive.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event: notify::Result<notify::Event> =
+                receive.recv_timeout(Duration::from_secs(3)).unwrap();
             assert!(event.unwrap().paths.contains(&link.join("activity")));
         } else {
             assert!(receive.recv_timeout(Duration::from_millis(200)).is_err());
             let inside = root.path().join("inside");
             std::fs::write(&inside, "source").unwrap();
-            let event: notify::Result<notify::Event> = receive.recv_timeout(Duration::from_secs(3)).unwrap();
+            let event: notify::Result<notify::Event> =
+                receive.recv_timeout(Duration::from_secs(3)).unwrap();
             assert!(event.unwrap().paths.contains(&inside));
         }
     }
@@ -32,10 +44,14 @@ fn external_directory_links_are_not_workspace_subscriptions_and_defaults_still_f
 fn next_git(receive: &mpsc::Receiver<Response>) {
     let deadline = Instant::now() + Duration::from_secs(4);
     loop {
-        let response = receive.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
+        let response = receive
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
         if let Ok(Reply::WorkspaceChanges(batch)) = response.result {
             assert_ne!(batch.active, Some(false));
-            if batch.git { return; }
+            if batch.git {
+                return;
+            }
         }
     }
 }
@@ -51,10 +67,23 @@ fn external_git_directories_remain_watched_for_gitfiles_and_directory_links() {
         if directory_link {
             std::os::unix::fs::symlink(&metadata, root.path().join(".git")).unwrap();
         } else {
-            std::fs::write(root.path().join(".git"), format!("gitdir: {}\n", metadata.display())).unwrap();
+            std::fs::write(
+                root.path().join(".git"),
+                format!("gitdir: {}\n", metadata.display()),
+            )
+            .unwrap();
         }
         let observation = Arc::new(Observation::default());
-        observation.repositories(root.path(), &git::Discovery { errors: Vec::new(), roots: vec![RemotePath::default()], parent: None }, false, &[]);
+        observation.repositories(
+            root.path(),
+            &git::Discovery {
+                errors: Vec::new(),
+                roots: vec![RemotePath::default()],
+                parent: None,
+            },
+            false,
+            &[],
+        );
         let (send, receive) = mpsc::sync_channel(32);
         let _watch = Watch::start(root.path().to_owned(), send, observation).unwrap();
         next_git(&receive);
@@ -62,8 +91,10 @@ fn external_git_directories_remain_watched_for_gitfiles_and_directory_links() {
         next_git(&receive);
         std::fs::write(metadata.join("objects/object"), "private").unwrap();
         if let Ok(response) = receive.recv_timeout(Duration::from_millis(600)) {
-            panic!("unexpected Git object notification (directory_link={directory_link}): {}",
-                serde_json::to_string(&response).unwrap());
+            panic!(
+                "unexpected Git object notification (directory_link={directory_link}): {}",
+                serde_json::to_string(&response).unwrap()
+            );
         }
     }
 }
@@ -73,10 +104,16 @@ fn external_git_scope_preserves_project_events_inside_an_ancestor_metadata_direc
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source");
     let mut burst = Burst::default();
-    burst.push_with_dependencies(root.path(),
-        Ok(notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Data(
-            notify::event::DataChange::Any))).add_path(source.clone())),
-        &[root.path().parent().unwrap().to_owned()]);
+    burst.push_with_dependencies(
+        root.path(),
+        Ok(
+            notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Any,
+            )))
+            .add_path(source.clone()),
+        ),
+        &[root.path().parent().unwrap().to_owned()],
+    );
     assert_eq!(burst.event.paths, vec![source]);
     assert!(!burst.event.git_metadata_changed);
 }
@@ -86,9 +123,14 @@ fn removing_an_external_git_subscription_root_reports_lost_coverage() {
     let root = tempfile::tempdir().unwrap();
     let metadata = tempfile::tempdir().unwrap();
     let mut burst = Burst::default();
-    burst.push_with_dependencies(root.path(),
-        Ok(notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::Folder))
-            .add_path(metadata.path().to_owned())), &[metadata.path().to_owned()]);
+    burst.push_with_dependencies(
+        root.path(),
+        Ok(
+            notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::Folder))
+                .add_path(metadata.path().to_owned()),
+        ),
+        &[metadata.path().to_owned()],
+    );
     assert!(burst.event.rescan);
     assert!(burst.event.watcher_failed);
 }
@@ -109,7 +151,15 @@ fn narrowing_and_widening_external_git_subscriptions_keep_child_watches_alive() 
     next_git(&receive);
     for (scope, branch) in [(child, "narrow"), (metadata, "wide")] {
         *observation.git.lock().unwrap() = vec![scope];
-        observation.wake.lock().unwrap().as_ref().unwrap().1.try_send(()).unwrap();
+        observation
+            .wake
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .1
+            .try_send(())
+            .unwrap();
         next_git(&receive);
         std::fs::write(&head, format!("ref: refs/heads/{branch}\n")).unwrap();
         next_git(&receive);
@@ -121,9 +171,16 @@ fn queued_events_from_retired_git_roots_do_not_become_project_changes() {
     let root = tempfile::tempdir().unwrap();
     let retired = tempfile::tempdir().unwrap();
     let mut burst = Burst::default();
-    burst.push_with_dependencies(root.path(),
-        Ok(notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Data(
-            notify::event::DataChange::Any))).add_path(retired.path().join("HEAD"))), &[]);
+    burst.push_with_dependencies(
+        root.path(),
+        Ok(
+            notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Any,
+            )))
+            .add_path(retired.path().join("HEAD")),
+        ),
+        &[],
+    );
     assert!(burst.event.is_empty());
 }
 
@@ -142,12 +199,28 @@ fn explicit_git_roots_inside_pruned_storage_reconcile_existing_parent_watches() 
     let _watch = Watch::start(root.path().to_owned(), send, observation.clone()).unwrap();
     next_git(&receive);
     *observation.git.lock().unwrap() = vec![metadata.clone(), child];
-    observation.wake.lock().unwrap().as_ref().unwrap().1.try_send(()).unwrap();
+    observation
+        .wake
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .1
+        .try_send(())
+        .unwrap();
     next_git(&receive);
     std::fs::write(&head, "ref: refs/heads/changed\n").unwrap();
     next_git(&receive);
     *observation.git.lock().unwrap() = vec![metadata];
-    observation.wake.lock().unwrap().as_ref().unwrap().1.try_send(()).unwrap();
+    observation
+        .wake
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .1
+        .try_send(())
+        .unwrap();
     next_git(&receive);
     std::fs::write(&head, "ref: refs/heads/retired\n").unwrap();
     assert!(receive.recv_timeout(Duration::from_millis(600)).is_err());

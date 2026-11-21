@@ -1,9 +1,15 @@
 use super::Editor;
-use crate::{app::{App, Tab}, app_lsp_edits};
+use crate::{
+    app::{App, Tab},
+    app_lsp_edits,
+};
 use lsp_types::{Position, Range, TextEdit};
 
 fn edit(start: (u32, u32), end: (u32, u32), text: &str) -> TextEdit {
-    TextEdit::new(Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)), text.into())
+    TextEdit::new(
+        Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
+        text.into(),
+    )
 }
 
 fn saved(text: &str) -> Editor {
@@ -20,9 +26,13 @@ fn combination_unchanged_lsp_formatting_preserves_redo_selection_and_clean_state
     editor.selection_anchor = Some((0, 0));
     editor.cursor_col = 2;
     let version = editor.content_version;
-    assert_eq!(app_lsp_edits::apply(&mut editor, &[
-        edit((0, 0), (0, 2), "αβ"), edit((1, 4), (1, 4), ""),
-    ]), Ok(0));
+    assert_eq!(
+        app_lsp_edits::apply(
+            &mut editor,
+            &[edit((0, 0), (0, 2), "αβ"), edit((1, 4), (1, 4), ""),]
+        ),
+        Ok(0)
+    );
     assert_eq!(editor.content_version, version);
     assert!(!editor.modified);
     assert_eq!(editor.selection_anchor, Some((0, 0)));
@@ -132,7 +142,10 @@ fn combination_split_edit_clears_stale_folds_and_clamps_all_selection_endpoints(
     app.editor_mut().unwrap().multi_cursor_insert_char('X');
     app.editor_mut().unwrap().undo();
     app.editor_mut().unwrap().undo();
-    assert_eq!(app.editor().unwrap().rope, "head\nfn f() {\n one();\n two();\n}\nend");
+    assert_eq!(
+        app.editor().unwrap().rope,
+        "head\nfn f() {\n one();\n two();\n}\nend"
+    );
     assert!(!app.editor().unwrap().modified);
 }
 
@@ -144,14 +157,24 @@ fn combination_snippet_replacement_paste_and_tab_navigation_follow_the_edited_te
         editor.insert_snippet_text(0, "${1:name}(${2:arg})\n$0");
         editor.paste_plain_with_text(replacement);
         assert!(editor.snippet_next_tab_stop());
-        assert_eq!(editor.selected_text().as_deref(), Some("arg"), "{replacement:?}");
+        assert_eq!(
+            editor.selected_text().as_deref(),
+            Some("arg"),
+            "{replacement:?}"
+        );
         editor.insert_char_replacing_selection('X');
         assert!(editor.snippet_prev_tab_stop());
-        assert_eq!(editor.selected_text(), Some(replacement.replace("\r\n", "\n")));
+        assert_eq!(
+            editor.selected_text(),
+            Some(replacement.replace("\r\n", "\n"))
+        );
         assert!(editor.snippet_next_tab_stop());
         assert_eq!(editor.selected_text().as_deref(), Some("X"));
         assert!(editor.snippet_next_tab_stop());
-        assert_eq!((editor.cursor_line, editor.cursor_col), (editor.line_count() - 1, 0));
+        assert_eq!(
+            (editor.cursor_line, editor.cursor_col),
+            (editor.line_count() - 1, 0)
+        );
         editor.undo();
         assert!(!editor.snippet_active);
         editor.redo();
@@ -165,7 +188,9 @@ fn combination_snippet_eof_placeholders_and_followup_typing_stay_in_bounds() {
         let mut editor = saved("");
         editor.save_undo();
         editor.insert_snippet_text(0, body);
-        if editor.has_selection() { editor.snippet_next_tab_stop(); }
+        if editor.has_selection() {
+            editor.snippet_next_tab_stop();
+        }
         assert_eq!((editor.cursor_line, editor.cursor_col), (1, 0), "{body}");
         editor.insert_char_replacing_selection('X');
         assert_eq!(editor.rope.line(1).to_string(), "X");
@@ -183,8 +208,10 @@ fn combination_reload_cancels_snippet_navigation_but_keeps_undo() {
     assert!(editor.try_expand_snippet());
     let expanded = editor.rope.clone();
     editor.apply_reloaded_file(super::LoadedTextFile {
-            remote_checkpoint: None,
-        rope: ropey::Rope::from_str("x"), encoding: "UTF-8", file_size: 1,
+        remote_checkpoint: None,
+        rope: ropey::Rope::from_str("x"),
+        encoding: "UTF-8",
+        file_size: 1,
         last_disk_modified: None,
     });
     assert!(!editor.snippet_active);
@@ -203,8 +230,11 @@ fn combination_snippet_repeated_boundary_text_does_not_confuse_placeholder_reloc
         let mut editor = saved("");
         editor.save_undo();
         editor.insert_snippet_text(0, &format!("${{1:{unit}}}{unit}${{2:arg}}$0"));
-        if replacement.is_empty() { editor.backspace_replacing_selection(); }
-        else { editor.paste_plain_with_text(replacement); }
+        if replacement.is_empty() {
+            editor.backspace_replacing_selection();
+        } else {
+            editor.paste_plain_with_text(replacement);
+        }
         assert!(editor.snippet_next_tab_stop(), "{unit:?}, {replacement:?}");
         assert_eq!(editor.selected_text().as_deref(), Some("arg"));
         assert!(editor.snippet_prev_tab_stop());
@@ -238,8 +268,11 @@ fn combination_snippet_navigation_after_editing_elsewhere_cancels_stale_position
         editor.insert_snippet_text(7, "${1:name} ${2:arg}");
         editor.selection_anchor = Some((0, 0));
         editor.cursor_col = 6;
-        if replacement.is_empty() { editor.backspace_replacing_selection(); }
-        else { editor.paste_plain_with_text(replacement); }
+        if replacement.is_empty() {
+            editor.backspace_replacing_selection();
+        } else {
+            editor.paste_plain_with_text(replacement);
+        }
         let text = editor.rope.clone();
         assert!(!editor.snippet_next_tab_stop());
         assert!(!editor.snippet_active);
@@ -259,9 +292,13 @@ fn combination_formatting_back_to_saved_text_updates_dirty_state_without_losing_
             editor.selection_anchor = Some((0, 0));
             (editor.cursor_line, editor.cursor_col) = (1, 0);
             editor.paste_plain_with_text("let x=1;\n");
-            if change_encoding { editor.set_encoding("UTF-16 LE"); }
+            if change_encoding {
+                editor.set_encoding("UTF-16 LE");
+            }
             if external {
-                crate::formatters::prepare(&editor.rope, "let x = 1;\n").apply(&mut editor).unwrap();
+                crate::formatters::prepare(&editor.rope, "let x = 1;\n")
+                    .apply(&mut editor)
+                    .unwrap();
             } else {
                 app_lsp_edits::apply(&mut editor, &[edit((0, 0), (0, 8), "let x = 1;")]).unwrap();
             }
@@ -283,7 +320,8 @@ fn combination_inline_formatting_preserves_valid_folds() {
         let mut editor = folded();
         if external {
             crate::formatters::prepare(&editor.rope, "HEAD\nfn f() {\n one();\n two();\n}\nend")
-                .apply(&mut editor).unwrap();
+                .apply(&mut editor)
+                .unwrap();
         } else {
             app_lsp_edits::apply(&mut editor, &[edit((0, 0), (0, 4), "HEAD")]).unwrap();
         }
@@ -317,20 +355,34 @@ fn combination_completion_imports_relocate_secondary_carets_and_retire_old_snipp
         editor.extra_cursors = vec![(1, 4)];
         editor.folded_ranges.insert(0, 1);
         let item = crate::lsp::LspCompletionItem {
-            label: "call".into(), detail: None, kind: None, documentation: None,
+            label: "call".into(),
+            detail: None,
+            kind: None,
+            documentation: None,
             insert_text: if snippet { "call(${1:arg})$0" } else { "call" }.into(),
             text_edit_range: Some(((0, 0), (0, 4))),
             additional_text_edits: vec![edit((0, 0), (0, 0), "import x\n")],
-            is_snippet: snippet, original_item: None,
+            is_snippet: snippet,
+            original_item: None,
         };
         app_lsp_edits::complete(&mut editor, &item).unwrap();
         assert_eq!(editor.extra_cursors, [(2, 4)]);
         assert!(editor.folded_ranges.is_empty());
         assert_eq!(editor.snippet_active, snippet);
-        if snippet { assert!(editor.snippet_next_tab_stop()); }
-        else { assert!(!editor.snippet_next_tab_stop()); }
+        if snippet {
+            assert!(editor.snippet_next_tab_stop());
+        } else {
+            assert!(!editor.snippet_next_tab_stop());
+        }
         editor.multi_cursor_insert_char('X');
-        assert_eq!(editor.rope, if snippet { "import x\ncall(arg)X\nkeepX" } else { "import x\ncallX\nkeepX" });
+        assert_eq!(
+            editor.rope,
+            if snippet {
+                "import x\ncall(arg)X\nkeepX"
+            } else {
+                "import x\ncallX\nkeepX"
+            }
+        );
         editor.undo();
         editor.undo();
         assert_eq!(editor.rope, "name\nkeep");
@@ -348,10 +400,15 @@ fn combination_completion_at_virtual_column_stays_on_its_line_after_imports() {
         editor.extra_cursors = vec![(1, 4)];
         editor.extra_cursor_anchors = vec![Some((1, 0))];
         let item = crate::lsp::LspCompletionItem {
-            label: "value".into(), detail: None, kind: None, documentation: None,
-            insert_text: "value".into(), text_edit_range: None,
+            label: "value".into(),
+            detail: None,
+            kind: None,
+            documentation: None,
+            insert_text: "value".into(),
+            text_edit_range: None,
             additional_text_edits: vec![edit((0, 0), (0, 0), &format!("# 😀 import{ending}"))],
-            is_snippet: false, original_item: None,
+            is_snippet: false,
+            original_item: None,
         };
         app_lsp_edits::complete(&mut editor, &item).unwrap();
         assert_eq!(editor.rope, format!("# 😀 import{ending}value{ending}next"));

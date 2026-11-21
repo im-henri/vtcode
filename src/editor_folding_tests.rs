@@ -3,7 +3,10 @@ use crate::editor::Editor;
 const NESTED_CPP: &str = include_str!("../tests/fixtures/folding/nested-preprocessor.cpp");
 
 fn line(source: &str, marker: &str) -> usize {
-    source.lines().position(|line| line.trim() == marker).unwrap_or_else(|| panic!("missing {marker}"))
+    source
+        .lines()
+        .position(|line| line.trim() == marker)
+        .unwrap_or_else(|| panic!("missing {marker}"))
 }
 
 fn cpp(source: &str) -> Editor {
@@ -40,11 +43,21 @@ fn nested_cpp_folds_span_outdented_directives_and_allman_braces() {
         ] {
             let start_line = line(&source, start);
             let expected_end = line(&source, end);
-            assert_eq!(editor.find_fold_end(start_line), Some(expected_end), "{start}");
-            assert!(editor.can_fold_line(start_line), "missing gutter hint for {start}");
+            assert_eq!(
+                editor.find_fold_end(start_line),
+                Some(expected_end),
+                "{start}"
+            );
+            assert!(
+                editor.can_fold_line(start_line),
+                "missing gutter hint for {start}"
+            );
         }
         let start = line(&source, "#define FOLD_ASSERT(condition) \\");
-        assert_eq!(editor.find_fold_end(start), Some(line(&source, "} while (false)") + 1));
+        assert_eq!(
+            editor.find_fold_end(start),
+            Some(line(&source, "} while (false)") + 1)
+        );
         assert!(editor.can_fold_line(start));
     }
 }
@@ -59,7 +72,9 @@ fn collapsing_nested_cpp_keeps_following_methods_and_closing_lines_visible() {
     editor.toggle_fold(start);
     assert_eq!(editor.folded_ranges.len(), 1);
     assert_eq!(editor.folded_ranges.get(&start), Some(&end));
-    for hidden in start + 1..end { assert!(editor.is_line_folded(hidden), "line {hidden}"); }
+    for hidden in start + 1..end {
+        assert!(editor.is_line_folded(hidden), "line {hidden}");
+    }
     assert!(!editor.is_line_folded(end));
     assert!(!editor.is_line_folded(line(NESTED_CPP, "int fallback(int value) {")));
     assert_eq!(editor.visible_line_at(start, 1), Some(end));
@@ -76,12 +91,18 @@ fn folding_cpp_by_level_keeps_ranges_disjoint_and_navigation_consistent() {
         for (&start, &end) in &editor.folded_ranges {
             assert!(start >= previous_end, "overlapping ranges at level {level}");
             for hidden in start + 1..end {
-                assert!(editor.is_line_folded(hidden), "level={level}, line={hidden}");
+                assert!(
+                    editor.is_line_folded(hidden),
+                    "level={level}, line={hidden}"
+                );
             }
             assert_eq!(editor.visible_line_at(start, 1), Some(end));
             previous_end = end;
         }
-        assert_eq!(editor.visible_line_count(), editor.visible_lines(0, editor.line_count()).len());
+        assert_eq!(
+            editor.visible_line_count(),
+            editor.visible_lines(0, editor.line_count()).len()
+        );
     }
 }
 
@@ -121,9 +142,15 @@ fn preprocessor_fold_hints_follow_edits_undo_and_language_changes() {
     editor.undo();
     assert!(editor.can_fold_line(0));
     editor.file_path = Some("example.py".into());
-    assert!(!editor.can_fold_line(0), "Python comments are not C preprocessor directives");
+    assert!(
+        !editor.can_fold_line(0),
+        "Python comments are not C preprocessor directives"
+    );
     editor.file_path = Some("example.hpp".into());
-    assert!(editor.can_fold_line(0), "C++ headers use preprocessor folding too");
+    assert!(
+        editor.can_fold_line(0),
+        "C++ headers use preprocessor folding too"
+    );
 }
 
 #[test]
@@ -154,7 +181,10 @@ fn unbraced_if_folds_stop_at_the_enclosing_preprocessor_branch() {
     assert_eq!(editor.find_fold_end(5), Some(7));
     for statement in [3, 6] {
         assert_eq!(editor.find_fold_end(statement), None);
-        assert!(!editor.can_fold_line(statement), "branch boundaries must not create fake fold hints");
+        assert!(
+            !editor.can_fold_line(statement),
+            "branch boundaries must not create fake fold hints"
+        );
     }
 }
 

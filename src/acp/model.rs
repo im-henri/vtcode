@@ -237,7 +237,8 @@ impl Session {
         });
         self.plan_index = self.plan_index.and_then(|i| positions[i]);
         self.tool_task_revisions.retain(|id, _| {
-            self.entries.iter()
+            self.entries
+                .iter()
                 .any(|entry| matches!(entry, ChatEntry::Tool(tool) if &tool.tool_call_id == id))
         });
         self.terminals.retain(|id, _| {

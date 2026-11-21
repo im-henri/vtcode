@@ -1,7 +1,10 @@
 use crate::app::{App, PaletteCommand};
 use crate::app_theme::{ThemeFile, theme_command_id};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::{buffer::Buffer, style::{Color, Modifier, Style}};
+use ratatui::{
+    buffer::Buffer,
+    style::{Color, Modifier, Style},
+};
 use std::borrow::Cow;
 
 const ORIGINAL: &str = "palette-original";
@@ -80,12 +83,19 @@ fn mouse(app: &mut App, kind: MouseEventKind, col: u16, row: u16) {
 fn render_palette(app: &mut App) {
     use ratatui::{Terminal, backend::TestBackend};
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| crate::ui_pickers::draw_command_palette(frame, app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui_pickers::draw_command_palette(frame, app))
+        .unwrap();
 }
 
 fn palette_row(app: &mut App, index: usize) -> ratatui::layout::Rect {
     render_palette(app);
-    app.quick_picker.rows.iter().find(|(_, item)| *item == index).unwrap().0
+    app.quick_picker
+        .rows
+        .iter()
+        .find(|(_, item)| *item == index)
+        .unwrap()
+        .0
 }
 
 #[test]
@@ -94,22 +104,37 @@ fn palette_theme_renders_input_and_match_colors_independently() {
     let (_workspace, mut app) = fixture();
     app.open_palette();
     filter(&mut app, "welco");
-    let mut theme = app.loaded_themes.iter().find(|theme| theme.config_key == ORIGINAL).unwrap().clone();
+    let mut theme = app
+        .loaded_themes
+        .iter()
+        .find(|theme| theme.config_key == ORIGINAL)
+        .unwrap()
+        .clone();
     for (key, value) in [
-        ("quickInput.background", "#0d1016"), ("input.background", "#1e2832"),
-        ("input.foreground", "#b3b1ad"), ("quickInputList.focusBackground", "#263545"),
+        ("quickInput.background", "#0d1016"),
+        ("input.background", "#1e2832"),
+        ("input.foreground", "#b3b1ad"),
+        ("quickInputList.focusBackground", "#263545"),
         ("quickInputList.focusHighlightForeground", "#e6b450"),
     ] {
         theme.workbench_colors.insert(key.into(), value.into());
     }
     app.colors = theme.to_theme_colors();
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal.draw(|frame| crate::ui_pickers::draw_command_palette(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui_pickers::draw_command_palette(frame, &mut app))
+        .unwrap();
     let cells = &terminal.backend().buffer().content;
-    let query = cells.iter().find(|cell| cell.symbol() == "w").expect("palette query");
+    let query = cells
+        .iter()
+        .find(|cell| cell.symbol() == "w")
+        .expect("palette query");
     assert_eq!(query.bg, Color::Rgb(30, 40, 50));
     assert_eq!(query.fg, Color::Rgb(179, 177, 173));
-    let matched = cells.iter().find(|cell| cell.symbol() == "W").expect("Welcome result");
+    let matched = cells
+        .iter()
+        .find(|cell| cell.symbol() == "W")
+        .expect("Welcome result");
     assert_eq!(matched.fg, Color::Rgb(230, 180, 80));
     assert_eq!(matched.bg, app.colors.ui.bg_quick_selected);
 }
@@ -210,7 +235,12 @@ fn palette_theme_mouse_hover_previews_only_visible_items_and_click_confirms() {
     mouse(&mut app, MouseEventKind::Moved, amber.x, amber.y);
     assert_eq!(app.theme_key, AMBER);
     // A click can select a different item without a preceding hover event.
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), light.x, light.y);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        light.x,
+        light.y,
+    );
     assert!(!app.palette.active);
     assert_eq!(app.theme_key, LIGHT);
     assert_eq!(app.current_settings().theme.as_deref(), Some(LIGHT));
@@ -226,12 +256,7 @@ fn palette_theme_mouse_hover_previews_only_visible_items_and_click_confirms() {
     mouse(&mut app, MouseEventKind::Moved, first.x, first.y);
     assert_eq!(app.theme_key, ORIGINAL);
     let below_list = app.quick_picker.list.bottom();
-    mouse(
-        &mut app,
-        MouseEventKind::Moved,
-        first.x,
-        below_list,
-    );
+    mouse(&mut app, MouseEventKind::Moved, first.x, below_list);
     assert_eq!(
         app.palette.selected, 0,
         "the bottom border is not a hidden theme row"
@@ -330,15 +355,20 @@ fn palette_theme_unchanged_selection_reuses_syntax_theme_and_unknown_keys_restor
 fn render_backdrop(app: &mut App, width: u16, height: u16) -> Buffer {
     use ratatui::{Terminal, backend::TestBackend};
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|frame| {
-        for cell in &mut frame.buffer_mut().content {
-            cell.set_char('x').set_style(Style::default()
-                .fg(app.colors.fg_text).bg(app.colors.bg_editor)
-                .add_modifier(Modifier::ITALIC));
-        }
-        crate::ui_quick_picker::draw_active(frame, app);
-        crate::ui_modal::draw_active(frame, app);
-    }).unwrap();
+    terminal
+        .draw(|frame| {
+            for cell in &mut frame.buffer_mut().content {
+                cell.set_char('x').set_style(
+                    Style::default()
+                        .fg(app.colors.fg_text)
+                        .bg(app.colors.bg_editor)
+                        .add_modifier(Modifier::ITALIC),
+                );
+            }
+            crate::ui_quick_picker::draw_active(frame, app);
+            crate::ui_modal::draw_active(frame, app);
+        })
+        .unwrap();
     terminal.backend().buffer().clone()
 }
 
@@ -346,7 +376,10 @@ fn assert_preview_backdrop(app: &App, buffer: &Buffer) {
     for y in 0..buffer.area.height {
         for x in 0..buffer.area.width {
             let cell = &buffer[(x, y)];
-            assert!(!cell.modifier.contains(Modifier::DIM), "theme preview at {x},{y}");
+            assert!(
+                !cell.modifier.contains(Modifier::DIM),
+                "theme preview at {x},{y}"
+            );
             if app.quick_picker.area.contains((x, y).into()) {
                 continue;
             }
@@ -362,7 +395,10 @@ fn assert_preview_backdrop(app: &App, buffer: &Buffer) {
 fn palette_theme_backdrop_previews_current_and_new_themes_across_resize() {
     let (_workspace, mut app) = fixture();
     open_themes(&mut app);
-    assert!(app.palette.theme_preview_original.is_none(), "current theme is also a preview");
+    assert!(
+        app.palette.theme_preview_original.is_none(),
+        "current theme is also a preview"
+    );
     for selected in [0, 1, 2, 0] {
         app.palette.selected = selected;
         app.preview_palette_theme();
@@ -379,7 +415,10 @@ fn palette_theme_backdrop_previews_current_and_new_themes_across_resize() {
 
 #[test]
 fn palette_theme_preview_updates_search_result_fills_and_cancel_restores_them() {
-    use crate::{app::{GlobalSearchResult, SidebarView}, theme_workbench::ColorLayer};
+    use crate::{
+        app::{GlobalSearchResult, SidebarView},
+        theme_workbench::ColorLayer,
+    };
     use ratatui::{Terminal, backend::TestBackend};
     let (_workspace, mut app) = fixture();
     let fills = [
@@ -387,23 +426,37 @@ fn palette_theme_preview_updates_search_result_fills_and_cancel_restores_them() 
         ColorLayer::rgba(0, 128, 64, 128),
         ColorLayer::rgba(48, 64, 255, 128),
     ];
-    for (theme, fill) in app.loaded_themes.iter_mut()
-        .zip(["#80300080", "#00804080", "#3040ff80"]) {
-        theme.workbench_colors.insert("editor.findMatchHighlightBackground".into(), fill.into());
-        theme.workbench_colors.insert("list.highlightForeground".into(), "#ffffff".into());
+    for (theme, fill) in app
+        .loaded_themes
+        .iter_mut()
+        .zip(["#80300080", "#00804080", "#3040ff80"])
+    {
+        theme
+            .workbench_colors
+            .insert("editor.findMatchHighlightBackground".into(), fill.into());
+        theme
+            .workbench_colors
+            .insert("list.highlightForeground".into(), "#ffffff".into());
     }
     app.apply_effective_settings();
     app.sidebar_view = SidebarView::Search;
     app.global_search_query = "needle".into();
     app.global_search_results = vec![GlobalSearchResult {
-        file_path: app.explorer.root.join("example.rs"), line_num: 1,
-        line_text: "before needle after".into(), col_start: 7, col_end: 13,
-        context_before: None, context_after: None,
-    }].into();
+        file_path: app.explorer.root.join("example.rs"),
+        line_num: 1,
+        line_text: "before needle after".into(),
+        col_start: 7,
+        col_end: 13,
+        context_before: None,
+        context_after: None,
+    }]
+    .into();
     open_themes(&mut app);
     let render = |app: &mut App| {
         let mut terminal = Terminal::new(TestBackend::new(60, 18)).unwrap();
-        terminal.draw(|frame| crate::ui_search_panel::draw_search_panel(frame, app, frame.area())).unwrap();
+        terminal
+            .draw(|frame| crate::ui_search_panel::draw_search_panel(frame, app, frame.area()))
+            .unwrap();
         let buffer = terminal.backend().buffer();
         let (x, y) = crate::ui_control_visibility_tests::find_cell(buffer, "before needle after");
         (buffer[(x, y)].bg, buffer[(x + 7, y)].bg)
@@ -425,17 +478,32 @@ fn palette_theme_preview_updates_search_result_fills_and_cancel_restores_them() 
 fn palette_theme_backdrop_ends_for_other_commands_no_results_install_and_close() {
     let (_workspace, mut app) = fixture();
     app.open_palette();
-    app.palette.filtered = [theme_command_id(LIGHT), "toggle_minimap".into()].iter().map(|id|
-        app.palette.commands.iter().position(|command| command.id.as_ref() == id.as_str()).unwrap()).collect();
+    app.palette.filtered = [theme_command_id(LIGHT), "toggle_minimap".into()]
+        .iter()
+        .map(|id| {
+            app.palette
+                .commands
+                .iter()
+                .position(|command| command.id.as_ref() == id.as_str())
+                .unwrap()
+        })
+        .collect();
     app.palette.selected = 0;
     app.preview_palette_theme();
     render_backdrop(&mut app, 120, 40);
     let layout = (app.quick_picker.area, app.quick_picker.rows.clone());
     key(&mut app, KeyCode::Down, KeyModifiers::NONE);
     render_backdrop(&mut app, 120, 40);
-    assert_eq!((app.quick_picker.area, app.quick_picker.rows.clone()), layout,
-        "theme previews must not move the command rows under the pointer");
-    for query in ["View: Toggle Minimap", "no-such-command-zzzz", "https://vscodethemes.com/e/test/theme"] {
+    assert_eq!(
+        (app.quick_picker.area, app.quick_picker.rows.clone()),
+        layout,
+        "theme previews must not move the command rows under the pointer"
+    );
+    for query in [
+        "View: Toggle Minimap",
+        "no-such-command-zzzz",
+        "https://vscodethemes.com/e/test/theme",
+    ] {
         filter(&mut app, "Preferences: Color Theme Palette Light");
         let buffer = render_backdrop(&mut app, 120, 40);
         assert_preview_backdrop(&app, &buffer);
@@ -448,9 +516,22 @@ fn palette_theme_backdrop_ends_for_other_commands_no_results_install_and_close()
     for confirm in [false, true] {
         app.open_palette();
         filter(&mut app, "Preferences: Color Theme Palette Light");
-        key(&mut app, if confirm { KeyCode::Enter } else { KeyCode::Esc }, KeyModifiers::NONE);
+        key(
+            &mut app,
+            if confirm {
+                KeyCode::Enter
+            } else {
+                KeyCode::Esc
+            },
+            KeyModifiers::NONE,
+        );
         let buffer = render_backdrop(&mut app, 120, 40);
-        assert!(buffer.content.iter().all(|cell| !cell.modifier.contains(Modifier::DIM)));
+        assert!(
+            buffer
+                .content
+                .iter()
+                .all(|cell| !cell.modifier.contains(Modifier::DIM))
+        );
         assert_eq!(app.theme_key, if confirm { LIGHT } else { ORIGINAL });
     }
 }
@@ -459,19 +540,33 @@ fn palette_theme_backdrop_ends_for_other_commands_no_results_install_and_close()
 fn palette_theme_backdrop_does_not_change_other_picker_kinds() {
     let (_workspace, mut app) = fixture();
     open_themes(&mut app);
-    for kind in [crate::ui_quick_picker::Kind::Files, crate::ui_quick_picker::Kind::Symbols,
+    for kind in [
+        crate::ui_quick_picker::Kind::Files,
+        crate::ui_quick_picker::Kind::Symbols,
         crate::ui_quick_picker::Kind::Branches,
-        crate::ui_quick_picker::Kind::OpenWith] {
+        crate::ui_quick_picker::Kind::OpenWith,
+    ] {
         use ratatui::{Terminal, backend::TestBackend};
         let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-        terminal.draw(|frame| crate::ui_quick_picker::draw(frame, &mut app, kind)).unwrap();
-        assert!(terminal.backend().buffer()[(119, 0)].modifier.contains(Modifier::DIM), "{kind:?}");
+        terminal
+            .draw(|frame| crate::ui_quick_picker::draw(frame, &mut app, kind))
+            .unwrap();
+        assert!(
+            terminal.backend().buffer()[(119, 0)]
+                .modifier
+                .contains(Modifier::DIM),
+            "{kind:?}"
+        );
     }
 }
 
 #[test]
 fn palette_theme_backdrop_survives_cached_frames_and_clears_from_the_editor() {
-    use crate::{animation_config::AnimationEffect, app::{ActivePane, Tab}, editor::Editor};
+    use crate::{
+        animation_config::AnimationEffect,
+        app::{ActivePane, Tab},
+        editor::Editor,
+    };
     use ratatui::{Terminal, backend::TestBackend};
     let workspace = tempfile::tempdir().unwrap();
     let mut app = App::new(workspace.path().into());
@@ -494,43 +589,76 @@ fn palette_theme_backdrop_survives_cached_frames_and_clears_from_the_editor() {
     app.show_explorer = false;
     app.show_minimap = false;
     app.cursor_blinking = false;
-    for effect in AnimationEffect::ALL { app.animation_settings.set(effect, effect == AnimationEffect::CursorSmear); }
+    for effect in AnimationEffect::ALL {
+        app.animation_settings
+            .set(effect, effect == AnimationEffect::CursorSmear);
+    }
     let mut terminal = Terminal::new(TestBackend::new(140, 48)).unwrap();
     for theme in ["monokai", "light", "high-contrast"] {
         assert!(app.set_theme_by_key(theme));
         app.open_palette();
         filter(&mut app, "Preferences: Color Theme");
-        app.palette.selected = app.palette.filtered.iter().position(|&index|
-            app.palette.commands[index].id == theme_command_id(theme)).unwrap();
+        app.palette.selected = app
+            .palette
+            .filtered
+            .iter()
+            .position(|&index| app.palette.commands[index].id == theme_command_id(theme))
+            .unwrap();
         app.preview_palette_theme();
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
         let expected = terminal.backend().buffer().clone();
         let text: String = expected.content.iter().map(|cell| cell.symbol()).collect();
         assert!(text.contains("Enter Apply   Esc Cancel"));
         let code = app.code_area.unwrap();
-        assert!(!expected[(code.x, code.bottom() - 2)].modifier.contains(Modifier::DIM));
-        assert!(!expected[(code.right() - 1, code.y)].modifier.contains(Modifier::DIM));
+        assert!(
+            !expected[(code.x, code.bottom() - 2)]
+                .modifier
+                .contains(Modifier::DIM)
+        );
+        assert!(
+            !expected[(code.right() - 1, code.y)]
+                .modifier
+                .contains(Modifier::DIM)
+        );
         for _ in 0..3 {
             app.rendering_animation_frame = true;
-            terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+            terminal
+                .draw(|frame| crate::ui::draw(frame, &mut app))
+                .unwrap();
             app.rendering_animation_frame = false;
             assert_eq!(*terminal.backend().buffer(), expected, "theme={theme}");
         }
         assert!(app.animation_frame_cache.replays > 0);
         if std::env::var_os("VTCODE_THEME_PREVIEW_SNAPSHOTS").is_some() {
-            let rgb = |color| match color { Color::Rgb(r, g, b) => [r, g, b], _ => [128, 128, 128] };
+            let rgb = |color| match color {
+                Color::Rgb(r, g, b) => [r, g, b],
+                _ => [128, 128, 128],
+            };
             let cells: Vec<_> = expected.content.iter().map(|cell| serde_json::json!({
                 "text": cell.symbol(), "fg": rgb(cell.fg), "bg": rgb(cell.bg),
                 "bold": cell.modifier.contains(Modifier::BOLD), "dim": cell.modifier.contains(Modifier::DIM),
             })).collect();
-            std::fs::write(format!("target/theme-preview-{theme}.json"), serde_json::to_vec(&serde_json::json!({
-                "width": expected.area.width, "height": expected.area.height, "cells": cells,
-            })).unwrap()).unwrap();
+            std::fs::write(
+                format!("target/theme-preview-{theme}.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "width": expected.area.width, "height": expected.area.height, "cells": cells,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
         }
         key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
         let buffer = terminal.backend().buffer();
-        assert!(!buffer[(code.x, code.bottom() - 2)].modifier.contains(Modifier::DIM));
+        assert!(
+            !buffer[(code.x, code.bottom() - 2)]
+                .modifier
+                .contains(Modifier::DIM)
+        );
         assert_eq!(app.editor().unwrap().rope.to_string(), source);
     }
 }

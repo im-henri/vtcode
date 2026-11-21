@@ -177,7 +177,11 @@ impl Cache {
             {
                 false
             } else if let Some(previous) = &query.rope {
-                let (old, new) = crate::rope_changes::changed_chars_cancellable(previous, &snapshot.rope, cancelled)?;
+                let (old, new) = crate::rope_changes::changed_chars_cancellable(
+                    previous,
+                    &snapshot.rope,
+                    cancelled,
+                )?;
                 (old.is_empty() && new.is_empty())
                     || (old.start >= prefix_start && new.start >= prefix_start)
             } else {

@@ -349,15 +349,33 @@ mod copy_tests {
             let contents = if directory {
                 fs::create_dir(&source).unwrap();
                 source.join("child.tcl")
-            } else { source.clone() };
+            } else {
+                source.clone()
+            };
             fs::write(&contents, "original\n").unwrap();
-            copy_with_publish(&source, &destination, || false, |item, destination| {
-                super::rename::with_primary(item, destination, || Err(io::ErrorKind::Unsupported.into()))
-            }).unwrap();
+            copy_with_publish(
+                &source,
+                &destination,
+                || false,
+                |item, destination| {
+                    super::rename::with_primary(item, destination, || {
+                        Err(io::ErrorKind::Unsupported.into())
+                    })
+                },
+            )
+            .unwrap();
             assert_eq!(fs::read_to_string(contents).unwrap(), "original\n");
-            let copied = if directory { destination.join("child.tcl") } else { destination };
+            let copied = if directory {
+                destination.join("child.tcl")
+            } else {
+                destination
+            };
             assert_eq!(fs::read_to_string(copied).unwrap(), "original\n");
-            assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2, "staging must be cleaned up");
+            assert_eq!(
+                fs::read_dir(root.path()).unwrap().count(),
+                2,
+                "staging must be cleaned up"
+            );
         }
     }
 
@@ -367,10 +385,17 @@ mod copy_tests {
         let source = root.path().join("source");
         let destination = root.path().join("destination");
         fs::write(&source, "original").unwrap();
-        let result = copy_with_publish(&source, &destination, || false, |item, destination| {
-            fs::write(destination, "concurrent").unwrap();
-            super::rename::with_primary(item, destination, || Err(io::ErrorKind::Unsupported.into()))
-        });
+        let result = copy_with_publish(
+            &source,
+            &destination,
+            || false,
+            |item, destination| {
+                fs::write(destination, "concurrent").unwrap();
+                super::rename::with_primary(item, destination, || {
+                    Err(io::ErrorKind::Unsupported.into())
+                })
+            },
+        );
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(fs::read_to_string(source).unwrap(), "original");
         assert_eq!(fs::read_to_string(destination).unwrap(), "concurrent");

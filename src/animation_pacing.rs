@@ -66,10 +66,7 @@ mod tests {
         );
         assert_eq!(pacing.wait(now + Duration::from_secs(1)), Duration::ZERO);
         // Input can repaint immediately and starts the next cosmetic rest.
-        pacing.record(
-            now + Duration::from_millis(5),
-            Duration::from_millis(2),
-        );
+        pacing.record(now + Duration::from_millis(5), Duration::from_millis(2));
         assert_eq!(
             pacing.wait(now + Duration::from_millis(5)),
             Duration::from_micros(30_500)
@@ -118,9 +115,15 @@ mod tests {
         assert_eq!(pacing.background_wait(now), Duration::ZERO);
         pacing.record(now, Duration::from_millis(2));
         assert_eq!(pacing.background_wait(now), BACKGROUND_FRAME_INTERVAL);
-        assert_eq!(pacing.background_wait(now + BACKGROUND_FRAME_INTERVAL), Duration::ZERO);
+        assert_eq!(
+            pacing.background_wait(now + BACKGROUND_FRAME_INTERVAL),
+            Duration::ZERO
+        );
         pacing.record(now, Duration::from_millis(40));
         assert_eq!(pacing.background_wait(now), Duration::from_millis(40));
-        assert_eq!(pacing.background_wait(now + Duration::from_secs(2)), Duration::ZERO);
+        assert_eq!(
+            pacing.background_wait(now + Duration::from_secs(2)),
+            Duration::ZERO
+        );
     }
 }

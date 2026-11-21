@@ -137,7 +137,10 @@ impl Stream {
         let repository = remote.remote_path(root)?;
         let (id, pages) = remote.client.register_history()?;
         Ok(Self {
-            handle: Handle { client: remote.client.clone(), id },
+            handle: Handle {
+                client: remote.client.clone(),
+                id,
+            },
             repository,
             pages,
         })
@@ -145,7 +148,12 @@ impl Stream {
 
     fn next(&self, cancel: &CancellationToken) -> io::Result<Page> {
         let client = &self.handle.client;
-        client.call_cancellable(Command::HistoryNext { history: self.handle.id }, cancel)?;
+        client.call_cancellable(
+            Command::HistoryNext {
+                history: self.handle.id,
+            },
+            cancel,
+        )?;
         loop {
             if cancel.is_cancelled() {
                 return Err(io::ErrorKind::Interrupted.into());
@@ -156,7 +164,10 @@ impl Stream {
                     "SSH connection lost while reading Git history",
                 ));
             }
-            match self.pages.recv_timeout(std::time::Duration::from_millis(50)) {
+            match self
+                .pages
+                .recv_timeout(std::time::Duration::from_millis(50))
+            {
                 Ok(page) => return Ok(page),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(error) => return Err(io::Error::other(error)),
@@ -164,38 +175,50 @@ impl Stream {
         }
     }
 
-    pub(crate) fn serve(
-        self,
-        read: Read,
-        sender: BackgroundResultSender,
-        log: diagnostics::Log,
-    ) {
-        let Read { root, generation, cached, requests, cancel } = read;
+    pub(crate) fn serve(self, read: Read, sender: BackgroundResultSender, log: diagnostics::Log) {
+        let Read {
+            root,
+            generation,
+            cached,
+            requests,
+            cancel,
+        } = read;
         if requests.recv().is_err() || cancel.is_cancelled() {
             return;
         }
         let mut offset = 0;
         let mut cached = cached.as_ref();
         let result = (|| -> io::Result<()> {
-            self.handle.client.call_cancellable(Command::HistoryStart {
-                history: self.handle.id,
-                repository: self.repository.clone(),
-            }, &cancel)?;
+            self.handle.client.call_cancellable(
+                Command::HistoryStart {
+                    history: self.handle.id,
+                    repository: self.repository.clone(),
+                },
+                &cancel,
+            )?;
             loop {
                 if cancel.is_cancelled() {
                     return Ok(());
                 }
                 let page = self.next(&cancel)?;
                 if page.offset != offset {
-                    return Err(io::Error::other("Remote Git history returned an unexpected page"));
+                    return Err(io::Error::other(
+                        "Remote Git history returned an unexpected page",
+                    ));
                 }
                 let (mut commits, has_more) = page.result.map_err(io::Error::other)?;
                 let end = offset + commits.len();
                 if has_more && commits.is_empty() {
-                    return Err(io::Error::other("Remote Git history returned an empty page before the end"));
+                    return Err(io::Error::other(
+                        "Remote Git history returned an empty page before the end",
+                    ));
                 }
                 if let Some(prefix) = cached {
-                    if offset == 0 && commits.first().is_none_or(|commit| commit.full_hash != prefix.head) {
+                    if offset == 0
+                        && commits
+                            .first()
+                            .is_none_or(|commit| commit.full_hash != prefix.head)
+                    {
                         cached = None;
                     } else if end < prefix.count && has_more {
                         offset = end;
@@ -204,8 +227,13 @@ impl Stream {
                         // Replay the prefix on the worker to rebuild merge lanes.
                         // Append only new rows when the branch still has the same tip.
                         let skip = prefix.count - offset;
-                        if commits.get(skip - 1).is_none_or(|commit| commit.full_hash != prefix.tail) {
-                            return Err(io::Error::other("Git history changed while this folder was inactive"));
+                        if commits
+                            .get(skip - 1)
+                            .is_none_or(|commit| commit.full_hash != prefix.tail)
+                        {
+                            return Err(io::Error::other(
+                                "Git history changed while this folder was inactive",
+                            ));
                         }
                         commits.drain(..skip);
                         offset = prefix.count;
@@ -219,7 +247,10 @@ impl Stream {
                     return Ok(());
                 }
                 let page = HistoryPage {
-                    root: root.clone(), generation, offset, result: Ok((commits, has_more)),
+                    root: root.clone(),
+                    generation,
+                    offset,
+                    result: Ok((commits, has_more)),
                 };
                 if !page.publish(&sender) || !has_more || requests.recv().is_err() {
                     return Ok(());
@@ -227,15 +258,28 @@ impl Stream {
                 offset = end;
             }
         })();
-        if let Err(error) = result && !cancel.is_cancelled() {
+        if let Err(error) = result
+            && !cancel.is_cancelled()
+        {
             let target = if self.repository.0.is_empty() && !self.repository.is_absolute() {
                 self.handle.client.hello().root.clone()
             } else {
-                format!("{} · {}", self.handle.client.hello().root, self.repository.display())
+                format!(
+                    "{} · {}",
+                    self.handle.client.hello().root,
+                    self.repository.display()
+                )
             };
-            log.operation("remote Git", "Read history page", &target).error(&error);
+            log.operation("remote Git", "Read history page", &target)
+                .error(&error);
             let offset = cached.map_or(offset, |prefix| prefix.count);
-            HistoryPage { root, generation, offset, result: Err(error.to_string()) }.publish(&sender);
+            HistoryPage {
+                root,
+                generation,
+                offset,
+                result: Err(error.to_string()),
+            }
+            .publish(&sender);
         }
     }
 }

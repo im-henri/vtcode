@@ -261,8 +261,14 @@ impl Rules {
     }
 
     pub(crate) fn with_automatic(self: &Arc<Self>, automatic: Option<Arc<Automatic>>) -> Arc<Self> {
-        if self.automatic == automatic { return self.clone(); }
-        Arc::new(Self { configs: self.configs.clone(), compiled: self.compiled.clone(), automatic })
+        if self.automatic == automatic {
+            return self.clone();
+        }
+        Arc::new(Self {
+            configs: self.configs.clone(),
+            compiled: self.compiled.clone(),
+            automatic,
+        })
     }
     pub(crate) fn get(&self, language: &str) -> Option<Rule> {
         if self.compiled.is_empty() {
@@ -281,18 +287,30 @@ impl Rules {
     }
     pub(crate) fn for_editor(&self, editor: &crate::editor::Editor) -> Option<Rule> {
         let configured = self.get(fallback_language(editor));
-        if configured.is_some_and(|rule| rule.syntax != Syntax::Automatic) { return configured; }
-        let automatic = self.automatic.as_ref().and_then(|automatic| automatic.for_editor(editor));
-        let configured = configured.or_else(|| automatic.and_then(|(source, _)| {
-            self.get(&source.name).or_else(|| self.get(&source.id))
-                .or_else(|| source.aliases.iter().find_map(|alias| self.get(alias)))
-        }));
+        if configured.is_some_and(|rule| rule.syntax != Syntax::Automatic) {
+            return configured;
+        }
+        let automatic = self
+            .automatic
+            .as_ref()
+            .and_then(|automatic| automatic.for_editor(editor));
+        let configured = configured.or_else(|| {
+            automatic.and_then(|(source, _)| {
+                self.get(&source.name)
+                    .or_else(|| self.get(&source.id))
+                    .or_else(|| source.aliases.iter().find_map(|alias| self.get(alias)))
+            })
+        });
         match (configured, automatic) {
             (Some(mut rule), Some((_, syntax))) if rule.syntax == Syntax::Automatic => {
                 rule.syntax = syntax;
                 Some(rule)
             }
-            (None, Some((_, syntax))) => Some(Rule { syntax, delimiters: None, language_blocks: true }),
+            (None, Some((_, syntax))) => Some(Rule {
+                syntax,
+                delimiters: None,
+                language_blocks: true,
+            }),
             (rule, _) => rule,
         }
     }
@@ -303,9 +321,15 @@ pub(crate) fn language_key(name: &str) -> String {
 }
 
 pub(crate) fn language(editor: &crate::editor::Editor) -> &str {
-    editor.scope_bubble_rules.automatic.as_ref()
+    editor
+        .scope_bubble_rules
+        .automatic
+        .as_ref()
         .and_then(|automatic| automatic.for_editor(editor))
-        .map_or_else(|| fallback_language(editor), |(source, _)| source.name.as_str())
+        .map_or_else(
+            || fallback_language(editor),
+            |(source, _)| source.name.as_str(),
+        )
 }
 
 fn fallback_language(editor: &crate::editor::Editor) -> &str {

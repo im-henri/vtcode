@@ -32,13 +32,16 @@ fn fixture(width: usize, height: usize, history: usize, alternate: bool) -> Term
         grid.wrapped[index] = index % 2 == 0;
     }
     for index in 0..history {
-        grid.scrollback.push_back(vec![
-            TermCell {
-                ch: char::from(b'a' + (index % 26) as u8),
-                ..TermCell::default()
-            };
-            width
-        ].into());
+        grid.scrollback.push_back(
+            vec![
+                TermCell {
+                    ch: char::from(b'a' + (index % 26) as u8),
+                    ..TermCell::default()
+                };
+                width
+            ]
+            .into(),
+        );
         grid.scrollback_wrapped.push_back(index % 3 == 0);
     }
     grid

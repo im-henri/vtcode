@@ -90,7 +90,9 @@ pub(crate) fn execute<P: AsRef<Path>>(
 ) -> Result<GitActionOutcome, String> {
     match task {
         Task::Operation(action) => crate::git_operation::execute(root, action),
-        Task::Amend { target, message } => crate::git_amend::execute(root, target, message.as_deref()),
+        Task::Amend { target, message } => {
+            crate::git_amend::execute(root, target, message.as_deref())
+        }
         Task::Stash {
             stash_message,
             label,
@@ -129,7 +131,9 @@ pub(crate) fn execute<P: AsRef<Path>>(
             let root = root.to_path_buf();
             let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
             if repo.state() != git2::RepositoryState::Clean {
-                return Err("Finish or abort the current Git operation before creating a branch.".into());
+                return Err(
+                    "Finish or abort the current Git operation before creating a branch.".into(),
+                );
             }
             if repo
                 .find_branch(&branch_name, git2::BranchType::Local)
@@ -137,12 +141,19 @@ pub(crate) fn execute<P: AsRef<Path>>(
             {
                 return Err(format!("branch already exists: {branch_name}"));
             }
-            let head_commit = repo
-                .head()
-                .and_then(|head| head.peel_to_commit())
-                .map_err(|error| if matches!(error.code(), git2::ErrorCode::UnbornBranch | git2::ErrorCode::NotFound) {
-                    "Create an initial commit before creating another branch.".to_string()
-                } else { error.to_string() })?;
+            let head_commit =
+                repo.head()
+                    .and_then(|head| head.peel_to_commit())
+                    .map_err(|error| {
+                        if matches!(
+                            error.code(),
+                            git2::ErrorCode::UnbornBranch | git2::ErrorCode::NotFound
+                        ) {
+                            "Create an initial commit before creating another branch.".to_string()
+                        } else {
+                            error.to_string()
+                        }
+                    })?;
             repo.branch(&branch_name, &head_commit, false)
                 .map_err(|error| error.to_string())?;
             crate::app_git_branch::checkout_branch(&repo, &branch_name)?;
@@ -179,7 +190,9 @@ pub(crate) fn execute<P: AsRef<Path>>(
             let root = root.to_path_buf();
             let repo = git2::Repository::open(root).map_err(|error| error.to_string())?;
             if repo.state() != git2::RepositoryState::Clean {
-                return Err("Finish or abort the current Git operation before switching branches.".into());
+                return Err(
+                    "Finish or abort the current Git operation before switching branches.".into(),
+                );
             }
             let remote_branch = repo
                 .find_branch(&remote_ref, git2::BranchType::Remote)
@@ -242,12 +255,15 @@ pub(crate) fn execute<P: AsRef<Path>>(
             let mut index = repo.index().map_err(|error| error.to_string())?;
             // Conflict resolution is validated file by file below; everything
             // else goes through Git itself when it can be run.
-            let staged = if index.has_conflicts() { None } else { stage_all_with_git(&repo) };
+            let staged = if index.has_conflicts() {
+                None
+            } else {
+                stage_all_with_git(&repo)
+            };
             if let Some(result) = staged {
                 result?;
             } else {
-                crate::app_git::ignore_working_copies(&repo)
-                    .map_err(|error| error.to_string())?;
+                crate::app_git::ignore_working_copies(&repo).map_err(|error| error.to_string())?;
                 crate::app_git::changes::prepare_conflicts_for_stage_all(&repo, &mut index)?;
                 index
                     .add_all(std::iter::once("*"), git2::IndexAddOption::DEFAULT, None)
@@ -298,10 +314,20 @@ pub(crate) fn execute<P: AsRef<Path>>(
 
 impl App {
     pub(crate) fn trust_source_control_repository(&mut self) {
-        let Some(error) = self.repositories.failure()
-            .filter(|error| error.kind == crate::git_trust::FailureKind::Ownership).cloned()
-        else { return; };
-        self.queue_git_task_at(error.root, "git-trust", "trust repository", Task::TrustRepository);
+        let Some(error) = self
+            .repositories
+            .failure()
+            .filter(|error| error.kind == crate::git_trust::FailureKind::Ownership)
+            .cloned()
+        else {
+            return;
+        };
+        self.queue_git_task_at(
+            error.root,
+            "git-trust",
+            "trust repository",
+            Task::TrustRepository,
+        );
     }
 
     pub(crate) fn queue_git_task(
@@ -314,10 +340,17 @@ impl App {
         self.queue_git_task_at(root, worker, action, task);
     }
 
-    pub(crate) fn queue_git_task_at(&mut self, key: std::path::PathBuf, worker: &'static str, action: &'static str, task: Task) -> bool {
+    pub(crate) fn queue_git_task_at(
+        &mut self,
+        key: std::path::PathBuf,
+        worker: &'static str,
+        action: &'static str,
+        task: Task,
+    ) -> bool {
         self.git_output();
         let Some(remote) = self.remote_workspace.clone() else {
-            return self.run_git_action_at_async(key, worker, action, move |root| execute(&root, task));
+            return self
+                .run_git_action_at_async(key, worker, action, move |root| execute(&root, task));
         };
         if !self.source_control_enabled {
             return false;
@@ -382,7 +415,8 @@ impl App {
 /// 0.3 s). `None` means Git could not be started; callers use libgit2.
 fn run_git_index_command(repo: &git2::Repository, args: &[&str]) -> Option<Result<(), String>> {
     let mut command = crate::git_repositories::git_command_for(repo).ok()?;
-    command.args(args)
+    command
+        .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
@@ -395,15 +429,25 @@ fn run_git_index_command(repo: &git2::Repository, args: &[&str]) -> Option<Resul
         Ok(())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        Err(if stderr.is_empty() { format!("git {} failed", args.join(" ")) } else { stderr })
+        Err(if stderr.is_empty() {
+            format!("git {} failed", args.join(" "))
+        } else {
+            stderr
+        })
     })
 }
 
 /// `git add -A` for the whole worktree, keeping vtcode's temporary working
 /// copies out of the index exactly like the libgit2 path's ignore rules.
 pub(crate) fn stage_all_with_git(repo: &git2::Repository) -> Option<Result<(), String>> {
-    let format_temp = format!(":(exclude,glob)**/{}*/**", crate::formatters::TEMP_DIR_PREFIX);
-    let copy_temp = format!(":(exclude,glob)**/{}**", crate::fs_ops::COPY_TEMP_GIT_IGNORE);
+    let format_temp = format!(
+        ":(exclude,glob)**/{}*/**",
+        crate::formatters::TEMP_DIR_PREFIX
+    );
+    let copy_temp = format!(
+        ":(exclude,glob)**/{}**",
+        crate::fs_ops::COPY_TEMP_GIT_IGNORE
+    );
     run_git_index_command(repo, &["add", "--all", "--", ".", &format_temp, &copy_temp])
 }
 
@@ -412,8 +456,16 @@ mod bulk_index_tests {
     use super::*;
 
     fn git(root: &Path, args: &[&str]) -> String {
-        let output = std::process::Command::new("git").args(args).current_dir(root).output().unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         String::from_utf8_lossy(&output.stdout).into_owned()
     }
 
@@ -433,15 +485,28 @@ mod bulk_index_tests {
         std::fs::remove_file(root.join("removed.txt")).unwrap();
         std::fs::create_dir_all(root.join("nested")).unwrap();
         std::fs::write(root.join("nested/new.txt"), "new\n").unwrap();
-        for temporary in [format!("{}abc", crate::formatters::TEMP_DIR_PREFIX), ".vtcode-copy-0123456789ab".into()] {
+        for temporary in [
+            format!("{}abc", crate::formatters::TEMP_DIR_PREFIX),
+            ".vtcode-copy-0123456789ab".into(),
+        ] {
             std::fs::create_dir_all(root.join("nested").join(&temporary)).unwrap();
-            std::fs::write(root.join("nested").join(&temporary).join("copy.txt"), "temporary\n").unwrap();
+            std::fs::write(
+                root.join("nested").join(&temporary).join("copy.txt"),
+                "temporary\n",
+            )
+            .unwrap();
         }
         execute::<String>(root, Task::StageAll).unwrap();
         let staged = git(root, &["diff", "--cached", "--name-status"]);
-        assert_eq!(staged.lines().collect::<Vec<_>>(), ["M\tkept.txt", "A\tnested/new.txt", "D\tremoved.txt"]);
+        assert_eq!(
+            staged.lines().collect::<Vec<_>>(),
+            ["M\tkept.txt", "A\tnested/new.txt", "D\tremoved.txt"]
+        );
         execute::<String>(root, Task::UnstageAll).unwrap();
         assert!(git(root, &["diff", "--cached", "--name-status"]).is_empty());
-        assert_eq!(std::fs::read_to_string(root.join("kept.txt")).unwrap(), "changed\n");
+        assert_eq!(
+            std::fs::read_to_string(root.join("kept.txt")).unwrap(),
+            "changed\n"
+        );
     }
 }

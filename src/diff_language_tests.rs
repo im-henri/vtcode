@@ -60,7 +60,8 @@ fn stash_pop_keeps_unchanged_visible_lines_highlighted_during_reload() {
         restored.insert_str(insert_at, &"const RESTORED: usize = 7;\n".repeat(32));
         std::fs::write(&path, &restored).unwrap();
         let signature = repo.signature().unwrap();
-        repo.stash_save(&signature, "restore lines below the viewport", None).unwrap();
+        repo.stash_save(&signature, "restore lines below the viewport", None)
+            .unwrap();
 
         let mut app = App::new(dir.path().to_owned());
         app.source_control_enabled = true;
@@ -110,7 +111,11 @@ fn stash_pop_keeps_unchanged_visible_lines_highlighted_during_reload() {
         app.refresh_visible_highlights_async();
         // Paint before accepting new syntax batches. These rows were visible
         // before the reload and are unchanged in the new source.
-        assert_eq!(colors(&mut terminal, &mut app), before, "open_diff={open_diff}");
+        assert_eq!(
+            colors(&mut terminal, &mut app),
+            before,
+            "open_diff={open_diff}"
+        );
 
         app.editor_mut().unwrap().scroll_offset = 100;
         app.refresh_visible_highlights_async();
@@ -215,7 +220,9 @@ fn extensionless_source_control_diff_inherits_language_in_both_layouts_and_panes
 fn scrolling_a_diff_only_highlights_rows_missing_from_the_cache() {
     use std::rc::Rc;
 
-    let suffix = (0..180).map(|line| format!("fn line_{line}() {{}}\n")).collect::<String>();
+    let suffix = (0..180)
+        .map(|line| format!("fn line_{line}() {{}}\n"))
+        .collect::<String>();
     let (_dir, path, mut app) = fixture_with_source(
         &(BASE.to_owned() + &suffix),
         &(INDEX.to_owned() + &suffix),
@@ -229,7 +236,11 @@ fn scrolling_a_diff_only_highlights_rows_missing_from_the_cache() {
     let lookup = |app: &App, line| {
         let row = &cache.rows[cache.aligned_row_for_target_line(line)];
         app.highlighter.highlighted_fragment_by_hash_if_cached(
-            row.right_highlight_hash(), line, Some(&path), Some("Rust"), &app.syntax_theme,
+            row.right_highlight_hash(),
+            line,
+            Some(&path),
+            Some("Rust"),
+            &app.syntax_theme,
         )
     };
     let editor = app.editor_mut().unwrap();
@@ -829,7 +840,9 @@ fn agent_and_commit_snapshot_diffs_inherit_extensionless_file_language() {
     app.commit_details.data.files = vec![crate::commit_details::CommitFile::new('M', "script")];
     let previous = app.active_diff_tab_id();
     app.open_source_control_commit_details_file_diff(0);
-    app.wait_for_background(Duration::from_secs(5), |app| app.active_diff_tab_id() != previous);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.active_diff_tab_id() != previous
+    });
     let diff_path = app.editor().unwrap().file_path.as_ref().unwrap();
     assert_eq!(diff_path, &path);
     assert!(App::same_open_path(diff_path, &path));

@@ -26,13 +26,23 @@ fn fixture(text: &str) -> (tempfile::TempDir, App, PathBuf) {
 fn search(app: &mut App) {
     app.update_global_search();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
-    assert!(app.global_search_error.is_none(), "{:?}", app.global_search_error);
+    assert!(
+        app.global_search_error.is_none(),
+        "{:?}",
+        app.global_search_error
+    );
 }
 
 fn finish_edits(app: &mut App) {
     assert!(app.poll_pending_global_search(Instant::now() + Duration::from_secs(1)));
-    app.wait_for_background(Duration::from_secs(5), |app| app.global_search_model_updates.pending.is_empty());
-    assert!(app.global_search_error.is_none(), "{:?}", app.global_search_error);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.global_search_model_updates.pending.is_empty()
+    });
+    assert!(
+        app.global_search_error.is_none(),
+        "{:?}",
+        app.global_search_error
+    );
 }
 
 fn key(app: &mut App, code: KeyCode) {
@@ -45,7 +55,13 @@ fn workspace_search_edits_remove_deleted_words_and_lines_before_save_and_follow_
     let (root, mut app, path) = fixture(source);
     search(&mut app);
     assert_eq!(app.global_search_results.len(), 4);
-    let other = app.global_search_results.iter().find(|found| found.file_path != path).unwrap().line_text.clone();
+    let other = app
+        .global_search_results
+        .iter()
+        .find(|found| found.file_path != path)
+        .unwrap()
+        .line_text
+        .clone();
     let generation = app.search_generation;
     let editor = app.editor_mut().unwrap();
     editor.selection_anchor = Some((0, 2));
@@ -53,13 +69,27 @@ fn workspace_search_edits_remove_deleted_words_and_lines_before_save_and_follow_
     key(&mut app, KeyCode::Backspace);
     assert_eq!(app.global_search_model_updates.pending.len(), 1);
     finish_edits(&mut app);
-    assert_eq!(app.search_generation, generation, "edits must not restart the workspace scan");
+    assert_eq!(
+        app.search_generation, generation,
+        "edits must not restart the workspace scan"
+    );
     assert_eq!(app.global_search_results.len(), 3);
-    let found: Vec<_> = app.global_search_results.iter().filter(|found| found.file_path == path).collect();
-    assert_eq!((found[0].line_num, found[0].col_start, found[0].col_end), (1, 3, 9));
+    let found: Vec<_> = app
+        .global_search_results
+        .iter()
+        .filter(|found| found.file_path == path)
+        .collect();
+    assert_eq!(
+        (found[0].line_num, found[0].col_start, found[0].col_end),
+        (1, 3, 9)
+    );
     assert_eq!(&*found[0].line_text, "界  needle");
     assert_eq!(found[1].line_num, 3);
-    let unchanged = app.global_search_results.iter().find(|found| found.file_path != path).unwrap();
+    let unchanged = app
+        .global_search_results
+        .iter()
+        .find(|found| found.file_path != path)
+        .unwrap();
     assert!(std::sync::Arc::ptr_eq(&other, &unchanged.line_text));
     assert_eq!(app.global_search_results.file_count(), 2);
 
@@ -72,10 +102,17 @@ fn workspace_search_edits_remove_deleted_words_and_lines_before_save_and_follow_
     app.execute_palette_command("delete_line");
     finish_edits(&mut app);
     assert_eq!(app.global_search_results.len(), 2);
-    let found = app.global_search_results.iter().find(|found| found.file_path == path).unwrap();
+    let found = app
+        .global_search_results
+        .iter()
+        .find(|found| found.file_path == path)
+        .unwrap();
     assert_eq!((found.line_num, found.col_start, found.col_end), (2, 0, 6));
     assert_eq!(&*found.line_text, "needle tail");
-    assert_eq!(std::fs::read_to_string(root.path().join("a.txt")).unwrap(), source);
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("a.txt")).unwrap(),
+        source
+    );
 }
 
 #[test]
@@ -84,12 +121,20 @@ fn workspace_search_edits_update_surviving_match_positions_and_previews() {
     search(&mut app);
     key(&mut app, KeyCode::Enter);
     finish_edits(&mut app);
-    let rows: Vec<_> = app.global_search_results.iter().filter(|found| found.file_path == path)
-        .map(|found| found.line_num).collect();
+    let rows: Vec<_> = app
+        .global_search_results
+        .iter()
+        .filter(|found| found.file_path == path)
+        .map(|found| found.line_num)
+        .collect();
     assert_eq!(rows, [2, 3]);
     key(&mut app, KeyCode::Char('界'));
     finish_edits(&mut app);
-    let found = app.global_search_results.iter().find(|found| found.file_path == path).unwrap();
+    let found = app
+        .global_search_results
+        .iter()
+        .find(|found| found.file_path == path)
+        .unwrap();
     assert_eq!((found.line_num, found.col_start, found.col_end), (2, 1, 7));
     assert_eq!(&*found.line_text, "界needle");
     assert_eq!(app.global_search_results.len(), 3);
@@ -102,13 +147,26 @@ fn workspace_search_edits_debounce_buffer_changes_independently_of_query_typing(
     app.search_debounce_ms = 60_000;
     key(&mut app, KeyCode::Char('x'));
     let first = app.global_search_model_updates.pending_since.unwrap();
-    assert_eq!(app.global_search_debounce_wait(first), Some(MODEL_SEARCH_QUIET_PERIOD));
-    assert!(!app.poll_pending_global_search(first + MODEL_SEARCH_QUIET_PERIOD - Duration::from_millis(1)));
+    assert_eq!(
+        app.global_search_debounce_wait(first),
+        Some(MODEL_SEARCH_QUIET_PERIOD)
+    );
+    assert!(
+        !app.poll_pending_global_search(
+            first + MODEL_SEARCH_QUIET_PERIOD - Duration::from_millis(1)
+        )
+    );
     key(&mut app, KeyCode::Char('y'));
     let latest = app.global_search_model_updates.pending_since.unwrap();
     assert!(app.poll_pending_global_search(latest + MODEL_SEARCH_QUIET_PERIOD));
-    app.wait_for_background(Duration::from_secs(5), |app| app.global_search_model_updates.pending.is_empty());
-    let found = app.global_search_results.iter().find(|found| found.file_path == path).unwrap();
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.global_search_model_updates.pending.is_empty()
+    });
+    let found = app
+        .global_search_results
+        .iter()
+        .find(|found| found.file_path == path)
+        .unwrap();
     assert_eq!(found.col_start, 2);
     assert_eq!(&*found.line_text, "xyneedle");
     assert!(app.global_search_debounce_wait(Instant::now()).is_none());
@@ -152,7 +210,11 @@ fn workspace_search_edits_recheck_case_word_boundaries_and_regex_contents() {
         app.editor_mut().unwrap().select_all();
         app.paste_editor_text(replacement.into(), false);
         finish_edits(&mut app);
-        assert_eq!(app.global_search_results.file_matches(&path), expected, "{query:?} -> {replacement:?}");
+        assert_eq!(
+            app.global_search_results.file_matches(&path),
+            expected,
+            "{query:?} -> {replacement:?}"
+        );
     }
 }
 
@@ -206,22 +268,41 @@ fn workspace_search_edits_respect_query_options_and_restore_a_files_last_match_o
 fn workspace_search_edits_reject_old_streams_buffer_versions_and_cleared_queries() {
     let (_root, mut app, path) = fixture("needle");
     search(&mut app);
-    let old = app.global_search_results.iter().find(|found| found.file_path == path).unwrap().clone();
+    let old = app
+        .global_search_results
+        .iter()
+        .find(|found| found.file_path == path)
+        .unwrap()
+        .clone();
     let generation = app.search_generation;
     app.editor_mut().unwrap().select_all();
     key(&mut app, KeyCode::Char('x'));
     let serial = app.global_search_model_updates.serial;
-    app.background.sender.send(BackgroundResult::GlobalSearchResults {
-        results: vec![old.clone(); app.max_global_search_results + 1],
-        done: false, generation, truncated: false,
-    }).unwrap();
+    app.background
+        .sender
+        .send(BackgroundResult::GlobalSearchResults {
+            results: vec![old.clone(); app.max_global_search_results + 1],
+            done: false,
+            generation,
+            truncated: false,
+        })
+        .unwrap();
     app.poll_background_results();
-    assert!(!app.global_search_truncated, "discarded matches must not consume the result budget");
+    assert!(
+        !app.global_search_truncated,
+        "discarded matches must not consume the result budget"
+    );
     assert_eq!(app.global_search_results.len(), 2);
     key(&mut app, KeyCode::Char('y'));
-    app.background.sender.send(BackgroundResult::GlobalSearchFileResults {
-        path: path.clone(), serial, generation, result: Ok((vec![old.clone()], false)),
-    }).unwrap();
+    app.background
+        .sender
+        .send(BackgroundResult::GlobalSearchFileResults {
+            path: path.clone(),
+            serial,
+            generation,
+            result: Ok((vec![old.clone()], false)),
+        })
+        .unwrap();
     app.poll_background_results();
     assert_eq!(app.global_search_model_updates.pending.len(), 1);
     finish_edits(&mut app);
@@ -230,9 +311,15 @@ fn workspace_search_edits_reject_old_streams_buffer_versions_and_cleared_queries
     app.queue_global_search_model_update(path.clone(), ropey::Rope::from_str("needle"));
     let serial = app.global_search_model_updates.serial;
     app.clear_global_search();
-    app.background.sender.send(BackgroundResult::GlobalSearchFileResults {
-        path, serial, generation, result: Ok((vec![old], false)),
-    }).unwrap();
+    app.background
+        .sender
+        .send(BackgroundResult::GlobalSearchFileResults {
+            path,
+            serial,
+            generation,
+            result: Ok((vec![old], false)),
+        })
+        .unwrap();
     app.poll_background_results();
     assert!(app.global_search_results.is_empty());
     assert!(app.global_search_model_updates.pending.is_empty());
@@ -253,7 +340,11 @@ fn workspace_search_edits_preserve_dismissals_collapsed_files_and_selection() {
     editor.cursor_col = 13;
     key(&mut app, KeyCode::Backspace);
     finish_edits(&mut app);
-    assert_eq!(app.global_search_results.file_matches(&path), 0, "the explicitly dismissed match stays hidden");
+    assert_eq!(
+        app.global_search_results.file_matches(&path),
+        0,
+        "the explicitly dismissed match stays hidden"
+    );
     assert_eq!(app.global_search_results.len(), 1);
     assert_eq!(app.global_search_results.file_count(), 1);
     assert!(app.global_search_results.is_collapsed(&other));
@@ -285,12 +376,17 @@ fn workspace_search_edits_coalesce_changes_to_several_open_files() {
 
 #[test]
 fn workspace_search_edits_refresh_remote_buffers_without_another_workspace_rpc() {
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("a.txt"), "needle needle").unwrap();
     let traffic = Arc::new(AtomicUsize::new(0));
     let workspace = crate::remote::workspace::Workspace::new(crate::remote::tests::connection(
-        root.path(), Arc::default(), traffic.clone(),
+        root.path(),
+        Arc::default(),
+        traffic.clone(),
     ));
     let path = workspace.view_key(&crate::remote::RemotePath::new(b"a.txt".to_vec()).unwrap());
     let mut app = App::new_deferred(workspace.view_root.clone());

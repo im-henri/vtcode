@@ -236,25 +236,34 @@ fn external_save_replacement_lock_cannot_fall_back_to_truncating_the_original() 
 #[cfg(windows)]
 #[test]
 fn external_save_new_files_remain_replaceable_during_concurrent_reads() {
-    use std::{io::{self, Read}, sync::{Arc, atomic::{AtomicBool, Ordering}}, thread};
+    use std::{
+        io::{self, Read},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+    };
     let directory = tempfile::tempdir().unwrap();
     let stop = Arc::new(AtomicBool::new(false));
-    let readers: Vec<_> = (0..4).map(|_| {
-        let root = directory.path().to_path_buf();
-        let stop = stop.clone();
-        thread::spawn(move || {
-            while !stop.load(Ordering::Relaxed) {
-                if let Ok(entries) = fs::read_dir(&root) {
-                    for entry in entries.flatten() {
-                        if let Ok(mut file) = fs::File::open(entry.path()) {
-                            let mut bytes = [0; 32];
-                            let _ = file.read(&mut bytes);
+    let readers: Vec<_> = (0..4)
+        .map(|_| {
+            let root = directory.path().to_path_buf();
+            let stop = stop.clone();
+            thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    if let Ok(entries) = fs::read_dir(&root) {
+                        for entry in entries.flatten() {
+                            if let Ok(mut file) = fs::File::open(entry.path()) {
+                                let mut bytes = [0; 32];
+                                let _ = file.read(&mut bytes);
+                            }
                         }
                     }
                 }
-            }
+            })
         })
-    }).collect();
+        .collect();
     // Read both the destination and temporary names, as concurrent indexers,
     // watchers and other applications can. Stop/join even on an I/O failure.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> io::Result<()> {
@@ -268,7 +277,10 @@ fn external_save_new_files_remain_replaceable_during_concurrent_reads() {
                 assert_eq!(fs::read_to_string(&path)?, "original\n");
                 assert_eq!(editor.rope, "Xoriginal\n");
                 assert!(editor.modified && editor.can_undo());
-                return Err(io::Error::new(error.kind(), format!("resaving file {index}: {error}")));
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!("resaving file {index}: {error}"),
+                ));
             }
             assert_eq!(fs::read_to_string(&path)?, "Xoriginal\n");
             assert!(!editor.modified);
@@ -277,6 +289,8 @@ fn external_save_new_files_remain_replaceable_during_concurrent_reads() {
         Ok(())
     }));
     stop.store(true, Ordering::Relaxed);
-    for reader in readers { reader.join().unwrap(); }
+    for reader in readers {
+        reader.join().unwrap();
+    }
     result.unwrap().unwrap();
 }

@@ -527,7 +527,10 @@ fn single_mutation_auto_pairs_keep_neighbor_rules_unicode_crlf_cursor_and_undo()
                     }
                     actual.undo();
                     assert_eq!(actual.rope.to_string(), source);
-                    assert_eq!((actual.cursor_line, actual.cursor_col), (0, col + usize::from(skip)));
+                    assert_eq!(
+                        (actual.cursor_line, actual.cursor_col),
+                        (0, col + usize::from(skip))
+                    );
                     actual.redo();
                     assert_eq!(actual.rope.to_string(), expected);
                 }

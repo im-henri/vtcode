@@ -76,27 +76,64 @@ struct PreparationCache {
     sizes: HashMap<PathBuf, usize>,
 }
 impl PreparationCache {
-    fn inspect(&mut self, workspace: &remote::workspace::Workspace, paths: &[PathBuf], cancel: &CancellationToken) -> Result<Vec<Result<Inspection, String>>, String> {
+    fn inspect(
+        &mut self,
+        workspace: &remote::workspace::Workspace,
+        paths: &[PathBuf],
+        cancel: &CancellationToken,
+    ) -> Result<Vec<Result<Inspection, String>>, String> {
         let mut unique = HashSet::new();
-        let missing: Vec<_> = paths.iter().filter(|path| !self.inspections.contains_key(*path) && unique.insert(*path)).cloned().collect();
+        let missing: Vec<_> = paths
+            .iter()
+            .filter(|path| !self.inspections.contains_key(*path) && unique.insert(*path))
+            .cloned()
+            .collect();
         for batch in missing.chunks(context::INSPECT_BATCH) {
-            let found = workspace.inspect_context(batch, cancel).map_err(|error| error.to_string())?;
+            let found = workspace
+                .inspect_context(batch, cancel)
+                .map_err(|error| error.to_string())?;
             self.inspections.extend(batch.iter().cloned().zip(found));
         }
-        paths.iter().map(|path| self.inspections.get(path).cloned().ok_or_else(|| "Incomplete file inspection.".to_string())).collect()
+        paths
+            .iter()
+            .map(|path| {
+                self.inspections
+                    .get(path)
+                    .cloned()
+                    .ok_or_else(|| "Incomplete file inspection.".to_string())
+            })
+            .collect()
     }
 }
 
-fn pasted_remote_paths(workspace: &remote::workspace::Workspace, text: &str, cache: &mut PreparationCache, cancel: &CancellationToken) -> Result<Option<Vec<PathBuf>>, String> {
+fn pasted_remote_paths(
+    workspace: &remote::workspace::Workspace,
+    text: &str,
+    cache: &mut PreparationCache,
+    cancel: &CancellationToken,
+) -> Result<Option<Vec<PathBuf>>, String> {
     let text = text.trim();
-    if text.is_empty() { return Ok(None); }
+    if text.is_empty() {
+        return Ok(None);
+    }
     let whole = resolve(workspace, text).ok();
-    let tokens = pasted_path_values(text).and_then(|values| values.iter().map(|value| resolve(workspace, value).ok()).collect::<Option<Vec<_>>>());
-    let paths: Vec<_> = whole.iter().chain(tokens.iter().flatten()).cloned().collect();
+    let tokens = pasted_path_values(text).and_then(|values| {
+        values
+            .iter()
+            .map(|value| resolve(workspace, value).ok())
+            .collect::<Option<Vec<_>>>()
+    });
+    let paths: Vec<_> = whole
+        .iter()
+        .chain(tokens.iter().flatten())
+        .cloned()
+        .collect();
     let info = cache.inspect(workspace, &paths, cancel)?;
     let info: HashMap<_, _> = paths.into_iter().zip(info).collect();
     let is_file = |path: &PathBuf| matches!(info.get(path), Some(Ok((_, context::Kind::File))));
-    if let Some(path) = whole.filter(is_file) { return Ok(Some(vec![path])); }
+    if let Some(path) = whole.filter(is_file) {
+        return Ok(Some(vec![path]));
+    }
     Ok(tokens.filter(|paths| paths.iter().all(is_file)))
 }
 
@@ -121,7 +158,14 @@ fn prepare_files(
     retain: bool,
     cancel: &CancellationToken,
 ) -> Result<PreparedFiles, String> {
-    prepare_files_cached(workspace, candidates, &buffers, retain, cancel, &mut PreparationCache::default())
+    prepare_files_cached(
+        workspace,
+        candidates,
+        &buffers,
+        retain,
+        cancel,
+        &mut PreparationCache::default(),
+    )
 }
 
 fn prepare_files_cached(
@@ -226,8 +270,12 @@ fn prepare_files_cached(
                 return Err(fail("file context is limited to 128 KiB per file."));
             }
             let text = buffer.rope.to_string();
-            if text.contains('\0') { return Err(fail("binary files cannot be attached.")); }
-            if !retain { cache.sizes.insert(identity.clone(), text.len()); }
+            if text.contains('\0') {
+                return Err(fail("binary files cannot be attached."));
+            }
+            if !retain {
+                cache.sizes.insert(identity.clone(), text.len());
+            }
             texts[index] = Some(FileText::Local(text));
         } else {
             if *kind != context::Kind::File {
@@ -250,7 +298,9 @@ fn prepare_files_cached(
             return Err("Missing prepared file context.".into());
         }
         for (source_index, (index, bytes)) in disk_positions.into_iter().zip(loaded).enumerate() {
-            if !retain { cache.sizes.insert(files[index].1.clone(), bytes); }
+            if !retain {
+                cache.sizes.insert(files[index].1.clone(), bytes);
+            }
             texts[index] = Some(FileText::Remote(source_index, bytes));
         }
     }
@@ -293,7 +343,15 @@ fn prompt(
     embedded: bool,
     cancel: &CancellationToken,
 ) -> Result<PreparedPrompt, String> {
-    prompt_cached(workspace, input, attached, buffers, embedded, cancel, &mut PreparationCache::default())
+    prompt_cached(
+        workspace,
+        input,
+        attached,
+        buffers,
+        embedded,
+        cancel,
+        &mut PreparationCache::default(),
+    )
 }
 
 fn prompt_cached(
@@ -426,7 +484,9 @@ impl App {
         let cancel = self
             .background
             .submit_context("chat-file-context", move |cancel| {
-                let (result, draft) = paste::prepare_prompt(&workspace, input, attached, buffers, embedded, &cancel, paste);
+                let (result, draft) = paste::prepare_prompt(
+                    &workspace, input, attached, buffers, embedded, &cancel, paste,
+                );
                 if !cancel.is_cancelled() {
                     let _ = sender.send(BackgroundResult::ChatPromptPrepared {
                         agent,
@@ -542,7 +602,12 @@ impl App {
         let visible = previous == target;
         self.chat.select_view(target);
         if self.chat_file_root() == job.root && self.chat.files.attached != job.base {
-            let additions = job.candidates.iter().filter(|path| !job.base.contains(path)).cloned().collect();
+            let additions = job
+                .candidates
+                .iter()
+                .filter(|path| !job.base.contains(path))
+                .cloned()
+                .collect();
             self.attach_remote_chat_files(additions, job.mention.clone());
             self.chat.select_view(previous);
             return visible;
@@ -658,5 +723,4 @@ impl App {
             }
         });
     }
-
 }

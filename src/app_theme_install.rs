@@ -2,7 +2,9 @@ use crate::app::App;
 
 impl App {
     pub(crate) fn theme_install_prompt_visible(&self) -> bool {
-        self.palette.install_theme_mode || self.palette.install_extension_mode || self.palette.install_syntax_mode
+        self.palette.install_theme_mode
+            || self.palette.install_extension_mode
+            || self.palette.install_syntax_mode
     }
 
     pub(crate) fn install_prompt_running(&self) -> bool {
@@ -73,8 +75,14 @@ impl App {
     }
 
     pub(crate) fn start_theme_install(&mut self) {
-        if self.palette.install_syntax_mode { self.start_syntax_install(); return; }
-        if self.palette.install_extension_mode { self.start_extension_install(); return; }
+        if self.palette.install_syntax_mode {
+            self.start_syntax_install();
+            return;
+        }
+        if self.palette.install_extension_mode {
+            self.start_extension_install();
+            return;
+        }
         if self.palette.theme_install_running {
             return;
         }
@@ -146,7 +154,9 @@ impl App {
             }
             Err(error) => {
                 let error = if self.theme_vsix_link().is_some() {
-                    format!("{error}. Choose Get VSIX link to download in a browser or on another device, then install the local .vsix file.")
+                    format!(
+                        "{error}. Choose Get VSIX link to download in a browser or on another device, then install the local .vsix file."
+                    )
                 } else {
                     error
                 };
@@ -241,7 +251,11 @@ mod tests {
             Err("Clipboard unavailable".into())
         });
         assert!(
-            app.modal.error.as_deref().unwrap().contains("Clipboard unavailable")
+            app.modal
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("Clipboard unavailable")
         );
         assert_eq!(app.palette.theme_vsix_url.as_deref(), Some(url));
         app.copy_theme_vsix_link_with(|value| {

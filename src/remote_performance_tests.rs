@@ -67,7 +67,12 @@ fn a_blocked_open_cannot_delay_an_unrelated_save_or_publish_another_roots_checkp
             },
         ),
         (3, Command::PerformanceSnapshot),
-        (4, Command::Open { path: path("other.rs") }),
+        (
+            4,
+            Command::Open {
+                path: path("other.rs"),
+            },
+        ),
     ] {
         wire::write_message(
             &mut batch,
@@ -94,17 +99,29 @@ fn a_blocked_open_cannot_delay_an_unrelated_save_or_publish_another_roots_checkp
             }
             if let Some((_, data)) = decoder.line(&line)? {
                 responses.push(serde_json::from_slice(&data)?);
-                if responses.len() == 3 { return Ok(responses); }
+                if responses.len() == 3 {
+                    return Ok(responses);
+                }
             }
         }
     })();
     drop(held); // unblock on regression too, before joining the owned service
     client.shutdown(std::net::Shutdown::Both).unwrap();
     let _ = worker.join().unwrap();
-    let responses = result.expect("an independent read, save and diagnostics complete while the first open is still blocked");
-    assert!(responses.iter().any(|response| response.id == 2 && matches!(response.result, Ok(Reply::Saved { .. }))));
-    assert!(responses.iter().any(|response| response.id == 3 && matches!(response.result, Ok(Reply::PerformanceSnapshot(_)))));
-    assert!(responses.iter().any(|response| response.id == 4 && matches!(&response.result, Ok(Reply::Opened { text, .. }) if text == "independent\n")));
+    let responses = result.expect(
+        "an independent read, save and diagnostics complete while the first open is still blocked",
+    );
+    assert!(
+        responses
+            .iter()
+            .any(|response| response.id == 2 && matches!(response.result, Ok(Reply::Saved { .. })))
+    );
+    assert!(
+        responses.iter().any(|response| response.id == 3
+            && matches!(response.result, Ok(Reply::PerformanceSnapshot(_))))
+    );
+    assert!(responses.iter().any(|response| response.id == 4
+        && matches!(&response.result, Ok(Reply::Opened { text, .. }) if text == "independent\n")));
     assert_eq!(
         std::fs::read_to_string(root.path().join("small.rs")).unwrap(),
         "saved\noriginal\n"
@@ -286,38 +303,72 @@ fn a_stalled_git_status_scan_cannot_block_another_workspace_or_staging() {
         };
         let cancel = CancellationToken::new();
         cancels.lock().unwrap().insert(id, cancel.clone());
-        status.get(&request).unwrap().enqueue(request, Some(cancel.clone())).unwrap();
+        status
+            .get(&request)
+            .unwrap()
+            .enqueue(request, Some(cancel.clone()))
+            .unwrap();
         cancel
     };
-    let cancel = enqueue_status(1, None, Some(git::StatusProgressOptions { preferred: None }));
+    let cancel = enqueue_status(
+        1,
+        None,
+        Some(git::StatusProgressOptions { preferred: None }),
+    );
     enqueue_status(2, Some(default_workspace), None);
     let other_workspace = Service::new(other.path()).unwrap().hello(42).root_uri;
     enqueue_status(3, Some(other_workspace), None);
-    let command = Command::GitAction { repo: RemotePath::default(), task: crate::git_tasks::Task::StageAll };
-    git.get().unwrap().enqueue(Request { id: 4, workspace: None, command }, None).unwrap();
-    let receive = |responses: &mpsc::Receiver<Response>| responses.recv_timeout(Duration::from_secs(10)).unwrap();
+    let command = Command::GitAction {
+        repo: RemotePath::default(),
+        task: crate::git_tasks::Task::StageAll,
+    };
+    git.get()
+        .unwrap()
+        .enqueue(
+            Request {
+                id: 4,
+                workspace: None,
+                command,
+            },
+            None,
+        )
+        .unwrap();
+    let receive = |responses: &mpsc::Receiver<Response>| {
+        responses.recv_timeout(Duration::from_secs(10)).unwrap()
+    };
     let mut results = [receive(&responses), receive(&responses)];
     results.sort_by_key(|response| response.id);
-    assert!(matches!(&results[0], Response { id: 3, result: Ok(Reply::GitStatus { scans, .. }) }
-        if scans.len() == 1 && scans[0].files.iter().any(|file| file.path.0 == b"other.txt")));
+    assert!(
+        matches!(&results[0], Response { id: 3, result: Ok(Reply::GitStatus { scans, .. }) }
+        if scans.len() == 1 && scans[0].files.iter().any(|file| file.path.0 == b"other.txt"))
+    );
     assert_eq!(results[1].id, 4);
     assert!(results[1].result.is_ok());
     let first = receive(&held_responses);
-    assert!(matches!(first.result, Ok(Reply::GitStatusProgress {
-        request: 1, progress: git::StatusProgress::Repository { .. },
-    })));
+    assert!(matches!(
+        first.result,
+        Ok(Reply::GitStatusProgress {
+            request: 1,
+            progress: git::StatusProgress::Repository { .. },
+        })
+    ));
     cancel.cancel();
     loop {
         let reply = receive(&held_responses);
         if reply.id == 1 {
-            assert_eq!(reply.result.unwrap_err().into_io().kind(), io::ErrorKind::Interrupted);
+            assert_eq!(
+                reply.result.unwrap_err().into_io().kind(),
+                io::ErrorKind::Interrupted
+            );
             break;
         }
         assert_eq!(reply.id, 0);
     }
     let retry = receive(&held_responses);
-    assert!(matches!(retry, Response { id: 2, result: Ok(Reply::GitStatus { scans, .. }) }
-        if scans.len() == 1 && scans[0].files.iter().any(|file| file.path.0 == b"file.txt" && file.staged)));
+    assert!(
+        matches!(retry, Response { id: 2, result: Ok(Reply::GitStatus { scans, .. }) }
+        if scans.len() == 1 && scans[0].files.iter().any(|file| file.path.0 == b"file.txt" && file.staged))
+    );
 }
 
 #[test]
@@ -476,12 +527,36 @@ fn reply_channel_loss_releases_transfers_before_skipping_queued_work() {
     let root = tempfile::tempdir().unwrap();
     let service = Service::new(root.path()).unwrap();
     let store = service.text.clone();
-    let transfer = store.lock().unwrap().read(ropey::Rope::from_str("body")).unwrap();
+    let transfer = store
+        .lock()
+        .unwrap()
+        .read(ropey::Rope::from_str("body"))
+        .unwrap();
     let (output, replies) = std::sync::mpsc::sync_channel(1);
     let held = store.lock().unwrap();
-    let worker = actor("cleanup-after-output-loss", service, output, Default::default()).unwrap().drain_on_disconnect();
+    let worker = actor(
+        "cleanup-after-output-loss",
+        service,
+        output,
+        Default::default(),
+    )
+    .unwrap()
+    .drain_on_disconnect();
     for id in 1..=3 {
-        worker.enqueue(Request { id, workspace: None, command: Command::Text(text::Command::Read { transfer, start: 0, end: 4 }) }, None).unwrap();
+        worker
+            .enqueue(
+                Request {
+                    id,
+                    workspace: None,
+                    command: Command::Text(text::Command::Read {
+                        transfer,
+                        start: 0,
+                        end: 4,
+                    }),
+                },
+                None,
+            )
+            .unwrap();
     }
     worker.close(ResourceClose::Text(transfer)).unwrap();
     // The first response fails before requests 2/3 can run. Its cleanup barrier
@@ -535,24 +610,61 @@ fn watcher_controls_keep_latest_root_state_when_the_actor_inbox_is_full() {
     let root = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
     let (sender, requests) = std::sync::mpsc::sync_channel(8);
-    let worker = Actor { sender, read_load: None, queued: std::cell::Cell::new(0), closes: Arc::default(), worker: None, join: false };
+    let worker = Actor {
+        sender,
+        read_load: None,
+        queued: std::cell::Cell::new(0),
+        closes: Arc::default(),
+        worker: None,
+        join: false,
+    };
     for id in 1..=8 {
-        worker.enqueue(Request { id, workspace: None, command: Command::Watch }, None).unwrap();
+        worker
+            .enqueue(
+                Request {
+                    id,
+                    workspace: None,
+                    command: Command::Watch,
+                },
+                None,
+            )
+            .unwrap();
     }
     for _ in 0..2000 {
-        worker.queue_control(ResourceClose::Watch(root.path().into(), WatchState::Paused)).unwrap();
-        worker.queue_control(ResourceClose::Watch(root.path().into(), WatchState::Active)).unwrap();
-        worker.queue_control(ResourceClose::Watch(second.path().into(), WatchState::Paused)).unwrap();
-        worker.queue_control(ResourceClose::Watch(second.path().into(), WatchState::Closed)).unwrap();
+        worker
+            .queue_control(ResourceClose::Watch(root.path().into(), WatchState::Paused))
+            .unwrap();
+        worker
+            .queue_control(ResourceClose::Watch(root.path().into(), WatchState::Active))
+            .unwrap();
+        worker
+            .queue_control(ResourceClose::Watch(
+                second.path().into(),
+                WatchState::Paused,
+            ))
+            .unwrap();
+        worker
+            .queue_control(ResourceClose::Watch(
+                second.path().into(),
+                WatchState::Closed,
+            ))
+            .unwrap();
     }
     assert_eq!(worker.closes.entries.lock().unwrap().len(), 2);
-    assert_eq!(requests.try_iter().count(), 8, "control state must survive without inbox space");
+    assert_eq!(
+        requests.try_iter().count(),
+        8,
+        "control state must survive without inbox space"
+    );
     let (output, _responses) = std::sync::mpsc::sync_channel(128);
     let mut service = Service::new(root.path()).unwrap();
     service.output = Some(output);
     let mut ready = Vec::new();
     worker.closes.apply(&mut service, 7, &mut ready);
-    assert!(service.watchers.is_empty(), "controls must respect earlier request tickets");
+    assert!(
+        service.watchers.is_empty(),
+        "controls must respect earlier request tickets"
+    );
     worker.closes.apply(&mut service, 8, &mut ready);
     assert!(service.watchers.contains_key(root.path()));
     assert!(!service.watchers.contains_key(second.path()));
@@ -566,7 +678,9 @@ fn a_failed_headless_watcher_can_be_restarted_when_its_folder_returns() {
     let mut service = Service::new(project.path()).unwrap();
     let (output, responses) = std::sync::mpsc::sync_channel(128);
     service.output = Some(output);
-    service.set_workspace_watch(root.clone(), WatchState::Active).unwrap();
+    service
+        .set_workspace_watch(root.clone(), WatchState::Active)
+        .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     while !service.watchers.get(&root).unwrap().is_finished() {
         assert!(Instant::now() < deadline);
@@ -574,10 +688,17 @@ fn a_failed_headless_watcher_can_be_restarted_when_its_folder_returns() {
     }
     assert!(responses.try_iter().any(|response| matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(false))));
     std::fs::create_dir(&root).unwrap();
-    service.set_workspace_watch(root, WatchState::Active).unwrap();
+    service
+        .set_workspace_watch(root, WatchState::Active)
+        .unwrap();
     loop {
-        let response = responses.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
-        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true) && batch.rescan) { break; }
+        let response = responses
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true) && batch.rescan)
+        {
+            break;
+        }
     }
 }
 
@@ -646,16 +767,26 @@ fn path(value: &str) -> RemotePath {
 
 #[test]
 fn legacy_heartbeat_request_bypasses_a_blocked_file_worker() {
-    use std::{io::{BufRead, Write}, net::{TcpListener, TcpStream}};
+    use std::{
+        io::{BufRead, Write},
+        net::{TcpListener, TcpStream},
+    };
     let root = tempfile::tempdir().unwrap();
     let service = Service::new(root.path()).unwrap();
     let store = service.text.clone();
-    let transfer = store.lock().unwrap().read(ropey::Rope::from_str("data")).unwrap();
+    let transfer = store
+        .lock()
+        .unwrap()
+        .read(ropey::Rope::from_str("data"))
+        .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-    client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
     let (server, _) = listener.accept().unwrap();
-    let worker = std::thread::spawn(move || serve_service(service, server.try_clone().unwrap(), server));
+    let worker =
+        std::thread::spawn(move || serve_service(service, server.try_clone().unwrap(), server));
     let mut reader = std::io::BufReader::new(client.try_clone().unwrap());
     let mut line = Vec::new();
     reader.read_until(b'\n', &mut line).unwrap();
@@ -663,19 +794,41 @@ fn legacy_heartbeat_request_bypasses_a_blocked_file_worker() {
     let held = store.lock().unwrap();
     let mut requests = Vec::new();
     for (id, command) in [
-        (1, Command::Text(text::Command::Read { transfer, start: 0, end: 4 })),
+        (
+            1,
+            Command::Text(text::Command::Read {
+                transfer,
+                start: 0,
+                end: 4,
+            }),
+        ),
         (2, Command::Heartbeat { nonce: 77 }),
     ] {
-        wire::write_message(&mut requests, 'C', hello.session, id,
-            &wire::encode(&Request { id, workspace: None, command }).unwrap()).unwrap();
+        wire::write_message(
+            &mut requests,
+            'C',
+            hello.session,
+            id,
+            &wire::encode(&Request {
+                id,
+                workspace: None,
+                command,
+            })
+            .unwrap(),
+        )
+        .unwrap();
     }
     client.write_all(&requests).unwrap();
     let result = (|| -> io::Result<Response> {
         let mut decoder = wire::Decoder::new('S', hello.session);
         loop {
             line.clear();
-            if reader.read_until(b'\n', &mut line)? == 0 { return Err(io::ErrorKind::UnexpectedEof.into()); }
-            if let Some((_, bytes)) = decoder.line(&line)? { return serde_json::from_slice(&bytes).map_err(io::Error::other); }
+            if reader.read_until(b'\n', &mut line)? == 0 {
+                return Err(io::ErrorKind::UnexpectedEof.into());
+            }
+            if let Some((_, bytes)) = decoder.line(&line)? {
+                return serde_json::from_slice(&bytes).map_err(io::Error::other);
+            }
         }
     })();
     drop(held);
@@ -683,7 +836,10 @@ fn legacy_heartbeat_request_bypasses_a_blocked_file_worker() {
     let _ = worker.join().unwrap();
     let response = result.expect("A legacy request must not depend on the blocked file worker");
     assert_eq!(response.id, 2);
-    assert!(matches!(response.result, Ok(Reply::Heartbeat { nonce: 77 })));
+    assert!(matches!(
+        response.result,
+        Ok(Reply::Heartbeat { nonce: 77 })
+    ));
 }
 
 fn close_cached_blame_workload(
@@ -1180,38 +1336,85 @@ fn paused_watchers_invalidate_explicit_agent_file_lists_without_streaming_events
     service.output = Some(output);
     let native = service.root.clone();
     let observation = service.observations.get(&native);
-    service.set_workspace_watch(native.clone(), WatchState::Active).unwrap();
+    service
+        .set_workspace_watch(native.clone(), WatchState::Active)
+        .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let response = responses.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
-        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true)) { break; }
+        let response = responses
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true))
+        {
+            break;
+        }
     }
-    service.set_workspace_watch(native.clone(), WatchState::Paused).unwrap();
-    let Reply::Files { version, .. } = service.execute(Command::Files {
-        generation: 1, known_version: None, excludes: Default::default(),
-    }).unwrap() else { panic!() };
+    service
+        .set_workspace_watch(native.clone(), WatchState::Paused)
+        .unwrap();
+    let Reply::Files { version, .. } = service
+        .execute(Command::Files {
+            generation: 1,
+            known_version: None,
+            excludes: Default::default(),
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
     let stamp = observation.stamp();
     std::fs::write(root.path().join("second.rs"), "second").unwrap();
     while observation.stamp() == stamp {
-        assert!(Instant::now() < deadline, "hidden change did not invalidate the explicit file-list cache");
+        assert!(
+            Instant::now() < deadline,
+            "hidden change did not invalidate the explicit file-list cache"
+        );
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(responses.try_recv().is_err(), "no hidden watcher traffic");
-    let Reply::Files { version, files: Some(files) } = service.execute(Command::Files {
-        generation: 1, known_version: Some(version), excludes: Default::default(),
-    }).unwrap() else { panic!("a live agent must see new files while its workspace is hidden") };
+    let Reply::Files {
+        version,
+        files: Some(files),
+    } = service
+        .execute(Command::Files {
+            generation: 1,
+            known_version: Some(version),
+            excludes: Default::default(),
+        })
+        .unwrap()
+    else {
+        panic!("a live agent must see new files while its workspace is hidden")
+    };
     assert!(files.contains(&path("second.rs")));
     let stamp = observation.stamp();
     let built = service.index.as_ref().unwrap().built;
-    service.set_workspace_watch(native, WatchState::Active).unwrap();
+    service
+        .set_workspace_watch(native, WatchState::Active)
+        .unwrap();
     loop {
-        let response = responses.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
-        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true)) { break; }
+        let response = responses
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true))
+        {
+            break;
+        }
     }
-    assert_eq!(observation.stamp(), stamp, "resuming a recorded change must not invalidate the filename index again");
-    assert!(matches!(service.execute(Command::Files {
-        generation: 1, known_version: Some(version), excludes: Default::default(),
-    }).unwrap(), Reply::Files { files: None, .. }));
+    assert_eq!(
+        observation.stamp(),
+        stamp,
+        "resuming a recorded change must not invalidate the filename index again"
+    );
+    assert!(matches!(
+        service
+            .execute(Command::Files {
+                generation: 1,
+                known_version: Some(version),
+                excludes: Default::default(),
+            })
+            .unwrap(),
+        Reply::Files { files: None, .. }
+    ));
     assert_eq!(service.index.as_ref().unwrap().built, built);
 }
 
@@ -1224,28 +1427,62 @@ fn paused_content_writes_do_not_rebuild_the_agent_filename_index() {
     let observation = service.observations.get(&native);
     let (output, responses) = std::sync::mpsc::sync_channel(128);
     service.output = Some(output);
-    service.set_workspace_watch(native.clone(), WatchState::Active).unwrap();
+    service
+        .set_workspace_watch(native.clone(), WatchState::Active)
+        .unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let response = responses.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
-        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true)) { break; }
+        let response = responses
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if batch.active == Some(true))
+        {
+            break;
+        }
     }
-    let Reply::Files { version, .. } = service.execute(Command::Files {
-        generation: 1, known_version: None, excludes: Default::default(),
-    }).unwrap() else { panic!() };
+    let Reply::Files { version, .. } = service
+        .execute(Command::Files {
+            generation: 1,
+            known_version: None,
+            excludes: Default::default(),
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
     let stamp = observation.stamp();
     let built = service.index.as_ref().unwrap().built;
-    service.set_workspace_watch(native.clone(), WatchState::Paused).unwrap();
+    service
+        .set_workspace_watch(native.clone(), WatchState::Paused)
+        .unwrap();
     std::fs::write(root.path().join("file.rs"), "after").unwrap();
-    service.set_workspace_watch(native, WatchState::Active).unwrap();
+    service
+        .set_workspace_watch(native, WatchState::Active)
+        .unwrap();
     loop {
-        let response = responses.recv_timeout(deadline.saturating_duration_since(Instant::now())).unwrap();
-        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if !batch.states.is_empty()) { break; }
+        let response = responses
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        if matches!(response.result, Ok(Reply::WorkspaceChanges(batch)) if !batch.states.is_empty())
+        {
+            break;
+        }
     }
-    assert_eq!(observation.stamp(), stamp, "content does not change filenames");
-    assert!(matches!(service.execute(Command::Files {
-        generation: 1, known_version: Some(version), excludes: Default::default(),
-    }).unwrap(), Reply::Files { files: None, .. }));
+    assert_eq!(
+        observation.stamp(),
+        stamp,
+        "content does not change filenames"
+    );
+    assert!(matches!(
+        service
+            .execute(Command::Files {
+                generation: 1,
+                known_version: Some(version),
+                excludes: Default::default(),
+            })
+            .unwrap(),
+        Reply::Files { files: None, .. }
+    ));
     assert_eq!(service.index.as_ref().unwrap().built, built);
 }
 
@@ -1803,22 +2040,55 @@ fn delayed_metadata_retains_request_time_for_save_and_checkpoint_barriers() {
 fn headless_git_status_sends_only_literal_worktree_deltas_and_full_rule_updates() {
     let root = tempfile::tempdir().unwrap();
     git2::Repository::init(root.path()).unwrap();
-    for name in ["literal[1].txt", "literal1.txt"] { std::fs::write(root.path().join(name), "original\n").unwrap(); }
+    for name in ["literal[1].txt", "literal1.txt"] {
+        std::fs::write(root.path().join(name), "original\n").unwrap();
+    }
     let mut service = Service::new(root.path()).unwrap();
-    let Reply::GitStatus { discovery: known, scans } = service.execute(Command::GitStatus { progress: None, revalidate: false,
-        known: None, parent_open: false, closed: Vec::new(), include_untracked: true,
-        changed: Some(vec![path("literal[1].txt")]),
-    }).unwrap() else { panic!(); };
-    assert_eq!(scans[0].files.len(), 2, "Discovery must return a complete initial snapshot");
+    let Reply::GitStatus {
+        discovery: known,
+        scans,
+    } = service
+        .execute(Command::GitStatus {
+            progress: None,
+            revalidate: false,
+            known: None,
+            parent_open: false,
+            closed: Vec::new(),
+            include_untracked: true,
+            changed: Some(vec![path("literal[1].txt")]),
+        })
+        .unwrap()
+    else {
+        panic!();
+    };
+    assert_eq!(
+        scans[0].files.len(),
+        2,
+        "Discovery must return a complete initial snapshot"
+    );
     assert!(scans[0].worktree_paths.is_none());
-    let mut query = |changed: Vec<RemotePath>| match service.execute(Command::GitStatus { progress: None, revalidate: false,
-        known: Some(known.clone()), parent_open: false, closed: Vec::new(), include_untracked: true,
-        changed: Some(changed),
-    }).unwrap() { Reply::GitStatus { scans, .. } => scans, _ => panic!() };
+    let mut query = |changed: Vec<RemotePath>| match service
+        .execute(Command::GitStatus {
+            progress: None,
+            revalidate: false,
+            known: Some(known.clone()),
+            parent_open: false,
+            closed: Vec::new(),
+            include_untracked: true,
+            changed: Some(changed),
+        })
+        .unwrap()
+    {
+        Reply::GitStatus { scans, .. } => scans,
+        _ => panic!(),
+    };
     let scans = query(vec![path("literal[1].txt")]);
     assert_eq!(scans[0].files.len(), 1);
     assert_eq!(scans[0].files[0].path, path("literal[1].txt"));
-    assert_eq!(scans[0].worktree_paths.as_ref().unwrap().paths, [path("literal[1].txt")]);
+    assert_eq!(
+        scans[0].worktree_paths.as_ref().unwrap().paths,
+        [path("literal[1].txt")]
+    );
     assert!(query(Vec::new()).is_empty());
     let scans = query(vec![path(".git/index")]);
     assert!(scans[0].worktree_paths.is_none());
@@ -1826,7 +2096,12 @@ fn headless_git_status_sends_only_literal_worktree_deltas_and_full_rule_updates(
     std::fs::write(root.path().join(".gitignore"), "literal1.txt\n").unwrap();
     let scans = query(vec![path(".gitignore")]);
     assert!(scans[0].worktree_paths.is_none());
-    assert!(!scans[0].files.iter().any(|file| file.path == path("literal1.txt")));
+    assert!(
+        !scans[0]
+            .files
+            .iter()
+            .any(|file| file.path == path("literal1.txt"))
+    );
 }
 
 #[test]
@@ -1834,29 +2109,95 @@ fn remote_status_deltas_do_not_extend_full_snapshot_expiry() {
     let root = tempfile::tempdir().unwrap();
     git2::Repository::init(root.path()).unwrap();
     std::fs::write(root.path().join("reported.txt"), "first\n").unwrap();
-    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), Arc::default()));
+    let workspace = workspace::Workspace::new(tests::connection(
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+    ));
     let cancel = crate::background::CancellationToken::new();
-    let (initial, _) = workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    let (initial, _) = workspace
+        .git_snapshot(true, None, false, Vec::new(), None, &cancel)
+        .unwrap();
     let known = discovery(&workspace, &initial);
-    let checked = workspace.git_snapshots.lock().unwrap().get(&path("")).unwrap().checked;
+    let checked = workspace
+        .git_snapshots
+        .lock()
+        .unwrap()
+        .get(&path(""))
+        .unwrap()
+        .checked;
     std::fs::write(root.path().join("unreported.txt"), "missed event\n").unwrap();
     for _ in 0..3 {
-        let (_, scans) = workspace.git_snapshot(true, Some(known.clone()), false, Vec::new(),
-            Some(vec![path("reported.txt")]), &cancel).unwrap();
-        assert_eq!(scans[0].files.len(), 1, "Unrelated paths must not be rescanned by an ordinary delta");
-        assert_eq!(workspace.git_snapshots.lock().unwrap().get(&path("")).unwrap().checked, checked);
+        let (_, scans) = workspace
+            .git_snapshot(
+                true,
+                Some(known.clone()),
+                false,
+                Vec::new(),
+                Some(vec![path("reported.txt")]),
+                &cancel,
+            )
+            .unwrap();
+        assert_eq!(
+            scans[0].files.len(),
+            1,
+            "Unrelated paths must not be rescanned by an ordinary delta"
+        );
+        assert_eq!(
+            workspace
+                .git_snapshots
+                .lock()
+                .unwrap()
+                .get(&path(""))
+                .unwrap()
+                .checked,
+            checked
+        );
     }
-    let mut cached = workspace.git_snapshots.lock().unwrap().take(&path("")).unwrap();
+    let mut cached = workspace
+        .git_snapshots
+        .lock()
+        .unwrap()
+        .take(&path(""))
+        .unwrap();
     cached.checked -= Duration::from_secs(31);
-    workspace.git_snapshots.lock().unwrap().insert(path(""), 1024, cached);
-    let (_, scans) = workspace.git_snapshot(true, Some(known.clone()), false, Vec::new(),
-        Some(vec![path("reported.txt")]), &cancel).unwrap();
-    assert_eq!(scans[0].files.len(), 2, "Expiry must discover a missed change outside the delta");
+    workspace
+        .git_snapshots
+        .lock()
+        .unwrap()
+        .insert(path(""), 1024, cached);
+    let (_, scans) = workspace
+        .git_snapshot(
+            true,
+            Some(known.clone()),
+            false,
+            Vec::new(),
+            Some(vec![path("reported.txt")]),
+            &cancel,
+        )
+        .unwrap();
+    assert_eq!(
+        scans[0].files.len(),
+        2,
+        "Expiry must discover a missed change outside the delta"
+    );
     workspace.git_snapshots.lock().unwrap().remove(&path(""));
     std::fs::write(root.path().join("uncached.txt"), "after eviction\n").unwrap();
-    let (_, scans) = workspace.git_snapshot(true, Some(known), false, Vec::new(),
-        Some(vec![path("reported.txt")]), &cancel).unwrap();
-    assert_eq!(scans[0].files.len(), 3, "An evicted baseline requires a full snapshot");
+    let (_, scans) = workspace
+        .git_snapshot(
+            true,
+            Some(known),
+            false,
+            Vec::new(),
+            Some(vec![path("reported.txt")]),
+            &cancel,
+        )
+        .unwrap();
+    assert_eq!(
+        scans[0].files.len(),
+        3,
+        "An evicted baseline requires a full snapshot"
+    );
 }
 
 #[test]
@@ -1865,49 +2206,129 @@ fn expired_remote_status_rejects_ignored_output_before_revalidation_and_keeps_it
     git2::Repository::init(root.path()).unwrap();
     std::fs::write(root.path().join(".gitignore"), "build/\n").unwrap();
     std::fs::create_dir(root.path().join("build")).unwrap();
-    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), Arc::default()));
+    let workspace = workspace::Workspace::new(tests::connection(
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+    ));
     let cancel = crate::background::CancellationToken::new();
-    let (initial, _) = workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    let (initial, _) = workspace
+        .git_snapshot(true, None, false, Vec::new(), None, &cancel)
+        .unwrap();
     let known = discovery(&workspace, &initial);
-    let mut cached = workspace.git_snapshots.lock().unwrap().take(&path("")).unwrap();
+    let mut cached = workspace
+        .git_snapshots
+        .lock()
+        .unwrap()
+        .take(&path(""))
+        .unwrap();
     cached.checked -= Duration::from_secs(31);
     let checked = cached.checked;
-    workspace.git_snapshots.lock().unwrap().insert(path(""), 1024, cached);
+    workspace
+        .git_snapshots
+        .lock()
+        .unwrap()
+        .insert(path(""), 1024, cached);
     std::fs::write(root.path().join("unreported.txt"), "missed event\n").unwrap();
     for batch in 0..4 {
         let name = format!("build/{batch}.o");
         std::fs::write(root.path().join(&name), "object\n").unwrap();
-        let (_, scans) = workspace.git_snapshot(true, Some(known.clone()), false, Vec::new(), Some(vec![path(&name)]), &cancel).unwrap();
-        assert!(!scans[0].files.iter().any(|file| file.path == "unreported.txt"), "ignored output cannot cause a full worktree scan");
-        assert_eq!(workspace.git_snapshots.lock().unwrap().get(&path("")).unwrap().checked, checked);
+        let (_, scans) = workspace
+            .git_snapshot(
+                true,
+                Some(known.clone()),
+                false,
+                Vec::new(),
+                Some(vec![path(&name)]),
+                &cancel,
+            )
+            .unwrap();
+        assert!(
+            !scans[0]
+                .files
+                .iter()
+                .any(|file| file.path == "unreported.txt"),
+            "ignored output cannot cause a full worktree scan"
+        );
+        assert_eq!(
+            workspace
+                .git_snapshots
+                .lock()
+                .unwrap()
+                .get(&path(""))
+                .unwrap()
+                .checked,
+            checked
+        );
     }
     // The missed-event fallback is retained for a relevant event or navigation.
     std::fs::write(root.path().join("reported.txt"), "visible\n").unwrap();
-    let (_, scans) = workspace.git_snapshot(true, Some(known), false, Vec::new(), Some(vec![path("reported.txt")]), &cancel).unwrap();
-    assert!(scans[0].files.iter().any(|file| file.path == "unreported.txt"));
-    assert!(workspace.git_snapshots.lock().unwrap().get(&path("")).unwrap().checked > checked);
+    let (_, scans) = workspace
+        .git_snapshot(
+            true,
+            Some(known),
+            false,
+            Vec::new(),
+            Some(vec![path("reported.txt")]),
+            &cancel,
+        )
+        .unwrap();
+    assert!(
+        scans[0]
+            .files
+            .iter()
+            .any(|file| file.path == "unreported.txt")
+    );
+    assert!(
+        workspace
+            .git_snapshots
+            .lock()
+            .unwrap()
+            .get(&path(""))
+            .unwrap()
+            .checked
+            > checked
+    );
 }
 
 #[test]
 fn ssh_build_notifications_coalesce_into_one_status_request_and_keep_real_changes() {
     let root = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(root.path()).unwrap();
-    repo.config().unwrap().set_bool("core.autocrlf", false).unwrap();
+    repo.config()
+        .unwrap()
+        .set_bool("core.autocrlf", false)
+        .unwrap();
     std::fs::write(root.path().join("source.cc"), "original\n").unwrap();
     let mut index = repo.index().unwrap();
     index.add_path(Path::new("source.cc")).unwrap();
     index.write().unwrap();
-    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), Arc::default()));
+    let workspace = workspace::Workspace::new(tests::connection(
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+    ));
     let mut app = crate::app::App::new_deferred(workspace.view_root.clone());
     app.remote_workspace = Some(workspace.clone());
     app.workspace_watcher_active = true;
     app.refresh_source_control_async();
-    let settle = |app: &mut crate::app::App| app.wait_for_background(Duration::from_secs(15), |app|
-        !app.bg_git_status_running && !app.bg_git_status_pending && !app.bg_git_log_running
-            && !app.bg_git_branch_running && !app.bg_git_branch_pending);
+    let settle = |app: &mut crate::app::App| {
+        app.wait_for_background(Duration::from_secs(15), |app| {
+            !app.bg_git_status_running
+                && !app.bg_git_status_pending
+                && !app.bg_git_log_running
+                && !app.bg_git_branch_running
+                && !app.bg_git_branch_pending
+        })
+    };
     settle(&mut app);
     let log = app.git_output();
-    let status_reads = || log.report().lines().filter(|line| line.contains("Git status") && line.contains("Queued")).count();
+    let status_reads = || {
+        log.report()
+            .lines()
+            .filter(|line| line.contains("Git status") && line.contains("Queued"))
+            .count()
+    };
     let before = status_reads();
     // Keep untracked output visible, the most conservative interpretation of
     // the report. The generated directory must still appear after the build.
@@ -1918,40 +2339,67 @@ fn ssh_build_notifications_coalesce_into_one_status_request_and_keep_real_change
             let name = format!("generated/{batch}-{file}.o");
             std::fs::write(root.path().join(&name), "object\n").unwrap();
             changes.push(crate::background::WorkspacePathChange {
-                path: workspace.view_key(&path(&name)), exists: true, is_dir: false,
-                observed_at: Instant::now(), modified: None, len: Some(7),
+                path: workspace.view_key(&path(&name)),
+                exists: true,
+                is_dir: false,
+                observed_at: Instant::now(),
+                modified: None,
+                len: Some(7),
             });
         }
         if batch == 5 {
             std::fs::write(root.path().join("source.cc"), "modified\n").unwrap();
             changes.push(crate::background::WorkspacePathChange {
-                path: workspace.view_key(&path("source.cc")), exists: true, is_dir: false,
-                observed_at: Instant::now(), modified: None, len: Some(9),
+                path: workspace.view_key(&path("source.cc")),
+                exists: true,
+                is_dir: false,
+                observed_at: Instant::now(),
+                modified: None,
+                len: Some(9),
             });
         }
         app.apply_workspace_file_changes(workspace.view_root.clone(), changes, true, false, false);
         assert!(!app.bg_git_status_running);
     }
-    assert_eq!(status_reads(), before, "notifications must not launch a status RPC per batch");
+    assert_eq!(
+        status_reads(),
+        before,
+        "notifications must not launch a status RPC per batch"
+    );
     assert!(app.poll_git_watcher_refresh(Instant::now() + Duration::from_secs(2)));
     assert!(app.bg_git_status_passive);
     settle(&mut app);
     assert_eq!(status_reads(), before + 1);
-    assert!(app.source_control_files.iter().any(|file| file.path == "source.cc" && file.status == 'M'));
-    assert!(app.source_control_files.iter().any(|file| file.path == "generated" && file.status == '?' && file.directory));
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "source.cc" && file.status == 'M')
+    );
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "generated" && file.status == '?' && file.directory)
+    );
 }
 
 #[test]
 fn native_remote_watcher_batches_a_running_compiler_without_delaying_open_file_reload() {
     let root = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(root.path()).unwrap();
-    repo.config().unwrap().set_bool("core.autocrlf", false).unwrap();
+    repo.config()
+        .unwrap()
+        .set_bool("core.autocrlf", false)
+        .unwrap();
     std::fs::write(root.path().join("source.cc"), "original\n").unwrap();
     std::fs::create_dir(root.path().join("generated")).unwrap();
     let mut index = repo.index().unwrap();
     index.add_path(Path::new("source.cc")).unwrap();
     index.write().unwrap();
-    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), Arc::default()));
+    let workspace = workspace::Workspace::new(tests::connection(
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+    ));
     let mut app = crate::app::App::new_deferred(workspace.view_root.clone());
     workspace.client.set_wake(app.background.wake_handle());
     app.remote_workspace = Some(workspace.clone());
@@ -1959,36 +2407,64 @@ fn native_remote_watcher_batches_a_running_compiler_without_delaying_open_file_r
     app.refresh_source_control_async();
     app.wait_for_background(Duration::from_secs(15), |app| {
         app.editor().is_some_and(|editor| !editor.bg_loading)
-            && !app.bg_git_status_running && !app.bg_git_status_pending
-            && !app.bg_git_log_running && !app.bg_git_branch_running && !app.bg_git_branch_pending
+            && !app.bg_git_status_running
+            && !app.bg_git_status_pending
+            && !app.bg_git_log_running
+            && !app.bg_git_branch_running
+            && !app.bg_git_branch_pending
     });
     workspace.client.call(Command::Watch).unwrap();
     app.wait_for_background(Duration::from_secs(10), |app| app.workspace_watcher_active);
     let log = app.git_output();
-    let status_reads = || log.report().lines().filter(|line| line.contains("Git status") && line.contains("Queued")).count();
+    let status_reads = || {
+        log.report()
+            .lines()
+            .filter(|line| line.contains("Git status") && line.contains("Queued"))
+            .count()
+    };
     let before = status_reads();
     let native = root.path().to_owned();
     let started = Instant::now();
     let writer = std::thread::spawn(move || {
         for batch in 0..12 {
             for file in 0..180 {
-                std::fs::write(native.join(format!("generated/{batch}-{file}.o")), "object\n").unwrap();
+                std::fs::write(
+                    native.join(format!("generated/{batch}-{file}.o")),
+                    "object\n",
+                )
+                .unwrap();
             }
             std::thread::sleep(Duration::from_millis(300));
         }
         std::fs::write(native.join("source.cc"), "final source edit\n").unwrap();
     });
     app.wait_for_background(Duration::from_secs(20), |app| {
-        app.editor().is_some_and(|editor| editor.rope == "final source edit\n" && !editor.bg_loading)
-            && !app.bg_git_status_running && !app.bg_git_status_pending
+        app.editor()
+            .is_some_and(|editor| editor.rope == "final source edit\n" && !editor.bg_loading)
+            && !app.bg_git_status_running
+            && !app.bg_git_status_pending
     });
     writer.join().unwrap();
     let refreshes = status_reads() - before;
     let allowed = started.elapsed().as_millis().div_ceil(2_000) as usize + 1;
-    assert!((1..=allowed).contains(&refreshes), "a real 12-burst build launched {refreshes} status requests (limit {allowed})");
-    eprintln!("Native remote build: 2,160 generated files; {refreshes} Git status requests; elapsed {:?}", started.elapsed());
-    assert!(app.source_control_files.iter().any(|file| file.path == "source.cc" && file.status == 'M'));
-    assert!(app.source_control_files.iter().any(|file| file.path == "generated" && file.status == '?' && file.directory));
+    assert!(
+        (1..=allowed).contains(&refreshes),
+        "a real 12-burst build launched {refreshes} status requests (limit {allowed})"
+    );
+    eprintln!(
+        "Native remote build: 2,160 generated files; {refreshes} Git status requests; elapsed {:?}",
+        started.elapsed()
+    );
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "source.cc" && file.status == 'M')
+    );
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "generated" && file.status == '?' && file.directory)
+    );
     workspace.client.call(Command::Shutdown).unwrap();
 }
 
@@ -1997,46 +2473,82 @@ fn remote_navigation_reuses_status_but_expiry_explicit_refresh_and_unwatched_pat
     let root = tempfile::tempdir().unwrap();
     git2::Repository::init(root.path()).unwrap();
     std::fs::write(root.path().join("first.txt"), "first\n").unwrap();
-    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), Arc::default()));
+    let workspace = workspace::Workspace::new(tests::connection(
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+    ));
     let mut app = crate::app::App::new_deferred(workspace.view_root.clone());
     app.remote_workspace = Some(workspace.clone());
     app.workspace_watcher_active = true;
     app.refresh_source_control_async();
-    let settle = |app: &mut crate::app::App| app.wait_for_background(Duration::from_secs(15), |app|
-        !app.bg_git_log_running && !app.bg_git_branch_running && !app.bg_git_branch_pending
-            && !app.bg_git_status_running && !app.bg_git_status_pending);
+    let settle = |app: &mut crate::app::App| {
+        app.wait_for_background(Duration::from_secs(15), |app| {
+            !app.bg_git_log_running
+                && !app.bg_git_branch_running
+                && !app.bg_git_branch_pending
+                && !app.bg_git_status_running
+                && !app.bg_git_status_pending
+        })
+    };
     settle(&mut app);
     let before = workspace.client.next_request_id_for_test();
     app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
     app.refresh_source_control_for_navigation();
     settle(&mut app);
-    assert_eq!(workspace.client.next_request_id_for_test(), before, "Navigation must not generate Git traffic for fresh snapshots");
-    let mut cached = workspace.git_snapshots.lock().unwrap().take(&path("")).unwrap();
+    assert_eq!(
+        workspace.client.next_request_id_for_test(),
+        before,
+        "Navigation must not generate Git traffic for fresh snapshots"
+    );
+    let mut cached = workspace
+        .git_snapshots
+        .lock()
+        .unwrap()
+        .take(&path(""))
+        .unwrap();
     cached.checked -= Duration::from_secs(31);
-    workspace.git_snapshots.lock().unwrap().insert(path(""), 1024, cached);
+    workspace
+        .git_snapshots
+        .lock()
+        .unwrap()
+        .insert(path(""), 1024, cached);
     std::fs::write(root.path().join("missed.txt"), "missed filesystem event\n").unwrap();
     app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
     app.refresh_source_control_for_navigation();
     settle(&mut app);
     assert!(workspace.client.next_request_id_for_test() > before);
-    assert!(app.source_control_files.iter().any(|file| file.path == "missed.txt"));
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "missed.txt")
+    );
     let before = workspace.client.next_request_id_for_test();
     app.refresh_source_control_async();
     settle(&mut app);
-    assert!(workspace.client.next_request_id_for_test() > before, "Explicit refresh must bypass cached status");
+    assert!(
+        workspace.client.next_request_id_for_test() > before,
+        "Explicit refresh must bypass cached status"
+    );
     let before = workspace.client.next_request_id_for_test();
     app.workspace_watcher_active = false;
     app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
     app.refresh_source_control_for_navigation();
     settle(&mut app);
-    assert!(workspace.client.next_request_id_for_test() > before, "Unavailable watches retain full refreshes");
+    assert!(
+        workspace.client.next_request_id_for_test() > before,
+        "Unavailable watches retain full refreshes"
+    );
     let before = workspace.client.next_request_id_for_test();
     app.workspace_watcher_active = true;
     app.source_control_repository_state = crate::app::SourceControlRepositoryState::Missing;
     app.source_control_last_refresh = Some(Instant::now() - Duration::from_secs(3));
     app.refresh_source_control_for_navigation();
     settle(&mut app);
-    assert!(workspace.client.next_request_id_for_test() > before, "Missing repositories must not be negatively cached by navigation");
+    assert!(
+        workspace.client.next_request_id_for_test() > before,
+        "Missing repositories must not be negatively cached by navigation"
+    );
 }
 
 #[cfg(unix)]
@@ -2046,16 +2558,44 @@ fn headless_git_status_keeps_non_unicode_paths_lossless_when_a_delta_falls_back(
     let root = tempfile::tempdir().unwrap();
     git2::Repository::init(root.path()).unwrap();
     for bytes in [b"name-\xfe.txt", b"name-\xff.txt"] {
-        std::fs::write(root.path().join(std::ffi::OsString::from_vec(bytes.to_vec())), "source\n").unwrap();
+        std::fs::write(
+            root.path()
+                .join(std::ffi::OsString::from_vec(bytes.to_vec())),
+            "source\n",
+        )
+        .unwrap();
     }
     let mut service = Service::new(root.path()).unwrap();
-    let Reply::GitStatus { discovery: known, .. } = service.execute(Command::GitStatus { progress: None, revalidate: false,
-        known: None, parent_open: false, closed: Vec::new(), include_untracked: true, changed: None,
-    }).unwrap() else { panic!(); };
-    let Reply::GitStatus { scans, .. } = service.execute(Command::GitStatus { progress: None, revalidate: false,
-        known: Some(known), parent_open: false, closed: Vec::new(), include_untracked: true,
-        changed: Some(vec![RemotePath::new(b"name-\xfe.txt".to_vec()).unwrap()]),
-    }).unwrap() else { panic!(); };
+    let Reply::GitStatus {
+        discovery: known, ..
+    } = service
+        .execute(Command::GitStatus {
+            progress: None,
+            revalidate: false,
+            known: None,
+            parent_open: false,
+            closed: Vec::new(),
+            include_untracked: true,
+            changed: None,
+        })
+        .unwrap()
+    else {
+        panic!();
+    };
+    let Reply::GitStatus { scans, .. } = service
+        .execute(Command::GitStatus {
+            progress: None,
+            revalidate: false,
+            known: Some(known),
+            parent_open: false,
+            closed: Vec::new(),
+            include_untracked: true,
+            changed: Some(vec![RemotePath::new(b"name-\xfe.txt".to_vec()).unwrap()]),
+        })
+        .unwrap()
+    else {
+        panic!();
+    };
     assert!(scans[0].worktree_paths.is_none());
     assert_eq!(scans[0].files.len(), 2);
     assert_ne!(scans[0].files[0].path, scans[0].files[1].path);
@@ -2067,7 +2607,12 @@ fn full_status_refreshes_revalidate_git_sources_without_resending_unchanged_blob
     let repo = git2::Repository::init(root.path()).unwrap();
     // Distinct lines, so compression cannot hide a resent blob.
     let text: String = (0..20_000u64)
-        .map(|i| format!("fn committed_{i}_{:x}() {{}}\n", i.wrapping_mul(0x9e37_79b9_7f4a_7c15)))
+        .map(|i| {
+            format!(
+                "fn committed_{i}_{:x}() {{}}\n",
+                i.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            )
+        })
         .collect();
     std::fs::write(root.path().join("big.rs"), &text).unwrap();
     let mut index = repo.index().unwrap();
@@ -2075,13 +2620,25 @@ fn full_status_refreshes_revalidate_git_sources_without_resending_unchanged_blob
     index.write().unwrap();
     let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
     let signature = git2::Signature::now("test", "test@example.com").unwrap();
-    repo.commit(Some("HEAD"), &signature, &signature, "base", &tree, &[]).unwrap();
-    std::fs::write(root.path().join("big.rs"), format!("{text}// worktree edit\n")).unwrap();
+    repo.commit(Some("HEAD"), &signature, &signature, "base", &tree, &[])
+        .unwrap();
+    std::fs::write(
+        root.path().join("big.rs"),
+        format!("{text}// worktree edit\n"),
+    )
+    .unwrap();
     let received = Arc::new(AtomicUsize::new(0));
     let workspace = workspace::Workspace::new(tests::connection_with_traffic(
-        root.path(), Arc::default(), Arc::default(), Arc::default(), received.clone()));
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+        Arc::default(),
+        received.clone(),
+    ));
     let cancel = crate::background::CancellationToken::new();
-    workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    workspace
+        .git_snapshot(true, None, false, Vec::new(), None, &cancel)
+        .unwrap();
     let key = workspace.view_key(&path("big.rs"));
     let before = received.load(Ordering::Relaxed);
     let first = workspace.git_sources(&key, None, false).unwrap();
@@ -2090,14 +2647,22 @@ fn full_status_refreshes_revalidate_git_sources_without_resending_unchanged_blob
     assert!(first.revisions.is_some());
 
     // A full refresh (no changed paths) used to discard every cached text.
-    workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    workspace
+        .git_snapshot(true, None, false, Vec::new(), None, &cancel)
+        .unwrap();
     let before = received.load(Ordering::Relaxed);
     let revalidated = workspace.git_sources(&key, None, false).unwrap();
     let conditional = received.load(Ordering::Relaxed) - before;
     assert_eq!(revalidated.head, first.head);
     assert_eq!(revalidated.index, first.index);
-    assert!(Arc::ptr_eq(revalidated.head.as_ref().unwrap(), first.head.as_ref().unwrap()));
-    assert!(conditional * 20 < initial, "conditional {conditional} bytes vs initial {initial}");
+    assert!(Arc::ptr_eq(
+        revalidated.head.as_ref().unwrap(),
+        first.head.as_ref().unwrap()
+    ));
+    assert!(
+        conditional * 20 < initial,
+        "conditional {conditional} bytes vs initial {initial}"
+    );
     // Cached at the current epoch: no further traffic.
     let before = received.load(Ordering::Relaxed);
     workspace.git_sources(&key, None, false).unwrap();
@@ -2109,7 +2674,9 @@ fn full_status_refreshes_revalidate_git_sources_without_resending_unchanged_blob
     let mut index = repo.index().unwrap();
     index.add_path(Path::new("big.rs")).unwrap();
     index.write().unwrap();
-    workspace.git_snapshot(true, None, false, Vec::new(), None, &cancel).unwrap();
+    workspace
+        .git_snapshot(true, None, false, Vec::new(), None, &cancel)
+        .unwrap();
     let staged = workspace.git_sources(&key, None, false).unwrap();
     assert_eq!(staged.index.as_deref(), Some(staged_text));
     assert_eq!(staged.head.as_deref(), Some(text.as_str()));
@@ -2120,7 +2687,12 @@ fn concurrent_git_source_requests_for_one_file_share_a_single_transfer() {
     let root = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(root.path()).unwrap();
     let text: String = (0..20_000u64)
-        .map(|i| format!("fn shared_{i}_{:x}() {{}}\n", i.wrapping_mul(0x9e37_79b9_7f4a_7c15)))
+        .map(|i| {
+            format!(
+                "fn shared_{i}_{:x}() {{}}\n",
+                i.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            )
+        })
         .collect();
     std::fs::write(root.path().join("big.rs"), &text).unwrap();
     let mut index = repo.index().unwrap();
@@ -2128,19 +2700,37 @@ fn concurrent_git_source_requests_for_one_file_share_a_single_transfer() {
     index.write().unwrap();
     let received = Arc::new(AtomicUsize::new(0));
     let workspace = workspace::Workspace::new(tests::connection_with_traffic(
-        root.path(), Arc::default(), Arc::default(), Arc::default(), received.clone()));
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+        Arc::default(),
+        received.clone(),
+    ));
     let key = workspace.view_key(&path("big.rs"));
     let before = received.load(Ordering::Relaxed);
-    let callers: Vec<_> = (0..4).map(|_| {
-        let workspace = workspace.clone();
-        let key = key.clone();
-        std::thread::spawn(move || workspace.git_sources(&key, None, false).unwrap())
-    }).collect();
-    let results: Vec<_> = callers.into_iter().map(|caller| caller.join().unwrap()).collect();
+    let callers: Vec<_> = (0..4)
+        .map(|_| {
+            let workspace = workspace.clone();
+            let key = key.clone();
+            std::thread::spawn(move || workspace.git_sources(&key, None, false).unwrap())
+        })
+        .collect();
+    let results: Vec<_> = callers
+        .into_iter()
+        .map(|caller| caller.join().unwrap())
+        .collect();
     let concurrent = received.load(Ordering::Relaxed) - before;
-    assert!(results.iter().all(|sources| sources.index.as_deref() == Some(text.as_str())));
+    assert!(
+        results
+            .iter()
+            .all(|sources| sources.index.as_deref() == Some(text.as_str()))
+    );
     // One transfer of the index text (compressed and framed), not four.
-    assert!(concurrent < text.len(), "{concurrent} bytes for {} bytes of text", text.len());
+    assert!(
+        concurrent < text.len(),
+        "{concurrent} bytes for {} bytes of text",
+        text.len()
+    );
 }
 
 #[test]
@@ -2148,7 +2738,12 @@ fn open_time_git_source_prefetch_is_size_capped_and_reused_by_the_gutter_request
     let root = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init(root.path()).unwrap();
     let text: String = (0..20_000u64)
-        .map(|i| format!("fn prefetched_{i}_{:x}() {{}}\n", i.wrapping_mul(0x9e37_79b9_7f4a_7c15)))
+        .map(|i| {
+            format!(
+                "fn prefetched_{i}_{:x}() {{}}\n",
+                i.wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            )
+        })
         .collect();
     std::fs::write(root.path().join("big.rs"), &text).unwrap();
     let mut index = repo.index().unwrap();
@@ -2156,7 +2751,12 @@ fn open_time_git_source_prefetch_is_size_capped_and_reused_by_the_gutter_request
     index.write().unwrap();
     let received = Arc::new(AtomicUsize::new(0));
     let workspace = workspace::Workspace::new(tests::connection_with_traffic(
-        root.path(), Arc::default(), Arc::default(), Arc::default(), received.clone()));
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+        Arc::default(),
+        received.clone(),
+    ));
     assert!(workspace.client.hello().git_sources_limit);
     let key = workspace.view_key(&path("big.rs"));
     // Over the cap: nothing but a small reply, and nothing cached.
@@ -2164,14 +2764,33 @@ fn open_time_git_source_prefetch_is_size_capped_and_reused_by_the_gutter_request
     workspace.prefetch_git_sources(&key, None, 1024);
     assert!(received.load(Ordering::Relaxed) - before < 4_096);
     let before = received.load(Ordering::Relaxed);
-    assert_eq!(workspace.git_sources(&key, None, false).unwrap().index.as_deref(), Some(text.as_str()));
+    assert_eq!(
+        workspace
+            .git_sources(&key, None, false)
+            .unwrap()
+            .index
+            .as_deref(),
+        Some(text.as_str())
+    );
     assert!(received.load(Ordering::Relaxed) - before > text.len() / 4);
     // Within the cap: the prefetched texts serve the gutter request.
     let other = workspace::Workspace::new(tests::connection_with_traffic(
-        root.path(), Arc::default(), Arc::default(), Arc::default(), received.clone()));
+        root.path(),
+        Arc::default(),
+        Arc::default(),
+        Arc::default(),
+        received.clone(),
+    ));
     let key = other.view_key(&path("big.rs"));
     other.prefetch_git_sources(&key, None, 64 * 1024 * 1024);
     let before = received.load(Ordering::Relaxed);
-    assert_eq!(other.git_sources(&key, None, false).unwrap().index.as_deref(), Some(text.as_str()));
+    assert_eq!(
+        other
+            .git_sources(&key, None, false)
+            .unwrap()
+            .index
+            .as_deref(),
+        Some(text.as_str())
+    );
     assert_eq!(received.load(Ordering::Relaxed), before);
 }

@@ -47,14 +47,21 @@ fn draw(app: &mut App, width: u16, height: u16) -> Terminal<TestBackend> {
 #[test]
 fn edge_case_selection_counts_follow_the_active_document() {
     let mut app = app_with_file();
-    app.tabs = ["a\nbc", "abcd"].into_iter().map(|text| {
-        let mut editor = Editor::test_with_text(text);
-        let end = editor.rope.char_to_line(3);
-        editor.set_cursor(end, 3 - editor.rope.line_to_char(end));
-        editor.selection_anchor = Some((0, 0));
-        Tab::new_file(editor)
-    }).collect();
-    for (tab, expected) in [(0, "(3 selected, 2 lines)"), (1, "(3 selected)"), (0, "(3 selected, 2 lines)")] {
+    app.tabs = ["a\nbc", "abcd"]
+        .into_iter()
+        .map(|text| {
+            let mut editor = Editor::test_with_text(text);
+            let end = editor.rope.char_to_line(3);
+            editor.set_cursor(end, 3 - editor.rope.line_to_char(end));
+            editor.selection_anchor = Some((0, 0));
+            Tab::new_file(editor)
+        })
+        .collect();
+    for (tab, expected) in [
+        (0, "(3 selected, 2 lines)"),
+        (1, "(3 selected)"),
+        (0, "(3 selected, 2 lines)"),
+    ] {
         app.active_tab = tab;
         draw(&mut app, 160, 24);
         assert_eq!(app.cached_sel_stats.as_deref(), Some(expected));
@@ -71,7 +78,11 @@ fn edge_case_selection_counts_follow_the_active_document() {
 
 fn open_gptcomplete_menu_from_bar(app: &mut App) -> Terminal<TestBackend> {
     draw(app, 100, 24);
-    let &(x, _, _) = app.status_bar_items.iter().find(|item| item.2 == GPTCOMPLETE_STATUS_ITEM).unwrap();
+    let &(x, _, _) = app
+        .status_bar_items
+        .iter()
+        .find(|item| item.2 == GPTCOMPLETE_STATUS_ITEM)
+        .unwrap();
     crate::mouse::handle_mouse(app, mouse(MouseEventKind::Down(MouseButton::Left), x, 23));
     assert!(gptcomplete_menu_open(app));
     let terminal = draw(app, 100, 24);
@@ -152,18 +163,27 @@ fn gptcomplete_menu_changes_eagerness_without_ending_a_snooze() {
     app.set_inline_predictions_enabled(true);
     let terminal = open_gptcomplete_menu_from_bar(&mut app);
     let inner = app.context_menu_inner.unwrap();
-    assert!((inner.y..inner.bottom())
-        .any(|y| row(&terminal, y).contains("✓ Eagerness · Balanced (30% to start)")));
+    assert!(
+        (inner.y..inner.bottom())
+            .any(|y| row(&terminal, y).contains("✓ Eagerness · Balanced (30% to start)"))
+    );
     let cautious_row = (inner.y..inner.bottom())
         .find(|&y| row(&terminal, y).contains("Eagerness · Cautious (60% to start)"))
         .unwrap();
     click_gptcomplete_menu_row(&mut app, cautious_row);
-    assert_eq!(app.completion_preferences.inline_eagerness, InlineEagerness::Cautious);
+    assert_eq!(
+        app.completion_preferences.inline_eagerness,
+        InlineEagerness::Cautious
+    );
 
     open_gptcomplete_menu_from_bar(&mut app);
     choose_gptcomplete_menu_item(&mut app, 1);
     let deadline = app.inline_snooze_deadline().unwrap();
-    for level in [InlineEagerness::Balanced, InlineEagerness::Eager, InlineEagerness::Always] {
+    for level in [
+        InlineEagerness::Balanced,
+        InlineEagerness::Eager,
+        InlineEagerness::Always,
+    ] {
         let terminal = open_gptcomplete_menu_from_bar(&mut app);
         let selected = format!(
             "✓ Eagerness · {}",
@@ -171,8 +191,11 @@ fn gptcomplete_menu_changes_eagerness_without_ending_a_snooze() {
         );
         let inner = app.context_menu_inner.unwrap();
         assert!((inner.y..inner.bottom()).any(|y| row(&terminal, y).contains(&selected)));
-        let choice = app.context_menu_items.iter()
-            .position(|item| item.id == level.menu_command()).unwrap();
+        let choice = app
+            .context_menu_items
+            .iter()
+            .position(|item| item.id == level.menu_command())
+            .unwrap();
         choose_gptcomplete_menu_item(&mut app, choice);
         assert_eq!(app.completion_preferences.inline_eagerness, level);
         assert_eq!(app.inline_snooze_deadline(), Some(deadline));
@@ -190,7 +213,10 @@ fn unpinned_gptcomplete_controls_stay_reachable_from_status_details() {
         .iter()
         .position(|row| row.id == GPTCOMPLETE_STATUS_ITEM)
         .unwrap();
-    assert!(handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+    assert!(handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    ));
     assert!(gptcomplete_menu_open(&app));
     assert!(!app.status_details.open);
 }
@@ -203,7 +229,10 @@ fn language_server_status_opens_setup_from_bar_and_details() {
         assert!(app.lsp_settings.active);
         assert_eq!(app.settings_category_selected, 8);
         assert!(!app.status_details.open);
-        assert_eq!(crate::ui_modal::active(&app), Some(crate::ui_modal::Kind::LspSettings));
+        assert_eq!(
+            crate::ui_modal::active(&app),
+            Some(crate::ui_modal::Kind::LspSettings)
+        );
     }
 }
 
@@ -211,17 +240,28 @@ fn click_language_server_status(app: &mut App, pinned: bool) {
     app.set_status_bar_item_pinned("language_server", pinned);
     draw(app, 160, 30);
     let (x, y) = if pinned {
-        let (x, _, _) = *app.status_bar_items.iter()
-            .find(|item| item.2 == "language_server").unwrap();
+        let (x, _, _) = *app
+            .status_bar_items
+            .iter()
+            .find(|item| item.2 == "language_server")
+            .unwrap();
         (x, 29)
     } else {
         open_details(app);
-        let index = detail_rows(app).iter()
-            .position(|row| row.id == "language_server").unwrap();
+        let index = detail_rows(app)
+            .iter()
+            .position(|row| row.id == "language_server")
+            .unwrap();
         app.status_details.selected = index;
         app.status_details.follow_selection = true;
         draw(app, 160, 30);
-        let area = app.status_details.rows.iter().find(|(_, i)| *i == index).unwrap().0;
+        let area = app
+            .status_details
+            .rows
+            .iter()
+            .find(|(_, i)| *i == index)
+            .unwrap()
+            .0;
         (area.x + 1, area.y)
     };
     crate::mouse::handle_mouse(app, mouse(MouseEventKind::Down(MouseButton::Left), x, y));
@@ -248,7 +288,8 @@ fn language_server_status_reuses_settings_in_other_split() {
                 app.create_split_group_dir(app.active_tab, direction);
                 let settings_group = app.active_group;
                 if hidden {
-                    app.tabs.push(Tab::new_file(Editor::test_with_text("other pane\n")));
+                    app.tabs
+                        .push(Tab::new_file(Editor::test_with_text("other pane\n")));
                     app.active_tab = 1;
                     app.tab_scroll_offset = 1;
                     app.tab_bar_area = Some(Rect::new(80, 0, 35, 1));
@@ -265,8 +306,14 @@ fn language_server_status_reuses_settings_in_other_split() {
                     assert_eq!(app.tabs[app.active_tab].editor.navigation_id, settings_id);
                     assert_eq!(app.tab_scroll_offset, 0);
                     assert_eq!(app.tab_mru_order.first(), Some(&app.active_tab));
-                    assert_eq!(app.tabs.iter().chain(app.groups.iter().flat_map(|g| &g.tabs))
-                        .filter(|tab| tab.kind == TabKind::Settings).count(), 1);
+                    assert_eq!(
+                        app.tabs
+                            .iter()
+                            .chain(app.groups.iter().flat_map(|g| &g.tabs))
+                            .filter(|tab| tab.kind == TabKind::Settings)
+                            .count(),
+                        1
+                    );
                     assert!(app.lsp_settings.active);
                     assert_eq!(app.settings_category_selected, 8);
                     assert_eq!(app.settings_items()[app.settings_selected].2, "lsp_servers");
@@ -391,7 +438,11 @@ fn status_resizes_without_overlaps_or_partial_hit_targets() {
                     .any(|item| item.2 == "goto_line")
             );
             assert!(app.status_bar_items.iter().any(|item| item.2 == "problems"));
-            assert!(app.status_bar_items.iter().any(|item| item.2 == GPTCOMPLETE_STATUS_ITEM));
+            assert!(
+                app.status_bar_items
+                    .iter()
+                    .any(|item| item.2 == GPTCOMPLETE_STATUS_ITEM)
+            );
             assert!(row(&terminal, 1).contains('…'));
         }
     }
@@ -941,7 +992,11 @@ fn pinned_monitor_does_not_suppress_other_status_bar_tooltips() {
     app.background.activity.details_open = true;
     app.performance_view.pinned = true;
     draw(&mut app, 80, 24);
-    let &(x, _, _) = app.status_bar_items.iter().find(|item| item.2 == "file_details").unwrap();
+    let &(x, _, _) = app
+        .status_bar_items
+        .iter()
+        .find(|item| item.2 == "file_details")
+        .unwrap();
     app.mouse_col = x + 1;
     app.mouse_row = 23;
     draw(&mut app, 80, 24);
@@ -1054,14 +1109,23 @@ fn compact_panel_headers_keep_the_active_tab_and_close_control_usable() {
 fn activity_navigation_keeps_settings_reachable_in_short_terminals() {
     for height in 1..=30 {
         let area = Rect::new(3, 2, 4, height);
-        let items = crate::ui_chrome::activity_item_regions(area, crate::settings::ActivityBarPosition::Left);
-        assert_eq!(items.last().unwrap().1, crate::ui_chrome::ACTIVITY_SETTINGS_INDEX);
+        let items = crate::ui_chrome::activity_item_regions(
+            area,
+            crate::settings::ActivityBarPosition::Left,
+        );
+        assert_eq!(
+            items.last().unwrap().1,
+            crate::ui_chrome::ACTIVITY_SETTINGS_INDEX
+        );
         assert_eq!(items.last().unwrap().0.bottom(), area.bottom());
         let mut end = area.y;
         for (item, _) in &items {
             assert!(item.height > 0 && item.y >= end && item.bottom() <= area.bottom());
             end = item.bottom();
         }
-        assert_eq!(items.len(), usize::from(height).min(crate::ui_chrome::ACTIVITY_SETTINGS_INDEX + 1));
+        assert_eq!(
+            items.len(),
+            usize::from(height).min(crate::ui_chrome::ACTIVITY_SETTINGS_INDEX + 1)
+        );
     }
 }

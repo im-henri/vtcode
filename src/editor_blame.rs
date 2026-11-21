@@ -141,11 +141,13 @@ impl View {
 }
 
 fn eligible(app: &App) -> bool {
-    app.source_control_enabled && app.tabs.get(app.active_tab).is_some_and(|tab| {
-        matches!(tab.kind, TabKind::File | TabKind::GitRevision)
-            && tab.editor.file_path.is_some()
-            && tab.editor.encoding != "Binary"
-    }) && !app.should_render_diff_for_active_editor()
+    app.source_control_enabled
+        && app.tabs.get(app.active_tab).is_some_and(|tab| {
+            matches!(tab.kind, TabKind::File | TabKind::GitRevision)
+                && tab.editor.file_path.is_some()
+                && tab.editor.encoding != "Binary"
+        })
+        && !app.should_render_diff_for_active_editor()
 }
 
 pub(crate) fn has_details(app: &App) -> bool {
@@ -549,12 +551,17 @@ fn tooltip(f: &mut Frame, app: &mut App) {
     {
         Some(editor.blame.previous_notice.clone().unwrap_or_else(|| {
             if editor.blame.previous_revision.is_some() {
-                "Open the previous commit that changed this file, skipping unrelated commits.".into()
+                "Open the previous commit that changed this file, skipping unrelated commits."
+                    .into()
             } else {
                 "This file has no earlier committed changes.".into()
             }
         }))
-    } else if editor.blame.revision_commit.is_some_and(|area| area.contains(point)) {
+    } else if editor
+        .blame
+        .revision_commit
+        .is_some_and(|area| area.contains(point))
+    {
         Some("Open this file revision's commit in Commit details.".into())
     } else if editor
         .blame
@@ -692,17 +699,33 @@ fn detail_actions(app: &App, width: u16) -> Vec<DetailAction> {
     if width == 0 {
         return Vec::new();
     }
-    let current_file = app.editor().and_then(|editor| {
-        let document = git_blame::cached(app, editor)?;
-        let git_blame::Line::Committed(commit) = document.lines.get(editor.blame.selected?)? else { return None; };
-        document.revision.as_ref().map(|revision| revision.matches_commit_file(commit))
-    }).unwrap_or(false);
+    let current_file = app
+        .editor()
+        .and_then(|editor| {
+            let document = git_blame::cached(app, editor)?;
+            let git_blame::Line::Committed(commit) = document.lines.get(editor.blame.selected?)?
+            else {
+                return None;
+            };
+            document
+                .revision
+                .as_ref()
+                .map(|revision| revision.matches_commit_file(commit))
+        })
+        .unwrap_or(false);
     let mut areas = Vec::new();
     let (mut x, mut y) = (0, 0);
     for (label, enabled) in [
         ("Open Commit", true),
         ("Compare", true),
-        (if current_file { "Current File" } else { "Open File" }, !current_file),
+        (
+            if current_file {
+                "Current File"
+            } else {
+                "Open File"
+            },
+            !current_file,
+        ),
         ("Copy Hash", true),
     ] {
         let size = (label.width() as u16 + 2).min(width);
@@ -710,7 +733,11 @@ fn detail_actions(app: &App, width: u16) -> Vec<DetailAction> {
             x = 0;
             y += 1;
         }
-        areas.push(DetailAction { area: Rect::new(x, y, size, 1), label, enabled });
+        areas.push(DetailAction {
+            area: Rect::new(x, y, size, 1),
+            label,
+            enabled,
+        });
         x += size + 1;
     }
     areas
@@ -982,14 +1009,21 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             if let Some(revision) = editor.blame.previous_revision.clone() {
                 git_blame::open_revision(app, revision, true);
             }
-        } else if editor.blame.revision_commit.is_some_and(|area| area.contains(point)) {
+        } else if editor
+            .blame
+            .revision_commit
+            .is_some_and(|area| area.contains(point))
+        {
             if let Some(revision) = editor.blame.revision.clone() {
-                app.open_commit_details(revision.workdir.clone(), crate::commit_details::CommitData {
-                    hash: revision.hash.clone(),
-                    message: revision.summary.clone(),
-                    date: revision.date.clone(),
-                    ..Default::default()
-                });
+                app.open_commit_details(
+                    revision.workdir.clone(),
+                    crate::commit_details::CommitData {
+                        hash: revision.hash.clone(),
+                        message: revision.summary.clone(),
+                        date: revision.date.clone(),
+                        ..Default::default()
+                    },
+                );
             }
         } else if editor
             .blame
@@ -1070,22 +1104,33 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             }
             return true;
         }
-        if editor.blame.open_commit.is_some_and(|area| area.contains(point)) {
+        if editor
+            .blame
+            .open_commit
+            .is_some_and(|area| area.contains(point))
+        {
             let details = git_blame::cached(app, editor).and_then(|doc| {
-                let git_blame::Line::Committed(commit) = doc.lines.get(editor.blame.selected?)? else {
+                let git_blame::Line::Committed(commit) = doc.lines.get(editor.blame.selected?)?
+                else {
                     return None;
                 };
-                let root = doc.revision.as_ref().map(|revision| revision.workdir.clone())
+                let root = doc
+                    .revision
+                    .as_ref()
+                    .map(|revision| revision.workdir.clone())
                     .or_else(|| doc.path.parent().map(|parent| parent.to_owned()))?;
-                Some((root, crate::commit_details::CommitData {
-                    hash: commit.hash.clone(),
-                    message: commit.message.clone(),
-                    author: commit.author.clone(),
-                    email: commit.email.clone(),
-                    date: commit.committed_at.clone(),
-                    time_ago: commit.age.clone(),
-                    ..Default::default()
-                }))
+                Some((
+                    root,
+                    crate::commit_details::CommitData {
+                        hash: commit.hash.clone(),
+                        message: commit.message.clone(),
+                        author: commit.author.clone(),
+                        email: commit.email.clone(),
+                        date: commit.committed_at.clone(),
+                        time_ago: commit.age.clone(),
+                        ..Default::default()
+                    },
+                ))
             });
             if let Some((root, data)) = details {
                 let view = &mut app.editor_mut().unwrap().blame;

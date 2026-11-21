@@ -35,11 +35,11 @@ thread_local! {
 }
 
 #[cfg(test)]
-#[path = "highlight_load_tests.rs"]
-mod load_tests;
-#[cfg(test)]
 #[path = "highlight_coordinate_tests.rs"]
 mod coordinate_tests;
+#[cfg(test)]
+#[path = "highlight_load_tests.rs"]
+mod load_tests;
 #[cfg(test)]
 #[path = "highlight_memory_tests.rs"]
 mod memory_tests;
@@ -59,7 +59,8 @@ pub(crate) type HighlightSpans = Vec<(Style, String)>;
 // retain more run metadata than text. Rc clones conservatively count the same
 // allocation again, so sharing can only reduce actual retained memory.
 fn span_bytes(spans: &HighlightSpans) -> usize {
-    std::mem::size_of::<HighlightSpans>() + 2 * std::mem::size_of::<usize>()
+    std::mem::size_of::<HighlightSpans>()
+        + 2 * std::mem::size_of::<usize>()
         + spans.capacity() * std::mem::size_of::<(Style, String)>()
         + spans.iter().map(|(_, text)| text.capacity()).sum::<usize>()
 }
@@ -86,7 +87,9 @@ struct CachedCheckpoint {
 }
 
 impl CachedCheckpoint {
-    fn line_offset(&self, line: usize) -> i128 { line as i128 - self.coordinate_origin }
+    fn line_offset(&self, line: usize) -> i128 {
+        line as i128 - self.coordinate_origin
+    }
 }
 
 #[derive(Clone)]
@@ -130,7 +133,8 @@ impl CachedLine {
     }
 
     fn allocation_bytes(&self) -> usize {
-        std::mem::size_of::<Self>() + span_bytes(&self.spans)
+        std::mem::size_of::<Self>()
+            + span_bytes(&self.spans)
             + 2 * (std::mem::size_of::<Vec<usize>>() + 2 * std::mem::size_of::<usize>())
             + self.span_char_lengths.capacity() * std::mem::size_of::<usize>()
             + self.comment_ranges.capacity() * std::mem::size_of::<(usize, usize)>()
@@ -138,8 +142,10 @@ impl CachedLine {
 
     fn rendered(&self) -> RenderedLine {
         RenderedLine {
-            spans: Rc::clone(&self.spans), lengths: Rc::clone(&self.span_char_lengths),
-            char_len: self.char_len, comments: Rc::clone(&self.comment_ranges),
+            spans: Rc::clone(&self.spans),
+            lengths: Rc::clone(&self.span_char_lengths),
+            char_len: self.char_len,
+            comments: Rc::clone(&self.comment_ranges),
         }
     }
 }
@@ -208,22 +214,34 @@ impl DocumentCache {
 
     fn insert_line(&mut self, line: usize, value: CachedLine) {
         self.line_bytes += value.bytes;
-        if let Some(previous) = self.lines.insert(line, value) { self.line_bytes -= previous.bytes; }
+        if let Some(previous) = self.lines.insert(line, value) {
+            self.line_bytes -= previous.bytes;
+        }
     }
 
     fn trim_lines(&mut self, visible: &Range<usize>) {
         if self.lines.len() <= MAX_CACHED_LINES_PER_DOCUMENT
-            && self.line_bytes <= MAX_CACHED_LINE_BYTES_PER_DOCUMENT { return; }
+            && self.line_bytes <= MAX_CACHED_LINE_BYTES_PER_DOCUMENT
+        {
+            return;
+        }
         let center = visible.start + visible.end.saturating_sub(visible.start) / 2;
         let mut by_distance = Vec::with_capacity(self.lines.len());
         self.lines.for_each(.., |line, _| {
-            if !visible.contains(&line) { by_distance.push((line, line.abs_diff(center))); }
+            if !visible.contains(&line) {
+                by_distance.push((line, line.abs_diff(center)));
+            }
         });
         by_distance.sort_unstable_by_key(|(_, distance)| std::cmp::Reverse(*distance));
         for (line, _) in by_distance {
             if self.lines.len() <= CACHED_LINES_AFTER_EVICTION
-                && self.line_bytes <= CACHED_LINE_BYTES_AFTER_EVICTION { break; }
-            if let Some(previous) = self.lines.remove(&line) { self.line_bytes -= previous.bytes; }
+                && self.line_bytes <= CACHED_LINE_BYTES_AFTER_EVICTION
+            {
+                break;
+            }
+            if let Some(previous) = self.lines.remove(&line) {
+                self.line_bytes -= previous.bytes;
+            }
         }
         // The current viewport may exceed the budget. Keep it usable instead
         // of making the scheduler repeatedly reparse rows we just evicted.
@@ -284,9 +302,10 @@ impl DocumentCache {
                     cached.version = version;
                     cached.display_version = version;
                 });
-                self.checkpoints.for_each_mut(..=effective_dirty, |_, checkpoint| {
-                    checkpoint.version = version;
-                });
+                self.checkpoints
+                    .for_each_mut(..=effective_dirty, |_, checkpoint| {
+                        checkpoint.version = version;
+                    });
                 self.unchanged_prefix = 0;
             }
             return;
@@ -316,9 +335,10 @@ impl DocumentCache {
                 }
             }
         }
-        self.lines.shift_after_with_removed(changed_from, delta, line_count, |removed| {
-            self.line_bytes -= removed.bytes;
-        });
+        self.lines
+            .shift_after_with_removed(changed_from, delta, line_count, |removed| {
+                self.line_bytes -= removed.bytes;
+            });
         if let Some(candidate) = dirty_line_candidate {
             // A newline splits the old dirty line into an upper fragment and
             // a shifted continuation. Keep the old style runs as candidates
@@ -337,7 +357,8 @@ impl DocumentCache {
         // Checkpoints inside deleted rows cannot be used to converge before
         // dirty_through anyway. Drop them rather than collide with unchanged
         // prefix coordinates while another edit is still propagating.
-        self.checkpoints.shift_after(changed_from, delta, line_count);
+        self.checkpoints
+            .shift_after(changed_from, delta, line_count);
         self.trim_lines(&(changed_from..changed_from.saturating_add(1)));
     }
 }
@@ -353,8 +374,14 @@ fn shift_line(line: usize, delta: i128, new_line_count: usize) -> Option<usize> 
 
 /// TextMate states contain no absolute line counters. A shifted suffix can be
 /// reused once its rule stack and scopes converge in the same parser session.
-fn states_converge_after_shift(current: &TextMateState, _current_line_offset: i128,
-    previous: &TextMateState, _previous_line_offset: i128) -> bool { current == previous }
+fn states_converge_after_shift(
+    current: &TextMateState,
+    _current_line_offset: i128,
+    previous: &TextMateState,
+    _previous_line_offset: i128,
+) -> bool {
+    current == previous
+}
 
 #[derive(Clone)]
 pub(crate) struct HighlightJob {
@@ -422,10 +449,18 @@ impl HighlightApplyOutcome {
 }
 
 impl HighlightJob {
-    fn hard_end(parse_start: usize, visible: &Range<usize>, line_count: usize, provisional: bool) -> usize {
+    fn hard_end(
+        parse_start: usize,
+        visible: &Range<usize>,
+        line_count: usize,
+        provisional: bool,
+    ) -> usize {
         let nominal = parse_start.saturating_add(MAX_LINES_PER_BATCH);
-        if provisional || visible.start <= nominal { visible.end.min(line_count) }
-        else { nominal.min(line_count) }
+        if provisional || visible.start <= nominal {
+            visible.end.min(line_count)
+        } else {
+            nominal.min(line_count)
+        }
     }
 
     /// Run a bounded, resumable TextMate pass. Every returned checkpoint is the
@@ -460,10 +495,18 @@ impl HighlightJob {
         // Preparation selected this grammar from the same immutable registry.
         // In particular, extensionless documents must not run the complete
         // first-line regex catalog again for every resumable worker slice.
-        let syntax = syntax_set.syntaxes().get(self.syntax_index)
+        let syntax = syntax_set
+            .syntaxes()
+            .get(self.syntax_index)
             .filter(|syntax| syntax.name == self.syntax_name)
-            .unwrap_or_else(|| select_syntax(syntax_set, Some(&self.file_path),
-                self.language.as_deref(), &self.first_line));
+            .unwrap_or_else(|| {
+                select_syntax(
+                    syntax_set,
+                    Some(&self.file_path),
+                    self.language.as_deref(),
+                    &self.first_line,
+                )
+            });
         let mut state = self
             .start_state
             .as_deref()
@@ -475,8 +518,12 @@ impl HighlightJob {
         // viewport before publishing. Applying half a viewport and the other
         // half one frame later makes colors appear to ripple during edits.
         // This work remains cancellable per line and stays off the UI thread.
-        let hard_end = Self::hard_end(self.parse_start, &self.visible,
-            self.line_count.min(rope.len_lines()), self.provisional);
+        let hard_end = Self::hard_end(
+            self.parse_start,
+            &self.visible,
+            self.line_count.min(rope.len_lines()),
+            self.provisional,
+        );
         let mut checkpoints = Vec::new();
         let mut entries = Vec::with_capacity(self.visible.end.saturating_sub(self.visible.start));
         let mut line = self.parse_start.min(hard_end);
@@ -490,11 +537,12 @@ impl HighlightJob {
             // few lines when an expensive grammar exhausts the normal slice.
             let inside_visible = self.visible.contains(&line);
             let cancel = cancelled();
-            if cancel || (!self.provisional && !inside_visible && started.elapsed() >= budget)
-            {
+            if cancel || (!self.provisional && !inside_visible && started.elapsed() >= budget) {
                 // A slice that ran out of time resumes exactly here instead
                 // of re-parsing up to a checkpoint interval next time.
-                if !cancel && !self.provisional && line > self.parse_start
+                if !cancel
+                    && !self.provisional
+                    && line > self.parse_start
                     && checkpoints.last().is_none_or(|&(last, _, _)| last != line)
                 {
                     checkpoints.push((line, self.start_line_offset, Arc::new(state.clone())));
@@ -544,8 +592,11 @@ impl HighlightJob {
                     Highlighter::normalize_line_for_highlighting(&mut text);
                     let hash = Highlighter::line_hash(&text);
                     let mut comment_ranges = Vec::new();
-                    let spans = state.line(&text,true,&mut comment_ranges).into_iter()
-                        .map(|(style,text)|(style,text.to_owned())).collect();
+                    let spans = state
+                        .line(&text, true, &mut comment_ranges)
+                        .into_iter()
+                        .map(|(style, text)| (style, text.to_owned()))
+                        .collect();
                     entries.push(HighlightEntry {
                         line,
                         hash,
@@ -573,10 +624,19 @@ impl HighlightJob {
                 0
             };
             let mut comment_ranges = Vec::new();
-            let ranges=state.line(&text,inside_visible,&mut comment_ranges);
+            let ranges = state.line(&text, inside_visible, &mut comment_ranges);
             if inside_visible {
-                let spans:HighlightSpans=ranges.into_iter().map(|(style,text)|(style,text.to_owned())).collect();
-                entries.push(HighlightEntry {line,hash,span_char_lengths:span_char_lengths(&spans),comment_ranges,spans});
+                let spans: HighlightSpans = ranges
+                    .into_iter()
+                    .map(|(style, text)| (style, text.to_owned()))
+                    .collect();
+                entries.push(HighlightEntry {
+                    line,
+                    hash,
+                    span_char_lengths: span_char_lengths(&spans),
+                    comment_ranges,
+                    spans,
+                });
             }
             line += 1;
         }
@@ -707,42 +767,96 @@ fn normalized_line_prefix(line: &str) -> String {
 fn project_stale_spans(previous: &HighlightSpans, current: &str) -> HighlightSpans {
     let current = current.strip_suffix('\n').unwrap_or(current);
     let current_len = current.chars().count();
-    let runs: Vec<_> = previous.iter().map(|(style, text)|
-        (*style, text.trim_end_matches(['\r', '\n']).chars().count())).collect();
+    let runs: Vec<_> = previous
+        .iter()
+        .map(|(style, text)| (*style, text.trim_end_matches(['\r', '\n']).chars().count()))
+        .collect();
     let previous_len: usize = runs.iter().map(|(_, len)| len).sum();
-    let previous_chars = || previous.iter().flat_map(|(_, text)| text.trim_end_matches(['\r', '\n']).chars());
-    let prefix = previous_chars().zip(current.chars()).take_while(|(a, b)| a == b).count();
-    let suffix = previous_chars().rev().zip(current.chars().rev())
+    let previous_chars = || {
+        previous
+            .iter()
+            .flat_map(|(_, text)| text.trim_end_matches(['\r', '\n']).chars())
+    };
+    let prefix = previous_chars()
+        .zip(current.chars())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = previous_chars()
+        .rev()
+        .zip(current.chars().rev())
         .take(previous_len.min(current_len).saturating_sub(prefix))
-        .take_while(|(a, b)| a == b).count();
+        .take_while(|(a, b)| a == b)
+        .count();
     let inherited = {
         let mut index = prefix.saturating_sub(1);
-        runs.iter().find_map(|&(style, len)| {
-            if index < len { Some(style) } else { index -= len; None }
-        }).unwrap_or_default()
+        runs.iter()
+            .find_map(|&(style, len)| {
+                if index < len {
+                    Some(style)
+                } else {
+                    index -= len;
+                    None
+                }
+            })
+            .unwrap_or_default()
     };
     let ascii = current.is_ascii();
     let prefix_end = style_split_at(current, prefix, ascii);
-    let middle_end = prefix_end + style_split_at(&current[prefix_end..], current_len - prefix - suffix, ascii);
+    let middle_end =
+        prefix_end + style_split_at(&current[prefix_end..], current_len - prefix - suffix, ascii);
     let mut projected = Vec::with_capacity(previous.len().max(1));
-    project_style_runs(&mut projected, &current[..prefix_end], &runs, 0, prefix, inherited, ascii);
-    project_style_runs(&mut projected, &current[prefix_end..middle_end], &runs,
-        prefix, previous_len - prefix - suffix, inherited, ascii);
-    project_style_runs(&mut projected, &current[middle_end..], &runs,
-        previous_len - suffix, suffix, inherited, ascii);
-    if let Some((_, text)) = projected.last_mut() { text.push('\n'); }
-    else { projected.push((inherited, "\n".to_owned())); }
+    project_style_runs(
+        &mut projected,
+        &current[..prefix_end],
+        &runs,
+        0,
+        prefix,
+        inherited,
+        ascii,
+    );
+    project_style_runs(
+        &mut projected,
+        &current[prefix_end..middle_end],
+        &runs,
+        prefix,
+        previous_len - prefix - suffix,
+        inherited,
+        ascii,
+    );
+    project_style_runs(
+        &mut projected,
+        &current[middle_end..],
+        &runs,
+        previous_len - suffix,
+        suffix,
+        inherited,
+        ascii,
+    );
+    if let Some((_, text)) = projected.last_mut() {
+        text.push('\n');
+    } else {
+        projected.push((inherited, "\n".to_owned()));
+    }
     projected
 }
 
 fn style_split_at(text: &str, chars: usize, ascii: bool) -> usize {
-    if ascii { chars.min(text.len()) }
-    else { text.char_indices().nth(chars).map_or(text.len(), |(byte, _)| byte) }
+    if ascii {
+        chars.min(text.len())
+    } else {
+        text.char_indices()
+            .nth(chars)
+            .map_or(text.len(), |(byte, _)| byte)
+    }
 }
 
 fn push_projected_span(output: &mut HighlightSpans, style: Style, text: &str) {
-    if text.is_empty() { return; }
-    if let Some((previous, content)) = output.last_mut() && *previous == style {
+    if text.is_empty() {
+        return;
+    }
+    if let Some((previous, content)) = output.last_mut()
+        && *previous == style
+    {
         content.push_str(text);
     } else {
         output.push((style, text.to_owned()));
@@ -752,12 +866,23 @@ fn push_projected_span(output: &mut HighlightSpans, style: Style, text: &str) {
 /// Copy whole style runs instead of allocating a Style for every character.
 /// Replacements inherit the old middle; inserted excess keeps its last style.
 #[allow(clippy::too_many_arguments)]
-fn project_style_runs(output: &mut HighlightSpans, mut text: &str, runs: &[(Style, usize)],
-    mut skip: usize, mut remaining: usize, mut inherited: Style, ascii: bool)
-{
+fn project_style_runs(
+    output: &mut HighlightSpans,
+    mut text: &str,
+    runs: &[(Style, usize)],
+    mut skip: usize,
+    mut remaining: usize,
+    mut inherited: Style,
+    ascii: bool,
+) {
     for &(style, len) in runs {
-        if text.is_empty() || remaining == 0 { break; }
-        if skip >= len { skip -= len; continue; }
+        if text.is_empty() || remaining == 0 {
+            break;
+        }
+        if skip >= len {
+            skip -= len;
+            continue;
+        }
         let count = (len - skip).min(remaining);
         skip = 0;
         let end = style_split_at(text, count, ascii);
@@ -895,7 +1020,8 @@ impl SyntaxAssetRefresh {
     }
 
     pub(crate) fn run_with_cached(
-        mut self, mut publish_cached: impl FnMut(LoadedSyntaxAssets),
+        mut self,
+        mut publish_cached: impl FnMut(LoadedSyntaxAssets),
     ) -> Result<Option<LoadedSyntaxAssets>, String> {
         if self.bootstrap {
             // Even loading a compiled registry can be slow on a cold disk.
@@ -904,7 +1030,8 @@ impl SyntaxAssetRefresh {
             if self.installed_folder.is_none() {
                 self.installed_folder = crate::syntax_assets::installed_syntax_folder();
             }
-            let cached = crate::syntax_assets::load_startup_syntax_set(self.installed_folder.as_deref())?;
+            let cached =
+                crate::syntax_assets::load_startup_syntax_set(self.installed_folder.as_deref())?;
             if cached.fingerprint.is_some() {
                 self.base_syntax_set = Arc::new(cached.syntax_set);
                 self.loaded_fingerprint = cached.fingerprint;
@@ -914,7 +1041,9 @@ impl SyntaxAssetRefresh {
                     syntax_set: self.base_syntax_set.clone(),
                     base_syntax_set: self.base_syntax_set.clone(),
                     fingerprint: self.loaded_fingerprint,
-                    folders: Vec::new(), cache_write_error: None, warning: None,
+                    folders: Vec::new(),
+                    cache_write_error: None,
+                    warning: None,
                 });
             }
         }
@@ -926,11 +1055,13 @@ impl SyntaxAssetRefresh {
         let installed_changed = refreshed.is_some();
         let (base_syntax_set, fingerprint, cache_write_error) = refreshed.map_or_else(
             || (self.base_syntax_set, self.loaded_fingerprint, None),
-            |refreshed| (
-                Arc::new(refreshed.syntax_set),
-                refreshed.fingerprint,
-                refreshed.cache_write_error,
-            ),
+            |refreshed| {
+                (
+                    Arc::new(refreshed.syntax_set),
+                    refreshed.fingerprint,
+                    refreshed.cache_write_error,
+                )
+            },
         );
 
         let mut folders = Vec::new();
@@ -940,17 +1071,19 @@ impl SyntaxAssetRefresh {
             }
         }
         if folders.is_empty() {
-            return Ok((installed_changed || !self.previous_folders.is_empty()).then(|| {
-                LoadedSyntaxAssets {
-                    installed_folder: self.installed_folder,
-                    syntax_set: Arc::clone(&base_syntax_set),
-                    base_syntax_set,
-                    fingerprint,
-                    folders,
-                    cache_write_error,
-                    warning: None,
-                }
-            }));
+            return Ok(
+                (installed_changed || !self.previous_folders.is_empty()).then(|| {
+                    LoadedSyntaxAssets {
+                        installed_folder: self.installed_folder,
+                        syntax_set: Arc::clone(&base_syntax_set),
+                        base_syntax_set,
+                        fingerprint,
+                        folders,
+                        cache_write_error,
+                        warning: None,
+                    }
+                }),
+            );
         }
 
         let mut builder = base_syntax_set.as_ref().clone().into_builder();
@@ -968,7 +1101,9 @@ impl SyntaxAssetRefresh {
                     fingerprint,
                     folders: Vec::new(),
                     cache_write_error,
-                    warning: Some(format!("Installed syntaxes loaded; custom syntaxes could not be loaded: {error}")),
+                    warning: Some(format!(
+                        "Installed syntaxes loaded; custom syntaxes could not be loaded: {error}"
+                    )),
                 }));
             }
         }
@@ -1033,7 +1168,9 @@ impl Highlighter {
             let mut themes = ThemeSet::new();
             let dark = crate::app_theme_loader::builtin_theme("dark").unwrap();
             if let Some(theme) = &dark.textmate_theme {
-                themes.themes.insert(dark.syntax_theme.clone(), theme.clone());
+                themes
+                    .themes
+                    .insert(dark.syntax_theme.clone(), theme.clone());
             }
             Arc::new(themes)
         }))
@@ -1047,16 +1184,27 @@ impl Highlighter {
     }
 
     fn new_with_bootstrap(bootstrap: bool) -> Self {
-        let theme_set = if bootstrap { Self::startup_theme_set() } else {
+        let theme_set = if bootstrap {
+            Self::startup_theme_set()
+        } else {
             let mut themes = ThemeSet::new();
             themes.themes = Self::startup_theme_set().themes.clone();
             install_bundled_themes(&mut themes);
             Arc::new(themes)
         };
-        let installed_folder = if bootstrap { None } else { crate::syntax_assets::installed_syntax_folder() };
+        let installed_folder = if bootstrap {
+            None
+        } else {
+            crate::syntax_assets::installed_syntax_folder()
+        };
         let (base_syntax_set, installed_syntax_fingerprint) = if bootstrap {
-            (Arc::new(crate::syntax_assets::build_syntax_set(&[])
-                .expect("the Plain Text fallback must load")), None)
+            (
+                Arc::new(
+                    crate::syntax_assets::build_syntax_set(&[])
+                        .expect("the Plain Text fallback must load"),
+                ),
+                None,
+            )
         } else {
             match INSTALLED_SYNTAX_SET.get_or_init(|| {
                 // Ordinary unit tests need a complete syntax registry even in
@@ -1064,10 +1212,14 @@ impl Highlighter {
                 // cold-start tests use for_syntax_folder and the real loader.
                 #[cfg(test)]
                 let startup = crate::syntax_assets::refresh_installed_syntax_set(
-                    installed_folder.as_deref(), true, None,
-                ).map(|loaded| loaded.expect("forced syntax refresh must return a registry"));
+                    installed_folder.as_deref(),
+                    true,
+                    None,
+                )
+                .map(|loaded| loaded.expect("forced syntax refresh must return a registry"));
                 #[cfg(not(test))]
-                let startup = crate::syntax_assets::load_startup_syntax_set(installed_folder.as_deref());
+                let startup =
+                    crate::syntax_assets::load_startup_syntax_set(installed_folder.as_deref());
                 startup.map(|loaded| (Arc::new(loaded.syntax_set), loaded.fingerprint))
             }) {
                 Ok((syntax_set, fingerprint)) => (Arc::clone(syntax_set), *fingerprint),
@@ -1182,9 +1334,12 @@ impl Highlighter {
         names
     }
 
-    pub(crate) fn scope_bubble_automatic(&self) -> Option<Arc<crate::scope_bubble_config::Automatic>> {
-        self.scope_automatic.get_or_init(||
-            crate::scope_bubble_config::Automatic::new(self.syntax_set.clone())).clone()
+    pub(crate) fn scope_bubble_automatic(
+        &self,
+    ) -> Option<Arc<crate::scope_bubble_config::Automatic>> {
+        self.scope_automatic
+            .get_or_init(|| crate::scope_bubble_config::Automatic::new(self.syntax_set.clone()))
+            .clone()
     }
 
     pub(crate) fn line_hash(line: &str) -> u64 {
@@ -1220,7 +1375,9 @@ impl Highlighter {
     ) -> Option<HighlightJob> {
         // Plain text is immediately drawable without building parser caches
         // that would be thrown away when the startup registry arrives.
-        if self.bootstrap { return None; }
+        if self.bootstrap {
+            return None;
+        }
         self.use_counter = self.use_counter.wrapping_add(1);
         let line_count = rope.len_lines();
         let visible = visible.start.min(line_count)..visible.end.min(line_count);
@@ -1230,8 +1387,11 @@ impl Highlighter {
             && cache.version == content_version
             && cache.line_count == line_count
             && changed_range.is_none()
-            && visible.clone().all(|line| cache.lines.get(&line)
-                .is_some_and(|entry| cache.line_is_current(line, entry.version) && entry.authoritative))
+            && visible.clone().all(|line| {
+                cache.lines.get(&line).is_some_and(|entry| {
+                    cache.line_is_current(line, entry.version) && entry.authoritative
+                })
+            })
         {
             // A warm viewport needs no line-zero snapshot, syntax detection,
             // owned request strings, or checkpoint search on cursor frames.
@@ -1246,7 +1406,11 @@ impl Highlighter {
                         && changed_range.is_some_and(|(start, _)| start > 0)))
         });
         let (first_line, syntax_name, syntax_index) = if let Some(cache) = reuse_detection {
-            (cache.first_line.clone(), cache.syntax_name.clone(), cache.syntax_index)
+            (
+                cache.first_line.clone(),
+                cache.syntax_name.clone(),
+                cache.syntax_index,
+            )
         } else {
             let first_rope_line = rope.line(0);
             let mut first_line = first_rope_line
@@ -1254,16 +1418,22 @@ impl Highlighter {
                 .to_string();
             Self::normalize_line_for_highlighting(&mut first_line);
             let syntax = select_syntax(&self.syntax_set, Some(file_path), language, &first_line);
-            let syntax_index = self.syntax_set.syntaxes().iter()
+            let syntax_index = self
+                .syntax_set
+                .syntaxes()
+                .iter()
                 .position(|candidate| std::ptr::eq(candidate, syntax))
                 .expect("selected syntax belongs to the registry");
-            (Arc::<str>::from(first_line), syntax.name.clone(), syntax_index)
+            (
+                Arc::<str>::from(first_line),
+                syntax.name.clone(),
+                syntax_index,
+            )
         };
-        let reset = self
-            .documents
-            .get(file_path)
-            .is_none_or(|cache| !cache.context_matches(theme_key, language, &syntax_name)
-                || cache.syntax_index != syntax_index);
+        let reset = self.documents.get(file_path).is_none_or(|cache| {
+            !cache.context_matches(theme_key, language, &syntax_name)
+                || cache.syntax_index != syntax_index
+        });
         if reset {
             self.documents.insert(
                 file_path.to_path_buf(),
@@ -1314,16 +1484,17 @@ impl Highlighter {
             return None;
         }
         let first_missing = visible.clone().find(|line| {
-            cache
-                .lines
-                .get(line)
-                .is_none_or(|entry| !cache.line_is_current(*line, entry.version) || !entry.authoritative)
+            cache.lines.get(line).is_none_or(|entry| {
+                !cache.line_is_current(*line, entry.version) || !entry.authoritative
+            })
         });
         let needed = first_missing?;
 
         let (parse_start, start_state, start_line_offset) = cache
             .checkpoints
-            .last_before_where(needed, |line, checkpoint| cache.checkpoint_is_current(line, checkpoint.version))
+            .last_before_where(needed, |line, checkpoint| {
+                cache.checkpoint_is_current(line, checkpoint.version)
+            })
             .map_or((0, None, 0), |(line, checkpoint)| {
                 (
                     line,
@@ -1336,13 +1507,19 @@ impl Highlighter {
         // the parser is still catching up. Include the final boundary check.
         let hard_end = HighlightJob::hard_end(parse_start, &visible, line_count, false);
         #[cfg(test)]
-        let hard_end = if REFERENCE_ALL_CHECKPOINTS.get() { usize::MAX } else { hard_end };
+        let hard_end = if REFERENCE_ALL_CHECKPOINTS.get() {
+            usize::MAX
+        } else {
+            hard_end
+        };
         let mut stale_checkpoints = Vec::new();
-        cache.checkpoints.for_each(parse_start..=hard_end, |line, checkpoint| {
-            if !cache.checkpoint_is_current(line, checkpoint.version) {
-                stale_checkpoints.push((line, checkpoint.clone()));
-            }
-        });
+        cache
+            .checkpoints
+            .for_each(parse_start..=hard_end, |line, checkpoint| {
+                if !cache.checkpoint_is_current(line, checkpoint.version) {
+                    stale_checkpoints.push((line, checkpoint.clone()));
+                }
+            });
         Some(HighlightJob {
             registry_generation: self.registry_generation,
             file_path: file_path.to_path_buf(),
@@ -1392,8 +1569,15 @@ impl Highlighter {
         {
             return None;
         }
-        let mut job = self.prepare_job(rope, file_path, content_version, None,
-            line_count - 1..line_count, language, theme_key)?;
+        let mut job = self.prepare_job(
+            rope,
+            file_path,
+            content_version,
+            None,
+            line_count - 1..line_count,
+            language,
+            theme_key,
+        )?;
         job.prefetch = true;
         Some(job)
     }
@@ -1482,7 +1666,9 @@ impl Highlighter {
             let unchanged_prefix = cache.unchanged_prefix;
             for entry in batch.entries {
                 if let Some(cached) = cache.lines.get_mut(&entry.line) {
-                    if (entry.line < unchanged_prefix || cached.version == batch.content_version) && cached.authoritative {
+                    if (entry.line < unchanged_prefix || cached.version == batch.content_version)
+                        && cached.authoritative
+                    {
                         continue;
                     }
                     if cached.hash == entry.hash {
@@ -1542,7 +1728,9 @@ impl Highlighter {
                     cached.char_len = entry.span_char_lengths.iter().sum();
                     cached.span_char_lengths = Rc::new(entry.span_char_lengths);
                 }
-                if comments_changed { cached.comment_ranges = Rc::new(entry.comment_ranges); }
+                if comments_changed {
+                    cached.comment_ranges = Rc::new(entry.comment_ranges);
+                }
                 if spans_changed || comments_changed {
                     cache.line_bytes -= cached.bytes;
                     cached.bytes = cached.allocation_bytes();
@@ -1551,7 +1739,8 @@ impl Highlighter {
                 continue;
             }
             visual_changes |= cache.lines.get(&entry.line).is_none_or(|cached| {
-                cached.hash != entry.hash || cached.spans.as_ref() != &entry.spans
+                cached.hash != entry.hash
+                    || cached.spans.as_ref() != &entry.spans
                     || cached.comment_ranges.as_ref() != &entry.comment_ranges
             });
             cache.insert_line(
@@ -1561,9 +1750,11 @@ impl Highlighter {
         }
 
         if let Some(converged) = batch.converged_at {
-            cache.checkpoints.for_each_mut(converged.., |_, checkpoint| {
-                checkpoint.version = batch.content_version;
-            });
+            cache
+                .checkpoints
+                .for_each_mut(converged.., |_, checkpoint| {
+                    checkpoint.version = batch.content_version;
+                });
             cache.lines.for_each_mut(converged.., |_, cached| {
                 cached.version = batch.content_version;
                 cached.display_version = batch.content_version;
@@ -1577,7 +1768,9 @@ impl Highlighter {
 
         // A checkpoint pass targets the last line, not the viewport; trimming
         // around it would evict the colors the user is looking at.
-        if !batch.prefetch { cache.trim_lines(&batch.visible); }
+        if !batch.prefetch {
+            cache.trim_lines(&batch.visible);
+        }
         self.evict_old_documents(&batch.file_path);
         HighlightApplyOutcome {
             accepted: true,
@@ -1600,7 +1793,9 @@ impl Highlighter {
             else {
                 break;
             };
-            if let Some(removed) = self.documents.remove(&path) { bytes -= removed.line_bytes; }
+            if let Some(removed) = self.documents.remove(&path) {
+                bytes -= removed.line_bytes;
+            }
         }
     }
 
@@ -1626,7 +1821,8 @@ impl Highlighter {
             if cache.render_context_matches(theme_key, language) {
                 cache.last_used = self.use_counter;
                 if let Some(entry) = cache.lines.get(&line_idx) {
-                    if cache.line_is_current(line_idx, entry.display_version) && entry.hash == hash {
+                    if cache.line_is_current(line_idx, entry.display_version) && entry.hash == hash
+                    {
                         return Some(Rc::clone(&entry.spans));
                     }
                 }
@@ -1653,7 +1849,8 @@ impl Highlighter {
         }
         cache.last_used = self.use_counter;
         let entry = cache.lines.get(&line_idx)?;
-        cache.line_is_current(line_idx, entry.display_version)
+        cache
+            .line_is_current(line_idx, entry.display_version)
             .then(|| (Rc::clone(&entry.spans), Rc::clone(&entry.span_char_lengths)))
     }
 
@@ -1673,7 +1870,9 @@ impl Highlighter {
             return None;
         }
         let entry = cache.lines.get(&line_idx)?;
-        cache.line_is_current(line_idx, entry.display_version).then(|| Rc::clone(&entry.comment_ranges))
+        cache
+            .line_is_current(line_idx, entry.display_version)
+            .then(|| Rc::clone(&entry.comment_ranges))
     }
 
     /// Stale-while-revalidate renderer fallback. An unchanged line is promoted
@@ -1690,8 +1889,15 @@ impl Highlighter {
         theme_key: &str,
         content_version: u64,
     ) -> Option<(Rc<HighlightSpans>, Rc<Vec<usize>>)> {
-        self.render_line(line, line_idx, file_path, language, theme_key, content_version)
-            .map(|line| (line.spans, line.lengths))
+        self.render_line(
+            line,
+            line_idx,
+            file_path,
+            language,
+            theme_key,
+            content_version,
+        )
+        .map(|line| (line.spans, line.lengths))
     }
 
     /// Resolve current or provisional spans once per logical row, including
@@ -1753,7 +1959,8 @@ impl Highlighter {
         theme_key: &str,
     ) -> Option<Rc<HighlightSpans>> {
         let file_path = file_path?;
-        self.fragment_cache.get(file_path, theme_key, language, line_idx, hash)
+        self.fragment_cache
+            .get(file_path, theme_key, language, line_idx, hash)
     }
 
     /// Highlight one isolated fragment with TextMate. This is intentionally
@@ -1780,7 +1987,8 @@ impl Highlighter {
         hash: u64,
         spans: HighlightSpans,
     ) {
-        self.fragment_cache.insert(file_path, theme_key, language, line_idx, hash, spans);
+        self.fragment_cache
+            .insert(file_path, theme_key, language, line_idx, hash, spans);
     }
 
     pub(crate) fn shared_sets(&self) -> (Arc<SyntaxRegistry>, Arc<ThemeSet>) {
@@ -1800,7 +2008,9 @@ fn rgb(r: u8, g: u8, b: u8) -> Color {
 /// Use the same original VS Code asset as the workbench and imported themes.
 fn install_bundled_themes(theme_set: &mut ThemeSet) {
     for theme in crate::app_theme_loader::load_builtin_themes() {
-        if let Some(syntax) = theme.textmate_theme { theme_set.themes.insert(theme.syntax_theme, syntax); }
+        if let Some(syntax) = theme.textmate_theme {
+            theme_set.themes.insert(theme.syntax_theme, syntax);
+        }
     }
 }
 
@@ -1814,10 +2024,15 @@ mod tests {
 
     fn write_refresh_grammar(folder: &Path, name: &str) {
         std::fs::create_dir_all(folder).unwrap();
-        std::fs::write(folder.join("Example.tmLanguage.json"), serde_json::json!({
-        "name":name,"scopeName":"source.example","fileTypes":["example"],
-        "patterns":[{"match":"magic","name":"keyword.control.example"}]
-    }).to_string()).unwrap();
+        std::fs::write(
+            folder.join("Example.tmLanguage.json"),
+            serde_json::json!({
+                "name":name,"scopeName":"source.example","fileTypes":["example"],
+                "patterns":[{"match":"magic","name":"keyword.control.example"}]
+            })
+            .to_string(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1828,7 +2043,10 @@ mod tests {
         let mut highlighter = Highlighter::for_syntax_folder(directory.path());
         write_refresh_grammar(directory.path(), "Other");
         crate::syntax_assets::rebuild_syntax_cache(directory.path()).unwrap();
-        let loaded = highlighter.syntax_asset_refresh(Vec::new()).run().unwrap()
+        let loaded = highlighter
+            .syntax_asset_refresh(Vec::new())
+            .run()
+            .unwrap()
             .expect("a fresh disk cache must replace the stale in-memory registry");
         highlighter.install_syntax_assets(loaded);
         assert!(highlighter.syntax_names().contains(&"Other".into()));
@@ -1844,7 +2062,10 @@ mod tests {
         std::fs::create_dir_all(&custom).unwrap();
         std::fs::write(custom.join("Bad.tmLanguage.json"), "contexts: [").unwrap();
         let mut highlighter = Highlighter::for_syntax_folder(&installed);
-        let loaded = highlighter.syntax_asset_refresh(vec![custom]).run().unwrap()
+        let loaded = highlighter
+            .syntax_asset_refresh(vec![custom])
+            .run()
+            .unwrap()
             .expect("the newly built installed registry must become usable on this launch");
         assert!(loaded.warning.is_some(), "report the broken override");
         highlighter.install_syntax_assets(loaded);
@@ -1859,12 +2080,19 @@ mod tests {
         write_refresh_grammar(&installed, "Installed");
         write_refresh_grammar(&custom, "Custom");
         let mut highlighter = Highlighter::for_syntax_folder(&installed);
-        let loaded = highlighter.syntax_asset_refresh(vec![custom.clone()]).run().unwrap().unwrap();
+        let loaded = highlighter
+            .syntax_asset_refresh(vec![custom.clone()])
+            .run()
+            .unwrap()
+            .unwrap();
         highlighter.install_syntax_assets(loaded);
         assert!(highlighter.syntax_names().contains(&"Custom".into()));
         std::fs::remove_file(custom.join("Example.tmLanguage.json")).unwrap();
         std::fs::remove_dir(&custom).unwrap();
-        let loaded = highlighter.syntax_asset_refresh(vec![custom]).run().unwrap()
+        let loaded = highlighter
+            .syntax_asset_refresh(vec![custom])
+            .run()
+            .unwrap()
             .expect("removing the last custom folder must restore the installed registry");
         highlighter.install_syntax_assets(loaded);
         assert!(!highlighter.syntax_names().contains(&"Custom".into()));
@@ -1898,8 +2126,8 @@ mod tests {
         let theme = highlighter.theme_set.themes.get("dark-plus").unwrap();
         assert_eq!(theme.background, rgb(30, 30, 30));
         assert_eq!(theme.foreground, rgb(212, 212, 212));
-        assert_eq!(theme.scope_foreground(&["string"]),rgb(206,145,120));
-        assert_eq!(theme.scope_foreground(&["comment"]),rgb(106,153,85));
+        assert_eq!(theme.scope_foreground(&["string"]), rgb(206, 145, 120));
+        assert_eq!(theme.scope_foreground(&["comment"]), rgb(106, 153, 85));
     }
 
     #[test]
@@ -1907,7 +2135,10 @@ mod tests {
         let mut highlighter = Highlighter::new();
         let (_, active_snapshot) = highlighter.shared_sets();
 
-        highlighter.register_theme("late-theme", Theme::new("test","#000000","#ffffff",&[]).unwrap());
+        highlighter.register_theme(
+            "late-theme",
+            Theme::new("test", "#000000", "#ffffff", &[]).unwrap(),
+        );
         let (_, updated_snapshot) = highlighter.shared_sets();
 
         assert!(!active_snapshot.themes.contains_key("late-theme"));
@@ -2040,7 +2271,11 @@ mod tests {
                 "SystemVerilog",
                 "always_ff @(posedge clk) q <= d;",
             ),
-            ("counter.svh", "SystemVerilog", "typedef logic [7:0] byte_t;"),
+            (
+                "counter.svh",
+                "SystemVerilog",
+                "typedef logic [7:0] byte_t;",
+            ),
             (
                 "message.proto",
                 "Protocol Buffer",
@@ -2139,40 +2374,85 @@ mod tests {
         let mut highlighter = Highlighter::new();
         let path = Path::new("refresh.c");
         let mut rope = Rope::from_str("int first;\nint value; // comment 界\nint last;\n");
-        let job = highlighter.prepare_job(&rope, path, 0, None, 0..3, None, "dark-plus").unwrap();
+        let job = highlighter
+            .prepare_job(&rope, path, 0, None, 0..3, None, "dark-plus")
+            .unwrap();
         let (syntaxes, themes) = highlighter.shared_sets();
         let batch = job.run(&rope, &syntaxes, &themes, || false);
         assert!(highlighter.apply_batch(batch.clone()));
-        let before = highlighter.render_line("", 1, Some(path), None, "dark-plus", 0).unwrap();
+        let before = highlighter
+            .render_line("", 1, Some(path), None, "dark-plus", 0)
+            .unwrap();
         let outcome = highlighter.apply_batch_with_outcome(batch.clone());
         assert!(outcome.accepted() && !outcome.visual_changes());
-        let repeated = highlighter.render_line("", 1, Some(path), None, "dark-plus", 0).unwrap();
+        let repeated = highlighter
+            .render_line("", 1, Some(path), None, "dark-plus", 0)
+            .unwrap();
         assert!(Rc::ptr_eq(&before.spans, &repeated.spans));
         assert!(Rc::ptr_eq(&before.lengths, &repeated.lengths));
         assert!(Rc::ptr_eq(&before.comments, &repeated.comments));
 
         let mut comments_only = batch.clone();
-        comments_only.entries.iter_mut().find(|entry| entry.line == 1).unwrap().comment_ranges.clear();
-        assert!(highlighter.apply_batch_with_outcome(comments_only).visual_changes());
-        let comments = highlighter.render_line("", 1, Some(path), None, "dark-plus", 0).unwrap();
+        comments_only
+            .entries
+            .iter_mut()
+            .find(|entry| entry.line == 1)
+            .unwrap()
+            .comment_ranges
+            .clear();
+        assert!(
+            highlighter
+                .apply_batch_with_outcome(comments_only)
+                .visual_changes()
+        );
+        let comments = highlighter
+            .render_line("", 1, Some(path), None, "dark-plus", 0)
+            .unwrap();
         assert!(Rc::ptr_eq(&before.spans, &comments.spans));
         assert!(comments.comments.is_empty() && !Rc::ptr_eq(&before.comments, &comments.comments));
 
         let mut recolored = batch.clone();
-        recolored.entries.iter_mut().find(|entry| entry.line == 1).unwrap().spans[0].0.foreground.r ^= 1;
-        assert!(highlighter.apply_batch_with_outcome(recolored).visual_changes());
-        let colored = highlighter.render_line("", 1, Some(path), None, "dark-plus", 0).unwrap();
+        recolored
+            .entries
+            .iter_mut()
+            .find(|entry| entry.line == 1)
+            .unwrap()
+            .spans[0]
+            .0
+            .foreground
+            .r ^= 1;
+        assert!(
+            highlighter
+                .apply_batch_with_outcome(recolored)
+                .visual_changes()
+        );
+        let colored = highlighter
+            .render_line("", 1, Some(path), None, "dark-plus", 0)
+            .unwrap();
         assert!(!Rc::ptr_eq(&before.spans, &colored.spans));
-        assert_eq!(colored.char_len, rope.line(1).to_string().trim_end_matches(['\r', '\n']).chars().count());
+        assert_eq!(
+            colored.char_len,
+            rope.line(1)
+                .to_string()
+                .trim_end_matches(['\r', '\n'])
+                .chars()
+                .count()
+        );
 
         // A real edit elsewhere advances parser authority but does not change
         // the neighboring row's display snapshot after it is restored.
         assert!(highlighter.apply_batch(batch));
-        let before = highlighter.render_line("", 1, Some(path), None, "dark-plus", 0).unwrap();
+        let before = highlighter
+            .render_line("", 1, Some(path), None, "dark-plus", 0)
+            .unwrap();
         rope.insert(0, "unsigned ");
-        let job = highlighter.prepare_job(&rope, path, 1, Some((0, 0)), 0..3, None, "dark-plus").unwrap();
+        let job = highlighter
+            .prepare_job(&rope, path, 1, Some((0, 0)), 0..3, None, "dark-plus")
+            .unwrap();
         run_job_to_completion(&mut highlighter, job, &rope);
-        let edited = highlighter.render_line("", 1, Some(path), None, "dark-plus", 1).unwrap();
+        let edited = highlighter
+            .render_line("", 1, Some(path), None, "dark-plus", 1)
+            .unwrap();
         assert!(Rc::ptr_eq(&before.spans, &edited.spans));
         assert!(highlighter.documents[path].lines[&1].authoritative);
     }
@@ -2183,15 +2463,35 @@ mod tests {
         let path = Path::new("comments.rs");
         let source = "let α = \"/* a b */\"; /* outer\n * a /* nested */ b\n */ let z = 2;\n";
         let rope = Rope::from_str(source);
-        let job = highlighter.prepare_job(&rope, path, 0, None, 0..rope.len_lines(), None, "dark-plus").unwrap();
+        let job = highlighter
+            .prepare_job(&rope, path, 0, None, 0..rope.len_lines(), None, "dark-plus")
+            .unwrap();
         run_job_to_completion(&mut highlighter, job, &rope);
-        let ranges = |line| highlighter.comment_ranges_if_cached(line, Some(path), None, "dark-plus", 0).unwrap();
+        let ranges = |line| {
+            highlighter
+                .comment_ranges_if_cached(line, Some(path), None, "dark-plus", 0)
+                .unwrap()
+        };
         let first = source.lines().next().unwrap();
-        assert_eq!(ranges(0).as_slice(), &[(first[..first.rfind("/*").unwrap()].chars().count(), first.chars().count() + 1)]);
+        assert_eq!(
+            ranges(0).as_slice(),
+            &[(
+                first[..first.rfind("/*").unwrap()].chars().count(),
+                first.chars().count() + 1
+            )]
+        );
         assert_eq!(ranges(1).as_slice(), &[(0, rope.line(1).len_chars())]);
         assert_eq!(ranges(2).as_slice(), &[(0, 3)]);
-        assert!(highlighter.comment_ranges_if_cached(0, Some(path), None, "dark-plus", 1).is_none());
-        assert!(highlighter.comment_ranges_if_cached(0, Some(path), Some("Python"), "dark-plus", 0).is_none());
+        assert!(
+            highlighter
+                .comment_ranges_if_cached(0, Some(path), None, "dark-plus", 1)
+                .is_none()
+        );
+        assert!(
+            highlighter
+                .comment_ranges_if_cached(0, Some(path), Some("Python"), "dark-plus", 0)
+                .is_none()
+        );
     }
 
     #[test]
@@ -2199,14 +2499,37 @@ mod tests {
         let mut highlighter = Highlighter::new();
         let path = Path::new("comment-edit.c");
         let original = Rope::from_str("/* a b */\n");
-        let job = highlighter.prepare_job(&original, path, 0, None, 0..1, None, "dark-plus").unwrap();
+        let job = highlighter
+            .prepare_job(&original, path, 0, None, 0..1, None, "dark-plus")
+            .unwrap();
         run_job_to_completion(&mut highlighter, job, &original);
         let edited = Rope::from_str("\"/* a b */\"\n");
-        let job = highlighter.prepare_job(&edited, path, 1, Some((0, 0)), 0..1, None, "dark-plus").unwrap();
-        highlighter.reconcile_stale_line_for_render(&edited.to_string(), 0, Some(path), None, "dark-plus", 1).unwrap();
-        assert!(highlighter.comment_ranges_if_cached(0, Some(path), None, "dark-plus", 1).unwrap().is_empty());
+        let job = highlighter
+            .prepare_job(&edited, path, 1, Some((0, 0)), 0..1, None, "dark-plus")
+            .unwrap();
+        highlighter
+            .reconcile_stale_line_for_render(
+                &edited.to_string(),
+                0,
+                Some(path),
+                None,
+                "dark-plus",
+                1,
+            )
+            .unwrap();
+        assert!(
+            highlighter
+                .comment_ranges_if_cached(0, Some(path), None, "dark-plus", 1)
+                .unwrap()
+                .is_empty()
+        );
         run_job_to_completion(&mut highlighter, job, &edited);
-        assert!(highlighter.comment_ranges_if_cached(0, Some(path), None, "dark-plus", 1).unwrap().is_empty());
+        assert!(
+            highlighter
+                .comment_ranges_if_cached(0, Some(path), None, "dark-plus", 1)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

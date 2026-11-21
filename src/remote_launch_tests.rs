@@ -2,7 +2,9 @@ use super::*;
 use ratatui::{Terminal, backend::TestBackend};
 
 fn palette() -> crate::app_theme::ThemeColors {
-    crate::app_theme_loader::builtin_theme("dark").unwrap().to_theme_colors()
+    crate::app_theme_loader::builtin_theme("dark")
+        .unwrap()
+        .to_theme_colors()
 }
 
 #[derive(Debug)]
@@ -137,15 +139,40 @@ fn connection_screen_applies_every_bundled_theme_and_preserves_application_color
     let mut terminal = Terminal::new(TestBackend::new(90, 8)).unwrap();
     for theme in crate::app_theme_loader::load_builtin_themes() {
         let colors = theme.to_theme_colors();
-        terminal.draw(|frame| draw_setup(frame, &grid, true, &colors, &mut rows)).unwrap();
+        terminal
+            .draw(|frame| draw_setup(frame, &grid, true, &colors, &mut rows))
+            .unwrap();
         let buffer = terminal.backend().buffer();
-        assert_eq!((buffer[(0,0)].fg, buffer[(0,0)].bg), (colors.ui.fg_title, colors.ui.bg_title), "{}", theme.name);
-        assert_eq!((buffer[(0,1)].fg, buffer[(0,1)].bg), (colors.ui.fg_terminal, colors.ui.bg_terminal), "{}", theme.name);
-        assert_eq!(buffer[(1,1)].fg, colors.ui.ansi[1], "{}", theme.name);
-        assert_eq!(buffer[(2,1)].fg, Color::Rgb(1,2,3), "{}", theme.name);
-        assert_eq!((buffer[(3,1)].fg, buffer[(3,1)].bg), (colors.ui.bg_terminal, colors.ui.fg_terminal), "{}", theme.name);
-        assert_eq!((buffer[(0,7)].fg, buffer[(0,7)].bg), (colors.fg_statusbar, colors.bg_statusbar), "{}", theme.name);
-        crate::ui_control_visibility_tests::snapshot(buffer, &format!("coverage ssh {}", theme.config_key));
+        assert_eq!(
+            (buffer[(0, 0)].fg, buffer[(0, 0)].bg),
+            (colors.ui.fg_title, colors.ui.bg_title),
+            "{}",
+            theme.name
+        );
+        assert_eq!(
+            (buffer[(0, 1)].fg, buffer[(0, 1)].bg),
+            (colors.ui.fg_terminal, colors.ui.bg_terminal),
+            "{}",
+            theme.name
+        );
+        assert_eq!(buffer[(1, 1)].fg, colors.ui.ansi[1], "{}", theme.name);
+        assert_eq!(buffer[(2, 1)].fg, Color::Rgb(1, 2, 3), "{}", theme.name);
+        assert_eq!(
+            (buffer[(3, 1)].fg, buffer[(3, 1)].bg),
+            (colors.ui.bg_terminal, colors.ui.fg_terminal),
+            "{}",
+            theme.name
+        );
+        assert_eq!(
+            (buffer[(0, 7)].fg, buffer[(0, 7)].bg),
+            (colors.fg_statusbar, colors.bg_statusbar),
+            "{}",
+            theme.name
+        );
+        crate::ui_control_visibility_tests::snapshot(
+            buffer,
+            &format!("coverage ssh {}", theme.config_key),
+        );
     }
 }
 
@@ -205,22 +232,48 @@ fn reconnect_launch_failures_back_off_stop_retry_and_never_restart_after_quit() 
 #[test]
 fn connection_diagnostics_explain_initial_transport_failure_and_preserve_exit_status() {
     #[cfg(windows)]
-    let launch = Launch::new("cmd.exe".into(), vec!["/d".into(), "/c".into(), "echo ssh: diagnostic fixture connection refused 1>&2 & exit /b 42".into()]);
+    let launch = Launch::new(
+        "cmd.exe".into(),
+        vec![
+            "/d".into(),
+            "/c".into(),
+            "echo ssh: diagnostic fixture connection refused 1>&2 & exit /b 42".into(),
+        ],
+    );
     #[cfg(not(windows))]
-    let launch = Launch::new("sh".into(), vec!["-c".into(), "printf 'ssh: diagnostic fixture connection refused\\n' >&2; exit 42".into()]);
-    let setup = launch.start(ratatui::layout::Size::new(100, 24), UiWake::default()).unwrap();
+    let launch = Launch::new(
+        "sh".into(),
+        vec![
+            "-c".into(),
+            "printf 'ssh: diagnostic fixture connection refused\\n' >&2; exit 42".into(),
+        ],
+    );
+    let setup = launch
+        .start(ratatui::layout::Size::new(100, 24), UiWake::default())
+        .unwrap();
     let log = setup.owned.trace.log.clone();
     let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
     let (_sender, receiver) = mpsc::channel();
     let mut events = TerminalEventPump::from_receiver(receiver);
-    let error = match setup.wait(&mut terminal, &mut events, &palette()) { Err(error) => error.to_string(), Ok(_) => panic!("Failed transport started an editor") };
-    assert!(error.contains("diagnostic fixture connection refused"), "{error}");
+    let error = match setup.wait(&mut terminal, &mut events, &palette()) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("Failed transport started an editor"),
+    };
+    assert!(
+        error.contains("diagnostic fixture connection refused"),
+        "{error}"
+    );
     assert!(error.contains("Connection diagnostics started"), "{error}");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         let report = log.report();
-        if report.contains("code 42") { break; }
-        assert!(std::time::Instant::now() < deadline, "Exit status was lost: {report}");
+        if report.contains("code 42") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Exit status was lost: {report}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 }
@@ -232,25 +285,60 @@ fn simplified_remote_cli_preserves_quoted_commands_through_the_transport_and_rel
     std::fs::create_dir(&root).unwrap();
     let executable = std::env::current_exe().unwrap();
     let prefix = shell_words::join([
-        executable.to_str().unwrap(), "--ignored", "--exact",
-        "remote::launch::tests::ssh_command_prefix_fixture", "--nocapture", "--",
+        executable.to_str().unwrap(),
+        "--ignored",
+        "--exact",
+        "remote::launch::tests::ssh_command_prefix_fixture",
+        "--nocapture",
+        "--",
     ]);
-    for command in [None, Some("submitcmd --queue short '/opt/VT Code/vtcode' --headless '/project λ🦀' ; literal $HOME")] {
-        let mut args = vec!["--remote".into(), "test-alias".into(), "--ssh-command".into(), prefix.clone().into()];
-        if let Some(command) = command { args.extend(["--remote-command".into(), command.into()]); }
-        let setup = Launch::parse(args).unwrap().unwrap()
-            .start_in(ratatui::layout::Size::new(100, 24), UiWake::default(), &root).unwrap();
+    for command in [
+        None,
+        Some(
+            "submitcmd --queue short '/opt/VT Code/vtcode' --headless '/project λ🦀' ; literal $HOME",
+        ),
+    ] {
+        let mut args = vec![
+            "--remote".into(),
+            "test-alias".into(),
+            "--ssh-command".into(),
+            prefix.clone().into(),
+        ];
+        if let Some(command) = command {
+            args.extend(["--remote-command".into(), command.into()]);
+        }
+        let setup = Launch::parse(args)
+            .unwrap()
+            .unwrap()
+            .start_in(
+                ratatui::layout::Size::new(100, 24),
+                UiWake::default(),
+                &root,
+            )
+            .unwrap();
         let recipe = setup.recipe.clone().unwrap();
         let (client, owner) = setup.endpoint_for_test().unwrap();
         assert!(matches!(client.call(Command::Ping).unwrap(), Reply::Done));
-        let delivered: Vec<String> = serde_json::from_slice(&std::fs::read(root.join("ssh-argv.json")).unwrap()).unwrap();
-        assert_eq!(delivered, ["test-alias", command.unwrap_or("vtcode --headless")]);
+        let delivered: Vec<String> =
+            serde_json::from_slice(&std::fs::read(root.join("ssh-argv.json")).unwrap()).unwrap();
+        assert_eq!(
+            delivered,
+            ["test-alias", command.unwrap_or("vtcode --headless")]
+        );
         client.call(Command::Shutdown).unwrap();
         owner.terminate();
-        let (recovered, next_owner) = recipe.start(ratatui::layout::Size::new(100, 24), UiWake::default()).unwrap().endpoint_for_test().unwrap();
-        let delivered_again: Vec<String> = serde_json::from_slice(&std::fs::read(root.join("ssh-argv.json")).unwrap()).unwrap();
+        let (recovered, next_owner) = recipe
+            .start(ratatui::layout::Size::new(100, 24), UiWake::default())
+            .unwrap()
+            .endpoint_for_test()
+            .unwrap();
+        let delivered_again: Vec<String> =
+            serde_json::from_slice(&std::fs::read(root.join("ssh-argv.json")).unwrap()).unwrap();
         assert_eq!(delivered_again, delivered);
-        assert!(matches!(recovered.call(Command::Ping).unwrap(), Reply::Done));
+        assert!(matches!(
+            recovered.call(Command::Ping).unwrap(),
+            Reply::Done
+        ));
         recovered.call(Command::Shutdown).unwrap();
         next_owner.terminate();
     }
@@ -262,6 +350,10 @@ fn ssh_command_prefix_fixture() {
     let args: Vec<_> = std::env::args().collect();
     let delivered = &args[args.len() - 2..];
     let root = std::env::current_dir().unwrap();
-    std::fs::write(root.join("ssh-argv.json"), serde_json::to_vec(delivered).unwrap()).unwrap();
+    std::fs::write(
+        root.join("ssh-argv.json"),
+        serde_json::to_vec(delivered).unwrap(),
+    )
+    .unwrap();
     super::super::service::run(&root).unwrap();
 }

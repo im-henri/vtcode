@@ -56,8 +56,14 @@ fn wait(app: &mut App, terminal: &mut Terminal<TestBackend>, ready: impl Fn(&App
         assert!(
             Instant::now() < deadline,
             "terminal viewport timed out: error={:?}, status={}, busy={}, outputs={:?}",
-            app.chat.error, app.chat.status, app.chat.busy(),
-            app.chat.session().map(|s| s.terminals.values().map(|t| (&t.id, &t.output, &t.exit_status)).collect::<Vec<_>>())
+            app.chat.error,
+            app.chat.status,
+            app.chat.busy(),
+            app.chat.session().map(|s| s
+                .terminals
+                .values()
+                .map(|t| (&t.id, &t.output, &t.exit_status))
+                .collect::<Vec<_>>())
         );
         std::thread::sleep(Duration::from_millis(3));
     }
@@ -118,10 +124,24 @@ fn agent_terminal_minimal_header_keeps_controls_and_expands_to_details() {
             assert_eq!(app.chat.cache.entry_height(1), 3);
             assert!(screen.contains("Running"));
             assert!(screen.contains("cargo test --all"));
-            let toggle = app.chat.hits.iter().find(|h| h.action == ChatAction::ToggleEntry(1)).unwrap().area;
+            let toggle = app
+                .chat
+                .hits
+                .iter()
+                .find(|h| h.action == ChatAction::ToggleEntry(1))
+                .unwrap()
+                .area;
             click(&mut app, &mut terminal, ChatAction::ToggleEntry(1));
             render(&mut app, &mut terminal);
-            assert_eq!(toggle, app.chat.hits.iter().find(|h| h.action == ChatAction::ToggleEntry(1)).unwrap().area);
+            assert_eq!(
+                toggle,
+                app.chat
+                    .hits
+                    .iter()
+                    .find(|h| h.action == ChatAction::ToggleEntry(1))
+                    .unwrap()
+                    .area
+            );
             assert!(text(&terminal).contains("Collapse"));
             assert!(text(&terminal).contains("Read-only"));
             assert!(app.chat.terminal_views.contains_key("test-run"));
@@ -190,7 +210,9 @@ fn agent_terminal_inline_viewport_scrolls_independently_and_stays_read_only() {
     });
     assert!(text(&terminal).contains("[agent command] cargo test"));
     assert!(text(&terminal).contains("line-000"));
-    for _ in 0..3 { app.handle_chat_key(KeyEvent::new(KeyCode::Right, KeyModifiers::empty())); }
+    for _ in 0..3 {
+        app.handle_chat_key(KeyEvent::new(KeyCode::Right, KeyModifiers::empty()));
+    }
     assert_eq!(app.chat.terminal_views["test-run"].column, 12);
     app.chat_action(ChatAction::TerminalTop("test-run".into()));
     let mut snapshot = app.chat.session().unwrap().terminals["test-run"].clone();
@@ -273,7 +295,13 @@ fn agent_terminal_cards_keep_kill_visible_in_narrow_themed_layouts() {
                     .iter()
                     .any(|h| h.action == ChatAction::Terminal("test-run".into()))
             );
-            assert!(!app.chat.hits.iter().any(|h| matches!(h.action, ChatAction::PanTerminal(..) | ChatAction::ScrollTerminal(..) | ChatAction::TerminalTop(..) | ChatAction::FollowTerminal(..))));
+            assert!(!app.chat.hits.iter().any(|h| matches!(
+                h.action,
+                ChatAction::PanTerminal(..)
+                    | ChatAction::ScrollTerminal(..)
+                    | ChatAction::TerminalTop(..)
+                    | ChatAction::FollowTerminal(..)
+            )));
             if let Some(directory) = std::env::var_os("VTCODE_TERMINAL_CAPTURE") {
                 let directory = std::path::PathBuf::from(directory);
                 std::fs::create_dir_all(&directory).unwrap();
@@ -327,7 +355,8 @@ fn acp_chat_sdk_round_trip_agent_terminal_input_history_and_scoped_kill() {
     app.explorer.root = directory.path().into();
     app.chat.visible = true;
     app.active_pane = ActivePane::Chat;
-    let python = std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
+    let python = std::env::var("VTCODE_ACP_TEST_PYTHON")
+        .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
     let mut config = vtcode::acp::AgentConfig::new("Terminal SDK", python);
     config.args = vec![
         "-u".into(),
@@ -373,9 +402,12 @@ fn acp_chat_sdk_round_trip_agent_terminal_input_history_and_scoped_kill() {
     wait(&mut app, &mut terminal, |a| {
         // The compact preview may still hold the initial command-only page.
         // Wait for the expanded page to load the process output as well.
-        a.chat.terminal_views[&id].page.as_ref().is_some_and(|page| {
-            page.first == 0 && page.lines.iter().any(|line| line.contains("line-000"))
-        })
+        a.chat.terminal_views[&id]
+            .page
+            .as_ref()
+            .is_some_and(|page| {
+                page.first == 0 && page.lines.iter().any(|line| line.contains("line-000"))
+            })
     });
     assert!(text(&terminal).contains("line-000"));
     assert!(app.chat.session().unwrap().terminals[&id].truncated);

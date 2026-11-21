@@ -17,7 +17,8 @@ fn fixture() -> App {
     app.cursor_blinking = false;
     app.idle_quiescent = true;
     app.workspace_watcher_active = true;
-    app.animation_settings.set(crate::animation_config::AnimationEffect::TabSlide, false);
+    app.animation_settings
+        .set(crate::animation_config::AnimationEffect::TabSlide, false);
     assert!(!app.animation_settings.any_enabled());
     app
 }
@@ -405,7 +406,9 @@ fn local_expansion_marks_the_folder_and_completion_clears_loading() {
         .send(BackgroundResult::ExplorerRefreshed {
             generation: app.explorer_refresh_generation,
             snapshot: Box::new(app.explorer.presentation().prepare(
-                app.explorer.root.clone(), app.explorer.entries.clone(), Default::default(),
+                app.explorer.root.clone(),
+                app.explorer.entries.clone(),
+                Default::default(),
             )),
         })
         .unwrap();

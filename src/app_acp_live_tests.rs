@@ -238,7 +238,9 @@ fn hidden_background_agent_captures_host_and_shell_edits_with_colliding_session_
     });
     assert_eq!(app.chat.active_agent, 1);
     assert_eq!(
-        app.chat.agent_state(0).unwrap().sessions[&id].rollback.active,
+        app.chat.agent_state(0).unwrap().sessions[&id]
+            .rollback
+            .active,
         Some(cp),
     );
     assert!(app.chat.session().unwrap().rollback.edits.is_empty());
@@ -248,7 +250,9 @@ fn hidden_background_agent_captures_host_and_shell_edits_with_colliding_session_
     changed(&mut app, root.path(), &path);
     until(&mut app, |app| {
         !app.chat.rollback.busy()
-            && app.editor_file_review(&path).is_some_and(|file| file.chunks.len() == 2)
+            && app
+                .editor_file_review(&path)
+                .is_some_and(|file| file.chunks.len() == 2)
             && app.editor().unwrap().rope.to_string() == "FIRST\nkeep\nLAST\n"
     });
     super::background_review_tests::assert_file_marked(&mut app, &path, 2);
@@ -340,7 +344,8 @@ fn acp_chat_sdk_round_trip_live_changes_appear_before_turn_end_for_host_and_shel
         app.background.start_file_watcher(root.path().into());
         let mut config = AgentConfig::new(
             "Live SDK",
-            std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
+            std::env::var("VTCODE_ACP_TEST_PYTHON")
+                .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
         );
         config.args = vec![
             "-u".into(),

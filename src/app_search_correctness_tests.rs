@@ -30,7 +30,13 @@ fn assert_valid_positions(editor: &Editor) {
 #[test]
 fn find_keeps_visible_matches_still_and_centers_offscreen_matches() {
     let text: String = (0..100)
-        .map(|line| if [20, 37, 80, 84].contains(&line) { "needle\n" } else { "text\n" })
+        .map(|line| {
+            if [20, 37, 80, 84].contains(&line) {
+                "needle\n"
+            } else {
+                "text\n"
+            }
+        })
         .collect();
     for typewriter in [false, true] {
         let mut app = app(&text);
@@ -91,7 +97,11 @@ fn find_centers_using_visible_rows_and_unfolds_the_match() {
 #[test]
 fn find_keeps_visible_columns_and_pans_to_a_hidden_column_on_the_same_row() {
     let line = format!("........needle{}needle\n", " ".repeat(50));
-    let mut app = app(&format!("{}{line}{}", "text\n".repeat(30), "text\n".repeat(30)));
+    let mut app = app(&format!(
+        "{}{line}{}",
+        "text\n".repeat(30),
+        "text\n".repeat(30)
+    ));
     let editor = app.editor_mut().unwrap();
     editor.viewport_height = 10;
     editor.viewport_width = 7;
@@ -173,15 +183,22 @@ fn find_centers_in_the_active_split_height_without_scrolling_other_panes() {
     app.show_minimap = false;
     app.sticky_scroll = false;
     let mut terminal = Terminal::new(TestBackend::new(120, 48)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let other_scroll = app.groups[0].tabs[0].editor.scroll_offset;
     app.search_query = "line_100".into();
     app.execute_palette_command("find");
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let code = app.code_area.unwrap();
     assert!(code.height < 24);
     let editor = app.editor().unwrap();
-    assert_eq!(editor.cursor_line - editor.scroll_offset, code.height as usize / 2);
+    assert_eq!(
+        editor.cursor_line - editor.scroll_offset,
+        code.height as usize / 2
+    );
     let row: String = (code.x..code.right())
         .map(|x| terminal.backend().buffer()[(x, code.y + code.height / 2)].symbol())
         .collect();
@@ -274,7 +291,10 @@ fn workspace_replace_does_not_modify_read_only_or_revision_tabs() {
         } else {
             app.tabs[0].editor.read_only = true;
         }
-        assert!(matches!(apply_open_replace_result(&mut app.tabs, &result), OpenReplacement::Skipped));
+        assert!(matches!(
+            apply_open_replace_result(&mut app.tabs, &result),
+            OpenReplacement::Skipped
+        ));
         assert_eq!(app.tabs[0].editor.rope.to_string(), "foo");
         assert!(!app.tabs[0].editor.can_undo());
     }
@@ -288,7 +308,10 @@ fn workspace_replace_shared_views_create_only_one_undo_step() {
     shared.copy_document_from(&app.tabs[0].editor);
     app.tabs.push(Tab::new_file(shared));
     let result = result(&app.tabs[0].editor, "bar");
-    assert!(matches!(apply_open_replace_result(&mut app.tabs, &result), OpenReplacement::Applied(None)));
+    assert!(matches!(
+        apply_open_replace_result(&mut app.tabs, &result),
+        OpenReplacement::Applied(None)
+    ));
     app.tabs[1].editor.refresh_document();
     assert_eq!(app.tabs[1].editor.rope.to_string(), "bar");
     app.tabs[1].editor.undo();
@@ -306,7 +329,10 @@ fn workspace_replace_rejects_an_edit_from_another_shared_view() {
     let mut shared = Editor::new();
     shared.copy_document_from(&app.tabs[0].editor);
     shared.insert_char('!');
-    assert!(matches!(apply_open_replace_result(&mut app.tabs, &result), OpenReplacement::Skipped));
+    assert!(matches!(
+        apply_open_replace_result(&mut app.tabs, &result),
+        OpenReplacement::Skipped
+    ));
     assert_eq!(app.tabs[0].editor.rope.to_string(), "!foo");
     shared.refresh_document();
     assert_eq!(shared.rope.to_string(), "!foo");
@@ -344,7 +370,10 @@ fn workspace_replace_does_not_target_a_reopened_file_at_the_same_version() {
     reopened.file_path = Some(result.path.clone());
     assert_eq!(reopened.content_version, result.source_content_version);
     app.tabs[0] = Tab::new_file(reopened);
-    assert!(matches!(apply_open_replace_result(&mut app.tabs, &result), OpenReplacement::Skipped));
+    assert!(matches!(
+        apply_open_replace_result(&mut app.tabs, &result),
+        OpenReplacement::Skipped
+    ));
     assert_eq!(app.tabs[0].editor.rope.to_string(), "foo");
 }
 

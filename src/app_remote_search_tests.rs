@@ -52,7 +52,9 @@ fn workspace_search_reads_external_edits_in_clean_tabs_and_keeps_drafts() {
         app.source_control_enabled = false;
         for path in [&native, &dirty] {
             let (key, loaded) = if let Some(workspace) = &workspace {
-                let key = workspace.target_key(path.file_name().unwrap().to_str().unwrap()).unwrap();
+                let key = workspace
+                    .target_key(path.file_name().unwrap().to_str().unwrap())
+                    .unwrap();
                 let loaded = workspace.load(&key).unwrap();
                 (key, loaded)
             } else {
@@ -74,8 +76,16 @@ fn workspace_search_reads_external_edits_in_clean_tabs_and_keeps_drafts() {
         let view = app.tabs[0].editor.navigation_id;
         let assert_matches = |app: &App, line: usize, text: &str| {
             assert_eq!(app.global_search_results.len(), 2);
-            let clean = app.global_search_results.iter().find(|hit| hit.file_path == clean_key).unwrap();
-            let draft = app.global_search_results.iter().find(|hit| hit.file_path == dirty_key).unwrap();
+            let clean = app
+                .global_search_results
+                .iter()
+                .find(|hit| hit.file_path == clean_key)
+                .unwrap();
+            let draft = app
+                .global_search_results
+                .iter()
+                .find(|hit| hit.file_path == dirty_key)
+                .unwrap();
             assert_eq!((clean.line_num, clean.line_text.as_ref()), (line, text));
             assert_eq!(draft.line_text.as_ref(), "draft needle");
             assert_eq!(app.tabs.len(), 2);
@@ -86,7 +96,12 @@ fn workspace_search_reads_external_edits_in_clean_tabs_and_keeps_drafts() {
         // No watcher is running. Also preserve size and mtime on the first
         // edit to prove that searches read the current file independently.
         std::fs::write(&native, "no match!!\nnew needle\n").unwrap();
-        std::fs::File::options().write(true).open(&native).unwrap().set_modified(modified).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&native)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
         std::fs::write(&dirty, "external needle").unwrap();
         ui_search_controls::activate(&mut app, SearchScope::Workspace, SearchControl::Refresh);
         app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
@@ -106,47 +121,91 @@ fn workspace_search_reads_external_edits_in_clean_tabs_and_keeps_drafts() {
         assert_eq!(app.tabs[1].editor.rope, "draft needle");
         assert!(app.tabs[1].editor.modified);
         assert_eq!(std::fs::read_to_string(&dirty).unwrap(), "external needle");
-        if let Some(workspace) = workspace { workspace.client.call(remote::Command::Shutdown).unwrap(); }
+        if let Some(workspace) = workspace {
+            workspace.client.call(remote::Command::Shutdown).unwrap();
+        }
     }
 }
 
 /// A peer whose search completion is controlled by the test, rather than by
 /// disk speed or sleeps. This also exercises real framed transport delivery.
-fn controlled_search_peer(root: &Path) -> (remote::client::Client, mpsc::Receiver<remote::Request>, mpsc::Sender<remote::Response>) {
+fn controlled_search_peer(
+    root: &Path,
+) -> (
+    remote::client::Client,
+    mpsc::Receiver<remote::Request>,
+    mpsc::Sender<remote::Response>,
+) {
     use std::io::{BufReader, Read, Write};
-    struct Input { replies: mpsc::Receiver<remote::Response>, bytes: std::io::Cursor<Vec<u8>> }
+    struct Input {
+        replies: mpsc::Receiver<remote::Response>,
+        bytes: std::io::Cursor<Vec<u8>>,
+    }
     impl Read for Input {
         fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-            if buffer.is_empty() { return Ok(0); }
+            if buffer.is_empty() {
+                return Ok(0);
+            }
             if self.bytes.position() as usize == self.bytes.get_ref().len() {
-                let Ok(reply) = self.replies.recv() else { return Ok(0); };
+                let Ok(reply) = self.replies.recv() else {
+                    return Ok(0);
+                };
                 let mut bytes = Vec::new();
-                let id = if reply.id == 0 { remote::wire::EVENT_ID | 1 } else { reply.id };
-                remote::wire::write_message(&mut bytes, 'S', 42, id, &remote::wire::encode(&reply)?)?;
+                let id = if reply.id == 0 {
+                    remote::wire::EVENT_ID | 1
+                } else {
+                    reply.id
+                };
+                remote::wire::write_message(
+                    &mut bytes,
+                    'S',
+                    42,
+                    id,
+                    &remote::wire::encode(&reply)?,
+                )?;
                 self.bytes = std::io::Cursor::new(bytes);
             }
             self.bytes.read(buffer)
         }
     }
-    struct Output { requests: mpsc::Sender<remote::Request>, decoder: remote::wire::Decoder, bytes: Vec<u8> }
+    struct Output {
+        requests: mpsc::Sender<remote::Request>,
+        decoder: remote::wire::Decoder,
+        bytes: Vec<u8>,
+    }
     impl Write for Output {
         fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
             self.bytes.extend_from_slice(buffer);
             while let Some(end) = memchr::memchr(b'\n', &self.bytes) {
                 let line = self.bytes.drain(..=end).collect::<Vec<_>>();
                 if let Some((_, data)) = self.decoder.line(&line)? {
-                    self.requests.send(serde_json::from_slice(&data)?).map_err(std::io::Error::other)?;
+                    self.requests
+                        .send(serde_json::from_slice(&data)?)
+                        .map_err(std::io::Error::other)?;
                 }
             }
             Ok(buffer.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
     let (requests, received) = mpsc::channel();
     let (responses, replies) = mpsc::channel();
     let hello = remote::service::Service::new(root).unwrap().hello(42);
-    let client = remote::client::Client::attach(BufReader::new(Input { replies, bytes: std::io::Cursor::new(Vec::new()) }),
-        Output { requests, decoder: remote::wire::Decoder::new('C', 42), bytes: Vec::new() }, hello).unwrap();
+    let client = remote::client::Client::attach(
+        BufReader::new(Input {
+            replies,
+            bytes: std::io::Cursor::new(Vec::new()),
+        }),
+        Output {
+            requests,
+            decoder: remote::wire::Decoder::new('C', 42),
+            bytes: Vec::new(),
+        },
+        hello,
+    )
+    .unwrap();
     (client, received, responses)
 }
 
@@ -158,40 +217,86 @@ fn remote_search_streams_into_the_ui_before_completion_and_discards_cancelled_ba
     let mut app = App::new_deferred(workspace.view_root.clone());
     app.source_control_enabled = false;
     app.remote_workspace = Some(workspace.clone());
-    let hit = |text: &str| remote::search::Hit { path: RemotePath::new(b"file.txt".to_vec()).unwrap(),
-        line: 1, start: 0, end: text.len(), text: text.into() };
+    let hit = |text: &str| remote::search::Hit {
+        path: RemotePath::new(b"file.txt".to_vec()).unwrap(),
+        line: 1,
+        start: 0,
+        end: text.len(),
+        text: text.into(),
+    };
     app.global_search_query = "needle".into();
     app.update_global_search();
     let first = requests.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(matches!(first.command, remote::Command::Search(ref query) if query.stream));
-    responses.send(remote::Response { id: 0, result: Ok(remote::Reply::SearchProgress {
-        request: first.id, hits: vec![hit("needle")],
-    }) }).unwrap();
-    app.wait_for_background(Duration::from_secs(5), |app| app.global_search_results.len() == 1);
-    assert!(app.bg_global_search_running, "the final reply is still held by the peer");
+    responses
+        .send(remote::Response {
+            id: 0,
+            result: Ok(remote::Reply::SearchProgress {
+                request: first.id,
+                hits: vec![hit("needle")],
+            }),
+        })
+        .unwrap();
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.global_search_results.len() == 1
+    });
+    assert!(
+        app.bg_global_search_running,
+        "the final reply is still held by the peer"
+    );
     assert_eq!(&*app.global_search_results[0].line_text, "needle");
     app.stop_global_search();
     let cancelled = requests.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(matches!(cancelled.command, remote::Command::Cancel { request } if request == first.id));
+    assert!(
+        matches!(cancelled.command, remote::Command::Cancel { request } if request == first.id)
+    );
     app.global_search_query = "new".into();
     app.update_global_search();
     let next = requests.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(matches!(next.command, remote::Command::Search(_)));
-    responses.send(remote::Response { id: 0, result: Ok(remote::Reply::SearchProgress {
-        request: first.id, hits: vec![hit("obsolete")],
-    }) }).unwrap();
-    responses.send(remote::Response { id: first.id, result: Ok(remote::Reply::Search {
-        hits: vec![hit("obsolete final")], truncated: true, draft_aliases: Vec::new(),
-    }) }).unwrap();
-    responses.send(remote::Response { id: 0, result: Ok(remote::Reply::SearchProgress {
-        request: next.id, hits: vec![hit("new")],
-    }) }).unwrap();
-    app.wait_for_background(Duration::from_secs(5), |app| app.global_search_results.len() == 1);
+    responses
+        .send(remote::Response {
+            id: 0,
+            result: Ok(remote::Reply::SearchProgress {
+                request: first.id,
+                hits: vec![hit("obsolete")],
+            }),
+        })
+        .unwrap();
+    responses
+        .send(remote::Response {
+            id: first.id,
+            result: Ok(remote::Reply::Search {
+                hits: vec![hit("obsolete final")],
+                truncated: true,
+                draft_aliases: Vec::new(),
+            }),
+        })
+        .unwrap();
+    responses
+        .send(remote::Response {
+            id: 0,
+            result: Ok(remote::Reply::SearchProgress {
+                request: next.id,
+                hits: vec![hit("new")],
+            }),
+        })
+        .unwrap();
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.global_search_results.len() == 1
+    });
     assert!(app.bg_global_search_running);
     assert_eq!(&*app.global_search_results[0].line_text, "new");
-    responses.send(remote::Response { id: next.id, result: Ok(remote::Reply::Search {
-        hits: vec![hit("new tail")], truncated: false, draft_aliases: Vec::new(),
-    }) }).unwrap();
+    responses
+        .send(remote::Response {
+            id: next.id,
+            result: Ok(remote::Reply::Search {
+                hits: vec![hit("new tail")],
+                truncated: false,
+                draft_aliases: Vec::new(),
+            }),
+        })
+        .unwrap();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
     assert_eq!(app.global_search_results.len(), 2);
     assert_eq!(&*app.global_search_results[1].line_text, "new tail");
@@ -212,24 +317,56 @@ fn remote_search_oversized_progress_fails_only_the_search_and_accepts_legacy_rep
     app.global_search_query = "needle".into();
     app.update_global_search();
     let first = requests.recv_timeout(Duration::from_secs(5)).unwrap();
-    let hit = || remote::search::Hit { path: RemotePath::new(b"file.txt".to_vec()).unwrap(),
-        line: 1, start: 0, end: 6, text: "needle".into() };
-    responses.send(remote::Response { id: 0, result: Ok(remote::Reply::SearchProgress {
-        request: first.id, hits: vec![hit(), hit()],
-    }) }).unwrap();
+    let hit = || remote::search::Hit {
+        path: RemotePath::new(b"file.txt".to_vec()).unwrap(),
+        line: 1,
+        start: 0,
+        end: 6,
+        text: "needle".into(),
+    };
+    responses
+        .send(remote::Response {
+            id: 0,
+            result: Ok(remote::Reply::SearchProgress {
+                request: first.id,
+                hits: vec![hit(), hit()],
+            }),
+        })
+        .unwrap();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
-    assert!(app.global_search_error.as_ref().unwrap().contains("result budget"));
-    assert!(workspace.client.connected(), "a search budget error must not disconnect the editor");
+    assert!(
+        app.global_search_error
+            .as_ref()
+            .unwrap()
+            .contains("result budget")
+    );
+    assert!(
+        workspace.client.connected(),
+        "a search budget error must not disconnect the editor"
+    );
     let cancelled = requests.recv_timeout(Duration::from_secs(5)).unwrap();
-    assert!(matches!(cancelled.command, remote::Command::Cancel { request } if request == first.id));
+    assert!(
+        matches!(cancelled.command, remote::Command::Cancel { request } if request == first.id)
+    );
     app.update_global_search();
     let next = requests.recv_timeout(Duration::from_secs(5)).unwrap();
-    responses.send(remote::Response { id: next.id, result: Ok(remote::Reply::Search {
-        hits: vec![hit()], truncated: false, draft_aliases: Vec::new(),
-    }) }).unwrap();
+    responses
+        .send(remote::Response {
+            id: next.id,
+            result: Ok(remote::Reply::Search {
+                hits: vec![hit()],
+                truncated: false,
+                draft_aliases: Vec::new(),
+            }),
+        })
+        .unwrap();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_global_search_running);
     assert!(app.global_search_error.is_none());
-    assert_eq!(app.global_search_results.len(), 1, "older nodes can still send a single complete reply");
+    assert_eq!(
+        app.global_search_results.len(),
+        1,
+        "older nodes can still send a single complete reply"
+    );
     workspace.client.disconnect();
 }
 
@@ -292,7 +429,11 @@ fn search_replace_all_keeps_a_draft_reached_by_a_file_symlink() {
     }
 }
 
-fn replace_draft_through_alias(include: impl FnOnce(&Path) -> String, remote: bool, _file_link: bool) {
+fn replace_draft_through_alias(
+    include: impl FnOnce(&Path) -> String,
+    remote: bool,
+    _file_link: bool,
+) {
     let root = tempfile::tempdir().unwrap();
     let directory = root.path().join("Sources");
     let alias = root.path().join("sources");
@@ -375,7 +516,10 @@ fn remote_search_uses_the_draft_when_only_the_walked_spelling_matches() {
 
     assert_eq!(app.global_search_results.len(), 1);
     assert_eq!(app.global_search_results[0].file_path, key);
-    assert_eq!(&*app.global_search_results[0].line_text, "draft needle needle");
+    assert_eq!(
+        &*app.global_search_results[0].line_text,
+        "draft needle needle"
+    );
     assert!(app.global_search_truncated);
     workspace.client.call(remote::Command::Shutdown).unwrap();
 }
@@ -639,8 +783,7 @@ fn remote_search_scope_rechecks_an_alias_after_its_directory_changes() {
 
 #[test]
 fn remote_search_scope_accepts_legacy_replies_without_caching_them() {
-    let reply: remote::Reply =
-        serde_json::from_str(r#"{"SearchScope":{"indices":[0]}}"#).unwrap();
+    let reply: remote::Reply = serde_json::from_str(r#"{"SearchScope":{"indices":[0]}}"#).unwrap();
     assert!(matches!(
         reply,
         remote::Reply::SearchScope { indices, cacheable: false } if indices == [0]

@@ -1,11 +1,20 @@
-use crate::editor::{is_markup_language, Editor};
+use crate::editor::{Editor, is_markup_language};
 
-fn matching_line_text<'a>(line: ropey::RopeSlice<'a>, cancelled: &impl Fn() -> bool) -> Option<std::borrow::Cow<'a, str>> {
-    if cancelled() { return None; }
-    if let Some(text) = line.as_str() { return Some(std::borrow::Cow::Borrowed(text)); }
+fn matching_line_text<'a>(
+    line: ropey::RopeSlice<'a>,
+    cancelled: &impl Fn() -> bool,
+) -> Option<std::borrow::Cow<'a, str>> {
+    if cancelled() {
+        return None;
+    }
+    if let Some(text) = line.as_str() {
+        return Some(std::borrow::Cow::Borrowed(text));
+    }
     let mut text = String::with_capacity(line.len_bytes());
     for chunk in line.chunks() {
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         text.push_str(chunk);
     }
     Some(std::borrow::Cow::Owned(text))
@@ -13,18 +22,31 @@ fn matching_line_text<'a>(line: ropey::RopeSlice<'a>, cancelled: &impl Fn() -> b
 
 /// Check cancellation even inside huge minified markup lines. ASCII matches
 /// are UTF-8 boundaries, including when a search block splits a character.
-fn tag_delimiter(text: &str, delimiter: u8, reverse: bool, cancelled: &impl Fn() -> bool) -> Option<usize> {
+fn tag_delimiter(
+    text: &str,
+    delimiter: u8,
+    reverse: bool,
+    cancelled: &impl Fn() -> bool,
+) -> Option<usize> {
     if reverse {
         let mut end = text.len();
         for block in text.as_bytes().rchunks(4_096) {
-            if cancelled() { return None; }
+            if cancelled() {
+                return None;
+            }
             end -= block.len();
-            if let Some(offset) = memchr::memrchr(delimiter, block) { return Some(end + offset); }
+            if let Some(offset) = memchr::memrchr(delimiter, block) {
+                return Some(end + offset);
+            }
         }
     } else {
         for (block_index, block) in text.as_bytes().chunks(4_096).enumerate() {
-            if cancelled() { return None; }
-            if let Some(offset) = memchr::memchr(delimiter, block) { return Some(block_index * 4_096 + offset); }
+            if cancelled() {
+                return None;
+            }
+            if let Some(offset) = memchr::memchr(delimiter, block) {
+                return Some(block_index * 4_096 + offset);
+            }
         }
     }
     None
@@ -34,15 +56,27 @@ impl Editor {
     /// Prove common negative cases without starting a worker. The markup
     /// prefix search is bounded even on a multi-megabyte minified line.
     pub(crate) fn may_have_cursor_pair(&self) -> bool {
-        let Some(line) = self.rope.get_line(self.cursor_line) else { return false; };
+        let Some(line) = self.rope.get_line(self.cursor_line) else {
+            return false;
+        };
         let bracket = |ch| matches!(ch, '(' | ')' | '[' | ']' | '{' | '}');
         if line.get_char(self.cursor_col).is_some_and(bracket)
-            || self.cursor_col.checked_sub(1).and_then(|col| line.get_char(col)).is_some_and(bracket)
-        { return true; }
-        if !is_markup_language(self.language_name()) { return false; }
+            || self
+                .cursor_col
+                .checked_sub(1)
+                .and_then(|col| line.get_char(col))
+                .is_some_and(bracket)
+        {
+            return true;
+        }
+        if !is_markup_language(self.language_name()) {
+            return false;
+        }
         let mut cursor = self.cursor_col.min(line.len_chars());
         // Matching includes the position immediately after the closing `>`.
-        if cursor > 0 && line.char(cursor - 1) == '>' { cursor -= 1; }
+        if cursor > 0 && line.char(cursor - 1) == '>' {
+            cursor -= 1;
+        }
         let before = line.slice(..cursor);
         let mut budget = 2_048usize;
         for chunk in before.chunks_at_byte(before.len_bytes()).0.reversed() {
@@ -52,7 +86,9 @@ impl Editor {
                 return bytes[bytes.len() - len + byte] == b'<';
             }
             budget -= len;
-            if budget == 0 { return true; } // Uncertain: let the worker decide.
+            if budget == 0 {
+                return true;
+            } // Uncertain: let the worker decide.
         }
         false
     }
@@ -63,7 +99,8 @@ impl Editor {
     }
 
     pub(crate) fn find_matching_bracket_cancellable(
-        &self, cancelled: &impl Fn() -> bool,
+        &self,
+        cancelled: &impl Fn() -> bool,
     ) -> Option<(usize, usize)> {
         if cancelled() || self.cursor_line >= self.rope.len_lines() {
             return None;
@@ -73,18 +110,24 @@ impl Editor {
         // Try character at cursor first
         if self.cursor_col < line_slice.len_chars() {
             let ch = line_slice.char(self.cursor_col);
-            if let Some(result) =
-                self.find_matching_bracket_for_cancellable(ch, self.cursor_line, self.cursor_col, cancelled)
-            {
+            if let Some(result) = self.find_matching_bracket_for_cancellable(
+                ch,
+                self.cursor_line,
+                self.cursor_col,
+                cancelled,
+            ) {
                 return Some(result);
             }
         }
         // Fall back to character before cursor (VS Code behavior)
         if self.cursor_col > 0 && self.cursor_col - 1 < line_slice.len_chars() {
             let ch = line_slice.char(self.cursor_col - 1);
-            if let Some(result) =
-                self.find_matching_bracket_for_cancellable(ch, self.cursor_line, self.cursor_col - 1, cancelled)
-            {
+            if let Some(result) = self.find_matching_bracket_for_cancellable(
+                ch,
+                self.cursor_line,
+                self.cursor_col - 1,
+                cancelled,
+            ) {
                 return Some(result);
             }
         }
@@ -102,12 +145,22 @@ impl Editor {
     }
 
     fn find_matching_bracket_for_cancellable(
-        &self, ch: char, start_line: usize, start_col: usize, cancelled: &impl Fn() -> bool,
+        &self,
+        ch: char,
+        start_line: usize,
+        start_col: usize,
+        cancelled: &impl Fn() -> bool,
     ) -> Option<(usize, usize)> {
-        if cancelled() { return None; }
+        if cancelled() {
+            return None;
+        }
         let (target, forward) = match ch {
-            '(' => (')', true), '[' => (']', true), '{' => ('}', true),
-            ')' => ('(', false), ']' => ('[', false), '}' => ('{', false),
+            '(' => (')', true),
+            '[' => (']', true),
+            '{' => ('}', true),
+            ')' => ('(', false),
+            ']' => ('[', false),
+            '}' => ('{', false),
             _ => return None,
         };
         if start_line >= self.line_count() {
@@ -116,13 +169,31 @@ impl Editor {
         let mut depth = 0i32;
         let mut block_comment = false;
         let mut candidates = Vec::new();
-        let line_count = if forward { self.line_count() - start_line } else { start_line + 1 };
+        let line_count = if forward {
+            self.line_count() - start_line
+        } else {
+            start_line + 1
+        };
         for offset in 0..line_count {
-            if cancelled() { return None; }
-            let line = if forward { start_line + offset } else { start_line - offset };
+            if cancelled() {
+                return None;
+            }
+            let line = if forward {
+                start_line + offset
+            } else {
+                start_line - offset
+            };
             let slice = self.rope.line(line);
-            let start = if forward && line == start_line { start_col.min(slice.len_chars()) } else { 0 };
-            let end = if !forward && line == start_line { start_col } else { slice.len_chars() };
+            let start = if forward && line == start_line {
+                start_col.min(slice.len_chars())
+            } else {
+                0
+            };
+            let end = if !forward && line == start_line {
+                start_col
+            } else {
+                slice.len_chars()
+            };
             let mut chars = slice.chars_at(start).enumerate().peekable();
             let mut single_quote = false;
             let mut double_quote = false;
@@ -135,7 +206,9 @@ impl Editor {
             // lines pay for a tree traversal at every character.
             while let Some((offset, c)) = chars.next() {
                 if offset >= next_cancel_check {
-                    if cancelled() { return None; }
+                    if cancelled() {
+                        return None;
+                    }
                     next_cancel_check = offset + 1_024;
                 }
                 let col = start + offset;
@@ -177,9 +250,15 @@ impl Editor {
                 }
                 if !single_quote && !double_quote && !backtick && !bc {
                     if forward {
-                        if c == ch { depth += 1; }
-                        if c == target { depth -= 1; }
-                        if depth == 0 { return Some((line, col)); }
+                        if c == ch {
+                            depth += 1;
+                        }
+                        if c == target {
+                            depth -= 1;
+                        }
+                        if depth == 0 {
+                            return Some((line, col));
+                        }
                     } else if col <= end && (c == ch || c == target) {
                         // Backward matching only needs bracket candidates,
                         // rather than a per-character context bitmap followed
@@ -193,10 +272,18 @@ impl Editor {
             }
             if !forward {
                 for (index, &(col, c)) in candidates.iter().rev().enumerate() {
-                    if index.is_multiple_of(1_024) && cancelled() { return None; }
-                    if c == ch { depth += 1; }
-                    if c == target { depth -= 1; }
-                    if depth == 0 { return Some((line, col)); }
+                    if index.is_multiple_of(1_024) && cancelled() {
+                        return None;
+                    }
+                    if c == ch {
+                        depth += 1;
+                    }
+                    if c == target {
+                        depth -= 1;
+                    }
+                    if depth == 0 {
+                        return Some((line, col));
+                    }
                 }
             }
         }
@@ -278,7 +365,8 @@ impl Editor {
     }
 
     pub(crate) fn find_matching_tag_cancellable(
-        &self, cancelled: &impl Fn() -> bool,
+        &self,
+        cancelled: &impl Fn() -> bool,
     ) -> Option<(usize, usize, usize, usize, usize, usize)> {
         if cancelled() || !is_markup_language(self.language_name()) {
             return None;
@@ -325,7 +413,9 @@ impl Editor {
             let mut depth = 0i32;
             let start_line = self.cursor_line.saturating_sub(max_scan);
             for line in (start_line..=self.cursor_line).rev() {
-                if cancelled() { return None; }
+                if cancelled() {
+                    return None;
+                }
                 let scan_rope = self.rope.line(line);
                 let scan_line = matching_line_text(scan_rope, cancelled)?;
                 let text = &*scan_line;
@@ -333,7 +423,9 @@ impl Editor {
                 let mut positions: Vec<(usize, usize, bool)> = Vec::new(); // (col_start, col_end, is_close)
                 let mut search_from = 0;
                 while let Some(lt) = tag_delimiter(&text[search_from..], b'<', false, cancelled) {
-                    if cancelled() { return None; }
+                    if cancelled() {
+                        return None;
+                    }
                     let open_pos = search_from + lt;
                     if let Some(gt) = tag_delimiter(&text[open_pos..], b'>', false, cancelled) {
                         let close_pos = open_pos + gt + 1;
@@ -362,7 +454,9 @@ impl Editor {
                     }
                 }
                 for (index, &(cs, ce, ic)) in positions.iter().rev().enumerate() {
-                    if index.is_multiple_of(1_024) && cancelled() { return None; }
+                    if index.is_multiple_of(1_024) && cancelled() {
+                        return None;
+                    }
                     if ic {
                         depth += 1;
                     } else {
@@ -385,13 +479,17 @@ impl Editor {
             let mut depth = 0i32;
             let end_line = (self.cursor_line + max_scan).min(total_lines);
             for line in self.cursor_line..end_line {
-                if cancelled() { return None; }
+                if cancelled() {
+                    return None;
+                }
                 let scan_rope = self.rope.line(line);
                 let scan_line = matching_line_text(scan_rope, cancelled)?;
                 let text = &*scan_line;
                 let mut search_from = 0;
                 while let Some(lt) = tag_delimiter(&text[search_from..], b'<', false, cancelled) {
-                    if cancelled() { return None; }
+                    if cancelled() {
+                        return None;
+                    }
                     let open_pos = search_from + lt;
                     if let Some(gt) = tag_delimiter(&text[open_pos..], b'>', false, cancelled) {
                         let close_pos = open_pos + gt + 1;
@@ -449,7 +547,10 @@ impl Editor {
             // Search forward on current line for nearest bracket, then try matching
             let rope_line = self.rope.line(self.cursor_line);
             let line_len = rope_line.len_chars();
-            for (offset, ch) in rope_line.chars_at((self.cursor_col + 1).min(line_len)).enumerate() {
+            for (offset, ch) in rope_line
+                .chars_at((self.cursor_col + 1).min(line_len))
+                .enumerate()
+            {
                 let i = self.cursor_col + 1 + offset;
                 if matches!(ch, '(' | ')' | '[' | ']' | '{' | '}') {
                     let saved_col = self.cursor_col;
@@ -487,8 +588,8 @@ impl Editor {
         let mut depth = [0i32; 4]; // depth for each bracket type
         // Virtual-space selections can leave the caret beyond EOF. The old
         // indexed scan skipped those positions; seek only the existing text.
-        let cursor_char_idx = (self.rope.line_to_char(self.cursor_line) + self.cursor_col)
-            .min(self.rope.len_chars());
+        let cursor_char_idx =
+            (self.rope.line_to_char(self.cursor_line) + self.cursor_col).min(self.rope.len_chars());
 
         // Search backward
         let mut open_pos = None;
@@ -554,7 +655,9 @@ impl Editor {
             let mut before = rope_line.chars_at(col).reversed().enumerate().peekable();
             let mut opening = None;
             while let Some((offset, ch)) = before.next() {
-                if ch != quote { continue; }
+                if ch != quote {
+                    continue;
+                }
                 let mut escaped = false;
                 while before.peek().is_some_and(|&(_, ch)| ch == '\\') {
                     before.next();
@@ -567,14 +670,28 @@ impl Editor {
             }
             let at_cursor = rope_line.get_char(col);
             if opening.is_none() && at_cursor == Some(quote) {
-                let escaped = rope_line.chars_at(col).reversed()
-                    .take_while(|&ch| ch == '\\').count() % 2 != 0;
-                if !escaped { opening = Some(col); }
+                let escaped = rope_line
+                    .chars_at(col)
+                    .reversed()
+                    .take_while(|&ch| ch == '\\')
+                    .count()
+                    % 2
+                    != 0;
+                if !escaped {
+                    opening = Some(col);
+                }
             }
-            let Some(opening) = opening else { continue; };
+            let Some(opening) = opening else {
+                continue;
+            };
             let start = col + usize::from(at_cursor == Some(quote));
-            let mut escaped = rope_line.chars_at(start).reversed()
-                .take_while(|&ch| ch == '\\').count() % 2 != 0;
+            let mut escaped = rope_line
+                .chars_at(start)
+                .reversed()
+                .take_while(|&ch| ch == '\\')
+                .count()
+                % 2
+                != 0;
             for (offset, ch) in rope_line.chars_at(start).enumerate() {
                 if ch == quote && !escaped {
                     self.selection_anchor = Some((self.cursor_line, opening + 1));

@@ -176,11 +176,16 @@ impl Trigger {
     }
 }
 
-fn cursor_effects(settings: &AnimationSettings, editing: bool) -> impl Iterator<Item = Effect> + '_ {
-    [Effect::CursorSmear, Effect::CursorFire].into_iter().filter(move |&effect| {
-        settings.enabled(effect)
-            && (effect != Effect::CursorSmear || !editing || settings.cursor_smear_when_typing)
-    })
+fn cursor_effects(
+    settings: &AnimationSettings,
+    editing: bool,
+) -> impl Iterator<Item = Effect> + '_ {
+    [Effect::CursorSmear, Effect::CursorFire]
+        .into_iter()
+        .filter(move |&effect| {
+            settings.enabled(effect)
+                && (effect != Effect::CursorSmear || !editing || settings.cursor_smear_when_typing)
+        })
 }
 
 #[derive(Clone)]
@@ -292,7 +297,11 @@ impl AnimationEvent {
         {
             return None;
         }
-        Some(motion.sample_for_effect(settings, effect, now.saturating_duration_since(self.started)))
+        Some(motion.sample_for_effect(
+            settings,
+            effect,
+            now.saturating_duration_since(self.started),
+        ))
     }
 }
 
@@ -870,9 +879,9 @@ impl AnimationState {
                         .any(|event| matches!(event.trigger, Trigger::Scope { .. }))
             });
         if let Some(cached) = self.scope_sources.get_mut(&editor.navigation_id) {
-            let same_context =
-                cached.language.as_deref() == language && cached.path.as_deref() == path
-                    && std::sync::Arc::ptr_eq(&cached.rules, &editor.scope_bubble_rules);
+            let same_context = cached.language.as_deref() == language
+                && cached.path.as_deref() == path
+                && std::sync::Arc::ptr_eq(&cached.rules, &editor.scope_bubble_rules);
             if cached.version == editor.content_version
                 && cached.source.is_instance(&editor.rope)
                 && same_context
@@ -1335,7 +1344,11 @@ impl AnimationState {
             view.fire.advance(now, settings);
         }
         view.events.retain_mut(|event| {
-            if let Trigger::Cursor { editing: editing_motion, .. } = &mut event.trigger {
+            if let Trigger::Cursor {
+                editing: editing_motion,
+                ..
+            } = &mut event.trigger
+            {
                 if remapped {
                     return false;
                 }
@@ -1349,7 +1362,10 @@ impl AnimationState {
         {
             let previous = (!remapped && !changed_view)
                 .then(|| {
-                    view.events.iter().rev().find_map(|event| event.cursor_sample(settings, effect, now))
+                    view.events
+                        .iter()
+                        .rev()
+                        .find_map(|event| event.cursor_sample(settings, effect, now))
                 })
                 .flatten();
             let origin = if remapped {
@@ -2220,7 +2236,11 @@ mod tests {
         let events = state.observe(deleted.clone(), &anchors(&deleted), &settings, at_delete);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].started, now);
-        assert!(events[0].cursor_sample(&settings, Effect::CursorSmear, at_delete).is_none());
+        assert!(
+            events[0]
+                .cursor_sample(&settings, Effect::CursorSmear, at_delete)
+                .is_none()
+        );
         assert!(state.fire_core(deleted.id, &settings, at_delete).is_some());
 
         let mut typed = snapshot("abcdefghXjklmnopqrstuvwxyz", 9);
@@ -2230,8 +2250,16 @@ mod tests {
         assert_eq!(events.len(), 1);
         let motion = &events[0];
         assert_eq!(motion.started, at_type);
-        assert!(motion.cursor_sample(&settings, Effect::CursorSmear, at_type).is_none());
-        assert!(motion.cursor_sample(&settings, Effect::CursorFire, at_type).is_some());
+        assert!(
+            motion
+                .cursor_sample(&settings, Effect::CursorSmear, at_type)
+                .is_none()
+        );
+        assert!(
+            motion
+                .cursor_sample(&settings, Effect::CursorFire, at_type)
+                .is_some()
+        );
         assert!(state.fire_core(typed.id, &settings, at_type).is_some());
         assert_eq!(motion.lifetime(&settings), Duration::from_millis(120));
     }

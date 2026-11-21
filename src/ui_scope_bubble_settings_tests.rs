@@ -25,20 +25,40 @@ fn automatic_custom_c_style_profile_can_be_saved_without_changing_language_mode(
     let (dir, mut app) = fixture();
     let syntaxes = dir.path().join("syntaxes");
     std::fs::create_dir_all(&syntaxes).unwrap();
-    std::fs::write(syntaxes.join("Example.tmLanguage.json"), include_bytes!("testdata/scope-bubble-custom.tmLanguage.json")).unwrap();
+    std::fs::write(
+        syntaxes.join("Example.tmLanguage.json"),
+        include_bytes!("testdata/scope-bubble-custom.tmLanguage.json"),
+    )
+    .unwrap();
     app.highlighter = crate::highlight::Highlighter::for_syntax_folder(&syntaxes);
     app.request_syntax_assets_async();
-    app.wait_for_background(std::time::Duration::from_secs(5), |app| !app.bg_syntax_asset_refresh_running);
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+        !app.bg_syntax_asset_refresh_running
+    });
     app.open_scope_bubble_settings();
     activate(&mut app, Action::New);
     app.scope_bubble_settings.field = Field::new("Scope Example".into());
     assert_eq!(app.scope_bubble_settings.syntax(), Syntax::Cpp);
     assert_eq!(app.scope_bubble_settings.draft.syntax, Syntax::Automatic);
     activate(&mut app, Action::Save);
-    assert!(app.scope_bubble_settings.error.is_none(), "{:?}", app.scope_bubble_settings.error);
+    assert!(
+        app.scope_bubble_settings.error.is_none(),
+        "{:?}",
+        app.scope_bubble_settings.error
+    );
     assert!(!app.scope_bubble_settings.editing);
-    assert_eq!(app.settings_global.animation_scope_bubble_languages.as_ref().unwrap()["scope example"].syntax, Syntax::Automatic);
-    assert_eq!(app.editor().unwrap().language_override.as_deref(), Some("My DSL"));
+    assert_eq!(
+        app.settings_global
+            .animation_scope_bubble_languages
+            .as_ref()
+            .unwrap()["scope example"]
+            .syntax,
+        Syntax::Automatic
+    );
+    assert_eq!(
+        app.editor().unwrap().language_override.as_deref(),
+        Some("My DSL")
+    );
 }
 fn render(app: &mut App, width: u16, height: u16) -> String {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();

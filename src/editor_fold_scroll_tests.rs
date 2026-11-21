@@ -383,12 +383,17 @@ fn change_on_the_last_visible_line_is_inside_the_minimap_and_scrollbar_viewports
     app.scroll_past_end = true;
 
     let mut terminal = Terminal::new(TestBackend::new(120, 55)).unwrap();
-    terminal.draw(|frame| crate::ui_editor::draw_editor(frame, &mut app, frame.area())).unwrap();
+    terminal
+        .draw(|frame| crate::ui_editor::draw_editor(frame, &mut app, frame.area()))
+        .unwrap();
     let buffer = terminal.backend().buffer();
     let gutter = app.gutter_area.unwrap();
     let change_column = crate::ui_editor_highlight::change_gutter_column(gutter).unwrap();
     let change_color = app.colors.ui.fg_gutter_modified;
-    assert_eq!(buffer[(change_column, gutter.bottom() - 1)].fg, change_color);
+    assert_eq!(
+        buffer[(change_column, gutter.bottom() - 1)].fg,
+        change_color
+    );
 
     let minimap = app.minimap_area.unwrap();
     let marker_y = (minimap.y..minimap.bottom())
@@ -397,7 +402,10 @@ fn change_on_the_last_visible_line_is_inside_the_minimap_and_scrollbar_viewports
     assert_eq!(buffer[(minimap.x, marker_y)].symbol(), "▁");
 
     let bar = app.scrollbar_area.unwrap();
-    let (_, thumb) = app.colors.ui.scrollbar_colors(app.colors.ui.bg_overview, false, false);
+    let (_, thumb) = app
+        .colors
+        .ui
+        .scrollbar_colors(app.colors.ui.bg_overview, false, false);
     let markers: Vec<_> = (bar.y..bar.bottom())
         .filter(|&y| buffer[(bar.right() - 1, y)].fg == app.colors.ui.fg_overview_modified)
         .collect();
@@ -421,12 +429,22 @@ fn wrapped_minimap_covers_the_displayed_source_lines_and_preserves_a_continuatio
     app.scroll_past_end = false;
 
     let mut terminal = Terminal::new(TestBackend::new(120, 12)).unwrap();
-    terminal.draw(|frame| crate::ui_editor::draw_editor(frame, &mut app, frame.area())).unwrap();
+    terminal
+        .draw(|frame| crate::ui_editor::draw_editor(frame, &mut app, frame.area()))
+        .unwrap();
     let minimap = app.minimap_area.unwrap();
     let buffer = terminal.backend().buffer();
     assert_eq!(buffer[(minimap.x, minimap.y + 3)].symbol(), "▁");
-    assert_eq!(buffer[(minimap.x, minimap.y + 4)].bg, app.colors.ui.bg_minimap);
-    crate::mouse_selection::handle_editor_area_left_click(&mut app, minimap.x, minimap.y, KeyModifiers::NONE);
+    assert_eq!(
+        buffer[(minimap.x, minimap.y + 4)].bg,
+        app.colors.ui.bg_minimap
+    );
+    crate::mouse_selection::handle_editor_area_left_click(
+        &mut app,
+        minimap.x,
+        minimap.y,
+        KeyModifiers::NONE,
+    );
     assert_eq!(app.editor().unwrap().wrap_scroll_offset, 1);
 }
 

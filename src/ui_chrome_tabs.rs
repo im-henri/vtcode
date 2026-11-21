@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Alignment, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -12,12 +12,15 @@ use crate::ui_widgets::{DropdownItem, DropdownMenu, themed_dropdown_colors};
 
 #[path = "tab_path_labels.rs"]
 mod tab_path_labels;
-use tab_path_labels::TabNameDuplicates;
 pub(crate) use tab_path_labels::NameCache;
+use tab_path_labels::TabNameDuplicates;
 
 #[path = "tab_strip_scroll.rs"]
 mod strip_scroll;
-pub(crate) use strip_scroll::{StripScroll, position as strip_scroll_position, scroll_by as scroll_strip_by, reveal as reveal_strip_tab};
+pub(crate) use strip_scroll::{
+    StripScroll, position as strip_scroll_position, reveal as reveal_strip_tab,
+    scroll_by as scroll_strip_by,
+};
 
 #[path = "tab_reorder_animation.rs"]
 mod reorder;
@@ -80,11 +83,19 @@ impl TabBarHits {
 
     pub(crate) fn for_group(app: &App, area: Rect, group: usize) -> Self {
         let mut hits = Self::for_group_with_names(app, area, group, None);
-        app.animations.tab_reorder.borrow().apply_hits(app, area, group, &mut hits);
+        app.animations
+            .tab_reorder
+            .borrow()
+            .apply_hits(app, area, group, &mut hits);
         hits
     }
 
-    fn for_group_with_names(app: &App, area: Rect, group: usize, names: Option<&TabNameDuplicates>) -> Self {
+    fn for_group_with_names(
+        app: &App,
+        area: Rect,
+        group: usize,
+        names: Option<&TabNameDuplicates>,
+    ) -> Self {
         if let Some(scroll) = strip_scroll_position(app, group) {
             return strip_scroll::hits(app, area, group, scroll, names);
         }
@@ -192,8 +203,14 @@ impl TabBarHits {
     }
 
     pub(crate) fn tab_at(&self, column: u16) -> Option<(usize, Rect, Rect)> {
-        if [self.left, self.right, self.new_tab].into_iter().any(|rect| Self::contains(rect, column))
-            || self.groups.iter().any(|(_, rect)| Self::contains(*rect, column)) {
+        if [self.left, self.right, self.new_tab]
+            .into_iter()
+            .any(|rect| Self::contains(rect, column))
+            || self
+                .groups
+                .iter()
+                .any(|(_, rect)| Self::contains(*rect, column))
+        {
             return None;
         }
         self.tabs
@@ -209,8 +226,7 @@ impl TabBarHits {
         let mut target = None;
         for (position, &(index, rect, _)) in self.tabs.iter().enumerate() {
             let inset = self.tab_clips.get(position).copied().unwrap_or(0);
-            let center = i64::from(rect.x) - inset as i64
-                + (self.tab_widths[position] / 2) as i64;
+            let center = i64::from(rect.x) - inset as i64 + (self.tab_widths[position] / 2) as i64;
             if index < source && i64::from(column) < center {
                 return Some(index);
             }
@@ -228,9 +244,7 @@ impl TabBarHits {
 
 fn tab_label_width(app: &App, tab: &crate::app::Tab, display_name: &str) -> usize {
     // Terminal activity and completion markers keep the usual icon's width.
-    let icon = chat_tab_marker(app, tab.kind).map_or_else(
-        || tab_icon(tab), |(icon, _)| icon,
-    );
+    let icon = chat_tab_marker(app, tab.kind).map_or_else(|| tab_icon(tab), |(icon, _)| icon);
     tab_label_width_with_icon(tab, display_name, icon)
 }
 
@@ -239,11 +253,16 @@ fn tab_label_width_with_icon(tab: &crate::app::Tab, display_name: &str, icon: &s
         + if tab.has_unsaved_changes() { 2 } else { 0 }
         + icon.width()
         + usize::from(tab.kind == crate::app::TabKind::File && tab.editor.disk_unavailable)
-        + display_name.width() + tab_trailing_padding(tab).len()
+        + display_name.width()
+        + tab_trailing_padding(tab).len()
 }
 
 pub(crate) fn tab_trailing_padding(tab: &crate::app::Tab) -> &'static str {
-    if tab.pinned { " " } else { close_button::PADDING }
+    if tab.pinned {
+        " "
+    } else {
+        close_button::PADDING
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -256,7 +275,9 @@ struct ColoredTabText {
 impl ColoredTabText {
     fn paint(self, buffer: &mut ratatui::buffer::Buffer, tab: Rect, clip: usize) {
         let start = self.start.saturating_sub(clip);
-        let end = (self.start + self.width).saturating_sub(clip).min(usize::from(tab.width));
+        let end = (self.start + self.width)
+            .saturating_sub(clip)
+            .min(usize::from(tab.width));
         for column in start..end {
             let cell = &mut buffer[(tab.x + column as u16, tab.y)];
             cell.set_fg(self.color.foreground(cell.bg));
@@ -275,7 +296,10 @@ fn tab_label_name<'a>(
     duplicates: Option<&TabNameDuplicates>,
 ) -> std::borrow::Cow<'a, str> {
     let name = tab_display_name_with_duplicates(app, index, tab, duplicates);
-    let available = usize::from(area.width.saturating_sub(crate::ui_desks::controls(app, area, group).width));
+    let available = usize::from(
+        area.width
+            .saturating_sub(crate::ui_desks::controls(app, area, group).width),
+    );
     // Leave at least a third for neighbours on normal panes, and account for
     // both scroll arrows. Tiny panes still clip safely by terminal cells.
     let room = available.saturating_sub(4);
@@ -301,7 +325,11 @@ pub(crate) fn diff_tab_width(app: &App, tab: &crate::app::Tab) -> usize {
 
 #[cfg(test)]
 pub(crate) fn tab_render_width(app: &App, index: usize, tab: &crate::app::Tab) -> u16 {
-    crate::helpers::len_as_u16(tab_label_width(app, tab, &tab_display_name(app, index, tab)))
+    crate::helpers::len_as_u16(tab_label_width(
+        app,
+        tab,
+        &tab_display_name(app, index, tab),
+    ))
 }
 
 fn tab_display_name_with_duplicates<'a>(
@@ -312,21 +340,41 @@ fn tab_display_name_with_duplicates<'a>(
 ) -> std::borrow::Cow<'a, str> {
     let name = tab.editor.file_display_name();
     if let crate::app::TabKind::RemoteConnection(id) = tab.kind {
-        return std::borrow::Cow::Owned(if id == 0 { "SSH: Reconnect".into() } else {
-            app.remote_targets.attempt.as_ref().filter(|attempt| attempt.id == id)
-                .map_or_else(|| "SSH: Connection".into(), |attempt| format!("SSH: {}", attempt.target.name))
+        return std::borrow::Cow::Owned(if id == 0 {
+            "SSH: Reconnect".into()
+        } else {
+            app.remote_targets
+                .attempt
+                .as_ref()
+                .filter(|attempt| attempt.id == id)
+                .map_or_else(
+                    || "SSH: Connection".into(),
+                    |attempt| format!("SSH: {}", attempt.target.name),
+                )
         });
     }
     if tab.kind == crate::app::TabKind::ExtensionInfo {
         let id = crate::ui_extension_info::tab_extension_id(tab);
-        let name = app.extension_views().into_iter().find(|ext| Some(ext.id.as_str()) == id.as_deref())
-            .map_or_else(|| "Extension".to_string(), |ext| format!("Extension: {}", ext.name));
+        let name = app
+            .extension_views()
+            .into_iter()
+            .find(|ext| Some(ext.id.as_str()) == id.as_deref())
+            .map_or_else(
+                || "Extension".to_string(),
+                |ext| format!("Extension: {}", ext.name),
+            );
         return std::borrow::Cow::Owned(name);
     }
     if tab.kind == crate::app::TabKind::CommitDetails {
         return std::borrow::Cow::Borrowed("Commit details");
     }
-    if let Some(revision) = tab.editor.blame.revision.as_ref().filter(|_| tab.kind == crate::app::TabKind::GitRevision) {
+    if let Some(revision) = tab
+        .editor
+        .blame
+        .revision
+        .as_ref()
+        .filter(|_| tab.kind == crate::app::TabKind::GitRevision)
+    {
         return role_name_with_context(app, tab, revision.tab_title(), duplicates);
     }
     if let crate::app::TabKind::Chat(key) = tab.kind {
@@ -346,7 +394,10 @@ fn tab_display_name_with_duplicates<'a>(
         return std::borrow::Cow::Borrowed(terminal_name);
     }
     if tab_idx == app.active_tab
-        && app.tabs.get(tab_idx).is_some_and(|active| std::ptr::eq(active, tab))
+        && app
+            .tabs
+            .get(tab_idx)
+            .is_some_and(|active| std::ptr::eq(active, tab))
         && app.diff_mode != crate::app::DiffMode::Off
         && app.active_editor_matches_diff_target()
     {
@@ -364,12 +415,17 @@ fn tab_display_name_with_duplicates<'a>(
             .as_ref()
             .is_some_and(|p| app.pending_agent_change(p));
     let review_mark = if pending { " [AI]" } else { "" };
-    let context = duplicates.and_then(|index| index.context(tab))
+    let context = duplicates
+        .and_then(|index| index.context(tab))
         .unwrap_or_else(|| tab_path_labels::context(app, tab));
     if let Some(context) = context {
         return std::borrow::Cow::Owned(format!("{name} ({context}){review_mark}"));
     }
-    if pending { std::borrow::Cow::Owned(format!("{name}{review_mark}")) } else { name }
+    if pending {
+        std::borrow::Cow::Owned(format!("{name}{review_mark}"))
+    } else {
+        name
+    }
 }
 
 fn diff_tab_title(app: &App, tab: &crate::app::Tab, name: &str) -> String {
@@ -390,28 +446,65 @@ fn diff_tab_title(app: &App, tab: &crate::app::Tab, name: &str) -> String {
     format!("{name} ({label})")
 }
 
-fn role_name_with_context<'a>(app: &App, tab: &crate::app::Tab, name: String, duplicates: Option<&TabNameDuplicates>) -> std::borrow::Cow<'a, str> {
-    let context = duplicates.and_then(|index| index.context(tab))
+fn role_name_with_context<'a>(
+    app: &App,
+    tab: &crate::app::Tab,
+    name: String,
+    duplicates: Option<&TabNameDuplicates>,
+) -> std::borrow::Cow<'a, str> {
+    let context = duplicates
+        .and_then(|index| index.context(tab))
         .unwrap_or_else(|| tab_path_labels::context(app, tab));
-    std::borrow::Cow::Owned(if let Some(context) = context { format!("{name} ({context})") } else { name })
+    std::borrow::Cow::Owned(if let Some(context) = context {
+        format!("{name} ({context})")
+    } else {
+        name
+    })
 }
 
-pub(crate) fn chat_tab_marker(app: &App, kind: crate::app::TabKind) -> Option<(&'static str, ratatui::style::Color)> {
-    let crate::app::TabKind::Chat(key) = kind else { return None; };
+pub(crate) fn chat_tab_marker(
+    app: &App,
+    kind: crate::app::TabKind,
+) -> Option<(&'static str, ratatui::style::Color)> {
+    let crate::app::TabKind::Chat(key) = kind else {
+        return None;
+    };
     let view = app.chat.layout.editors.get(&key)?;
     let state = app.chat.agent_state(view.agent)?;
     let session = state.sessions.get(&view.session)?;
-    Some(if state.permissions.iter().any(|p| p.request.session_id == view.session) {
-        ("! ", app.colors.fg_warning)
-    } else if session.busy {
-        (app.chat.activity.tab_symbol(), app.colors.fg_accent_blue)
-    } else if state.unread_tabs.contains(&view.session) {
-        let error = matches!(session.entries.last(), Some(vtcode::acp::ChatEntry::Error(_)));
-        ("● ", if error { app.colors.fg_error } else { app.colors.fg_success })
-    } else { ("◇ ", app.colors.fg_dim) })
+    Some(
+        if state
+            .permissions
+            .iter()
+            .any(|p| p.request.session_id == view.session)
+        {
+            ("! ", app.colors.fg_warning)
+        } else if session.busy {
+            (app.chat.activity.tab_symbol(), app.colors.fg_accent_blue)
+        } else if state.unread_tabs.contains(&view.session) {
+            let error = matches!(
+                session.entries.last(),
+                Some(vtcode::acp::ChatEntry::Error(_))
+            );
+            (
+                "● ",
+                if error {
+                    app.colors.fg_error
+                } else {
+                    app.colors.fg_success
+                },
+            )
+        } else {
+            ("◇ ", app.colors.fg_dim)
+        },
+    )
 }
 
-pub(crate) fn terminal_input_marker(app: &App, index: usize, now: std::time::Instant) -> Option<&'static str> {
+pub(crate) fn terminal_input_marker(
+    app: &App,
+    index: usize,
+    now: std::time::Instant,
+) -> Option<&'static str> {
     let terminal = app.terminals.get(index)?;
     let progress = terminal.terminal_pty.as_ref()?.remote_input_progress();
     terminal.input_activity.symbol(progress, now)
@@ -419,13 +512,20 @@ pub(crate) fn terminal_input_marker(app: &App, index: usize, now: std::time::Ins
 
 pub(crate) fn show_terminal_input(app: &App, index: Option<usize>, now: std::time::Instant) {
     if let Some(terminal) = index.and_then(|index| app.terminals.get(index))
-        && terminal.terminal_pty.as_ref().is_some_and(|pty| pty.remote_input_progress().pending)
+        && terminal
+            .terminal_pty
+            .as_ref()
+            .is_some_and(|pty| pty.remote_input_progress().pending)
     {
         terminal.input_activity.show(now);
     }
 }
 
-fn tab_marker(app: &App, tab: &crate::app::Tab, now: std::time::Instant) -> Option<(&'static str, ratatui::style::Color)> {
+fn tab_marker(
+    app: &App,
+    tab: &crate::app::Tab,
+    now: std::time::Instant,
+) -> Option<(&'static str, ratatui::style::Color)> {
     if tab.kind != crate::app::TabKind::Terminal {
         return chat_tab_marker(app, tab.kind);
     }
@@ -436,18 +536,36 @@ fn tab_marker(app: &App, tab: &crate::app::Tab, now: std::time::Instant) -> Opti
     let notice = &app.terminals.get(index)?.completion;
     notice.visible(now).then_some((
         // Match the usual ">_ " icon width so close targets never move.
-        "●  ", if notice.failed() { app.colors.fg_error } else { app.colors.fg_success },
+        "●  ",
+        if notice.failed() {
+            app.colors.fg_error
+        } else {
+            app.colors.fg_success
+        },
     ))
 }
 
 pub(crate) fn terminal_completion_background(
-    app: &App, index: Option<usize>, background: ratatui::style::Color, now: std::time::Instant,
+    app: &App,
+    index: Option<usize>,
+    background: ratatui::style::Color,
+    now: std::time::Instant,
 ) -> ratatui::style::Color {
-    let Some(notice) = index.and_then(|index| app.terminals.get(index)).map(|terminal| &terminal.completion) else {
+    let Some(notice) = index
+        .and_then(|index| app.terminals.get(index))
+        .map(|terminal| &terminal.completion)
+    else {
         return background;
     };
-    if notice.pulse(now, app.terminal_has_focus && app.animation_settings.any_enabled()) {
-        let accent = if notice.failed() { app.colors.fg_error } else { app.colors.fg_success };
+    if notice.pulse(
+        now,
+        app.terminal_has_focus && app.animation_settings.any_enabled(),
+    ) {
+        let accent = if notice.failed() {
+            app.colors.fg_error
+        } else {
+            app.colors.fg_success
+        };
         crate::app_theme::lerp_color(background, accent, 0.22)
     } else {
         background
@@ -493,8 +611,17 @@ pub(crate) fn draw_tab_bar_for_group(
                     );
                 }
                 let active = reorder::paint(f, app, area, cache.active, now);
-                draw_tab_indicator(f, app, area, active, cache.track,
-                    cache.strip_scroll.map_or(cache.scroll, |scroll| scroll.columns), now);
+                draw_tab_indicator(
+                    f,
+                    app,
+                    area,
+                    active,
+                    cache.track,
+                    cache
+                        .strip_scroll
+                        .map_or(cache.scroll, |scroll| scroll.columns),
+                    now,
+                );
                 return;
             }
         }
@@ -503,11 +630,18 @@ pub(crate) fn draw_tab_bar_for_group(
         if group == app.active_group && app.groups.get(group).is_none_or(|g| g.tabs.is_empty()) {
             (&app.tabs, app.active_tab, app.tab_scroll_offset)
         } else {
-            (&app.groups[group].tabs, app.groups[group].active_tab, app.groups[group].tab_scroll_offset)
+            (
+                &app.groups[group].tabs,
+                app.groups[group].active_tab,
+                app.groups[group].tab_scroll_offset,
+            )
         };
     let strip_scroll = strip_scroll_position(app, group);
-    let duplicates = if strip_scroll.is_some() { TabNameDuplicates::for_scroll(app, tabs, active) }
-        else { TabNameDuplicates::for_tabs(app, tabs, active, scroll, area.width) };
+    let duplicates = if strip_scroll.is_some() {
+        TabNameDuplicates::for_scroll(app, tabs, active)
+    } else {
+        TabNameDuplicates::for_tabs(app, tabs, active, scroll, area.width)
+    };
     let hits = TabBarHits::for_group_with_names(app, area, group, duplicates.as_ref());
     let bg = app.colors.bg_tabbar;
     f.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
@@ -523,14 +657,16 @@ pub(crate) fn draw_tab_bar_for_group(
         }
     }
     for (position, (id, rect)) in hits.groups.iter().enumerate() {
-        let (clip, width) = hits.group_clips.get(position).copied().unwrap_or((0, usize::from(rect.width)));
+        let (clip, width) = hits
+            .group_clips
+            .get(position)
+            .copied()
+            .unwrap_or((0, usize::from(rect.width)));
         let named = &app.desks.groups[id];
         let (count, dirty) = group_stats.get(id).copied().unwrap_or_default();
         let suffix = format!(" {}{} ", count, if dirty { "●" } else { "" });
-        let name = crate::ui_desks::clipped_name(
-            &named.name,
-            width.saturating_sub(suffix.width() + 2),
-        );
+        let name =
+            crate::ui_desks::clipped_name(&named.name, width.saturating_sub(suffix.width() + 2));
         let color = crate::ui_desks::group_color(app, named.color);
         let label = format!(
             "{} {}{}",
@@ -539,13 +675,15 @@ pub(crate) fn draw_tab_bar_for_group(
             suffix
         );
         f.render_widget(
-            Paragraph::new(label).scroll((0, crate::helpers::len_as_u16(clip))).style(
-                Style::default()
-                    .fg(color)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-                    .underline_color(color),
-            ),
+            Paragraph::new(label)
+                .scroll((0, crate::helpers::len_as_u16(clip)))
+                .style(
+                    Style::default()
+                        .fg(color)
+                        .bg(bg)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                        .underline_color(color),
+                ),
             *rect,
         );
     }
@@ -554,9 +692,12 @@ pub(crate) fn draw_tab_bar_for_group(
     let gradient = &app.colors.gradients.bg_tabbar;
     let has_gradient = strip_scroll.is_some() && gradient.start != gradient.end;
     let mut colored_text = Vec::new();
-    let mut reorder_labels = (group == app.active_group && app.terminal_has_focus
-        && app.animation_settings.enabled(crate::animation_config::AnimationEffect::TabSlide))
-        .then(Vec::new);
+    let mut reorder_labels = (group == app.active_group
+        && app.terminal_has_focus
+        && app
+            .animation_settings
+            .enabled(crate::animation_config::AnimationEffect::TabSlide))
+    .then(Vec::new);
     for (position, &(i, rect, close)) in hits.tabs.iter().enumerate() {
         let clip = hits.tab_clips.get(position).copied().unwrap_or(0);
         let tab = &tabs[i];
@@ -617,10 +758,7 @@ pub(crate) fn draw_tab_bar_for_group(
                 .underline_color(border);
         }
         let marker = tab_marker(app, tab, now);
-        let icon = marker.map_or_else(
-            || tab_icon(tab),
-            |(icon, _)| icon,
-        );
+        let icon = marker.map_or_else(|| tab_icon(tab), |(icon, _)| icon);
         let mut spans = vec![Span::styled(if tab.pinned { " 📌" } else { " " }, style)];
         let icon_start = if tab.pinned { " 📌".width() } else { 1 }
             + if tab.has_unsaved_changes() { 2 } else { 0 };
@@ -649,11 +787,19 @@ pub(crate) fn draw_tab_bar_for_group(
         } else {
             style
         };
-        if matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision) {
+        if matches!(
+            tab.kind,
+            crate::app::TabKind::File | crate::app::TabKind::GitRevision
+        ) {
             let first = icon_start.max(clip);
             let end = (icon_start + icon.width()).min(clip + usize::from(rect.width));
             if end > first {
-                file_icon_areas.push(Rect::new(rect.x + (first - clip) as u16, rect.y, (end - first) as u16, 1));
+                file_icon_areas.push(Rect::new(
+                    rect.x + (first - clip) as u16,
+                    rect.y,
+                    (end - first) as u16,
+                    1,
+                ));
             }
         }
         spans.push(Span::styled(icon, icon_style));
@@ -675,16 +821,35 @@ pub(crate) fn draw_tab_bar_for_group(
         }
         if let Some(labels) = &mut reorder_labels {
             let width = hits.tab_widths[position];
-            let line = Line::from(spans.iter().cloned().map(|span| Span::styled(span.content.into_owned(), span.style)).collect::<Vec<_>>());
+            let line = Line::from(
+                spans
+                    .iter()
+                    .cloned()
+                    .map(|span| Span::styled(span.content.into_owned(), span.style))
+                    .collect::<Vec<_>>(),
+            );
             labels.push(reorder::Label {
-                id: tab.editor.navigation_id, index: i, x: i32::from(rect.x) - clip as i32,
-                width, close: CloseButton::for_tab(tab, width), line, style,
-                icon: matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision)
-                    .then_some(icon_start..icon_start + icon.width()),
+                id: tab.editor.navigation_id,
+                index: i,
+                x: i32::from(rect.x) - clip as i32,
+                width,
+                close: CloseButton::for_tab(tab, width),
+                line,
+                style,
+                icon: matches!(
+                    tab.kind,
+                    crate::app::TabKind::File | crate::app::TabKind::GitRevision
+                )
+                .then_some(icon_start..icon_start + icon.width()),
                 text_color,
             });
         }
-        f.render_widget(Paragraph::new(Line::from(spans)).scroll((0, crate::helpers::len_as_u16(clip))).style(style), rect);
+        f.render_widget(
+            Paragraph::new(Line::from(spans))
+                .scroll((0, crate::helpers::len_as_u16(clip)))
+                .style(style),
+            rect,
+        );
         close_button::paint(f, app, close);
         if is_active {
             active_rect = Some(rect);
@@ -692,27 +857,46 @@ pub(crate) fn draw_tab_bar_for_group(
     }
     for (rect, label) in [(hits.left, "◂ "), (hits.right, " ▸"), (hits.new_tab, " + ")] {
         f.render_widget(
-            Paragraph::new(label).scroll((0, if rect == hits.new_tab { hits.new_tab_clip as u16 } else { 0 })).style(app.colors.ui.toolbar_style(
-                app.colors.ui.fg_tab_active,
-                bg,
-                rect.contains((app.mouse_col, app.mouse_row).into()),
-                false,
-                false,
-            )),
+            Paragraph::new(label)
+                .scroll((
+                    0,
+                    if rect == hits.new_tab {
+                        hits.new_tab_clip as u16
+                    } else {
+                        0
+                    },
+                ))
+                .style(app.colors.ui.toolbar_style(
+                    app.colors.ui.fg_tab_active,
+                    bg,
+                    rect.contains((app.mouse_col, app.mouse_row).into()),
+                    false,
+                    false,
+                )),
             rect,
         );
     }
     if has_gradient && area.width > 0 {
-        let computed = crate::app_theme::GradientPrecomputed::new(area.width, 1, gradient.angle_deg);
+        let computed =
+            crate::app_theme::GradientPrecomputed::new(area.width, 1, gradient.angle_deg);
         let buffer = f.buffer_mut();
         for x in area.x..area.right() {
             if let Some(cell) = buffer.cell_mut((x, area.y))
                 && (cell.bg == bg || cell.bg == app.colors.bg_tab_inactive)
             {
-                cell.set_bg(crate::app_theme::lerp_color(gradient.start, gradient.end, computed.t_at(x - area.x, 0)));
+                cell.set_bg(crate::app_theme::lerp_color(
+                    gradient.start,
+                    gradient.end,
+                    computed.t_at(x - area.x, 0),
+                ));
             }
         }
-        crate::ui_colors::ensure_control_row_contrast_except(buffer, area, &app.colors.ui, &file_icon_areas);
+        crate::ui_colors::ensure_control_row_contrast_except(
+            buffer,
+            area,
+            &app.colors.ui,
+            &file_icon_areas,
+        );
         for (rect, clip, text) in colored_text {
             text.paint(buffer, rect, clip);
         }
@@ -749,14 +933,30 @@ pub(crate) fn draw_tab_bar_for_group(
             *app.tab_animation_cache.borrow_mut() = None;
         }
         if let Some(labels) = reorder_labels {
-            let left = area.x.saturating_add(prefix).saturating_add(hits.left.width);
-            let right = if hits.right.is_empty() { area.right() } else { hits.right.x };
+            let left = area
+                .x
+                .saturating_add(prefix)
+                .saturating_add(hits.left.width);
+            let right = if hits.right.is_empty() {
+                area.right()
+            } else {
+                hits.right.x
+            };
             let mut fixed: Vec<_> = hits.groups.iter().map(|(_, rect)| *rect).collect();
             fixed.extend([hits.left, hits.right, hits.new_tab]);
-            reorder::capture(f, app, reorder::Capture {
-                area, bar: area, viewport: Rect::new(left, area.y, right.saturating_sub(left), 1),
-                labels, fixed, gradient: has_gradient,
-            }, now);
+            reorder::capture(
+                f,
+                app,
+                reorder::Capture {
+                    area,
+                    bar: area,
+                    viewport: Rect::new(left, area.y, right.saturating_sub(left), 1),
+                    labels,
+                    fixed,
+                    gradient: has_gradient,
+                },
+                now,
+            );
         }
         let active_rect = reorder::paint(f, app, area, active_rect, now);
         draw_tab_indicator(
@@ -857,24 +1057,37 @@ fn draw_tab_bar_labels(
     let available_width = area.width as usize;
     let mut used_width = 0;
     let scroll = app.tab_scroll_offset;
-    let tab_track_start = if scroll > 0 { TAB_SCROLL_INDICATOR_WIDTH } else { 0 };
+    let tab_track_start = if scroll > 0 {
+        TAB_SCROLL_INDICATOR_WIDTH
+    } else {
+        0
+    };
     let mut tab_track_end = tab_track_start;
 
     // Show scroll indicator if scrolled
     if scroll > 0 {
-        let left_style = app.colors.ui.toolbar_style(fg_text, tab_bar_bg, app.hovered_tab_scroll_left, false, false);
+        let left_style = app.colors.ui.toolbar_style(
+            fg_text,
+            tab_bar_bg,
+            app.hovered_tab_scroll_left,
+            false,
+            false,
+        );
         spans.push(Span::styled("◂ ", left_style));
         used_width += TAB_SCROLL_INDICATOR_WIDTH;
     }
 
     for (visible_count, (i, tab)) in app.tabs.iter().enumerate().skip(scroll).enumerate() {
-        let is_file_tab = matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision);
-        let deleted_prefix =
-            if tab.kind == crate::app::TabKind::File && tab.editor.disk_unavailable {
-                "~"
-            } else {
-                ""
-            };
+        let is_file_tab = matches!(
+            tab.kind,
+            crate::app::TabKind::File | crate::app::TabKind::GitRevision
+        );
+        let deleted_prefix = if tab.kind == crate::app::TabKind::File && tab.editor.disk_unavailable
+        {
+            "~"
+        } else {
+            ""
+        };
         let chat_marker = tab_marker(app, tab, now);
         let icon = chat_marker.map_or_else(|| tab_icon(tab), |(icon, _)| icon);
         let file_icon_color = chat_marker.map(|(_, color)| color);
@@ -887,25 +1100,34 @@ fn draw_tab_bar_labels(
         let close_button = CloseButton::for_tab(tab, tab_width);
         if used_width + tab_width > available_width && visible_count > 0 {
             // Show right scroll indicator
-            let right_style = app.colors.ui.toolbar_style(fg_text, tab_bar_bg, app.hovered_tab_scroll_right, false, false);
+            let right_style = app.colors.ui.toolbar_style(
+                fg_text,
+                tab_bar_bg,
+                app.hovered_tab_scroll_right,
+                false,
+                false,
+            );
             spans.push(Span::styled(" ▸", right_style));
             used_width += TAB_SCROLL_INDICATOR_WIDTH;
             break;
         }
 
         let rect = Rect::new(
-            area.x.saturating_add(crate::helpers::len_as_u16(used_width)),
+            area.x
+                .saturating_add(crate::helpers::len_as_u16(used_width)),
             area.y,
             crate::helpers::len_as_u16(tab_width),
             1,
-        ).intersection(area);
+        )
+        .intersection(area);
         if i == app.active_tab {
             active_tab_area = Some(rect);
         }
 
         if used_width + 2 < available_width
             && matches!(tab.kind, crate::app::TabKind::Chat(_))
-            && chat_marker.is_some_and(|(icon, _)| icon.trim_end() == app.chat.activity.symbol()) {
+            && chat_marker.is_some_and(|(icon, _)| icon.trim_end() == app.chat.activity.symbol())
+        {
             app.chat.activity.show();
         }
         if tab.kind == crate::app::TabKind::Terminal
@@ -930,35 +1152,62 @@ fn draw_tab_bar_labels(
         let bg = terminal_completion_background(app, tab.terminal_idx, bg, now);
 
         let fg = app.colors.ui.readable_foreground(fg, bg, 4.5);
-        let mut text_style = if is_file_tab && tab.preview && !tab.pinned && !tab.has_unsaved_changes() {
-            Style::default()
-                .fg(fg)
-                .bg(bg)
-                .add_modifier(Modifier::ITALIC)
+        let mut text_style =
+            if is_file_tab && tab.preview && !tab.pinned && !tab.has_unsaved_changes() {
+                Style::default()
+                    .fg(fg)
+                    .bg(bg)
+                    .add_modifier(Modifier::ITALIC)
+            } else {
+                Style::default().fg(fg).bg(bg)
+            };
+        let border = if i == app.active_tab && sliding_indicator {
+            None
+        } else if i == app.active_tab {
+            app.colors.ui.border_tab_active
+        } else if app.hovered_tab == Some(i) {
+            app.colors.ui.border_tab_hover
         } else {
-            Style::default().fg(fg).bg(bg)
+            None
         };
-        let border = if i == app.active_tab && sliding_indicator { None }
-            else if i == app.active_tab { app.colors.ui.border_tab_active }
-            else if app.hovered_tab == Some(i) { app.colors.ui.border_tab_hover } else { None };
         if let Some(border) = border {
-            text_style = text_style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+            text_style = text_style
+                .add_modifier(Modifier::UNDERLINED)
+                .underline_color(border);
         }
         // Split tab into parts for per-element styling
         let span_start = spans.len();
         spans.push(Span::styled(prefix, text_style));
         if tab.has_unsaved_changes() {
-            let mod_color = app.colors.ui.readable_foreground(app.colors.fg_modified_indicator, bg, 3.0);
+            let mod_color =
+                app.colors
+                    .ui
+                    .readable_foreground(app.colors.fg_modified_indicator, bg, 3.0);
             spans.push(Span::styled("● ", Style::default().fg(mod_color).bg(bg)));
         }
-        let file_icon_color = if is_file_tab { Some(crate::file_icons::for_editor(&tab.editor).1) } else { file_icon_color };
+        let file_icon_color = if is_file_tab {
+            Some(crate::file_icons::for_editor(&tab.editor).1)
+        } else {
+            file_icon_color
+        };
         if is_file_tab && has_gradient && !icon.is_empty() {
             let offset = used_width + prefix.width() + modified_width;
-            file_icon_areas.push(Rect::new(area.x.saturating_add(crate::helpers::len_as_u16(offset)),
-                area.y, crate::helpers::len_as_u16(icon.width()), 1).intersection(area));
+            file_icon_areas.push(
+                Rect::new(
+                    area.x.saturating_add(crate::helpers::len_as_u16(offset)),
+                    area.y,
+                    crate::helpers::len_as_u16(icon.width()),
+                    1,
+                )
+                .intersection(area),
+            );
         }
         let icon_style = file_icon_color.map_or(text_style, |color| {
-            text_style.fg(if is_file_tab { color } else { app.colors.ui.readable_foreground(color, bg, 3.0) })
+            text_style.fg(if is_file_tab {
+                color
+            } else {
+                app.colors.ui.readable_foreground(color, bg, 3.0)
+            })
         });
         spans.push(Span::styled(icon, icon_style));
         if !deleted_prefix.is_empty() {
@@ -969,13 +1218,17 @@ fn draw_tab_bar_labels(
             start: prefix.width() + modified_width + icon.width() + deleted_prefix.len(),
             width: display_name.width(),
         });
-        let name_style = text_color.map_or(text_style, |text| text_style.fg(text.color.foreground(bg)));
+        let name_style =
+            text_color.map_or(text_style, |text| text_style.fg(text.color.foreground(bg)));
         spans.push(Span::styled(display_name, name_style));
         if has_gradient && let Some(text) = text_color {
             colored_text.push((rect, text));
         }
-        let trailing_style = app.colors.ui.border_tab.map_or(text_style, |border|
-            text_style.add_modifier(Modifier::UNDERLINED).underline_color(border));
+        let trailing_style = app.colors.ui.border_tab.map_or(text_style, |border| {
+            text_style
+                .add_modifier(Modifier::UNDERLINED)
+                .underline_color(border)
+        });
         spans.push(Span::styled(tab_trailing_padding(tab), trailing_style));
         if let Some(button) = close_button {
             close_buttons.push(button.rect(rect, 0));
@@ -983,10 +1236,18 @@ fn draw_tab_bar_labels(
         if let Some(labels) = &mut reorder_labels {
             let start = prefix.width() + modified_width;
             labels.push(reorder::Label {
-                id: tab.editor.navigation_id, index: i, x: i32::from(area.x) + used_width as i32,
-                width: tab_width, close: close_button, style: text_style,
-                line: Line::from(spans[span_start..].iter().map(|span|
-                    Span::styled(span.content.to_string(), span.style)).collect::<Vec<_>>()),
+                id: tab.editor.navigation_id,
+                index: i,
+                x: i32::from(area.x) + used_width as i32,
+                width: tab_width,
+                close: close_button,
+                style: text_style,
+                line: Line::from(
+                    spans[span_start..]
+                        .iter()
+                        .map(|span| Span::styled(span.content.to_string(), span.style))
+                        .collect::<Vec<_>>(),
+                ),
                 icon: is_file_tab.then_some(start..start + icon.width()),
                 text_color,
             });
@@ -997,7 +1258,13 @@ fn draw_tab_bar_labels(
 
     // "+" new tab button
     if used_width + 3 <= available_width {
-        let style = app.colors.ui.toolbar_style(fg_text, tab_bar_bg, app.hovered_new_tab_button, false, false);
+        let style = app.colors.ui.toolbar_style(
+            fg_text,
+            tab_bar_bg,
+            app.hovered_new_tab_button,
+            false,
+            false,
+        );
         spans.push(Span::styled(" + ", style));
         used_width += 3;
     }
@@ -1030,7 +1297,12 @@ fn draw_tab_bar_labels(
                 }
             }
         }
-        crate::ui_colors::ensure_control_row_contrast_except(buf, area, &app.colors.ui, &file_icon_areas);
+        crate::ui_colors::ensure_control_row_contrast_except(
+            buf,
+            area,
+            &app.colors.ui,
+            &file_icon_areas,
+        );
         for (rect, text) in colored_text {
             text.paint(buf, rect, 0);
         }
@@ -1064,11 +1336,24 @@ fn draw_tab_bar_labels(
     }
     if let Some(labels) = reorder_labels {
         let left = area.x.saturating_add(tab_track_start as u16);
-        reorder::capture(f, app, reorder::Capture {
-            area, bar, viewport: Rect::new(left, area.y, area.right().saturating_sub(left), 1),
-            labels, fixed: vec![Rect::new(area.x + tab_track_end as u16, area.y,
-                area.width.saturating_sub(tab_track_end as u16), 1)], gradient: has_gradient,
-        }, now);
+        reorder::capture(
+            f,
+            app,
+            reorder::Capture {
+                area,
+                bar,
+                viewport: Rect::new(left, area.y, area.right().saturating_sub(left), 1),
+                labels,
+                fixed: vec![Rect::new(
+                    area.x + tab_track_end as u16,
+                    area.y,
+                    area.width.saturating_sub(tab_track_end as u16),
+                    1,
+                )],
+                gradient: has_gradient,
+            },
+            now,
+        );
     }
     let active_tab_area = reorder::paint(f, app, bar, active_tab_area, now);
     draw_tab_indicator(
@@ -1116,19 +1401,23 @@ fn draw_tab_indicator(
             .ui
             .border_tab_active
             .unwrap_or(app.colors.fg_accent);
-        let track_left = area.x.saturating_add(crate::helpers::len_as_u16(tab_track_start)).min(area.right());
-        let track_right = area.x.saturating_add(crate::helpers::len_as_u16(tab_track_end)).min(area.right());
+        let track_left = area
+            .x
+            .saturating_add(crate::helpers::len_as_u16(tab_track_start))
+            .min(area.right());
+        let track_right = area
+            .x
+            .saturating_add(crate::helpers::len_as_u16(tab_track_end))
+            .min(area.right());
         for x in track_left..track_right {
             let coverage = indicator_coverage(x, indicator.left, indicator.right);
-            if coverage > 0.0 && let Some(cell) = f.buffer_mut().cell_mut((x, area.y)) {
+            if coverage > 0.0
+                && let Some(cell) = f.buffer_mut().cell_mut((x, area.y))
+            {
                 let amount = coverage * (0.75 + strength * 0.25);
                 cell.set_style(
                     Style::default()
-                        .underline_color(indicator_blend(
-                            cell.bg,
-                            indicator_color,
-                            amount,
-                        ))
+                        .underline_color(indicator_blend(cell.bg, indicator_color, amount))
                         .add_modifier(Modifier::UNDERLINED),
                 );
             }
@@ -1174,8 +1463,8 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
 
     let has_diff = app.should_render_diff_for_active_editor();
     let has_cached_diff_changes = has_diff && !app.diff_render_cache.hunks.is_empty();
-    let has_changes = has_cached_diff_changes
-        || app.editor().is_some_and(|ed| ed.has_git_line_changes());
+    let has_changes =
+        has_cached_diff_changes || app.editor().is_some_and(|ed| ed.has_git_line_changes());
     let is_markdown = app
         .tabs
         .get(app.active_tab)
@@ -1208,12 +1497,7 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
     }
     if has_diff && path_area.width >= diff_layout_w {
         path_area.width = path_area.width.saturating_sub(diff_layout_w);
-        app.diff_layout_toggle_area = Some(Rect::new(
-            path_area.right(),
-            area.y,
-            diff_layout_w,
-            1,
-        ));
+        app.diff_layout_toggle_area = Some(Rect::new(path_area.right(), area.y, diff_layout_w, 1));
     }
     if has_changes && path_area.width > diff_nav_w {
         path_area.width = path_area.width.saturating_sub(diff_nav_w);
@@ -1225,10 +1509,11 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
     let Some(editor) = app.editor() else {
         return;
     };
-    let preview_open_for_active = app.breadcrumb_markdown_preview_area.is_some() && editor
-        .file_path
-        .as_deref()
-        .is_some_and(|p| app.has_markdown_preview_for_path(p));
+    let preview_open_for_active = app.breadcrumb_markdown_preview_area.is_some()
+        && editor
+            .file_path
+            .as_deref()
+            .is_some_and(|p| app.has_markdown_preview_for_path(p));
     let path: String = match editor.file_path.as_ref() {
         Some(p) => {
             let rel = p.strip_prefix(&app.explorer.root).unwrap_or(p);
@@ -1256,7 +1541,7 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             0
         }; // " › " separators
-           // Build display parts with their original dir_parts index for navigation
+    // Build display parts with their original dir_parts index for navigation
     let display_parts: Vec<(&str, usize)> = if full_width > max_width && dir_parts.len() > 2 {
         // Keep first and last segments, replace middle with "…"
         let mut result: Vec<(&str, usize)> = vec![(dir_parts[0], 0)];
@@ -1319,7 +1604,12 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             app.colors.ui.fg_breadcrumb
         };
-        let mut style = Style::default().fg(app.colors.ui.readable_foreground(fg, app.colors.ui.bg_breadcrumb, 4.5)).bg(app.colors.ui.bg_breadcrumb);
+        let mut style = Style::default()
+            .fg(app
+                .colors
+                .ui
+                .readable_foreground(fg, app.colors.ui.bg_breadcrumb, 4.5))
+            .bg(app.colors.ui.bg_breadcrumb);
         if is_hovered {
             style = style.add_modifier(Modifier::UNDERLINED);
         }
@@ -1345,7 +1635,8 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
             x_pos += 3;
         }
         let (icon, icon_color) = app.editor().map_or_else(
-            || crate::file_icons::for_name(file_name), crate::file_icons::for_editor,
+            || crate::file_icons::for_name(file_name),
+            crate::file_icons::for_editor,
         );
         let mut icon_str = String::with_capacity(icon.len() + 1);
         icon_str.push_str(icon);
@@ -1355,12 +1646,18 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
         if x_pos + icon_w + name_w <= path_area.x + path_area.width {
             spans.push(Span::styled(
                 icon_str,
-                Style::default().fg(icon_color).bg(app.colors.ui.bg_breadcrumb),
+                Style::default()
+                    .fg(icon_color)
+                    .bg(app.colors.ui.bg_breadcrumb),
             ));
             spans.push(Span::styled(
                 file_name,
                 Style::default()
-                    .fg(app.colors.ui.readable_foreground(app.colors.ui.fg_breadcrumb_focus, app.colors.ui.bg_breadcrumb, 4.5))
+                    .fg(app.colors.ui.readable_foreground(
+                        app.colors.ui.fg_breadcrumb_focus,
+                        app.colors.ui.bg_breadcrumb,
+                        4.5,
+                    ))
                     .bg(app.colors.ui.bg_breadcrumb),
             ));
         }
@@ -1388,8 +1685,17 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
             crate::app::DiffMode::Inline => "Side by Side",
             crate::app::DiffMode::Off => "",
         };
-        let style = app.colors.ui.toolbar_style(app.colors.ui.fg_breadcrumb,
-            app.colors.ui.bg_breadcrumb, hovered, false, false).add_modifier(Modifier::BOLD);
+        let style = app
+            .colors
+            .ui
+            .toolbar_style(
+                app.colors.ui.fg_breadcrumb,
+                app.colors.ui.bg_breadcrumb,
+                hovered,
+                false,
+                false,
+            )
+            .add_modifier(Modifier::BOLD);
         f.render_widget(
             Paragraph::new(label)
                 .alignment(Alignment::Center)
@@ -1403,8 +1709,13 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
         let hovered = app.mouse_row == prev_area.y
             && app.mouse_col >= prev_area.x
             && app.mouse_col < prev_area.x + prev_area.width;
-        let style = app.colors.ui.toolbar_style(app.colors.ui.fg_breadcrumb,
-            app.colors.ui.bg_breadcrumb, hovered, false, false);
+        let style = app.colors.ui.toolbar_style(
+            app.colors.ui.fg_breadcrumb,
+            app.colors.ui.bg_breadcrumb,
+            hovered,
+            false,
+            false,
+        );
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(" ▲ ", style))),
             prev_area,
@@ -1414,8 +1725,13 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
         let hovered = app.mouse_row == next_area.y
             && app.mouse_col >= next_area.x
             && app.mouse_col < next_area.x + next_area.width;
-        let style = app.colors.ui.toolbar_style(app.colors.ui.fg_breadcrumb,
-            app.colors.ui.bg_breadcrumb, hovered, false, false);
+        let style = app.colors.ui.toolbar_style(
+            app.colors.ui.fg_breadcrumb,
+            app.colors.ui.bg_breadcrumb,
+            hovered,
+            false,
+            false,
+        );
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(" ▼ ", style))),
             next_area,
@@ -1426,10 +1742,20 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
         let hovered = app.mouse_row == button_area.y
             && app.mouse_col >= button_area.x
             && app.mouse_col < button_area.x + button_area.width;
-        let mut style = app.colors.ui.toolbar_style(app.colors.ui.fg_breadcrumb,
-            app.colors.ui.bg_breadcrumb, hovered, false, preview_open_for_active)
+        let mut style = app
+            .colors
+            .ui
+            .toolbar_style(
+                app.colors.ui.fg_breadcrumb,
+                app.colors.ui.bg_breadcrumb,
+                hovered,
+                false,
+                preview_open_for_active,
+            )
             .add_modifier(Modifier::BOLD);
-        if preview_open_for_active { style = style.add_modifier(Modifier::UNDERLINED); }
+        if preview_open_for_active {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(preview_label, style)))
                 .style(Style::default().bg(app.colors.ui.bg_breadcrumb)),
@@ -1456,9 +1782,11 @@ pub(crate) fn draw_breadcrumb(f: &mut Frame, app: &mut App, area: Rect) {
                 .map(|(path, is_dir)| {
                     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
                     if *is_dir {
-                        DropdownItem::new(name).icon("📁 ", app.colors.ui.folder_icon_color(app.colors.bg_menu))
+                        DropdownItem::new(name)
+                            .icon("📁 ", app.colors.ui.folder_icon_color(app.colors.bg_menu))
                     } else {
-                        DropdownItem::new(name).icon("  ", app.colors.ui.icon_color(app.colors.bg_menu))
+                        DropdownItem::new(name)
+                            .icon("  ", app.colors.ui.icon_color(app.colors.bg_menu))
                     }
                 })
                 .collect()
@@ -1491,8 +1819,8 @@ mod tests {
     use super::*;
     use crate::app::{DiffMode, Tab};
     use crate::editor::Editor;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn active_editor_is_markdown_with_md_extension() {
@@ -1555,16 +1883,25 @@ mod tests {
                 (Some("Python"), false),
                 (None, name.ends_with(".md")),
             ] {
-                let command = language.map(crate::app_menu::language_command_id)
+                let command = language
+                    .map(crate::app_menu::language_command_id)
                     .unwrap_or_else(|| "lang_auto".into());
                 app.execute_editor_command(&command);
-                terminal.draw(|frame| draw_breadcrumb(frame, &mut app, frame.area())).unwrap();
-                assert_eq!(app.breadcrumb_markdown_preview_area.is_some(), expected,
-                    "{name}: {language:?}");
+                terminal
+                    .draw(|frame| draw_breadcrumb(frame, &mut app, frame.area()))
+                    .unwrap();
+                assert_eq!(
+                    app.breadcrumb_markdown_preview_area.is_some(),
+                    expected,
+                    "{name}: {language:?}"
+                );
                 app.toggle_markdown_preview_tab();
                 assert_eq!(app.markdown_preview, expected, "{name}: {language:?}");
                 if expected {
-                    assert_eq!(app.tabs[app.active_tab].kind, crate::app::TabKind::MarkdownPreview);
+                    assert_eq!(
+                        app.tabs[app.active_tab].kind,
+                        crate::app::TabKind::MarkdownPreview
+                    );
                     app.toggle_markdown_preview_tab();
                 }
                 assert_eq!(app.tabs.len(), 1);
@@ -1580,13 +1917,23 @@ mod tests {
             editor.file_path = Some(name.into());
             app.tabs.push(Tab::new_file(editor));
         }
-        app.colors.ui.fg_tab_active = ratatui::style::Color::Rgb(242,244,246);
-        app.colors.ui.fg_tab_inactive = ratatui::style::Color::Rgb(210,220,230);
-        let mut terminal = Terminal::new(TestBackend::new(80,1)).unwrap();
-        terminal.draw(|frame| draw_tab_bar(frame, &app, Rect::new(0,0,80,1))).unwrap();
+        app.colors.ui.fg_tab_active = ratatui::style::Color::Rgb(242, 244, 246);
+        app.colors.ui.fg_tab_inactive = ratatui::style::Color::Rgb(210, 220, 230);
+        let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
+        terminal
+            .draw(|frame| draw_tab_bar(frame, &app, Rect::new(0, 0, 80, 1)))
+            .unwrap();
         let cells = &terminal.backend().buffer().content;
-        assert!(cells.iter().any(|c| c.symbol() == "a" && c.fg == app.colors.ui.fg_tab_active));
-        assert!(cells.iter().any(|c| c.symbol() == "b" && c.fg == app.colors.ui.fg_tab_inactive));
+        assert!(
+            cells
+                .iter()
+                .any(|c| c.symbol() == "a" && c.fg == app.colors.ui.fg_tab_active)
+        );
+        assert!(
+            cells
+                .iter()
+                .any(|c| c.symbol() == "b" && c.fg == app.colors.ui.fg_tab_inactive)
+        );
     }
 
     #[test]
@@ -1605,7 +1952,9 @@ mod tests {
         app.colors.gradients.bg_tabbar.end = Color::Rgb(250, 250, 250);
         let render = |app: &App| {
             let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
-            terminal.draw(|frame| draw_tab_bar(frame, app, frame.area())).unwrap();
+            terminal
+                .draw(|frame| draw_tab_bar(frame, app, frame.area()))
+                .unwrap();
             terminal.backend().buffer().clone()
         };
         let color = TabTextColor::Purple;
@@ -1618,7 +1967,12 @@ mod tests {
             let before = render(&app);
             app.tabs[1].text_color = Some(color);
             let after = render(&app);
-            let start = before.content.iter().position(|cell| cell.symbol() == "~").unwrap() + 1;
+            let start = before
+                .content
+                .iter()
+                .position(|cell| cell.symbol() == "~")
+                .unwrap()
+                + 1;
             let end = start + "target.rs".len();
             assert_ne!(after.content[start].fg, before.content[start].fg);
             for (index, (old, new)) in before.content.iter().zip(&after.content).enumerate() {
@@ -1662,10 +2016,11 @@ mod tests {
             .unwrap();
         let first = underlined(terminal.backend().buffer());
         assert!(!first.is_empty());
-        assert!(app
-            .animations
-            .next_frame_wait(&app.animation_settings, start)
-            .is_none());
+        assert!(
+            app.animations
+                .next_frame_wait(&app.animation_settings, start)
+                .is_none()
+        );
 
         app.active_tab = 1;
         let switched = start + Duration::from_millis(1);
@@ -1673,10 +2028,11 @@ mod tests {
             .draw(|frame| draw_tab_bar_at(frame, &app, area, switched))
             .unwrap();
         assert_eq!(underlined(terminal.backend().buffer()), first);
-        assert!(app
-            .animations
-            .next_frame_wait(&app.animation_settings, switched)
-            .is_some());
+        assert!(
+            app.animations
+                .next_frame_wait(&app.animation_settings, switched)
+                .is_some()
+        );
 
         let midway = start + Duration::from_millis(90);
         terminal
@@ -1699,10 +2055,11 @@ mod tests {
             .unwrap();
         let animated = terminal.backend().buffer().clone();
         assert_eq!(underlined(&animated), first);
-        assert!(app
-            .animations
-            .next_frame_wait(&app.animation_settings, settled)
-            .is_none());
+        assert!(
+            app.animations
+                .next_frame_wait(&app.animation_settings, settled)
+                .is_none()
+        );
 
         app.animation_settings.set(AnimationEffect::TabSlide, false);
         terminal
@@ -1952,7 +2309,9 @@ mod tests {
         app.mouse_col = TabBarHits::new(&app, area).tabs[0].1.x + 1;
         app.mouse_row = area.y;
         let mut terminal = Terminal::new(TestBackend::new(80, 1)).unwrap();
-        terminal.draw(|frame| draw_tab_bar(frame, &app, area)).unwrap();
+        terminal
+            .draw(|frame| draw_tab_bar(frame, &app, area))
+            .unwrap();
         let clean = terminal.backend().buffer().clone();
         let width = crate::mouse::tab_render_width(&app, 0, &app.tabs[0]);
 
@@ -1960,14 +2319,23 @@ mod tests {
         // document state and must not decorate or widen their tabs.
         app.tabs[0].editor.modified = true;
         app.tabs[0].editor.disk_unavailable = true;
-        terminal.draw(|frame| draw_tab_bar(frame, &app, area)).unwrap();
+        terminal
+            .draw(|frame| draw_tab_bar(frame, &app, area))
+            .unwrap();
         assert_eq!(terminal.backend().buffer(), &clean);
         assert_eq!(crate::mouse::tab_render_width(&app, 0, &app.tabs[0]), width);
-        let close_x = (0..80).find(|&x| clean.cell((x, 0)).unwrap().symbol() == "×").unwrap();
-        crate::mouse::handle_mouse(&mut app, MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column: close_x, row: 0, modifiers: KeyModifiers::NONE,
-        });
+        let close_x = (0..80)
+            .find(|&x| clean.cell((x, 0)).unwrap().symbol() == "×")
+            .unwrap();
+        crate::mouse::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: close_x,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
         assert!(app.tabs.is_empty());
         assert!(!app.confirm_close_active);
 
@@ -1975,8 +2343,17 @@ mod tests {
         let mut editor = Editor::new();
         editor.modified = true;
         app.tabs.push(Tab::new_file(editor));
-        terminal.draw(|frame| draw_tab_bar(frame, &app, area)).unwrap();
-        assert!(terminal.backend().buffer().content.iter().any(|cell| cell.symbol() == "●"));
+        terminal
+            .draw(|frame| draw_tab_bar(frame, &app, area))
+            .unwrap();
+        assert!(
+            terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .any(|cell| cell.symbol() == "●")
+        );
     }
 
     #[test]
@@ -2007,10 +2384,7 @@ mod tests {
         editor.rope = ropey::Rope::from_str("unchanged\n");
         app.tabs.push(Tab::new_file(editor));
         app.compare_base_content = Some("unchanged\n".into());
-        app.set_compare_diff_lines(crate::app::compute_file_diff(
-            "unchanged\n",
-            "unchanged\n",
-        ));
+        app.set_compare_diff_lines(crate::app::compute_file_diff("unchanged\n", "unchanged\n"));
 
         let mut terminal = Terminal::new(TestBackend::new(100, 2)).unwrap();
         for width in [0, 1, 13, 14, 20, 40, 90] {

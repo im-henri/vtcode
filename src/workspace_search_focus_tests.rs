@@ -104,7 +104,9 @@ fn returning_to_explorer_reveals_the_open_search_match() {
         result.file_path = path.clone();
         app.global_search_results = vec![result].into();
         app.refresh_explorer_tree_async();
-        app.wait_for_background(Duration::from_secs(5), |app| !app.bg_explorer_refresh_running);
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            !app.bg_explorer_refresh_running
+        });
         assert!(app.explorer.find_path(&path).is_none());
 
         let mut terminal = Terminal::new(TestBackend::new(100, 25)).unwrap();
@@ -115,20 +117,27 @@ fn returning_to_explorer_reveals_the_open_search_match() {
 
         if use_activity_bar {
             let area = app.activity_bar_area.unwrap();
-            let (explorer, _) = crate::ui_chrome::activity_item_regions(area, app.activity_bar_position)[0];
+            let (explorer, _) =
+                crate::ui_chrome::activity_item_regions(area, app.activity_bar_position)[0];
             click(&mut app, explorer.x, explorer.y);
         } else {
             app.execute_palette_command("show_explorer");
         }
         assert_eq!(app.sidebar_view, crate::app::SidebarView::Explorer);
-        app.wait_for_background(Duration::from_secs(5), |app| !app.bg_explorer_refresh_running);
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            !app.bg_explorer_refresh_running
+        });
         draw(&mut app, &mut terminal);
 
         assert_eq!(app.tabs.len(), 1);
         assert_eq!(app.editor().unwrap().navigation_id, editor_id);
         let selected = app.explorer.selected;
         assert_eq!(app.explorer.entries[selected].path, path);
-        assert!(app.explorer.viewport_indices(app.explorer.visible_height).contains(&selected));
+        assert!(
+            app.explorer
+                .viewport_indices(app.explorer.visible_height)
+                .contains(&selected)
+        );
     }
 }
 
@@ -213,7 +222,10 @@ fn workspace_match_stays_centered_when_the_wrapped_rows_arrive() {
     let width = editor.effective_wrap_width();
     let center = usize::from(app.code_area.unwrap().height / 2);
     assert!(!editor.wrap_layout_ready(width));
-    assert_eq!(editor.visible_line_at(editor.scroll_offset, center), Some(100));
+    assert_eq!(
+        editor.visible_line_at(editor.scroll_offset, center),
+        Some(100)
+    );
 
     app.refresh_wrap_layout_async();
     app.wait_for_background(Duration::from_secs(5), |app| {
@@ -256,7 +268,11 @@ fn double_clicking_a_match_keeps_the_tab_open_and_preserves_search_navigation() 
                 wait_for_files(&mut app);
                 assert_open_match(&app, 2, preview);
                 assert_eq!(app.tabs.len(), 2);
-                let kept = app.tabs.iter().find(|tab| tab.editor.navigation_id == identity).unwrap();
+                let kept = app
+                    .tabs
+                    .iter()
+                    .find(|tab| tab.editor.navigation_id == identity)
+                    .unwrap();
                 assert!(!kept.preview);
                 assert!(!kept.pinned);
                 key(&mut app, KeyCode::Up);
@@ -499,15 +515,22 @@ fn clicking_back_into_the_query_restores_history_navigation() {
         draw(&mut app, &mut terminal);
         let input = app.text_input_area(TextInputId::GlobalSearch(0)).unwrap();
         click(&mut app, input.x + 2, input.y);
-        assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(0)));
+        assert_eq!(
+            app.focused_text_input_id(),
+            Some(TextInputId::GlobalSearch(0))
+        );
         assert!(!app.global_search_results_focused);
-        app.global_search_history = crate::search_history::History::restore(&["older".into(), "recent".into()]);
+        app.global_search_history =
+            crate::search_history::History::restore(&["older".into(), "recent".into()]);
         key(&mut app, KeyCode::Up);
         assert_eq!(app.global_search_query, "recent");
         assert_eq!(app.editor().unwrap().navigation_id, identity);
         key(&mut app, KeyCode::Down);
         assert_eq!(app.global_search_query, "needle");
-        assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(0)));
+        assert_eq!(
+            app.focused_text_input_id(),
+            Some(TextInputId::GlobalSearch(0))
+        );
     }
 }
 

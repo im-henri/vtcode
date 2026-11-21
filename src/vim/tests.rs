@@ -2,7 +2,7 @@
 //! (no auto-pairs or completion).
 
 use super::exec::Tx;
-use super::keys::{self, Key, K};
+use super::keys::{self, K, Key};
 use super::text::{Pos, Text};
 use super::{Act, Host, Mode, VimState};
 use crate::editor::Editor;
@@ -19,13 +19,21 @@ impl TestHost {
         // The parity harness runs Vim with an 80x24 screen.
         ed.viewport_width = 80;
         ed.viewport_height = 24;
-        Self { ed, clip: None, acts: Vec::new() }
+        Self {
+            ed,
+            clip: None,
+            acts: Vec::new(),
+        }
     }
 }
 
 impl Host for TestHost {
-    fn ed(&mut self) -> Option<&mut Editor> { Some(&mut self.ed) }
-    fn ed_ref(&self) -> Option<&Editor> { Some(&self.ed) }
+    fn ed(&mut self) -> Option<&mut Editor> {
+        Some(&mut self.ed)
+    }
+    fn ed_ref(&self) -> Option<&Editor> {
+        Some(&self.ed)
+    }
 
     fn native_key(&mut self, key: Key) {
         let ed = &mut self.ed;
@@ -50,9 +58,16 @@ impl Host for TestHost {
                 let ind = super::indent_like(ed, &t, p.line);
                 let chars = t.line_chars(p.line);
                 let blank_line = chars.iter().all(|&c| c == ' ' || c == '\t');
-                let lead = chars[p.col.min(chars.len())..].iter().take_while(|&&c| c == ' ' || c == '\t').count();
+                let lead = chars[p.col.min(chars.len())..]
+                    .iter()
+                    .take_while(|&&c| c == ' ' || c == '\t')
+                    .count();
                 // A line left with only its indent loses it.
-                let start = if blank_line && p.col == t.len(p.line) && !chars.is_empty() { t.line_start(p.line) } else { at };
+                let start = if blank_line && p.col == t.len(p.line) && !chars.is_empty() {
+                    t.line_start(p.line)
+                } else {
+                    at
+                };
                 tx.edit(ed, start, at + lead, &format!("\n{ind}"));
                 tx.finish(ed);
                 ed.cursor_line = p.line + 1;
@@ -61,8 +76,16 @@ impl Host for TestHost {
             (K::Backspace, false) => {
                 if at > 0 {
                     let prev = t.pos(at - 1);
-                    let start = if p.col == 0 { t.line_end(p.line - 1) } else { at - 1 };
-                    let np = if p.col == 0 { Pos::new(p.line - 1, t.len(p.line - 1)) } else { prev };
+                    let start = if p.col == 0 {
+                        t.line_end(p.line - 1)
+                    } else {
+                        at - 1
+                    };
+                    let np = if p.col == 0 {
+                        Pos::new(p.line - 1, t.len(p.line - 1))
+                    } else {
+                        prev
+                    };
                     tx.edit(ed, start, at, "");
                     tx.finish(ed);
                     ed.cursor_line = np.line;
@@ -71,27 +94,43 @@ impl Host for TestHost {
             }
             (K::Delete, false) => {
                 if at < ed.rope.len_chars() {
-                    let end = if t.char_at(p).is_some() { at + 1 } else { t.line_next_start(p.line) };
+                    let end = if t.char_at(p).is_some() {
+                        at + 1
+                    } else {
+                        t.line_next_start(p.line)
+                    };
                     tx.edit(ed, at, end, "");
                     tx.finish(ed);
                 }
             }
             (K::Left, false) => ed.cursor_col = p.col.saturating_sub(1),
             (K::Right, false) => ed.cursor_col = (p.col + 1).min(t.len(p.line)),
-            (K::Up, false) if p.line > 0 => { ed.cursor_line -= 1; ed.cursor_col = p.col.min(t.len(p.line - 1)); }
-            (K::Down, false) if p.line + 1 < t.lines() => { ed.cursor_line += 1; ed.cursor_col = p.col.min(t.len(p.line + 1)); }
+            (K::Up, false) if p.line > 0 => {
+                ed.cursor_line -= 1;
+                ed.cursor_col = p.col.min(t.len(p.line - 1));
+            }
+            (K::Down, false) if p.line + 1 < t.lines() => {
+                ed.cursor_line += 1;
+                ed.cursor_col = p.col.min(t.len(p.line + 1));
+            }
             (K::Home, false) => ed.cursor_col = 0,
             (K::End, false) => ed.cursor_col = t.len(p.line),
             _ => {}
         }
     }
-    fn clip_get(&mut self) -> Option<String> { self.clip.clone() }
-    fn clip_set(&mut self, text: &str, _linewise: bool) { self.clip = Some(text.to_string()); }
+    fn clip_get(&mut self) -> Option<String> {
+        self.clip.clone()
+    }
+    fn clip_set(&mut self, text: &str, _linewise: bool) {
+        self.clip = Some(text.to_string());
+    }
     fn act(&mut self, act: Act) -> Result<(), String> {
         self.acts.push(act);
         Ok(())
     }
-    fn file_name(&self) -> Option<String> { Some("test.txt".into()) }
+    fn file_name(&self) -> Option<String> {
+        Some("test.txt".into())
+    }
 }
 
 /// Vim options matching the parity harness (`scripts/vim_parity.py`).
@@ -131,14 +170,29 @@ pub(crate) fn run(text: &str, cursor: (usize, usize), keys_text: &str) -> Outcom
     let lines = vim_lines(&host.ed);
     let cursor = (host.ed.cursor_line, host.ed.cursor_col);
     let mode = vim.mode;
-    Outcome { lines, cursor, mode, host, vim }
+    Outcome {
+        lines,
+        cursor,
+        mode,
+        host,
+        vim,
+    }
 }
 
-fn check(text: &str, cursor: (usize, usize), keys_text: &str, want: &str, want_cursor: (usize, usize)) {
+fn check(
+    text: &str,
+    cursor: (usize, usize),
+    keys_text: &str,
+    want: &str,
+    want_cursor: (usize, usize),
+) {
     let o = run(text, cursor, keys_text);
     let want_lines: Vec<String> = want.split('\n').map(str::to_string).collect();
     assert_eq!(o.lines, want_lines, "text after {keys_text:?} on {text:?}");
-    assert_eq!(o.cursor, want_cursor, "cursor after {keys_text:?} on {text:?}");
+    assert_eq!(
+        o.cursor, want_cursor,
+        "cursor after {keys_text:?} on {text:?}"
+    );
 }
 
 #[test]
@@ -218,10 +272,19 @@ fn a_recursive_macro_runs_to_the_end_without_overflowing_the_stack() {
     let text = vec!["x"; 3000].join("\n");
     let o = run(&text, (0, 0), "qaqqaA;<Esc>j@aq@a");
     assert!(o.lines.iter().all(|l| l == "x;"), "every line done");
-    assert!(o.vim.message.is_none(), "{:?}", o.vim.message.as_ref().map(|m| &m.text));
+    assert!(
+        o.vim.message.is_none(),
+        "{:?}",
+        o.vim.message.as_ref().map(|m| &m.text)
+    );
     // A macro with nothing to stop it ends with an error instead of hanging.
     let o = run("abc", (0, 0), "qaqqa@aq@a");
-    assert!(o.vim.message.as_ref().is_some_and(|m| m.error && m.text.contains("macro stopped")));
+    assert!(
+        o.vim
+            .message
+            .as_ref()
+            .is_some_and(|m| m.error && m.text.contains("macro stopped"))
+    );
     // `.` afterwards repeats the last change, as in Vim.
     let o = run("abc\nabc", (0, 0), "xqaqqajq@a.");
     assert_eq!(o.lines, ["bc", "bc"]);
@@ -231,7 +294,12 @@ fn a_recursive_macro_runs_to_the_end_without_overflowing_the_stack() {
 fn runaway_normal_recursion_stops_with_e192() {
     // `y` runs `:normal y`, which uses the mapping again, and so on.
     let o = run("abc", (0, 0), ":nmap y :normal y<lt>CR><CR>y");
-    let msg = o.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    let msg = o
+        .vim
+        .message
+        .as_ref()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
     assert!(msg.starts_with("E192"), "{msg}");
 }
 
@@ -248,7 +316,13 @@ fn ex_commands() {
     let o = run("a\nb", (0, 0), ":%norm Ax<CR>");
     assert_eq!(o.lines, ["ax", "bx"]);
     let o = run("abc", (0, 0), ":w<CR>");
-    assert_eq!(o.host.acts, vec![Act::Write { path: None, force: false }]);
+    assert_eq!(
+        o.host.acts,
+        vec![Act::Write {
+            path: None,
+            force: false
+        }]
+    );
 }
 
 #[test]
@@ -259,7 +333,11 @@ fn mappings_with_timeout_prefixes() {
     run_keys(&mut vim, &mut host, "ixjk");
     assert_eq!(vim.mode, Mode::Normal);
     assert_eq!(vim_lines(&host.ed), ["xabc"]);
-    run_keys(&mut vim, &mut host, ":let mapleader = \" \"<CR>:nnoremap <lt>leader>d dd<CR>");
+    run_keys(
+        &mut vim,
+        &mut host,
+        ":let mapleader = \" \"<CR>:nnoremap <lt>leader>d dd<CR>",
+    );
     run_keys(&mut vim, &mut host, "<Space>d");
     assert_eq!(vim_lines(&host.ed), [""]);
     // An ambiguous prefix waits, then resolves on timeout.
@@ -268,7 +346,10 @@ fn mappings_with_timeout_prefixes() {
     run_keys(&mut vim, &mut host, ":nnoremap x l<CR>:nnoremap xy dd<CR>");
     run_keys(&mut vim, &mut host, "x");
     assert_eq!(host.ed.cursor_col, 0, "waiting for a longer mapping");
-    vim.tick(&mut host, std::time::Instant::now() + std::time::Duration::from_secs(5));
+    vim.tick(
+        &mut host,
+        std::time::Instant::now() + std::time::Duration::from_secs(5),
+    );
     assert_eq!(host.ed.cursor_col, 1);
 }
 
@@ -284,9 +365,14 @@ fn search_and_star() {
 #[test]
 fn text_objects_with_operators() {
     check("f(a, b)", (0, 3), "di(", "f()", (0, 2));
-    check("x = \"hi there\";", (0, 6), "ci\"yo<Esc>", "x = \"yo\";", (0, 6));
+    check(
+        "x = \"hi there\";",
+        (0, 6),
+        "ci\"yo<Esc>",
+        "x = \"yo\";",
+        (0, 6),
+    );
     check("<a><b>x</b></a>", (0, 6), "dit", "<a><b></b></a>", (0, 6));
     check("foo bar baz", (0, 5), "daw", "foo baz", (0, 4));
     check("a\n\nb\nc\n\nd", (2, 0), "dap", "a\n\nd", (2, 0));
 }
-

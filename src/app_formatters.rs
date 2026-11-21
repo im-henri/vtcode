@@ -112,7 +112,16 @@ impl App {
             }
         };
         if self.is_formatting() {
-            if save_after && self.lsp_format_pending && self.editor().is_some_and(|editor| self.formatting.has_document_request(&request.path, request.version, editor.save_identity)) {
+            if save_after
+                && self.lsp_format_pending
+                && self.editor().is_some_and(|editor| {
+                    self.formatting.has_document_request(
+                        &request.path,
+                        request.version,
+                        editor.save_identity,
+                    )
+                })
+            {
                 self.lsp_save_after_format_path = Some(request.path);
                 return true;
             }
@@ -149,31 +158,47 @@ impl App {
             }
             Provider::Command => {
                 let rope = self.editor().unwrap().rope.clone();
-                let root = if self.remote_workspace.is_some() && !crate::remote::workspace::is_view_key(&request.path) {
-                    request.path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf()
-                } else { self.explorer.root.clone() };
+                let root = if self.remote_workspace.is_some()
+                    && !crate::remote::workspace::is_view_key(&request.path)
+                {
+                    request
+                        .path
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .to_path_buf()
+                } else {
+                    self.explorer.root.clone()
+                };
                 let cancelled = Arc::new(AtomicBool::new(false));
                 let worker_cancelled = Arc::clone(&cancelled);
                 let target = request.clone();
                 let (sender, receiver) = mpsc::channel();
                 let wake = self.background.wake_handle();
-                let remote = self.remote_workspace.clone().filter(|_| crate::remote::workspace::is_view_key(&request.path));
+                let remote = self
+                    .remote_workspace
+                    .clone()
+                    .filter(|_| crate::remote::workspace::is_view_key(&request.path));
                 self.background.spawn("formatter", move || {
                     let result = if let Some(remote) = remote {
                         (|| -> Result<_, String> {
-                            let cancel = crate::background::CancellationToken::from_flag(worker_cancelled);
-                            let output = remote.format_document(&target.path, config, &rope, target.lines, &cancel).map_err(|error| error.to_string())?;
+                            let cancel =
+                                crate::background::CancellationToken::from_flag(worker_cancelled);
+                            let output = remote
+                                .format_document(&target.path, config, &rope, target.lines, &cancel)
+                                .map_err(|error| error.to_string())?;
                             Ok(crate::formatters::prepare(&rope, &output))
                         })()
-                    } else { crate::formatters::run(
-                        &config,
-                        &target.path,
-                        &root,
-                        &rope,
-                        target.lines,
-                        worker_cancelled,
-                        Duration::from_secs(30),
-                    ) };
+                    } else {
+                        crate::formatters::run(
+                            &config,
+                            &target.path,
+                            &root,
+                            &rope,
+                            target.lines,
+                            worker_cancelled,
+                            Duration::from_secs(30),
+                        )
+                    };
                     let _ = sender.send(result);
                     wake.notify();
                 });
@@ -201,14 +226,18 @@ impl App {
             .find(|tab| tab.editor.navigation_id == request.document);
         let invalid = match target.map(|tab| &tab.editor) {
             None => Some("The document was closed before formatting finished."),
-            Some(editor) if editor.file_path.as_ref() != Some(&request.path) =>
-                Some("The document was renamed while formatting. Run Format Document again."),
-            Some(editor) if editor.read_only =>
-                Some("The document became read-only before formatting finished."),
-            Some(editor) if editor.bg_loading =>
-                Some("The document is being reloaded. Run Format Document when it has finished."),
-            Some(editor) if editor.content_version != request.version =>
-                Some("The document changed while formatting. Your newer edits were kept; run Format Document again."),
+            Some(editor) if editor.file_path.as_ref() != Some(&request.path) => {
+                Some("The document was renamed while formatting. Run Format Document again.")
+            }
+            Some(editor) if editor.read_only => {
+                Some("The document became read-only before formatting finished.")
+            }
+            Some(editor) if editor.bg_loading => {
+                Some("The document is being reloaded. Run Format Document when it has finished.")
+            }
+            Some(editor) if editor.content_version != request.version => Some(
+                "The document changed while formatting. Your newer edits were kept; run Format Document again.",
+            ),
             _ => None,
         };
         let result = if let Some(reason) = invalid {
@@ -231,7 +260,9 @@ impl App {
                 .ok_or("The formatted document was closed.")?;
             prepared.apply(&mut tab.editor)
         });
-        if result.is_ok() { self.sync_document_view(request.document); }
+        if result.is_ok() {
+            self.sync_document_view(request.document);
+        }
         self.report_formatting_result(result, request.save_after.then_some(request.path));
         true
     }
@@ -254,6 +285,7 @@ impl App {
             } else {
                 map.remove(language);
             }
-        }).map_err(|error| format!("Could not save formatter: {error}"))
+        })
+        .map_err(|error| format!("Could not save formatter: {error}"))
     }
 }

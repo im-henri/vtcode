@@ -167,7 +167,8 @@ impl IgnoreMatcher {
         if relative.components().any(|part| part.as_os_str() == ".git") {
             return Some(true);
         }
-        let index = lookup.index
+        let index = lookup
+            .index
             .get_or_insert_with(|| {
                 metrics.index();
                 git2::Repository::open(&self.git_dir)
@@ -183,7 +184,10 @@ impl IgnoreMatcher {
         // exceptions. Ignored folders (node_modules, target, build output)
         // are expanded as whole listings: check the index once per parent,
         // not four stage lookups per child.
-        if let Some(parent) = relative.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = relative
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             let untracked = match &lookup.parent {
                 Some((cached, untracked)) if cached.as_path() == parent => *untracked,
                 _ => {

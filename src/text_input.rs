@@ -81,10 +81,14 @@ pub(crate) struct TextInputHistory {
 }
 
 impl TextInputHistory {
-    pub(crate) fn revision(&self) -> u64 { self.revision }
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
     pub(crate) fn break_group(&mut self) {
         self.last_edit = None;
-        if let Some(deferred) = self.deferred.take() { deferred.invalidate(); }
+        if let Some(deferred) = self.deferred.take() {
+            deferred.invalidate();
+        }
     }
 
     fn remember(stack: &mut Vec<Snapshot>, snapshot: Snapshot) {
@@ -103,11 +107,30 @@ impl TextInputHistory {
         modifiers: KeyModifiers,
         paste: Option<&str>,
     ) -> TextInputResult {
-        self.edit_at(input, code, modifiers, paste, None, std::time::Instant::now())
+        self.edit_at(
+            input,
+            code,
+            modifiers,
+            paste,
+            None,
+            std::time::Instant::now(),
+        )
     }
 
-    pub(crate) fn conditional_paste(&mut self, input: TextInput<'_>, id: u64, paste: &str) -> TextInputResult {
-        self.edit_at(input, KeyCode::Null, KeyModifiers::empty(), Some(paste), Some(id), std::time::Instant::now())
+    pub(crate) fn conditional_paste(
+        &mut self,
+        input: TextInput<'_>,
+        id: u64,
+        paste: &str,
+    ) -> TextInputResult {
+        self.edit_at(
+            input,
+            KeyCode::Null,
+            KeyModifiers::empty(),
+            Some(paste),
+            Some(id),
+            std::time::Instant::now(),
+        )
     }
 
     fn edit_at(
@@ -124,20 +147,30 @@ impl TextInputHistory {
         let mut deferred = self.deferred.take();
         if let Some(previous) = &self.current {
             if previous.0 != before.0 {
-                if let Some(old) = deferred.take() { old.invalidate(); }
+                if let Some(old) = deferred.take() {
+                    old.invalidate();
+                }
                 let revision = self.revision.wrapping_add(1);
                 *self = Self::default();
                 self.revision = revision;
             } else if previous.1 != before.1 || previous.2 != before.2 {
-                if let Some(old) = deferred.take() { old.invalidate(); }
+                if let Some(old) = deferred.take() {
+                    old.invalidate();
+                }
                 self.break_group();
             }
         }
         if deferred.is_some() && paste.is_none() && deferred::clipboard_key(code, modifiers) {
-            if let Some(old) = deferred.take() { old.invalidate(); }
+            if let Some(old) = deferred.take() {
+                old.invalidate();
+            }
         }
         if conditional.is_some() && deferred.is_none() && DeferredInput::can_start(&before) {
-            deferred = Some(Box::new(DeferredInput::new(self.clone(), before.clone(), conditional.unwrap())));
+            deferred = Some(Box::new(DeferredInput::new(
+                self.clone(),
+                before.clone(),
+                conditional.unwrap(),
+            )));
         }
         let primary = modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
             && !modifiers.contains(KeyModifiers::ALT);
@@ -179,7 +212,8 @@ impl TextInputHistory {
                 let grouped = before.2.is_none()
                     && class.is_some_and(|class| {
                         self.last_edit.is_some_and(|(time, previous)| {
-                            when.saturating_duration_since(time).as_millis() < 500 && previous == class
+                            when.saturating_duration_since(time).as_millis() < 500
+                                && previous == class
                         })
                     });
                 if !grouped {
@@ -192,10 +226,20 @@ impl TextInputHistory {
             }
         }
         let changed = before.0 != *input.text;
-        if changed { self.revision = self.revision.wrapping_add(1); }
+        if changed {
+            self.revision = self.revision.wrapping_add(1);
+        }
         self.current = Some((input.text.clone(), *input.cursor, *input.selection_anchor));
         if let Some(mut deferred) = deferred {
-            if deferred.record(code, modifiers, paste, conditional, when, input.multiline, input.accept) {
+            if deferred.record(
+                code,
+                modifiers,
+                paste,
+                conditional,
+                when,
+                input.multiline,
+                input.accept,
+            ) {
                 self.deferred = Some(deferred);
             } else {
                 deferred.invalidate();
@@ -239,7 +283,11 @@ impl TextInputHitMap {
         while rows_to_byte.len() < area.height as usize {
             rows_to_byte.push(vec![text_len; area.width as usize]);
         }
-        Self { area, rows_to_byte, horizontal: None }
+        Self {
+            area,
+            rows_to_byte,
+            horizontal: None,
+        }
     }
 
     fn normalize_row(row: &mut Vec<usize>, width: u16, text_len: usize) {
@@ -670,16 +718,24 @@ impl App {
     }
 
     pub(crate) fn register_text_input(&mut self, id: TextInputId, hit_map: TextInputHitMap) {
-        if self.rendering_background_window { return; }
+        if self.rendering_background_window {
+            return;
+        }
         let file_search_owner = matches!(id, TextInputId::SearchFind | TextInputId::SearchReplace)
-            .then(|| self.file_search_owner()).flatten();
+            .then(|| self.file_search_owner())
+            .flatten();
         self.register_input_viewport(id, file_search_owner, &hit_map);
-        self.text_input_regions
-            .push(TextInputRegion { id, hit_map, file_search_owner });
+        self.text_input_regions.push(TextInputRegion {
+            id,
+            hit_map,
+            file_search_owner,
+        });
     }
 
     pub(crate) fn text_input_area(&self, id: TextInputId) -> Option<Rect> {
-        self.text_input_regions.iter().rev()
+        self.text_input_regions
+            .iter()
+            .rev()
             .find(|region| region.id == id && self.text_input_region_is_current(region))
             .map(|region| region.hit_map.area)
     }
@@ -695,9 +751,17 @@ impl App {
         if matches!(id, TextInputId::SearchFind | TextInputId::SearchReplace) {
             let state: &mut crate::file_search::State = self;
             return if id == TextInputId::SearchFind {
-                (&mut state.search_query, &mut state.search_cursor, &mut state.search_selection_anchor)
+                (
+                    &mut state.search_query,
+                    &mut state.search_cursor,
+                    &mut state.search_selection_anchor,
+                )
             } else {
-                (&mut state.replace_query, &mut state.replace_cursor, &mut state.replace_selection_anchor)
+                (
+                    &mut state.replace_query,
+                    &mut state.replace_cursor,
+                    &mut state.replace_selection_anchor,
+                )
             };
         }
         match id {
@@ -709,11 +773,17 @@ impl App {
             TextInputId::WorkspaceName => self.workspaces.popup.sets.input_state(),
             TextInputId::OutputFind => self.logs.find_input_state(),
             TextInputId::TerminalFind(id) => {
-                let index = self.terminal_find_index(id).expect("live terminal Find field");
+                let index = self
+                    .terminal_find_index(id)
+                    .expect("live terminal Find field");
                 let find = &mut self.terminals[index].find;
                 (&mut find.query, &mut find.cursor, &mut find.anchor)
             }
-            TextInputId::GitOperationTarget => (&mut self.git_operation_ui.target, &mut self.git_operation_ui.cursor, &mut self.git_operation_ui.anchor),
+            TextInputId::GitOperationTarget => (
+                &mut self.git_operation_ui.target,
+                &mut self.git_operation_ui.cursor,
+                &mut self.git_operation_ui.anchor,
+            ),
             TextInputId::ScopeBubbleLanguage => {
                 let field = &mut self.scope_bubble_settings.field;
                 (&mut field.text, &mut field.cursor, &mut field.anchor)
@@ -731,11 +801,21 @@ impl App {
                 (&mut state.input, &mut state.cursor, &mut state.anchor)
             }
             TextInputId::AgentSetting(id) => {
-                let field = &mut self.agent_settings.draft.as_mut().expect("agent form is open").fields[id];
+                let field = &mut self
+                    .agent_settings
+                    .draft
+                    .as_mut()
+                    .expect("agent form is open")
+                    .fields[id];
                 (&mut field.text, &mut field.cursor, &mut field.anchor)
             }
             TextInputId::LspSetting(id) => {
-                let field = &mut self.lsp_settings.draft.as_mut().expect("LSP form is open").fields[id];
+                let field = &mut self
+                    .lsp_settings
+                    .draft
+                    .as_mut()
+                    .expect("LSP form is open")
+                    .fields[id];
                 (&mut field.text, &mut field.cursor, &mut field.anchor)
             }
             TextInputId::FormatterSetting(id) => {
@@ -743,7 +823,12 @@ impl App {
                 (&mut field.text, &mut field.cursor, &mut field.anchor)
             }
             TextInputId::RemoteTarget(id) => {
-                let field = &mut self.remote_targets.form.as_mut().expect("remote target form is open").fields[id];
+                let field = &mut self
+                    .remote_targets
+                    .form
+                    .as_mut()
+                    .expect("remote target form is open")
+                    .fields[id];
                 (&mut field.text, &mut field.cursor, &mut field.anchor)
             }
             TextInputId::RemoteFilter => {
@@ -866,7 +951,9 @@ impl App {
             TextInputId::WorkspaceName => self.workspaces.popup.sets.focus_input(),
             TextInputId::OutputFind => crate::ui_logs::focus_find(self),
             TextInputId::TerminalFind(id) => self.focus_terminal_find(id),
-            TextInputId::FolderAddress => self.folder_browser.focus = crate::folder_browser::Focus::Address,
+            TextInputId::FolderAddress => {
+                self.folder_browser.focus = crate::folder_browser::Focus::Address
+            }
             TextInputId::AgentSetting(id) => {
                 self.agent_settings.focus = crate::ui_agent_settings::Action::Field(id);
                 self.agent_settings.reveal_focus = true;
@@ -880,7 +967,10 @@ impl App {
                 self.formatter_settings.reveal_focus = true;
             }
             TextInputId::RemoteTarget(id) => {
-                if let Some(form) = &mut self.remote_targets.form { form.focus = id; form.reveal = true; }
+                if let Some(form) = &mut self.remote_targets.form {
+                    form.focus = id;
+                    form.reveal = true;
+                }
             }
             TextInputId::RemoteFilter => {
                 self.remote_targets.filter_focused = true;
@@ -888,17 +978,24 @@ impl App {
                 self.reveal_sidebar();
             }
             TextInputId::ScopeBubbleLanguage => {
-                self.scope_bubble_settings.focus = crate::ui_scope_bubble_settings::Action::Language;
+                self.scope_bubble_settings.focus =
+                    crate::ui_scope_bubble_settings::Action::Language;
                 self.scope_bubble_settings.reveal_focus = true;
             }
-            TextInputId::Exclusion(id) => { self.exclusion_settings.focus = crate::ui_exclusion_settings::Action::Field(id); }
+            TextInputId::Exclusion(id) => {
+                self.exclusion_settings.focus = crate::ui_exclusion_settings::Action::Field(id);
+            }
             TextInputId::FileAssociation(id) => {
                 self.file_associations.focus = crate::ui_file_associations::Action::Field(id);
                 self.file_associations.reveal_focus = true;
             }
             TextInputId::Chat => self.focus_chat(),
-            TextInputId::FolderSearch => self.folder_browser.focus = crate::folder_browser::Focus::Search,
-            TextInputId::FolderName => self.folder_browser.focus = crate::folder_browser::Focus::Folder,
+            TextInputId::FolderSearch => {
+                self.folder_browser.focus = crate::folder_browser::Focus::Search
+            }
+            TextInputId::FolderName => {
+                self.folder_browser.focus = crate::folder_browser::Focus::Folder
+            }
             TextInputId::SearchFind => {
                 self.active_pane = crate::app::ActivePane::Editor;
                 self.search_input_focused = true;
@@ -976,12 +1073,19 @@ impl App {
                 return self.formatter_settings.focused_input();
             }
             if kind == crate::ui_modal::Kind::RemoteTargets {
-                return self.remote_targets.form.as_ref().filter(|form| form.focus < 5).map(|form| TextInputId::RemoteTarget(form.focus));
+                return self
+                    .remote_targets
+                    .form
+                    .as_ref()
+                    .filter(|form| form.focus < 5)
+                    .map(|form| TextInputId::RemoteTarget(form.focus));
             }
             if kind == crate::ui_modal::Kind::ScopeBubbleSettings {
                 return self.scope_bubble_settings.focused_input();
             }
-            if kind == crate::ui_modal::Kind::ExclusionSettings { return self.exclusion_settings.focused_input(); }
+            if kind == crate::ui_modal::Kind::ExclusionSettings {
+                return self.exclusion_settings.focused_input();
+            }
             if kind == crate::ui_modal::Kind::FileAssociations {
                 return self.file_associations.focused_input();
             }
@@ -993,7 +1097,8 @@ impl App {
             return kind.input();
         }
         if let Some(id) = crate::ui_workspaces::focused_input(self)
-            .or_else(|| crate::ui_desks::focused_input(self)) {
+            .or_else(|| crate::ui_desks::focused_input(self))
+        {
             return Some(id);
         }
         if crate::ui_logs::focused(self) && self.logs.search_focused() {
@@ -1023,22 +1128,29 @@ impl App {
         if self.quick_open_active {
             return Some(TextInputId::QuickOpen);
         }
-        if let Some(id) = self.focused_terminal_find() { return Some(TextInputId::TerminalFind(id)); }
+        if let Some(id) = self.focused_terminal_find() {
+            return Some(TextInputId::TerminalFind(id));
+        }
         if self.focused_terminal_index().is_some() {
             return None;
         }
         let sidebar_search_active =
             self.show_explorer && self.sidebar_view == crate::app::SidebarView::Search;
-        if self.sidebar_is_visible() && self.sidebar_view == crate::app::SidebarView::Remote
-            && self.active_pane == crate::app::ActivePane::Explorer && self.remote_targets.filter_focused {
+        if self.sidebar_is_visible()
+            && self.sidebar_view == crate::app::SidebarView::Remote
+            && self.active_pane == crate::app::ActivePane::Explorer
+            && self.remote_targets.filter_focused
+        {
             return Some(TextInputId::RemoteFilter);
         }
-        if self.global_search_active && !self.global_search_results_focused
+        if self.global_search_active
+            && !self.global_search_results_focused
             && (!sidebar_search_active || self.active_pane == crate::app::ActivePane::Explorer)
         {
             return Some(TextInputId::GlobalSearch(self.search_focus_field));
         }
-        if self.show_explorer && self.sidebar_view == crate::app::SidebarView::Explorer
+        if self.show_explorer
+            && self.sidebar_view == crate::app::SidebarView::Explorer
             && self.active_pane == crate::app::ActivePane::Explorer
             && self.explorer.find.open
         {
@@ -1049,7 +1161,8 @@ impl App {
             }
         }
         if self.active_pane == crate::app::ActivePane::Editor
-            && self.file_search_visible() && self.search_input_focused
+            && self.file_search_visible()
+            && self.search_input_focused
             && !self.docked_terminal_has_focus()
         {
             return Some(if self.search_focus_replace {
@@ -1081,7 +1194,10 @@ impl App {
         {
             return Some(TextInputId::ExtensionsFilter);
         }
-        if self.chat.visible && self.active_pane == crate::app::ActivePane::Chat && self.chat.picker.is_none() {
+        if self.chat.visible
+            && self.active_pane == crate::app::ActivePane::Chat
+            && self.chat.picker.is_none()
+        {
             return Some(TextInputId::Chat);
         }
         None
@@ -1090,27 +1206,43 @@ impl App {
     /// Retain history while a field is open, but never resurrect a previous
     /// dialog's edits when a new dialog happens to start with identical text.
     pub(crate) fn sync_text_input_sessions(&mut self) {
-        if !self.search_active { self.input_histories = Default::default(); }
+        if !self.search_active {
+            self.input_histories = Default::default();
+        }
         let closed: Vec<_> = self
             .text_input_histories
             .keys()
             .copied()
             .filter(|id| !match id {
                 TextInputId::DeskPopup => crate::ui_desks::focused_input(self).is_some(),
-                TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => self.workspaces.popup.open,
+                TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => {
+                    self.workspaces.popup.open
+                }
                 TextInputId::OutputFind => self.show_panel && self.panel_tab == 2,
-                TextInputId::TerminalFind(id) => self.terminal_find_index(*id).is_some_and(|index| self.terminals[index].find.open),
-                TextInputId::FolderAddress | TextInputId::FolderSearch | TextInputId::FolderName => self.change_dir_active,
+                TextInputId::TerminalFind(id) => self
+                    .terminal_find_index(*id)
+                    .is_some_and(|index| self.terminals[index].find.open),
+                TextInputId::FolderAddress
+                | TextInputId::FolderSearch
+                | TextInputId::FolderName => self.change_dir_active,
                 TextInputId::SearchFind | TextInputId::SearchReplace => self.search_active,
                 TextInputId::QuickOpen => self.quick_open_active,
-                TextInputId::ExplorerFind | TextInputId::ExplorerFindPath => self.explorer.find.open,
+                TextInputId::ExplorerFind | TextInputId::ExplorerFindPath => {
+                    self.explorer.find.open
+                }
                 TextInputId::GotoLine => self.goto_line_active,
                 TextInputId::GlobalSearch(_) => {
                     self.global_search_active
                         || self.sidebar_view == crate::app::SidebarView::Search
                 }
                 TextInputId::GitBranch => self.git_branch_picker_active,
-                TextInputId::GitOperationTarget => self.git_operation_ui.request.as_ref().is_some_and(|request| request.choice == crate::ui_git_operation::Choice::Start),
+                TextInputId::GitOperationTarget => self
+                    .git_operation_ui
+                    .request
+                    .as_ref()
+                    .is_some_and(|request| {
+                        request.choice == crate::ui_git_operation::Choice::Start
+                    }),
                 TextInputId::CommandPalette => self.palette.active,
                 TextInputId::SymbolList => self.symbol_list_active,
                 TextInputId::SaveAs => self.save_as_active,
@@ -1118,14 +1250,24 @@ impl App {
                 TextInputId::TerminalRename => self.terminal_rename.target.is_some(),
                 TextInputId::SettingsSearch => self.settings_editor_active,
                 TextInputId::SettingsValue => self.settings_value_editing,
-                TextInputId::AgentSetting(_) => self.agent_settings.active && self.agent_settings.draft.is_some(),
-                TextInputId::LspSetting(_) => self.lsp_settings.active && self.lsp_settings.draft.is_some(),
+                TextInputId::AgentSetting(_) => {
+                    self.agent_settings.active && self.agent_settings.draft.is_some()
+                }
+                TextInputId::LspSetting(_) => {
+                    self.lsp_settings.active && self.lsp_settings.draft.is_some()
+                }
                 TextInputId::FormatterSetting(_) => self.formatter_settings.active,
                 TextInputId::RemoteTarget(_) => self.remote_targets.form.is_some(),
                 TextInputId::RemoteFilter => self.sidebar_view == crate::app::SidebarView::Remote,
-                TextInputId::ScopeBubbleLanguage => self.scope_bubble_settings.active && self.scope_bubble_settings.editing,
-                TextInputId::Exclusion(_) => self.exclusion_settings.active && self.exclusion_settings.editing,
-                TextInputId::FileAssociation(_) => self.file_associations.active && self.file_associations.editing,
+                TextInputId::ScopeBubbleLanguage => {
+                    self.scope_bubble_settings.active && self.scope_bubble_settings.editing
+                }
+                TextInputId::Exclusion(_) => {
+                    self.exclusion_settings.active && self.exclusion_settings.editing
+                }
+                TextInputId::FileAssociation(_) => {
+                    self.file_associations.active && self.file_associations.editing
+                }
                 TextInputId::ExtensionsFilter => {
                     self.sidebar_view == crate::app::SidebarView::Extensions
                 }
@@ -1188,8 +1330,10 @@ impl App {
     pub(crate) fn text_input_changed(&mut self, id: TextInputId) {
         match id {
             TextInputId::TerminalFind(id) => self.terminal_find_edited(id),
-            TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName
-            | TextInputId::OutputFind => {},
+            TextInputId::DeskPopup
+            | TextInputId::WorkspaceFilter
+            | TextInputId::WorkspaceName
+            | TextInputId::OutputFind => {}
             TextInputId::GitOperationTarget => crate::ui_modal::field_changed(self),
             TextInputId::Chat => self.refresh_chat_file_completion(),
             TextInputId::AgentSetting(_) => {
@@ -1203,21 +1347,40 @@ impl App {
             TextInputId::FormatterSetting(_) => {
                 crate::ui_formatter_settings::input_changed(self);
             }
-            TextInputId::RemoteTarget(_) => { if let Some(form) = &mut self.remote_targets.form { if !form.conflict { form.error = None; } form.reveal = true; } }
-            TextInputId::RemoteFilter => { self.remote_targets.selected = 0; self.remote_targets.scroll = 0; self.remote_targets.clamp(); }
-            TextInputId::ScopeBubbleLanguage => crate::ui_scope_bubble_settings::input_changed(self),
-            TextInputId::Exclusion(_) => { self.exclusion_settings.error = None; }
+            TextInputId::RemoteTarget(_) => {
+                if let Some(form) = &mut self.remote_targets.form {
+                    if !form.conflict {
+                        form.error = None;
+                    }
+                    form.reveal = true;
+                }
+            }
+            TextInputId::RemoteFilter => {
+                self.remote_targets.selected = 0;
+                self.remote_targets.scroll = 0;
+                self.remote_targets.clamp();
+            }
+            TextInputId::ScopeBubbleLanguage => {
+                crate::ui_scope_bubble_settings::input_changed(self)
+            }
+            TextInputId::Exclusion(_) => {
+                self.exclusion_settings.error = None;
+            }
             TextInputId::FileAssociation(_) => {
                 self.file_associations.hits.clear();
                 self.file_associations.error = None;
                 self.file_associations.reveal_focus = true;
             }
-            TextInputId::SaveAs | TextInputId::RenameSymbol | TextInputId::TerminalRename => crate::ui_modal::field_changed(self),
+            TextInputId::SaveAs | TextInputId::RenameSymbol | TextInputId::TerminalRename => {
+                crate::ui_modal::field_changed(self)
+            }
             TextInputId::FolderSearch => {
                 self.folder_browser_path_changed(id);
                 self.filter_folder_browser();
             }
-            TextInputId::FolderAddress | TextInputId::FolderName => self.folder_browser_path_changed(id),
+            TextInputId::FolderAddress | TextInputId::FolderName => {
+                self.folder_browser_path_changed(id)
+            }
             TextInputId::QuickOpen => self.update_quick_open(),
             TextInputId::ExplorerFind => self.update_explorer_find(),
             TextInputId::ExplorerFindPath => {
@@ -1238,7 +1401,9 @@ impl App {
             }
             TextInputId::GlobalSearch(field) => {
                 self.global_search_field_history_mut(field).edited();
-                if field != 1 { self.schedule_global_search(); }
+                if field != 1 {
+                    self.schedule_global_search();
+                }
             }
             TextInputId::CommandPalette => {
                 self.palette.theme_install_error = None;
@@ -1278,12 +1443,18 @@ impl App {
         modifiers: KeyModifiers,
         paste: Option<&str>,
     ) -> TextInputResult {
-        let copy = paste.is_none() && modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
-            && !modifiers.contains(KeyModifiers::ALT) && matches!(code, KeyCode::Char('c' | 'C') | KeyCode::Insert);
-        if !copy { self.clear_text_input_viewport(id); }
+        let copy = paste.is_none()
+            && modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER)
+            && !modifiers.contains(KeyModifiers::ALT)
+            && matches!(code, KeyCode::Char('c' | 'C') | KeyCode::Insert);
+        if !copy {
+            self.clear_text_input_viewport(id);
+        }
         // Vim mode: Ctrl-U deletes to the start of the field and Ctrl-W the
         // word before the cursor, as on Vim's command line.
-        if self.vim.enabled && paste.is_none() && modifiers == KeyModifiers::CONTROL
+        if self.vim.enabled
+            && paste.is_none()
+            && modifiers == KeyModifiers::CONTROL
             && matches!(code, KeyCode::Char('u' | 'w'))
         {
             let (select, mods) = if code == KeyCode::Char('u') {
@@ -1293,30 +1464,49 @@ impl App {
             };
             let selected = self.edit_text_input(id, select, mods, None);
             let deleted = self.edit_text_input(id, KeyCode::Backspace, KeyModifiers::NONE, None);
-            return TextInputResult { consumed: true, changed: selected.changed || deleted.changed };
+            return TextInputResult {
+                consumed: true,
+                changed: selected.changed || deleted.changed,
+            };
         }
         match id {
-            TextInputId::DeskPopup => return crate::ui_desks::edit_input(self, code, modifiers, paste),
-            TextInputId::WorkspaceFilter => return crate::ui_workspaces::edit_filter(self, code, modifiers, paste),
-            TextInputId::WorkspaceName => return crate::ui_workspace_sets::edit_input(self, code, modifiers, paste),
+            TextInputId::DeskPopup => {
+                return crate::ui_desks::edit_input(self, code, modifiers, paste);
+            }
+            TextInputId::WorkspaceFilter => {
+                return crate::ui_workspaces::edit_filter(self, code, modifiers, paste);
+            }
+            TextInputId::WorkspaceName => {
+                return crate::ui_workspace_sets::edit_input(self, code, modifiers, paste);
+            }
             TextInputId::OutputFind => return self.logs.edit_find_input(code, modifiers, paste),
             _ => {}
         }
         if id == TextInputId::GitBranch && !self.git_branch_dialog.accepts_text() {
-            return TextInputResult { consumed: true, changed: false };
+            return TextInputResult {
+                consumed: true,
+                changed: false,
+            };
         }
         if id == TextInputId::Chat {
             let before = self.chat.input.clone();
             self.edit_chat_input(code, modifiers, paste);
-            return TextInputResult { consumed: true, changed: before != self.chat.input };
+            return TextInputResult {
+                consumed: true,
+                changed: before != self.chat.input,
+            };
         }
         for (other, history) in &mut self.text_input_histories {
             if *other != id {
                 history.break_group();
             }
         }
-        if id != TextInputId::SearchFind { self.input_histories[0].break_group(); }
-        if id != TextInputId::SearchReplace { self.input_histories[1].break_group(); }
+        if id != TextInputId::SearchFind {
+            self.input_histories[0].break_group();
+        }
+        if id != TextInputId::SearchReplace {
+            self.input_histories[1].break_group();
+        }
         if id == TextInputId::SourceControlCommit {
             let before = self.source_control_commit_msg.clone();
             self.edit_commit_input(code, modifiers, paste);
@@ -1332,17 +1522,20 @@ impl App {
         };
         // Starting a new search by replacing the entire field commits the old
         // query, without filling history with every intermediate keystroke.
-        let previous_query = if matches!(id, TextInputId::SearchFind | TextInputId::GlobalSearch(_)) {
+        let previous_query = if matches!(id, TextInputId::SearchFind | TextInputId::GlobalSearch(_))
+        {
             let (text, cursor, anchor) = self.text_input_state_mut(id);
-            (!text.is_empty() && Self::inline_selection_range(*cursor, *anchor) == Some((0, text.len())))
-                .then(|| text.clone())
+            (!text.is_empty()
+                && Self::inline_selection_range(*cursor, *anchor) == Some((0, text.len())))
+            .then(|| text.clone())
         } else {
             None
         };
         let numeric_setting = id == TextInputId::SettingsValue
-            && self.settings_value_setting_id.as_deref().is_none_or(|setting| {
-                Self::setting_field_kind(setting) == "number"
-            });
+            && self
+                .settings_value_setting_id
+                .as_deref()
+                .is_none_or(|setting| Self::setting_field_kind(setting) == "number");
         let (text, cursor, anchor) = self.text_input_state_mut(id);
         let mut input = TextInput::new(text, cursor, anchor);
         if id == TextInputId::GotoLine {
@@ -1354,12 +1547,18 @@ impl App {
         match id {
             TextInputId::SearchFind => self.input_histories[0] = history,
             TextInputId::SearchReplace => self.input_histories[1] = history,
-            _ => { self.text_input_histories.insert(id, history); }
+            _ => {
+                self.text_input_histories.insert(id, history);
+            }
         }
-        if result.changed && let Some(query) = previous_query {
+        if result.changed
+            && let Some(query) = previous_query
+        {
             match id {
                 TextInputId::SearchFind => self.search_history.record(&query),
-                TextInputId::GlobalSearch(field) => self.global_search_field_history_mut(field).record(&query),
+                TextInputId::GlobalSearch(field) => {
+                    self.global_search_field_history_mut(field).record(&query)
+                }
                 _ => unreachable!(),
             }
         }
@@ -1369,9 +1568,19 @@ impl App {
     fn text_input_is_overlay(&self, id: TextInputId) -> bool {
         match id {
             TextInputId::TerminalFind(_) => true,
-            TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => true,
-            TextInputId::AgentSetting(_) | TextInputId::LspSetting(_) | TextInputId::FormatterSetting(_) | TextInputId::RemoteTarget(_) | TextInputId::FileAssociation(_) | TextInputId::Exclusion(_) | TextInputId::ScopeBubbleLanguage => true,
-            TextInputId::FolderAddress | TextInputId::FolderSearch | TextInputId::FolderName => true,
+            TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => {
+                true
+            }
+            TextInputId::AgentSetting(_)
+            | TextInputId::LspSetting(_)
+            | TextInputId::FormatterSetting(_)
+            | TextInputId::RemoteTarget(_)
+            | TextInputId::FileAssociation(_)
+            | TextInputId::Exclusion(_)
+            | TextInputId::ScopeBubbleLanguage => true,
+            TextInputId::FolderAddress | TextInputId::FolderSearch | TextInputId::FolderName => {
+                true
+            }
             TextInputId::SearchFind
             | TextInputId::SearchReplace
             | TextInputId::QuickOpen
@@ -1401,10 +1610,14 @@ impl App {
 
     fn text_input_region_is_current(&self, region: &TextInputRegion) -> bool {
         if let TextInputId::TerminalFind(id) = region.id {
-            return self.terminal_find_index(id).is_some_and(|index| self.terminals[index].find.open);
+            return self
+                .terminal_find_index(id)
+                .is_some_and(|index| self.terminals[index].find.open);
         }
-        !matches!(region.id, TextInputId::SearchFind | TextInputId::SearchReplace)
-            || region.file_search_owner == self.file_search_owner()
+        !matches!(
+            region.id,
+            TextInputId::SearchFind | TextInputId::SearchReplace
+        ) || region.file_search_owner == self.file_search_owner()
     }
 
     /// Handle pointer editing for every registered text field.  The same hit
@@ -1443,14 +1656,17 @@ impl App {
         if self.menu_active && self.menu_open {
             return false;
         }
-        if self.rename.active && kind == MouseEventKind::Down(MouseButton::Left)
+        if self.rename.active
+            && kind == MouseEventKind::Down(MouseButton::Left)
             && !self.text_input_regions.iter().any(|region| {
                 region.id == TextInputId::ExplorerRename && region.hit_map.contains(column, row)
             })
         {
             self.execute_rename();
             // Failed validation and pending remote operations retain the edit.
-            if self.rename.active { return true; }
+            if self.rename.active {
+                return true;
+            }
         }
         self.handle_text_input_mouse_scoped(kind, column, row, modifiers, Some(false))
     }
@@ -1463,21 +1679,37 @@ impl App {
         modifiers: KeyModifiers,
         overlay: Option<bool>,
     ) -> bool {
-        if self.scroll_text_input(kind, column, row, overlay) { return true; }
+        if self.scroll_text_input(kind, column, row, overlay) {
+            return true;
+        }
         if overlay != Some(true) && self.handle_commit_input_scrollbar_mouse(kind, column, row) {
             return true;
         }
         match kind {
             MouseEventKind::Down(MouseButton::Right) => {
-                let Some((id, byte, owner)) = self.text_input_regions.iter().rev()
-                    .find(|region| overlay.is_none_or(|scope| self.text_input_is_overlay(region.id) == scope)
-                        && region.hit_map.contains(column, row))
-                    .map(|region| (region.id, region.hit_map.byte_at(column, row), region.file_search_owner))
+                let Some((id, byte, owner)) = self
+                    .text_input_regions
+                    .iter()
+                    .rev()
+                    .find(|region| {
+                        overlay.is_none_or(|scope| self.text_input_is_overlay(region.id) == scope)
+                            && region.hit_map.contains(column, row)
+                    })
+                    .map(|region| {
+                        (
+                            region.id,
+                            region.hit_map.byte_at(column, row),
+                            region.file_search_owner,
+                        )
+                    })
                 else {
                     // Find is painted over the editor. Its border and toolbar
                     // buttons must consume right-clicks just like its fields.
-                    return overlay == Some(true) && self.file_search_bars.iter()
-                        .any(|bar| bar.area.contains((column, row).into()));
+                    return overlay == Some(true)
+                        && self
+                            .file_search_bars
+                            .iter()
+                            .any(|bar| bar.area.contains((column, row).into()));
                 };
                 if matches!(id, TextInputId::SearchFind | TextInputId::SearchReplace) {
                     self.focus_file_search_owner(owner);
@@ -1486,7 +1718,8 @@ impl App {
                 let (text, cursor, anchor) = self.text_input_state_mut(id);
                 Self::normalize_inline_cursor(text, cursor, anchor);
                 if !Self::inline_selection_range(*cursor, *anchor)
-                    .is_some_and(|(start, end)| start <= byte && byte <= end) {
+                    .is_some_and(|(start, end)| start <= byte && byte <= end)
+                {
                     self.set_text_input_cursor(id, byte, None);
                 }
                 self.open_text_input_context_menu(id, column, row);
@@ -1522,7 +1755,13 @@ impl App {
                         overlay.is_none_or(|value| self.text_input_is_overlay(region.id) == value)
                             && region.hit_map.contains(column, row)
                     })
-                    .map(|region| (region.id, region.hit_map.byte_at(column, row), region.file_search_owner))
+                    .map(|region| {
+                        (
+                            region.id,
+                            region.hit_map.byte_at(column, row),
+                            region.file_search_owner,
+                        )
+                    })
                 else {
                     // An overlay pass that misses must not erase a background
                     // field's gesture before the background pass sees the click.
@@ -1737,8 +1976,11 @@ mod tests {
     pub(super) fn activate_field(app: &mut App, id: TextInputId) {
         app.active_pane = crate::app::ActivePane::Editor;
         match id {
-            TextInputId::DeskPopup | TextInputId::WorkspaceFilter | TextInputId::WorkspaceName
-            | TextInputId::OutputFind | TextInputId::TerminalFind(_) => {
+            TextInputId::DeskPopup
+            | TextInputId::WorkspaceFilter
+            | TextInputId::WorkspaceName
+            | TextInputId::OutputFind
+            | TextInputId::TerminalFind(_) => {
                 unreachable!("these controls have dedicated popup fixtures")
             }
             TextInputId::AgentSetting(_) => {
@@ -1756,21 +1998,33 @@ mod tests {
                 app.focus_text_input(id);
             }
             TextInputId::RemoteTarget(_) => {
-                app.remote_targets.path = Some(std::env::temp_dir().join("vtcode-shared-fields-remote-targets.json"));
+                app.remote_targets.path =
+                    Some(std::env::temp_dir().join("vtcode-shared-fields-remote-targets.json"));
                 app.edit_remote_target(None, false);
                 app.remote_targets.form.as_mut().unwrap().advanced = true;
                 app.focus_text_input(id);
             }
-            TextInputId::RemoteFilter => { app.open_remote_sidebar(); app.focus_text_input(id); }
-            TextInputId::ScopeBubbleLanguage => {
-                app.open_scope_bubble_settings();
-                crate::ui_scope_bubble_settings::activate(app, crate::ui_scope_bubble_settings::Action::New);
+            TextInputId::RemoteFilter => {
+                app.open_remote_sidebar();
                 app.focus_text_input(id);
             }
-            TextInputId::Exclusion(_) => { app.open_exclusion_settings("files_exclude", None, true); }
+            TextInputId::ScopeBubbleLanguage => {
+                app.open_scope_bubble_settings();
+                crate::ui_scope_bubble_settings::activate(
+                    app,
+                    crate::ui_scope_bubble_settings::Action::New,
+                );
+                app.focus_text_input(id);
+            }
+            TextInputId::Exclusion(_) => {
+                app.open_exclusion_settings("files_exclude", None, true);
+            }
             TextInputId::FileAssociation(_) => {
                 app.open_file_associations();
-                crate::ui_file_associations::activate(app, crate::ui_file_associations::Action::New);
+                crate::ui_file_associations::activate(
+                    app,
+                    crate::ui_file_associations::Action::New,
+                );
                 app.focus_text_input(id);
             }
             TextInputId::Chat => app.focus_chat(),
@@ -1796,7 +2050,9 @@ mod tests {
                 app.search_focus_field = field;
             }
             TextInputId::GitBranch => app.git_branch_picker_active = true,
-            TextInputId::GitOperationTarget => app.start_git_operation_dialog(crate::git_operation::Kind::CherryPick),
+            TextInputId::GitOperationTarget => {
+                app.start_git_operation_dialog(crate::git_operation::Kind::CherryPick)
+            }
             TextInputId::CommandPalette => app.palette.active = true,
             TextInputId::SymbolList => app.symbol_list_active = true,
             TextInputId::SaveAs => app.save_as_active = true,
@@ -1950,23 +2206,25 @@ mod tests {
     #[test]
     fn every_rendered_field_supports_double_and_triple_click_through_workbench_routing() {
         use crossterm::event::MouseEvent;
-        use ratatui::{backend::TestBackend, Frame, Terminal};
+        use ratatui::{Frame, Terminal, backend::TestBackend};
 
         fn render(frame: &mut Frame, app: &mut App, id: TextInputId) {
             app.text_input_regions.clear();
             let area = frame.area();
             match id {
                 TextInputId::DeskPopup => crate::ui_desks::draw(frame, app),
-                TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => crate::ui_workspaces::draw(frame, app),
+                TextInputId::WorkspaceFilter | TextInputId::WorkspaceName => {
+                    crate::ui_workspaces::draw(frame, app)
+                }
                 TextInputId::OutputFind => crate::ui_logs::draw_content(frame, app, area),
                 TextInputId::TerminalFind(id) => {
                     let index = app.terminal_find_index(id).unwrap();
                     crate::app_terminal_find::draw(frame, app, index, area);
                 }
                 TextInputId::Chat => crate::ui_chat::draw(frame, app, area),
-                TextInputId::FolderAddress | TextInputId::FolderSearch | TextInputId::FolderName => {
-                    crate::ui_folder_browser::draw(frame, app)
-                }
+                TextInputId::FolderAddress
+                | TextInputId::FolderSearch
+                | TextInputId::FolderName => crate::ui_folder_browser::draw(frame, app),
                 TextInputId::SearchFind | TextInputId::SearchReplace => {
                     crate::ui_search_dialog::draw_search_bar(frame, app)
                 }
@@ -1976,14 +2234,18 @@ mod tests {
                 TextInputId::QuickOpen => crate::ui_search_dialog::draw_quick_open(frame, app),
                 TextInputId::GotoLine => crate::ui_search_dialog::draw_goto_line(frame, app),
                 TextInputId::GitBranch => crate::ui_pickers::draw_git_branch_picker(frame, app),
-                TextInputId::GitOperationTarget => crate::ui_modal::draw(frame, app, crate::ui_modal::Kind::GitOperationTarget),
+                TextInputId::GitOperationTarget => {
+                    crate::ui_modal::draw(frame, app, crate::ui_modal::Kind::GitOperationTarget)
+                }
                 TextInputId::CommandPalette => crate::ui_pickers::draw_command_palette(frame, app),
                 TextInputId::SymbolList => crate::ui_pickers::draw_symbol_list(frame, app),
                 TextInputId::SaveAs => crate::ui_dialogs::draw_save_as_dialog(frame, app),
                 TextInputId::RenameSymbol => {
                     crate::ui_dialogs::draw_rename_symbol_dialog(frame, app)
                 }
-                TextInputId::TerminalRename => crate::ui_modal::draw(frame, app, crate::ui_modal::Kind::RenameTerminal),
+                TextInputId::TerminalRename => {
+                    crate::ui_modal::draw(frame, app, crate::ui_modal::Kind::RenameTerminal)
+                }
                 TextInputId::SettingsSearch | TextInputId::SettingsValue => {
                     crate::ui_settings::draw_settings_editor(frame, app, area)
                 }
@@ -1991,15 +2253,21 @@ mod tests {
                 TextInputId::LspSetting(_) => crate::ui_lsp_settings::draw(frame, app),
                 TextInputId::FormatterSetting(_) => crate::ui_formatter_settings::draw(frame, app),
                 TextInputId::RemoteTarget(_) => crate::ui_remote_targets::draw_dialog(frame, app),
-                TextInputId::RemoteFilter => crate::ui_remote_targets::draw_sidebar(frame, app, area),
-                TextInputId::ScopeBubbleLanguage => crate::ui_scope_bubble_settings::draw(frame, app),
+                TextInputId::RemoteFilter => {
+                    crate::ui_remote_targets::draw_sidebar(frame, app, area)
+                }
+                TextInputId::ScopeBubbleLanguage => {
+                    crate::ui_scope_bubble_settings::draw(frame, app)
+                }
                 TextInputId::Exclusion(_) => crate::ui_exclusion_settings::draw(frame, app),
                 TextInputId::FileAssociation(_) => crate::ui_file_associations::draw(frame, app),
                 TextInputId::ExtensionsFilter => {
                     crate::ui_helpers::draw_extensions_sidebar(frame, app, area)
                 }
                 TextInputId::ExplorerRename => crate::ui_chrome::draw_explorer(frame, app, area),
-                TextInputId::ExplorerFind | TextInputId::ExplorerFindPath => crate::ui_chrome::draw_explorer(frame, app, area),
+                TextInputId::ExplorerFind | TextInputId::ExplorerFindPath => {
+                    crate::ui_chrome::draw_explorer(frame, app, area)
+                }
                 TextInputId::SourceControlCommit => {
                     crate::ui_source_control::draw_source_control_sidebar(frame, app, area)
                 }

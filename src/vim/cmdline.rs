@@ -1,7 +1,7 @@
 //! The `:`, `/` and `?` command line.
 
-use super::exec::{self, cursor, push_history, push_jump, set_cursor, update_curswant, MKind};
-use super::keys::{Key, K};
+use super::exec::{self, MKind, cursor, push_history, push_jump, set_cursor, update_curswant};
+use super::keys::{K, Key};
 use super::parse::Cmd;
 use super::text::{Pos, Text};
 use super::{Host, Mode, VimState};
@@ -35,10 +35,18 @@ pub(crate) struct CmdLine {
 }
 
 impl CmdLine {
-    pub(crate) fn string(&self) -> String { self.text.iter().collect() }
+    pub(crate) fn string(&self) -> String {
+        self.text.iter().collect()
+    }
 }
 
-pub(crate) fn open(vim: &mut VimState, host: &mut dyn Host, kind: char, pending: Option<Cmd>, init: String) {
+pub(crate) fn open(
+    vim: &mut VimState,
+    host: &mut dyn Host,
+    kind: char,
+    pending: Option<Cmd>,
+    init: String,
+) {
     if vim.is_visual() && kind != ':' {
         // Searching from Visual mode extends the selection.
     }
@@ -67,7 +75,11 @@ pub(crate) fn open(vim: &mut VimState, host: &mut dyn Host, kind: char, pending:
         preview: None,
         resume_insert: vim.insert_oneshot.take(),
     });
-    vim.cmdline_visual = if vim.is_visual() { Some(vim.mode) } else { None };
+    vim.cmdline_visual = if vim.is_visual() {
+        Some(vim.mode)
+    } else {
+        None
+    };
     vim.mode = Mode::Cmdline;
     vim.message = None;
 }
@@ -86,7 +98,9 @@ fn close(vim: &mut VimState, host: &mut dyn Host) -> Option<CmdLine> {
 }
 
 pub(crate) fn cancel(vim: &mut VimState, host: &mut dyn Host) {
-    let Some(c) = close(vim, host) else { return; };
+    let Some(c) = close(vim, host) else {
+        return;
+    };
     if matches!(c.kind, '/' | '?') {
         if let Some(ed) = host.ed() {
             ed.cursor_line = c.saved_cursor.line;
@@ -97,7 +111,9 @@ pub(crate) fn cancel(vim: &mut VimState, host: &mut dyn Host) {
     }
     vim.incsearch = None;
     if vim.is_visual() {
-        if let Some(ed) = host.ed() { exec::sync_visual(vim, ed); }
+        if let Some(ed) = host.ed() {
+            exec::sync_visual(vim, ed);
+        }
     } else if let Some(ed) = host.ed() {
         exec::clamp_normal(ed);
     }
@@ -115,10 +131,14 @@ fn resume_after(vim: &mut VimState, host: &mut dyn Host) {
 
 fn word_before(text: &[char], cursor: usize) -> usize {
     let mut i = cursor;
-    while i > 0 && text[i - 1] == ' ' { i -= 1; }
+    while i > 0 && text[i - 1] == ' ' {
+        i -= 1;
+    }
     let word = |c: char| c.is_alphanumeric() || c == '_';
     if i > 0 && word(text[i - 1]) {
-        while i > 0 && word(text[i - 1]) { i -= 1; }
+        while i > 0 && word(text[i - 1]) {
+            i -= 1;
+        }
     } else if i > 0 {
         i -= 1;
     }
@@ -126,7 +146,10 @@ fn word_before(text: &[char], cursor: usize) -> usize {
 }
 
 pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
-    let Some(c) = vim.cmdline.as_mut() else { vim.mode = Mode::Normal; return; };
+    let Some(c) = vim.cmdline.as_mut() else {
+        vim.mode = Mode::Normal;
+        return;
+    };
     if c.awaiting_literal {
         c.awaiting_literal = false;
         let ch = match key.k {
@@ -149,34 +172,52 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
                 let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
                 let p = cursor(ed);
                 let chars = t.line_chars(p.line);
-                let is = |ch: char| if key.is_ctrl('w') { vim.opts.iskeyword.is_word(ch) } else { !ch.is_whitespace() };
+                let is = |ch: char| {
+                    if key.is_ctrl('w') {
+                        vim.opts.iskeyword.is_word(ch)
+                    } else {
+                        !ch.is_whitespace()
+                    }
+                };
                 let mut s = p.col.min(chars.len());
-                while s < chars.len() && !is(chars[s]) { s += 1; }
+                while s < chars.len() && !is(chars[s]) {
+                    s += 1;
+                }
                 let mut b = s;
-                while b > 0 && is(chars[b - 1]) { b -= 1; }
+                while b > 0 && is(chars[b - 1]) {
+                    b -= 1;
+                }
                 let mut e = s;
-                while e < chars.len() && is(chars[e]) { e += 1; }
+                while e < chars.len() && is(chars[e]) {
+                    e += 1;
+                }
                 (e > b).then(|| chars[b..e].iter().collect())
             })
         } else if key.is_ctrl('l') {
-            host.ed_ref().map(|ed| Text::of(&ed.rope, ed.vim_buf.trailing_empty).line_string(ed.cursor_line))
+            host.ed_ref()
+                .map(|ed| Text::of(&ed.rope, ed.vim_buf.trailing_empty).line_string(ed.cursor_line))
         } else if key.is_ctrl('r') || key.is_ctrl('o') || key.is_ctrl('p') {
             c.awaiting_register = true;
             return;
         } else if let Some(r) = key.char() {
-            super::ops::read_reg(vim, host, Some(r)).map(|reg| reg.text.trim_end_matches('\n').replace('\n', "\r"))
+            super::ops::read_reg(vim, host, Some(r))
+                .map(|reg| reg.text.trim_end_matches('\n').replace('\n', "\r"))
         } else {
             None
         };
         if let (Some(s), Some(c)) = (insert, vim.cmdline.as_mut()) {
-            for ch in s.chars() { c.text.insert(c.cursor, ch); c.cursor += 1; }
+            for ch in s.chars() {
+                c.text.insert(c.cursor, ch);
+                c.cursor += 1;
+            }
             changed(vim, host);
         }
         return;
     }
     let is_tab = key.k == K::Tab && !key.ctrl && !key.alt || key.is_ctrl('i');
     let is_backtab = key.k == K::BackTab;
-    if !is_tab && !is_backtab && !(c.completion.is_some() && (key.is_ctrl('n') || key.is_ctrl('p'))) {
+    if !is_tab && !is_backtab && !(c.completion.is_some() && (key.is_ctrl('n') || key.is_ctrl('p')))
+    {
         c.completion = None;
     }
     if key.is_escape() || key.is_ctrl('c') {
@@ -226,13 +267,20 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
         (K::Left, _, _) => c.cursor = word_before(&c.text, c.cursor),
         (K::Right, _, _) => {
             let mut i = c.cursor;
-            while i < c.text.len() && c.text[i] != ' ' { i += 1; }
-            while i < c.text.len() && c.text[i] == ' ' { i += 1; }
+            while i < c.text.len() && c.text[i] != ' ' {
+                i += 1;
+            }
+            while i < c.text.len() && c.text[i] == ' ' {
+                i += 1;
+            }
             c.cursor = i;
         }
         (K::Home, _, _) | (K::Char('b'), true, false) => c.cursor = 0,
         (K::End, _, _) | (K::Char('e'), true, false) => c.cursor = c.text.len(),
-        (K::Up, false, _) | (K::Down, false, _) | (K::Char('p'), true, false) | (K::Char('n'), true, false) => {
+        (K::Up, false, _)
+        | (K::Down, false, _)
+        | (K::Char('p'), true, false)
+        | (K::Char('n'), true, false) => {
             if c.completion.is_some() && key.ctrl {
                 complete(vim, host, key.is_ctrl('n'));
                 return;
@@ -241,16 +289,27 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
             history(vim, matches!(key.k, K::Up | K::Char('p')), prefix_filter);
             text_changed = true;
         }
-        (K::Char('r'), true, false) => { c.awaiting_register = true; return; }
-        (K::Char('v') | K::Char('q'), true, false) => { c.awaiting_literal = true; return; }
+        (K::Char('r'), true, false) => {
+            c.awaiting_register = true;
+            return;
+        }
+        (K::Char('v') | K::Char('q'), true, false) => {
+            c.awaiting_literal = true;
+            return;
+        }
         (K::Char('g') | K::Char('t'), true, false) if matches!(c.kind, '/' | '?') => {
             step_preview(vim, host, key.is_ctrl('g'));
             return;
         }
         (K::Tab, false, false) | (K::Char('i'), true, false) | (K::BackTab, _, _) => {
             if matches!(c.kind, '/' | '?') {
-                if !is_backtab { c.text.insert(c.cursor, '\t'); c.cursor += 1; text_changed = true; }
-                else { return; }
+                if !is_backtab {
+                    c.text.insert(c.cursor, '\t');
+                    c.cursor += 1;
+                    text_changed = true;
+                } else {
+                    return;
+                }
             } else {
                 complete(vim, host, !is_backtab);
                 return;
@@ -270,7 +329,9 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
 }
 
 fn changed(vim: &mut VimState, host: &mut dyn Host) {
-    let Some(c) = vim.cmdline.as_mut() else { return; };
+    let Some(c) = vim.cmdline.as_mut() else {
+        return;
+    };
     if !c.text.is_empty() || c.hist_idx.is_none() {
         // Typing resets the history position.
     }
@@ -287,11 +348,17 @@ pub(crate) fn split_pattern(text: &str, delim: char) -> (String, Option<String>)
     while let Some(ch) = chars.next() {
         if ch == '\\' {
             pat.push(ch);
-            if let Some(n) = chars.next() { pat.push(n); }
+            if let Some(n) = chars.next() {
+                pat.push(n);
+            }
             continue;
         }
-        if ch == '[' { in_class = true; }
-        if ch == ']' { in_class = false; }
+        if ch == '[' {
+            in_class = true;
+        }
+        if ch == ']' {
+            in_class = false;
+        }
         if ch == delim && !in_class {
             return (pat, Some(chars.collect()));
         }
@@ -311,17 +378,29 @@ pub(crate) enum Offset {
 
 pub(crate) fn parse_offset(s: &str) -> Offset {
     let s = s.trim();
-    if s.is_empty() { return Offset::None; }
+    if s.is_empty() {
+        return Offset::None;
+    }
     let num = |t: &str| -> isize {
-        if t.is_empty() { return 0; }
-        if t == "+" { return 1; }
-        if t == "-" { return -1; }
+        if t.is_empty() {
+            return 0;
+        }
+        if t == "+" {
+            return 1;
+        }
+        if t == "-" {
+            return -1;
+        }
         t.parse().unwrap_or(0)
     };
     match s.chars().next() {
         Some('e') => Offset::End(num(&s[1..])),
         Some('s' | 'b') => Offset::Start(num(&s[1..])),
-        Some('+' | '-' | '0'..='9') => Offset::Lines(if s.chars().all(|c| c.is_ascii_digit()) { s.parse().unwrap_or(0) } else { num(s) }),
+        Some('+' | '-' | '0'..='9') => Offset::Lines(if s.chars().all(|c| c.is_ascii_digit()) {
+            s.parse().unwrap_or(0)
+        } else {
+            num(s)
+        }),
         _ => Offset::None,
     }
 }
@@ -329,7 +408,9 @@ pub(crate) fn parse_offset(s: &str) -> Offset {
 fn step(t: &Text<'_>, p: &mut Pos, n: isize) {
     for _ in 0..n.unsigned_abs() {
         let r = if n > 0 { t.incl(p) } else { t.decl(p) };
-        if r == super::text::Step::Fail { break; }
+        if r == super::text::Step::Fail {
+            break;
+        }
     }
 }
 
@@ -350,34 +431,51 @@ pub(crate) fn apply_offset(t: &Text<'_>, start: usize, end: usize, off: Offset) 
         Offset::Start(n) => {
             let mut p = t.pos(start);
             step(t, &mut p, n);
-            (p, if n > 0 { MKind::Inclusive } else { MKind::Exclusive })
+            (
+                p,
+                if n > 0 {
+                    MKind::Inclusive
+                } else {
+                    MKind::Exclusive
+                },
+            )
         }
     }
 }
 
 fn preview(vim: &mut VimState, host: &mut dyn Host) {
-    let Some(c) = vim.cmdline.as_ref() else { return; };
+    let Some(c) = vim.cmdline.as_ref() else {
+        return;
+    };
     let forward = c.kind == '/';
     let (pat, _) = split_pattern(&c.string(), c.kind);
     let saved = c.saved_cursor;
     let saved_scroll = c.saved_scroll;
-    let Some(ed) = host.ed() else { return; };
+    let Some(ed) = host.ed() else {
+        return;
+    };
     ed.cursor_line = saved.line;
     ed.cursor_col = saved.col;
     ed.scroll_offset = saved_scroll.0;
     ed.wrap_scroll_offset = saved_scroll.1;
     if pat.is_empty() {
         vim.incsearch = None;
-        if let Some(c) = vim.cmdline.as_mut() { c.preview = None; }
+        if let Some(c) = vim.cmdline.as_mut() {
+            c.preview = None;
+        }
         return;
     }
-    let Ok(re) = super::search::compile(&pat, &vim.search_options()) else { return; };
+    let Ok(re) = super::search::compile(&pat, &vim.search_options()) else {
+        return;
+    };
     let hay = exec::haystack(ed);
     let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
     let from = t.idx(saved);
     let found = super::search::search(&ed.rope, &hay, &re, from, forward, vim.opts.wrapscan, false);
     vim.incsearch = Some(pat);
-    if let Some(c) = vim.cmdline.as_mut() { c.preview = found.map(|(s, e, _)| (s, e)); }
+    if let Some(c) = vim.cmdline.as_mut() {
+        c.preview = found.map(|(s, e, _)| (s, e));
+    }
     if let Some((s, _, _)) = found {
         let p = t.pos(s);
         ed.cursor_line = p.line;
@@ -388,14 +486,22 @@ fn preview(vim: &mut VimState, host: &mut dyn Host) {
 
 /// `<C-g>`/`<C-t>` while typing a search: move the preview between matches.
 fn step_preview(vim: &mut VimState, host: &mut dyn Host, forward: bool) {
-    let Some(c) = vim.cmdline.as_ref() else { return; };
+    let Some(c) = vim.cmdline.as_ref() else {
+        return;
+    };
     let (pat, _) = split_pattern(&c.string(), c.kind);
-    let Some(ed) = host.ed() else { return; };
-    let Ok(re) = super::search::compile(&pat, &vim.search_options()) else { return; };
+    let Some(ed) = host.ed() else {
+        return;
+    };
+    let Ok(re) = super::search::compile(&pat, &vim.search_options()) else {
+        return;
+    };
     let hay = exec::haystack(ed);
     let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
     let from = t.idx(cursor(ed));
-    if let Some((s, e, _)) = super::search::search(&ed.rope, &hay, &re, from, forward, vim.opts.wrapscan, false) {
+    if let Some((s, e, _)) =
+        super::search::search(&ed.rope, &hay, &re, from, forward, vim.opts.wrapscan, false)
+    {
         let p = t.pos(s);
         ed.cursor_line = p.line;
         ed.cursor_col = p.col;
@@ -408,16 +514,26 @@ fn step_preview(vim: &mut VimState, host: &mut dyn Host, forward: bool) {
 }
 
 fn history(vim: &mut VimState, older: bool, prefix: bool) {
-    let Some(c) = vim.cmdline.as_mut() else { return; };
-    let list = if c.kind == ':' { &vim.history_cmd } else { &vim.history_search };
-    if list.is_empty() { return; }
+    let Some(c) = vim.cmdline.as_mut() else {
+        return;
+    };
+    let list = if c.kind == ':' {
+        &vim.history_cmd
+    } else {
+        &vim.history_search
+    };
+    if list.is_empty() {
+        return;
+    }
     if c.hist_idx.is_none() {
         c.hist_prefix = if prefix { c.string() } else { String::new() };
     }
     let mut idx = c.hist_idx.unwrap_or(list.len());
     loop {
         if older {
-            if idx == 0 { return; }
+            if idx == 0 {
+                return;
+            }
             idx -= 1;
         } else {
             idx += 1;
@@ -428,7 +544,9 @@ fn history(vim: &mut VimState, older: bool, prefix: bool) {
                 return;
             }
         }
-        if list[idx].starts_with(&c.hist_prefix) { break; }
+        if list[idx].starts_with(&c.hist_prefix) {
+            break;
+        }
     }
     c.hist_idx = Some(idx);
     c.text = list[idx].chars().collect();
@@ -436,17 +554,42 @@ fn history(vim: &mut VimState, older: bool, prefix: bool) {
 }
 
 fn complete(vim: &mut VimState, host: &mut dyn Host, forward: bool) {
-    let Some(c) = vim.cmdline.as_mut() else { return; };
+    let Some(c) = vim.cmdline.as_mut() else {
+        return;
+    };
     if let Some(comp) = &mut c.completion {
-        if comp.items.is_empty() { return; }
+        if comp.items.is_empty() {
+            return;
+        }
         let n = comp.items.len();
         comp.index = Some(match comp.index {
-            None => if forward { 0 } else { n - 1 },
-            Some(i) if forward => if i + 1 >= n { usize::MAX } else { i + 1 },
-            Some(i) => if i == 0 { usize::MAX } else { i - 1 },
+            None => {
+                if forward {
+                    0
+                } else {
+                    n - 1
+                }
+            }
+            Some(i) if forward => {
+                if i + 1 >= n {
+                    usize::MAX
+                } else {
+                    i + 1
+                }
+            }
+            Some(i) => {
+                if i == 0 {
+                    usize::MAX
+                } else {
+                    i - 1
+                }
+            }
         });
         let word: String = match comp.index {
-            Some(usize::MAX) => { comp.index = None; comp.original.clone() }
+            Some(usize::MAX) => {
+                comp.index = None;
+                comp.original.clone()
+            }
             Some(i) => comp.items[i].clone(),
             None => comp.original.clone(),
         };
@@ -458,16 +601,27 @@ fn complete(vim: &mut VimState, host: &mut dyn Host, forward: bool) {
     }
     let before: String = c.text[..c.cursor].iter().collect();
     let (start, items) = super::ex::completions(vim, host, &before);
-    let Some(c) = vim.cmdline.as_mut() else { return; };
-    if items.is_empty() { return; }
+    let Some(c) = vim.cmdline.as_mut() else {
+        return;
+    };
+    if items.is_empty() {
+        return;
+    }
     let original: String = c.text[start..c.cursor].iter().collect();
     c.text.truncate(c.cursor);
-    c.completion = Some(Completion { items, index: None, start, original });
+    c.completion = Some(Completion {
+        items,
+        index: None,
+        start,
+        original,
+    });
     complete(vim, host, forward);
 }
 
 fn execute(vim: &mut VimState, host: &mut dyn Host) {
-    let Some(c) = close(vim, host) else { return; };
+    let Some(c) = close(vim, host) else {
+        return;
+    };
     let text = c.string();
     vim.incsearch = None;
     match c.kind {
@@ -476,12 +630,16 @@ fn execute(vim: &mut VimState, host: &mut dyn Host) {
             if !text.trim().is_empty() {
                 vim.regs.last_cmdline = text.clone();
             }
-            if vim.is_visual() { exec::exit_visual(vim, host); }
+            if vim.is_visual() {
+                exec::exit_visual(vim, host);
+            }
             if let Err(e) = super::ex::run(vim, host, &text) {
                 vim.set_error(e);
             }
             if vim.mode == Mode::Normal {
-                if let Some(ed) = host.ed() { exec::clamp_normal(ed); }
+                if let Some(ed) = host.ed() {
+                    exec::clamp_normal(ed);
+                }
             }
             resume_after(vim, host);
         }
@@ -493,9 +651,14 @@ fn execute(vim: &mut VimState, host: &mut dyn Host) {
                 match &vim.last_search {
                     Some((p, _)) => {
                         pat = p.clone();
-                        if off.is_none() { offset = vim.last_offset; }
+                        if off.is_none() {
+                            offset = vim.last_offset;
+                        }
                     }
-                    None => { vim.set_error("E35: No previous regular expression"); return; }
+                    None => {
+                        vim.set_error("E35: No previous regular expression");
+                        return;
+                    }
                 }
             }
             push_history(&mut vim.history_search, &text);
@@ -507,25 +670,55 @@ fn execute(vim: &mut VimState, host: &mut dyn Host) {
                 ed.cursor_line = c.saved_cursor.line;
                 ed.cursor_col = c.saved_cursor.col;
             }
-            let Some(target) = search_target(vim, host, &pat, forward, c.count.max(1), offset) else {
-                if let Some(ed) = host.ed() { ed.scroll_offset = c.saved_scroll.0; ed.wrap_scroll_offset = c.saved_scroll.1; }
+            let Some(target) = search_target(vim, host, &pat, forward, c.count.max(1), offset)
+            else {
+                if let Some(ed) = host.ed() {
+                    ed.scroll_offset = c.saved_scroll.0;
+                    ed.wrap_scroll_offset = c.saved_scroll.1;
+                }
                 if let Some(cmd) = &c.pending {
                     let _ = cmd;
                 }
-                if vim.is_visual() { if let Some(ed) = host.ed() { exec::sync_visual(vim, ed); } }
+                if vim.is_visual() {
+                    if let Some(ed) = host.ed() {
+                        exec::sync_visual(vim, ed);
+                    }
+                }
                 return;
             };
             if let Some(cmd) = c.pending {
-                if let super::parse::Action::Op { op, force, target: tg, .. } = cmd.action.clone() {
-                    super::ops::op_target(vim, host, &cmd, op, force, tg, cmd.count1(), cmd.has_count(), Some((target.0, target.1, pat, forward)));
+                if let super::parse::Action::Op {
+                    op,
+                    force,
+                    target: tg,
+                    ..
+                } = cmd.action.clone()
+                {
+                    super::ops::op_target(
+                        vim,
+                        host,
+                        &cmd,
+                        op,
+                        force,
+                        tg,
+                        cmd.count1(),
+                        cmd.has_count(),
+                        Some((target.0, target.1, pat, forward)),
+                    );
                 }
             } else if let Some(ed) = host.ed() {
                 push_jump(vim, ed);
                 let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
-                let p = if vim.is_visual() { t.clamp_insert(target.0) } else { t.clamp_normal(target.0) };
+                let p = if vim.is_visual() {
+                    t.clamp_insert(target.0)
+                } else {
+                    t.clamp_normal(target.0)
+                };
                 set_cursor(ed, p);
                 update_curswant(vim, ed);
-                if vim.is_visual() { exec::sync_visual(vim, ed); }
+                if vim.is_visual() {
+                    exec::sync_visual(vim, ed);
+                }
             }
             resume_after(vim, host);
         }
@@ -533,7 +726,14 @@ fn execute(vim: &mut VimState, host: &mut dyn Host) {
 }
 
 /// Run a search with an offset from the cursor.
-pub(crate) fn search_target(vim: &mut VimState, host: &mut dyn Host, pat: &str, forward: bool, count: usize, offset: Offset) -> Option<(Pos, MKind)> {
+pub(crate) fn search_target(
+    vim: &mut VimState,
+    host: &mut dyn Host,
+    pat: &str,
+    forward: bool,
+    count: usize,
+    offset: Offset,
+) -> Option<(Pos, MKind)> {
     let origin = host.ed_ref().map(cursor)?;
     let first = search_target_once(vim, host, pat, forward, count, offset)?;
     if first.0 != origin || offset == Offset::None {
@@ -546,11 +746,21 @@ pub(crate) fn search_target(vim: &mut VimState, host: &mut dyn Host, pat: &str, 
     ed.cursor_line = p.line;
     ed.cursor_col = p.col;
     let r = search_target_once(vim, host, pat, forward, 1, offset);
-    if let Some(ed) = host.ed() { ed.cursor_line = saved.line; ed.cursor_col = saved.col; }
+    if let Some(ed) = host.ed() {
+        ed.cursor_line = saved.line;
+        ed.cursor_col = saved.col;
+    }
     r.or(Some(first))
 }
 
-fn search_target_once(vim: &mut VimState, host: &mut dyn Host, pat: &str, forward: bool, count: usize, offset: Offset) -> Option<(Pos, MKind)> {
+fn search_target_once(
+    vim: &mut VimState,
+    host: &mut dyn Host,
+    pat: &str,
+    forward: bool,
+    count: usize,
+    offset: Offset,
+) -> Option<(Pos, MKind)> {
     let p = exec::search_motion(vim, host, pat, forward, count, false)?;
     let ed = host.ed_ref()?;
     let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
@@ -559,7 +769,12 @@ fn search_target_once(vim: &mut VimState, host: &mut dyn Host, pat: &str, forwar
         let re = super::search::compile(pat, &vim.search_options()).ok()?;
         let hay = exec::haystack(ed);
         let b = ed.rope.char_to_byte(start);
-        re.find_iter(&hay).find(|&(s, _)| s == b).map(|(_, e)| ed.rope.byte_to_char(e)).unwrap_or(start + 1)
-    } else { start + 1 };
+        re.find_iter(&hay)
+            .find(|&(s, _)| s == b)
+            .map(|(_, e)| ed.rope.byte_to_char(e))
+            .unwrap_or(start + 1)
+    } else {
+        start + 1
+    };
     Some(apply_offset(&t, start, end, offset))
 }

@@ -1,4 +1,3 @@
-
 use super::*;
 use std::path::PathBuf;
 
@@ -84,9 +83,8 @@ fn semantic_token_decode_can_cancel_obsolete_work() {
     ];
     let checks = AtomicUsize::new(0);
 
-    let decoded = decode_semantic_tokens_cancellable(&tokens, || {
-        checks.fetch_add(1, Ordering::Relaxed) >= 1
-    });
+    let decoded =
+        decode_semantic_tokens_cancellable(&tokens, || checks.fetch_add(1, Ordering::Relaxed) >= 1);
 
     assert!(decoded.is_none());
     assert_eq!(checks.load(Ordering::Relaxed), 2);
@@ -148,7 +146,8 @@ fn register_configs_keeps_first_server_per_language() {
         command: "rust-analyzer".into(),
         args: vec![],
         file_patterns: vec!["*.rs".into()],
-        settings: None, init_options: None,
+        settings: None,
+        init_options: None,
     };
     manager.register_config(rust.clone());
     assert_eq!(manager.configs.len(), 1);
@@ -163,7 +162,8 @@ fn register_configs_keeps_first_server_per_language() {
         command: "pylsp".into(),
         args: vec![],
         file_patterns: vec!["*.py".into()],
-        settings: None, init_options: None,
+        settings: None,
+        init_options: None,
     });
     assert_eq!(
         manager
@@ -490,7 +490,8 @@ fn configured_file_patterns_match_extensions_and_exact_basenames_without_startin
         command: "unused-server".into(),
         args: vec![],
         file_patterns: vec!["*.rs".into(), "Cargo.toml".into()],
-        settings: None, init_options: None,
+        settings: None,
+        init_options: None,
     });
     for (path, expected) in [
         ("src/main.rs", true),
@@ -627,7 +628,8 @@ fn test_rust_analyzer_start_and_initialize() {
         command: "rust-analyzer".to_string(),
         args: vec![],
         file_patterns: vec!["*.rs".to_string()],
-        settings: None, init_options: None,
+        settings: None,
+        init_options: None,
     };
 
     let mut client = LspClient::start(&config, workspace).unwrap();
@@ -686,7 +688,8 @@ fn test_lsp_manager_ensure_client_for_file() {
         command: "rust-analyzer".to_string(),
         args: vec![],
         file_patterns: vec!["*.rs".to_string()],
-        settings: None, init_options: None,
+        settings: None,
+        init_options: None,
     });
 
     // Should start a client for .rs files
@@ -716,7 +719,8 @@ fn test_ensure_client_invalid_command() {
         command: "nonexistent-lsp-server-binary".to_string(),
         args: vec![],
         file_patterns: vec!["*.fake".to_string()],
-        settings: None, init_options: None,
+        settings: None,
+        init_options: None,
     });
     let idx = mgr.ensure_client_for_file(Path::new("test.fake"));
     assert!(idx.is_none()); // Should fail to start
@@ -732,9 +736,17 @@ fn rust_analyzer_linux_feature_round_trip() {
         let deadline = Instant::now() + Duration::from_secs(45);
         loop {
             manager.poll();
-            if ready(manager) { break; }
-            assert!(Instant::now() < deadline, "language server timed out: {label}");
-            assert!(!manager.clients.is_empty(), "language server disconnected: {label}");
+            if ready(manager) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "language server timed out: {label}"
+            );
+            assert!(
+                !manager.clients.is_empty(),
+                "language server disconnected: {label}"
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
         eprintln!("rust-analyzer Linux: {label}");
@@ -743,19 +755,33 @@ fn rust_analyzer_linux_feature_round_trip() {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().join("workspace with spaces 世界");
     std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::write(root.join("Cargo.toml"), "[package]\nname='linux-lsp-probe'\nversion='0.1.0'\nedition='2024'\n").unwrap();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname='linux-lsp-probe'\nversion='0.1.0'\nedition='2024'\n",
+    )
+    .unwrap();
     let path = root.join("src/lib.rs");
     let source = "pub fn add(left:i32,right:i32)->i32{\nleft+right\n}\npub fn caller()->i32{\n    let result=add(1,2);\n    result\n}\npub fn invalid(){ let trouble:i32=\"oops\"; }\n";
     std::fs::write(&path, source).unwrap();
     let mut manager = LspManager::new(root);
     manager.register_config(LspServerConfig {
-        language: "rust".into(), command: "rust-analyzer".into(), args: vec![],
-        file_patterns: vec!["*.rs".into()], settings: None, init_options: None,
+        language: "rust".into(),
+        command: "rust-analyzer".into(),
+        args: vec![],
+        file_patterns: vec!["*.rs".into()],
+        settings: None,
+        init_options: None,
     });
     assert!(manager.ensure_client_for_file(&path).is_some());
     wait(&mut manager, "initialize", |m| m.clients[0].initialized);
     manager.sync_document_owned(&path, 1, source.to_string());
-    wait(&mut manager, "diagnostics", |m| m.get_diagnostics(&path).is_some_and(|diagnostics| diagnostics.iter().any(|d| d.severity == DiagnosticSeverity::ERROR)));
+    wait(&mut manager, "diagnostics", |m| {
+        m.get_diagnostics(&path).is_some_and(|diagnostics| {
+            diagnostics
+                .iter()
+                .any(|d| d.severity == DiagnosticSeverity::ERROR)
+        })
+    });
 
     // Diagnostics can arrive while rust-analyzer is still indexing. Repeat
     // the completion probe until the workspace is ready, as a user would.
@@ -767,37 +793,84 @@ fn rust_analyzer_linux_feature_round_trip() {
             manager.poll();
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(Instant::now() < completion_deadline, "workspace never became ready for completion");
+        assert!(
+            Instant::now() < completion_deadline,
+            "workspace never became ready for completion"
+        );
     }
-    wait(&mut manager, "completion", |m| !m.completion_items.is_empty());
-    assert!(manager.completion_items.iter().any(|item| item.label.starts_with("add")), "{:?}", manager.completion_items);
+    wait(&mut manager, "completion", |m| {
+        !m.completion_items.is_empty()
+    });
+    assert!(
+        manager
+            .completion_items
+            .iter()
+            .any(|item| item.label.starts_with("add")),
+        "{:?}",
+        manager.completion_items
+    );
     assert!(manager.request_hover(&path, 4, 16));
     wait(&mut manager, "hover", |m| m.hover_content.is_some());
-    assert!(manager.hover_content.as_ref().is_some_and(|text| text.contains("add")));
+    assert!(
+        manager
+            .hover_content
+            .as_ref()
+            .is_some_and(|text| text.contains("add"))
+    );
     assert!(manager.request_definition(&path, 4, 16));
-    wait(&mut manager, "definition", |m| !m.definition_locations.is_empty());
-    assert!(manager.definition_locations.iter().any(|location| location.range.start.line == 0 && location.uri.to_file_path().ok().as_ref() == Some(&path)));
+    wait(&mut manager, "definition", |m| {
+        !m.definition_locations.is_empty()
+    });
+    assert!(
+        manager
+            .definition_locations
+            .iter()
+            .any(|location| location.range.start.line == 0
+                && location.uri.to_file_path().ok().as_ref() == Some(&path))
+    );
     assert!(manager.request_references(&path, 0, 8));
-    wait(&mut manager, "references", |m| !m.reference_locations.is_empty());
+    wait(&mut manager, "references", |m| {
+        !m.reference_locations.is_empty()
+    });
     assert!(manager.reference_locations.len() >= 2);
     assert!(manager.request_rename(&path, 0, 8, "sum"));
     wait(&mut manager, "rename", |m| m.rename_edit.is_some());
-    assert!(serde_json::to_string(&manager.rename_edit).unwrap().contains("sum"));
+    assert!(
+        serde_json::to_string(&manager.rename_edit)
+            .unwrap()
+            .contains("sum")
+    );
     assert!(manager.request_format_document(&path, 4, true));
     wait(&mut manager, "formatting", |m| m.format_dirty);
     assert!(!manager.format_edits.is_empty());
     assert!(manager.request_code_action(&CodeActionParams {
-        path: &path, start_line: 1, start_col: 0, end_line: 1, end_col: 10,
+        path: &path,
+        start_line: 1,
+        start_col: 0,
+        end_line: 1,
+        end_col: 10,
         diagnostics: vec![],
     }));
     wait(&mut manager, "code actions", |m| !m.code_actions.is_empty());
-    assert!(manager.code_actions.iter().any(|action| action.edit.is_some()));
+    assert!(
+        manager
+            .code_actions
+            .iter()
+            .any(|action| action.edit.is_some())
+    );
     assert!(manager.request_signature_help(&path, 4, 21));
-    wait(&mut manager, "signature help", |m| m.signature_help.is_some());
+    wait(&mut manager, "signature help", |m| {
+        m.signature_help.is_some()
+    });
     assert!(manager.signature_help.is_some());
     assert!(manager.request_semantic_tokens_full(&path));
     wait(&mut manager, "semantic tokens", |m| m.semantic_tokens_dirty);
-    assert!(manager.semantic_tokens_response.as_ref().is_some_and(|tokens| !tokens.data.is_empty()));
+    assert!(
+        manager
+            .semantic_tokens_response
+            .as_ref()
+            .is_some_and(|tokens| !tokens.data.is_empty())
+    );
     assert!(manager.request_folding_range(&path));
     wait(&mut manager, "folding ranges", |m| m.folding_ranges_dirty);
     assert!(!manager.folding_ranges.is_empty());
@@ -809,16 +882,35 @@ fn rust_analyzer_linux_feature_round_trip() {
     std::fs::write(&path, &fixed).unwrap();
     manager.did_change(&path, &fixed);
     manager.notify_did_save(&path);
-    wait(&mut manager, "compiler diagnostics after save", |m| m.get_diagnostics(&path).is_some_and(|diagnostics| diagnostics.iter().all(|d| d.severity != DiagnosticSeverity::ERROR)));
+    wait(&mut manager, "compiler diagnostics after save", |m| {
+        m.get_diagnostics(&path).is_some_and(|diagnostics| {
+            diagnostics
+                .iter()
+                .all(|d| d.severity != DiagnosticSeverity::ERROR)
+        })
+    });
     // Cargo-check diagnostics update on save. Parser diagnostics must also
     // update for unsaved text without changing the file on disk.
     let broken = format!("{fixed}\nfn syntax_error() {{ let broken = ; }}\n");
     manager.did_change(&path, &broken);
-    wait(&mut manager, "diagnostics for unsaved syntax error", |m| m.get_diagnostics(&path).is_some_and(|diagnostics| diagnostics.iter().any(|d| d.line >= 8 && d.severity == DiagnosticSeverity::ERROR)));
+    wait(&mut manager, "diagnostics for unsaved syntax error", |m| {
+        m.get_diagnostics(&path).is_some_and(|diagnostics| {
+            diagnostics
+                .iter()
+                .any(|d| d.line >= 8 && d.severity == DiagnosticSeverity::ERROR)
+        })
+    });
     assert_eq!(std::fs::read_to_string(&path).unwrap(), fixed);
     let previous_diagnostics = manager.diagnostics_version;
     manager.did_change(&path, &fixed);
-    wait(&mut manager, "diagnostics after unsaved edit", |m| m.diagnostics_version > previous_diagnostics && m.get_diagnostics(&path).is_none_or(|diagnostics| diagnostics.iter().all(|d| d.severity != DiagnosticSeverity::ERROR)));
+    wait(&mut manager, "diagnostics after unsaved edit", |m| {
+        m.diagnostics_version > previous_diagnostics
+            && m.get_diagnostics(&path).is_none_or(|diagnostics| {
+                diagnostics
+                    .iter()
+                    .all(|d| d.severity != DiagnosticSeverity::ERROR)
+            })
+    });
     manager.did_close(&path);
     assert!(manager.get_diagnostics(&path).is_none());
     manager.shutdown_all();

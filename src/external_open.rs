@@ -278,26 +278,40 @@ mod linux_tests {
             }
             let log = temporary.path().join(format!("{mode}.log"));
             let output = Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "external_open::linux_tests::desktop_dispatch_fixture", "--nocapture"])
+                .args([
+                    "--exact",
+                    "external_open::linux_tests::desktop_dispatch_fixture",
+                    "--nocapture",
+                ])
                 .env("PATH", &helpers)
                 .env("VTCODE_DESKTOP_MODE", mode)
                 .env("VTCODE_DESKTOP_FILE", &file)
                 .env("VTCODE_DESKTOP_LOG", &log)
-                .output().unwrap();
-            assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 
     #[test]
     fn desktop_dispatch_fixture() {
-        let Ok(mode) = std::env::var("VTCODE_DESKTOP_MODE") else { return; };
+        let Ok(mode) = std::env::var("VTCODE_DESKTOP_MODE") else {
+            return;
+        };
         let file = PathBuf::from(std::env::var_os("VTCODE_DESKTOP_FILE").unwrap());
         let folder = file.parent().unwrap();
         let log = PathBuf::from(std::env::var_os("VTCODE_DESKTOP_LOG").unwrap());
         let url = "https://example.invalid/?q=a b&literal=$(ignored)";
         let requests = [
-            Request::SystemApp(file.clone()), Request::Reveal(file.clone()),
-            Request::Url(url.into()), Request::Terminal(file.clone()),
+            Request::SystemApp(file.clone()),
+            Request::Reveal(file.clone()),
+            Request::Url(url.into()),
+            Request::Terminal(file.clone()),
         ];
         for (index, request) in requests.into_iter().enumerate() {
             let result = request.run();
@@ -311,7 +325,10 @@ mod linux_tests {
                 let contents = std::fs::read_to_string(&log).unwrap_or_default();
                 let rows: Vec<_> = contents.lines().collect();
                 if rows.len() > index {
-                    let values: Vec<_> = rows[index].split('\0').filter(|value| !value.is_empty()).collect();
+                    let values: Vec<_> = rows[index]
+                        .split('\0')
+                        .filter(|value| !value.is_empty())
+                        .collect();
                     if index == 3 {
                         assert_eq!(values[1], folder.to_str().unwrap());
                         if mode == "preferred" {
@@ -322,7 +339,11 @@ mod linux_tests {
                             assert_eq!(values.len(), 2);
                         }
                     } else {
-                        let target = match index { 0 => file.to_str().unwrap(), 1 => folder.to_str().unwrap(), _ => url };
+                        let target = match index {
+                            0 => file.to_str().unwrap(),
+                            1 => folder.to_str().unwrap(),
+                            _ => url,
+                        };
                         if mode == "preferred" {
                             assert_eq!(values[0], "xdg-open");
                             assert_eq!(values[2..], [target]);
@@ -333,11 +354,20 @@ mod linux_tests {
                     }
                     break;
                 }
-                assert!(Instant::now() < deadline, "desktop helper did not receive request {index}");
+                assert!(
+                    Instant::now() < deadline,
+                    "desktop helper did not receive request {index}"
+                );
                 std::thread::sleep(Duration::from_millis(10));
             }
         }
-        assert_eq!(Request::Terminal(folder.join("missing directory/not a file")).run().unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            Request::Terminal(folder.join("missing directory/not a file"))
+                .run()
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
     }
 }
 

@@ -223,7 +223,11 @@ impl Workspace {
                     return Err(failure("The file is read-only"));
                 }
                 let text = read_text_contents(&mut file)?;
-                Some(WriteBaseline { file, metadata, text })
+                Some(WriteBaseline {
+                    file,
+                    metadata,
+                    text,
+                })
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(io_error(error)),
@@ -347,8 +351,8 @@ struct WriteBaseline {
 fn verify_write_baseline(path: &Path, before: &WriteBaseline) -> Result<(), p::Error> {
     use crate::file_source::file_identity;
 
-    let (mut file, metadata) = crate::file_source::open_canonical_regular_file(path)
-        .map_err(io_error)?;
+    let (mut file, metadata) =
+        crate::file_source::open_canonical_regular_file(path).map_err(io_error)?;
     let changed = || failure("The file changed during the ACP write");
     if metadata.len() != before.text.len() as u64
         || metadata.permissions() != before.metadata.permissions()

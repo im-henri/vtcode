@@ -137,7 +137,8 @@ fn ssh_external_delayed_missing_notification_cannot_close_a_successfully_saved_f
     assert_eq!(std::fs::read_to_string(&native).unwrap(), "!before\n");
     event(
         &mut app,
-        WorkspacePathChange { is_dir: false,
+        WorkspacePathChange {
+            is_dir: false,
             path: path.clone(),
             observed_at: Instant::now(),
             exists: stale.exists,
@@ -184,7 +185,8 @@ fn ssh_external_write_with_preserved_mtime_and_size_reloads_clean_text() {
     );
     event(
         &mut app,
-        WorkspacePathChange { is_dir: false,
+        WorkspacePathChange {
+            is_dir: false,
             path,
             observed_at: Instant::now(),
             exists: true,
@@ -522,7 +524,8 @@ fn ssh_external_parent_replacement_and_watcher_overflow_revalidate_open_children
         let changes = if overflow {
             vec![]
         } else {
-            vec![WorkspacePathChange { is_dir: false,
+            vec![WorkspacePathChange {
+                is_dir: false,
                 path: workspace.target_key("nested").unwrap(),
                 observed_at: Instant::now(),
                 exists: true,

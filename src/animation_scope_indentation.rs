@@ -204,10 +204,24 @@ struct Statements<'a> {
 
 /// Share the Python f-string scanner with configurable delimiter scopes.
 /// It is iterative and uses the caller's cancellation/work budget.
-pub(super) fn formatted_string_end(input: &CharInput<'_>, at: usize, control: Option<&ScanControl<'_>>) -> Result<usize, ()> {
+pub(super) fn formatted_string_end(
+    input: &CharInput<'_>,
+    at: usize,
+    control: Option<&ScanControl<'_>>,
+) -> Result<usize, ()> {
     let fallback = ScanControl::new(&|| false);
-    let mut lexer = Statements { input, control: control.unwrap_or(&fallback), at, line: 0, string_frames: Vec::new() };
-    if lexer.string(true)? { Ok(lexer.at) } else { Err(()) }
+    let mut lexer = Statements {
+        input,
+        control: control.unwrap_or(&fallback),
+        at,
+        line: 0,
+        string_frames: Vec::new(),
+    };
+    if lexer.string(true)? {
+        Ok(lexer.at)
+    } else {
+        Err(())
+    }
 }
 
 impl Statements<'_> {

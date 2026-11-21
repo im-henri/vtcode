@@ -225,8 +225,13 @@ impl Editor {
         crate::extension_buffer::Buffer::from_rope(&self.rope)
     }
 
-    pub(crate) fn set_remote_checkpoint(&mut self, checkpoint: Option<Arc<crate::remote::Checkpoint>>) {
-        crate::editor_document::edit!(self, { self.remote_checkpoint = checkpoint; });
+    pub(crate) fn set_remote_checkpoint(
+        &mut self,
+        checkpoint: Option<Arc<crate::remote::Checkpoint>>,
+    ) {
+        crate::editor_document::edit!(self, {
+            self.remote_checkpoint = checkpoint;
+        });
     }
     pub(crate) fn document_revision(&self) -> u64 {
         self.document.seen.get()
@@ -285,13 +290,26 @@ impl Editor {
                 // rich analysis. Invalidate those directly instead of walking
                 // every shared leaf in a gigabyte to discover a tiny edit.
                 // This also covers missed edits, replacements and undo/redo.
-                return (0, self.rope.len_lines().max(doc.rope.len_lines()).saturating_sub(1), true);
+                return (
+                    0,
+                    self.rope
+                        .len_lines()
+                        .max(doc.rope.len_lines())
+                        .saturating_sub(1),
+                    true,
+                );
             }
             let (old, new) = crate::rope_changes::changed_chars(&self.rope, &doc.rope);
-            let first = self.rope.char_to_line(old.start).min(doc.rope.char_to_line(new.start));
-            let last = self.rope.char_to_line(old.end).max(doc.rope.char_to_line(new.end));
-            let multiline = self.rope.slice(old).len_lines() > 1
-                || doc.rope.slice(new).len_lines() > 1;
+            let first = self
+                .rope
+                .char_to_line(old.start)
+                .min(doc.rope.char_to_line(new.start));
+            let last = self
+                .rope
+                .char_to_line(old.end)
+                .max(doc.rope.char_to_line(new.end));
+            let multiline =
+                self.rope.slice(old).len_lines() > 1 || doc.rope.slice(new).len_lines() > 1;
             (first, last, multiline)
         });
         if text_changed {
@@ -321,7 +339,9 @@ impl Editor {
         self.file_size = doc.file_size;
         self.large_file_mode = doc.large_file;
         self.rich_features_timed_out = doc.rich_features_timed_out;
-        if self.large_file_mode { self.pause_large_file_features(); }
+        if self.large_file_mode {
+            self.pause_large_file_features();
+        }
         self.bg_loading = doc.loading;
         self.language_override.clone_from(&doc.language);
         self.inferred_language.clone_from(&doc.inferred_language);
@@ -342,12 +362,16 @@ impl Editor {
         }
         if text_changed || indentation_changed {
             self.cached_wrapped_total = None;
-            if indentation_changed { self.cached_row_offsets = None; }
+            if indentation_changed {
+                self.cached_row_offsets = None;
+            }
         }
         if saved_changed {
             self.invalidate_unsaved_diff_cache();
         }
-        if !text_changed { return; }
+        if !text_changed {
+            return;
+        }
         self.clamp_cursor();
         let rope = &self.rope;
         let clamp = |(line, col): (usize, usize)| {

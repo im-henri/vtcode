@@ -146,7 +146,9 @@ impl Editor {
             states.retain_mut(|state| {
                 let mut length = |line: usize| {
                     if let Some((cached, len)) = lengths[0] {
-                        if cached == line { return len; }
+                        if cached == line {
+                            return len;
+                        }
                     }
                     if let Some((cached, len)) = lengths[1] {
                         if cached == line {
@@ -175,11 +177,15 @@ impl Editor {
             let mut line_lengths = rustc_hash::FxHashMap::default();
             states.retain_mut(|state| {
                 state.line = state.line.min(max_line);
-                let len = *line_lengths.entry(state.line).or_insert_with(|| self.line_len(state.line));
+                let len = *line_lengths
+                    .entry(state.line)
+                    .or_insert_with(|| self.line_len(state.line));
                 state.col = state.col.min(len);
                 if let Some((line, col)) = state.anchor {
                     let line = line.min(max_line);
-                    let len = *line_lengths.entry(line).or_insert_with(|| self.line_len(line));
+                    let len = *line_lengths
+                        .entry(line)
+                        .or_insert_with(|| self.line_len(line));
                     state.anchor = Some((line, col.min(len)));
                 }
                 seen.insert((state.line, state.col))
@@ -409,7 +415,9 @@ impl Editor {
                 if *line > 0 {
                     *line -= 1;
                 }
-                *col = self.source_column_at_cell(*line, 0, self.line_len(*line), visual_col).0;
+                *col = self
+                    .source_column_at_cell(*line, 0, self.line_len(*line), visual_col)
+                    .0;
             }
         }
         self.set_multi_cursor_positions(positions);
@@ -444,7 +452,9 @@ impl Editor {
                 if *line < max_line {
                     *line += 1;
                 }
-                *col = self.source_column_at_cell(*line, 0, self.line_len(*line), visual_col).0;
+                *col = self
+                    .source_column_at_cell(*line, 0, self.line_len(*line), visual_col)
+                    .0;
             }
         }
         self.set_multi_cursor_positions(positions);
@@ -538,7 +548,8 @@ impl Editor {
                         self.wrapped_row_at(current_row, wrap_width),
                         self.wrapped_row_at(current_row - 1, wrap_width),
                     ) {
-                        let visual_col = self.cell_at_source_column(state.line, current.start_col, state.col);
+                        let visual_col =
+                            self.cell_at_source_column(state.line, current.start_col, state.col);
                         state.line = target.line_idx;
                         state.col = self.column_on_wrapped_row(&target, visual_col);
                     }
@@ -552,7 +563,9 @@ impl Editor {
                 if state.line > 0 {
                     state.line -= 1;
                 }
-                state.col = self.source_column_at_cell(state.line, 0, self.line_len(state.line), visual_col).0;
+                state.col = self
+                    .source_column_at_cell(state.line, 0, self.line_len(state.line), visual_col)
+                    .0;
             }
         }
         self.set_multi_cursor_states(states);
@@ -570,7 +583,8 @@ impl Editor {
                         self.wrapped_row_at(current_row, wrap_width),
                         self.wrapped_row_at(current_row + 1, wrap_width),
                     ) {
-                        let visual_col = self.cell_at_source_column(state.line, current.start_col, state.col);
+                        let visual_col =
+                            self.cell_at_source_column(state.line, current.start_col, state.col);
                         state.line = target.line_idx;
                         state.col = self.column_on_wrapped_row(&target, visual_col);
                     }
@@ -587,7 +601,9 @@ impl Editor {
                 if state.line < max_line {
                     state.line += 1;
                 }
-                state.col = self.source_column_at_cell(state.line, 0, self.line_len(state.line), visual_col).0;
+                state.col = self
+                    .source_column_at_cell(state.line, 0, self.line_len(state.line), visual_col)
+                    .0;
             }
         }
         self.set_multi_cursor_states(states);

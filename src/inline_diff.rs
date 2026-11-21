@@ -55,9 +55,10 @@ impl InlineDiffScroll {
     }
 
     pub fn row_count(&self) -> usize {
-        self.content_rows() + usize::from(
-            self.terminal_empty_line.is_some() || self.aligned && self.original_terminal,
-        )
+        self.content_rows()
+            + usize::from(
+                self.terminal_empty_line.is_some() || self.aligned && self.original_terminal,
+            )
     }
 
     fn row_for_line(&self, cache: &DiffRenderCache, line: usize) -> usize {
@@ -79,7 +80,8 @@ impl InlineDiffScroll {
         let row = if !self.aligned && self.terminal_empty_line != Some(line) {
             // Scroll anchors include removed blocks; caret visibility follows
             // the target text after those blocks.
-            cache.inline_text_row_for_target_line(line)
+            cache
+                .inline_text_row_for_target_line(line)
                 .unwrap_or_else(|| self.row_for_line(cache, line))
         } else {
             self.row_for_line(cache, line)
@@ -94,7 +96,10 @@ impl InlineDiffScroll {
         widths: Option<Widths>,
     ) {
         if self.aligned != aligned {
-            *self = Self { aligned, ..Self::default() };
+            *self = Self {
+                aligned,
+                ..Self::default()
+            };
         }
         let anchor = self.wrap.row_at(self.row);
         let enabling = widths.is_some() && !self.wrap.enabled();
@@ -124,7 +129,8 @@ impl InlineDiffScroll {
         if self.wrap.enabled() {
             return 0;
         }
-        self.horizontal_width().saturating_sub(self.text_area.width as usize)
+        self.horizontal_width()
+            .saturating_sub(self.text_area.width as usize)
     }
 
     fn horizontal_width(&self) -> usize {
@@ -153,17 +159,21 @@ impl InlineDiffScroll {
             self.overview_geometry = Some(geometry);
             self.change_rows =
                 crate::ui_editor_minimap::ChangeRows::project(height, total, |start, end| {
-                    if start >= end { return Default::default(); }
+                    if start >= end {
+                        return Default::default();
+                    }
                     let first = self.wrap.row_at(start).logical;
                     let last = self.wrap.row_at(end.saturating_sub(1)).logical;
-                    self.cache.overview_status_in_range(self.aligned, first, last + 1)
+                    self.cache
+                        .overview_status_in_range(self.aligned, first, last + 1)
                 });
         }
         if !same_cache || self.source_scroll != Some(editor.scroll_offset) {
             self.row = if self.cache.target_content_lines() == 0 {
                 0
             } else {
-                self.wrap.first_row(self.row_for_line(&self.cache, editor.scroll_offset))
+                self.wrap
+                    .first_row(self.row_for_line(&self.cache, editor.scroll_offset))
             };
         }
         let cursor_moved = self.cursor.map_or(
@@ -209,7 +219,12 @@ impl InlineDiffScroll {
     /// A card's visible range belongs to the outer review scrollbar. Preserve
     /// exact deletion-only row anchors and allow its tail to occupy fewer than
     /// a viewport's rows, without the native pane clamping it back to the top.
-    pub(crate) fn layout_review(&mut self, cache: Arc<DiffRenderCache>, editor: &mut Editor, row: usize) {
+    pub(crate) fn layout_review(
+        &mut self,
+        cache: Arc<DiffRenderCache>,
+        editor: &mut Editor,
+        row: usize,
+    ) {
         self.review = true;
         self.layout(cache, editor);
         self.row = row.min(self.row_count().saturating_sub(1));
@@ -264,7 +279,10 @@ impl InlineDiffScroll {
         let end = self.row.saturating_add(self.text_area.height as usize);
         (self.row..end).contains(&row)
             && (self.terminal_empty_line == Some(line)
-                || self.wrap.row_at(row).target(&self.cache, self.aligned)
+                || self
+                    .wrap
+                    .row_at(row)
+                    .target(&self.cache, self.aligned)
                     .is_some_and(|target| target.right_line == Some(line)))
     }
 
@@ -345,7 +363,8 @@ impl InlineDiffScroll {
         } else {
             let last = crate::ui_editor_minimap::scrollbar_viewport(
                 total, visible, max_scroll, track, false,
-            ).start;
+            )
+            .start;
             *offset = if position >= last {
                 max_scroll
             } else {
@@ -367,7 +386,9 @@ impl App {
     }
 
     pub(crate) fn wrapped_diff_vertical_navigation(
-        &mut self, key: crossterm::event::KeyCode, modifiers: crossterm::event::KeyModifiers,
+        &mut self,
+        key: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
     ) -> bool {
         use crossterm::event::{KeyCode, KeyModifiers};
         if !matches!(key, KeyCode::Up | KeyCode::Down)
@@ -379,7 +400,10 @@ impl App {
         let scroll = &self.diff_inline_scroll;
         let wrap = &scroll.wrap;
         let cache = &self.diff_render_cache;
-        let Some(editor) = self.editor().filter(|editor| editor.extra_cursors.is_empty()) else {
+        let Some(editor) = self
+            .editor()
+            .filter(|editor| editor.extra_cursors.is_empty())
+        else {
             return false;
         };
         if !wrap.enabled() || !Arc::ptr_eq(&scroll.cache, cache) {
@@ -391,33 +415,56 @@ impl App {
         let visual = scroll.cursor_row(cache, line, editor.cursor_col);
         let current = wrap.row_at(visual);
         let desired = editor.desired_col.unwrap_or_else(|| {
-            current.target(cache, scroll.aligned).map_or(0, |row| current.cell_column(row, false, editor.cursor_col))
+            current
+                .target(cache, scroll.aligned)
+                .map_or(0, |row| current.cell_column(row, false, editor.cursor_col))
         });
         let next = wrap.row_at(visual.saturating_add_signed(step));
-        let same_line = next.logical == current.logical && next.continuation != current.continuation
+        let same_line = next.logical == current.logical
+            && next.continuation != current.continuation
             && !next.padding(false);
         let next_line = if same_line {
             line
         } else if cache.context_lines.is_some() {
             let lines = &cache.visible_target_lines;
-            let index = lines.partition_point(|&candidate| if down { candidate <= line } else { candidate < line });
-            let index = if down { Some(index) } else { index.checked_sub(1) };
-            index.and_then(|index| lines.get(index)).copied().unwrap_or(line)
+            let index = lines.partition_point(|&candidate| {
+                if down {
+                    candidate <= line
+                } else {
+                    candidate < line
+                }
+            });
+            let index = if down {
+                Some(index)
+            } else {
+                index.checked_sub(1)
+            };
+            index
+                .and_then(|index| lines.get(index))
+                .copied()
+                .unwrap_or(line)
         } else {
-            line.saturating_add_signed(step).min(editor.line_count().saturating_sub(1))
+            line.saturating_add_signed(step)
+                .min(editor.line_count().saturating_sub(1))
         };
         let column = if !same_line && next_line == line {
             if down { editor.line_len(line) } else { 0 }
         } else {
-            let next = if same_line { next } else {
+            let next = if same_line {
+                next
+            } else {
                 wrap.row_at(scroll.cursor_row(cache, next_line, if down { 0 } else { usize::MAX }))
             };
-            next.target(cache, scroll.aligned).filter(|row| row.right_line == Some(next_line))
+            next.target(cache, scroll.aligned)
+                .filter(|row| row.right_line == Some(next_line))
                 .map_or(0, |row| next.column_at_cell(row, false, desired))
         };
         if let Some(editor) = self.editor_mut() {
-            if modifiers.contains(KeyModifiers::SHIFT) { editor.start_selection(); }
-            else { editor.clear_selection(); }
+            if modifiers.contains(KeyModifiers::SHIFT) {
+                editor.start_selection();
+            } else {
+                editor.clear_selection();
+            }
             editor.cursor_line = next_line;
             editor.cursor_col = column.min(editor.line_len(next_line));
             editor.desired_col = Some(desired);
@@ -544,11 +591,7 @@ mod tests {
             draw(&mut app, &mut terminal);
             assert!(app.diff_inline_scroll.row > 0);
             for _ in 0..30 {
-                crate::input::handle_editor_key(
-                    &mut app,
-                    KeyCode::PageDown,
-                    KeyModifiers::NONE,
-                );
+                crate::input::handle_editor_key(&mut app, KeyCode::PageDown, KeyModifiers::NONE);
                 draw(&mut app, &mut terminal);
             }
             assert_eq!(app.diff_inline_scroll.row, app.diff_inline_scroll.max_row());
@@ -598,7 +641,10 @@ mod tests {
                 .cell((vertical.x, vertical.y))
                 .unwrap()
                 .bg,
-            app.colors.ui.scrollbar_colors(app.colors.ui.bg_overview, true, false).1
+            app.colors
+                .ui
+                .scrollbar_colors(app.colors.ui.bg_overview, true, false)
+                .1
         );
         mouse(
             &mut app,
@@ -657,7 +703,10 @@ mod tests {
         let code = app.code_area.unwrap();
         let buffer = terminal.backend().buffer();
         let gutter: String = (0..code.x).map(|x| buffer[(x, code.y)].symbol()).collect();
-        assert_eq!(gutter, format!("{:>4}    - ", app.diff_inline_scroll.row + 1));
+        assert_eq!(
+            gutter,
+            format!("{:>4}    - ", app.diff_inline_scroll.row + 1)
+        );
         mouse(
             &mut app,
             MouseEventKind::Down(MouseButton::Left),
@@ -720,7 +769,9 @@ mod tests {
             KeyModifiers::NONE,
         );
         assert_eq!(app.active_group, 0);
-        assert!(app.advance_wheel_scroll(std::time::Instant::now() + std::time::Duration::from_millis(120)));
+        assert!(app.advance_wheel_scroll(
+            std::time::Instant::now() + std::time::Duration::from_millis(120)
+        ));
         render(&mut app, &mut terminal);
         app.switch_group(diff_group);
         render(&mut app, &mut terminal);
@@ -831,19 +882,23 @@ mod tests {
                         cache
                             .rows
                             .iter()
-                            .map(|row| {
-                                match (row.left_kind, row.right_kind) {
-                                    ('-', '+') => 'M',
-                                    (_, '+') => 'A',
-                                    ('-', _) => 'D',
-                                    _ => ' ',
-                                }
+                            .map(|row| match (row.left_kind, row.right_kind) {
+                                ('-', '+') => 'M',
+                                (_, '+') => 'A',
+                                ('-', _) => 'D',
+                                _ => ' ',
                             })
                             .collect()
                     } else {
-                        cache.inline_rows.iter().map(|row| match row.kind {
-                            '+' => 'A', '-' => 'D', _ => ' ',
-                        }).collect()
+                        cache
+                            .inline_rows
+                            .iter()
+                            .map(|row| match row.kind {
+                                '+' => 'A',
+                                '-' => 'D',
+                                _ => ' ',
+                            })
+                            .collect()
                     };
                     let expected = crate::ui_editor_minimap::ChangeRows::from_lines(
                         17,
@@ -874,19 +929,23 @@ mod tests {
                     cache
                         .rows
                         .iter()
-                        .map(|row| {
-                            match (row.left_kind, row.right_kind) {
-                                ('-', '+') => 'M',
-                                (_, '+') => 'A',
-                                ('-', _) => 'D',
-                                _ => ' ',
-                            }
+                        .map(|row| match (row.left_kind, row.right_kind) {
+                            ('-', '+') => 'M',
+                            (_, '+') => 'A',
+                            ('-', _) => 'D',
+                            _ => ' ',
                         })
                         .collect()
                 } else {
-                    cache.inline_rows.iter().map(|row| match row.kind {
-                        '+' => 'A', '-' => 'D', _ => ' ',
-                    }).collect()
+                    cache
+                        .inline_rows
+                        .iter()
+                        .map(|row| match row.kind {
+                            '+' => 'A',
+                            '-' => 'D',
+                            _ => ' ',
+                        })
+                        .collect()
                 };
                 let mut editor = Editor::test_with_text(target);
                 let mut scroll = InlineDiffScroll {

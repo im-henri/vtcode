@@ -9,7 +9,11 @@ fn delayed_permission_resolution_does_not_dismiss_a_new_generation_of_the_same_i
     app.receive_chat_permission(id.clone(), 2, request("first", 41), |_, _| true);
     app.apply_acp_event(Event::PermissionResolved(id.clone(), 1));
     assert_eq!(app.chat.permission().unwrap().ticket, 2);
-    app.apply_acp_event(Event::PermissionResponded { id: id.clone(), ticket: 1, option: p::PermissionOptionId::new("temporary") });
+    app.apply_acp_event(Event::PermissionResponded {
+        id: id.clone(),
+        ticket: 1,
+        option: p::PermissionOptionId::new("temporary"),
+    });
     assert!(notices(&app, "first").is_empty());
     app.apply_acp_event(Event::PermissionResolved(id, 2));
     assert!(app.chat.permission().is_none());
@@ -49,7 +53,8 @@ fn request(session: &str, id: i64) -> p::RequestPermissionRequest {
 fn receive(app: &mut App, session: &str, id: i64) -> Vec<Command> {
     let mut sent = Vec::new();
     app.receive_chat_permission(
-        p::RequestId::Number(id), 0,
+        p::RequestId::Number(id),
+        0,
         request(session, id),
         |_, command| {
             sent.push(command);
@@ -254,7 +259,8 @@ fn yolo_failed_sends_preserve_the_request_and_never_report_acceptance() {
     let mut app = app();
     app.chat_action(ChatAction::Yolo);
     app.receive_chat_permission(
-        p::RequestId::Number(41), 0,
+        p::RequestId::Number(41),
+        0,
         request("first", 41),
         |_, command| {
             assert_once(&[command], 41);
@@ -375,7 +381,8 @@ fn acp_chat_sdk_round_trip_yolo_toggle_restores_manual_approval() {
     app.explorer.root = root.path().into();
     let mut config = AgentConfig::new(
         "Official SDK scenario agent",
-        std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
+        std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
     );
     config.args = vec![
         "-u".into(),

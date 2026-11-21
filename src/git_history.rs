@@ -150,16 +150,30 @@ fn serve_history(
     let mut operation = Some(crate::git_output::native(&log, "Read history", &root));
     stream_history(root, requests, cancel, move |offset, result| {
         if let Some(operation) = operation.take() {
-            operation.result(&result, |(commits, more)| format!("{} commits; more={more}", commits.len()));
+            operation.result(&result, |(commits, more)| {
+                format!("{} commits; more={more}", commits.len())
+            });
         }
-        HistoryPage { root: view_root.clone(), generation, offset, result }.publish(&sender)
+        HistoryPage {
+            root: view_root.clone(),
+            generation,
+            offset,
+            result,
+        }
+        .publish(&sender)
     });
 }
 
-pub(crate) fn stream_history(root: PathBuf, requests: mpsc::Receiver<()>, cancel: CancellationToken,
-    mut publish: impl FnMut(usize, Result<(Vec<GitCommitInfo>, bool), String>) -> bool) {
+pub(crate) fn stream_history(
+    root: PathBuf,
+    requests: mpsc::Receiver<()>,
+    cancel: CancellationToken,
+    mut publish: impl FnMut(usize, Result<(Vec<GitCommitInfo>, bool), String>) -> bool,
+) {
     // Do not traverse/open repository metadata until the first page is wanted.
-    if requests.recv().is_err() || cancel.is_cancelled() { return; }
+    if requests.recv().is_err() || cancel.is_cancelled() {
+        return;
+    }
     let mut offset = 0;
     let result = (|| -> Result<(), git2::Error> {
         let canonical = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
@@ -178,8 +192,11 @@ pub(crate) fn stream_history(root: PathBuf, requests: mpsc::Receiver<()>, cancel
         }
         for labels in refs.values_mut() {
             labels.sort_unstable_by(|a, b| {
-                (a.tag_name().is_some(), a.remote, &a.name)
-                    .cmp(&(b.tag_name().is_some(), b.remote, &b.name))
+                (a.tag_name().is_some(), a.remote, &a.name).cmp(&(
+                    b.tag_name().is_some(),
+                    b.remote,
+                    &b.name,
+                ))
             });
         }
         let mut walk = repo.revwalk()?;
@@ -229,9 +246,7 @@ pub(crate) fn stream_history(root: PathBuf, requests: mpsc::Receiver<()>, cancel
             }
             let has_more = walk.peek().is_some();
             let count = commits.len();
-            if cancel.is_cancelled()
-                || !publish(offset, Ok((commits, has_more)))
-            {
+            if cancel.is_cancelled() || !publish(offset, Ok((commits, has_more))) {
                 return Ok(());
             }
             offset += count;
@@ -289,9 +304,15 @@ impl App {
     }
 
     pub(crate) fn refresh_git_log_async(&mut self) {
-        if !self.source_control_enabled { return; }
-        if self.repositories.discovered && self.repositories.active.is_none() { return; }
-        if self.defer_git_work(crate::app_workspaces::GitWork::History) { return; }
+        if !self.source_control_enabled {
+            return;
+        }
+        if self.repositories.discovered && self.repositories.active.is_none() {
+            return;
+        }
+        if self.defer_git_work(crate::app_workspaces::GitWork::History) {
+            return;
+        }
         self.invalidate_git_history();
         self.git_history.replace_on_resume = true;
         self.start_git_history(None);
@@ -300,14 +321,18 @@ impl App {
     fn start_git_history(&mut self, cached: Option<crate::remote::history::CachedHistory>) {
         let root = self.source_control_root().to_owned();
         let generation = self.git_history.generation;
-        let remote = match self.remote_workspace.as_ref()
+        let remote = match self
+            .remote_workspace
+            .as_ref()
             .map(|remote| crate::remote::history::Stream::register(remote, &root))
             .transpose()
         {
             Ok(remote) => remote,
             Err(error) => {
                 let target = self.display_path(&root);
-                self.git_output().operation("remote Git", "Read history", &target).error(&error);
+                self.git_output()
+                    .operation("remote Git", "Read history", &target)
+                    .error(&error);
                 self.set_git_history_error(error.to_string());
                 return;
             }
@@ -324,16 +349,21 @@ impl App {
         let log = self.git_output();
         // This worker sleeps on its request channel between pages, so it must
         // not occupy the shared pool or keep the editor's idle loop awake.
-        self.background.spawn_untracked("git-history", move || match remote {
-            Some(stream) => stream.serve(
-                crate::remote::history::Read {
-                    root, generation, cached, requests: receiver, cancel,
-                },
-                sender,
-                log,
-            ),
-            None => serve_history(root, generation, receiver, cancel, sender, log),
-        });
+        self.background
+            .spawn_untracked("git-history", move || match remote {
+                Some(stream) => stream.serve(
+                    crate::remote::history::Read {
+                        root,
+                        generation,
+                        cached,
+                        requests: receiver,
+                        cancel,
+                    },
+                    sender,
+                    log,
+                ),
+                None => serve_history(root, generation, receiver, cancel, sender, log),
+            });
         self.load_more_git_history();
     }
 
@@ -346,7 +376,11 @@ impl App {
             return;
         }
         if self.git_history.paused {
-            if self.remote_workspace.as_ref().is_some_and(|remote| !remote.client.connected()) {
+            if self
+                .remote_workspace
+                .as_ref()
+                .is_some_and(|remote| !remote.client.connected())
+            {
                 return;
             }
             self.git_history.paused = false;
@@ -389,7 +423,11 @@ impl App {
 
     fn set_git_history_error(&mut self, error: String) {
         let error = crate::remote::diagnostics::plain(error.as_bytes());
-        let error = if error.is_empty() { "Git history could not be read".into() } else { error };
+        let error = if error.is_empty() {
+            "Git history could not be read".into()
+        } else {
+            error
+        };
         self.notify_error(format!("Could not load Git history: {error}"));
         self.git_history.error = Some(error);
         self.git_history.has_more = false;
@@ -398,7 +436,8 @@ impl App {
     }
 
     pub(crate) fn apply_git_history_page(&mut self, page: HistoryPage) -> bool {
-        if page.root != self.source_control_root() || page.generation != self.git_history.generation {
+        if page.root != self.source_control_root() || page.generation != self.git_history.generation
+        {
             return false;
         }
         if page.offset != 0 && page.offset != self.git_log.len() {

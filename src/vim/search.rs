@@ -12,7 +12,12 @@ use regex::Regex;
 use ropey::Rope;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Magic { Very, Magic, No, VeryNo }
+enum Magic {
+    Very,
+    Magic,
+    No,
+    VeryNo,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct VimRegex {
@@ -30,7 +35,14 @@ pub(crate) struct Options<'a> {
 }
 
 impl Default for Options<'_> {
-    fn default() -> Self { Self { ignorecase: false, smartcase: false, magic: true, last_sub: None } }
+    fn default() -> Self {
+        Self {
+            ignorecase: false,
+            smartcase: false,
+            magic: true,
+            last_sub: None,
+        }
+    }
 }
 
 fn push_lit(out: &mut String, c: char) {
@@ -41,7 +53,26 @@ fn push_lit(out: &mut String, c: char) {
 }
 
 fn regex_syntax_meta(c: char) -> bool {
-    matches!(c, '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '#' | '&' | '-' | '~')
+    matches!(
+        c,
+        '\\' | '.'
+            | '+'
+            | '*'
+            | '?'
+            | '('
+            | ')'
+            | '|'
+            | '['
+            | ']'
+            | '{'
+            | '}'
+            | '^'
+            | '$'
+            | '#'
+            | '&'
+            | '-'
+            | '~'
+    )
 }
 
 fn class(c: char) -> Option<&'static str> {
@@ -97,39 +128,83 @@ fn translate(pat: &str, opts: &Options<'_>) -> Result<(String, bool, Option<bool
             };
             i += 1;
             match n {
-                'v' => { magic = Magic::Very; at_start = start_before; continue; }
-                'm' => { magic = Magic::Magic; at_start = start_before; continue; }
-                'M' => { magic = Magic::No; at_start = start_before; continue; }
-                'V' => { magic = Magic::VeryNo; at_start = start_before; continue; }
-                'c' => { case = Some(false); at_start = start_before; continue; }
-                'C' => { case = Some(true); at_start = start_before; continue; }
+                'v' => {
+                    magic = Magic::Very;
+                    at_start = start_before;
+                    continue;
+                }
+                'm' => {
+                    magic = Magic::Magic;
+                    at_start = start_before;
+                    continue;
+                }
+                'M' => {
+                    magic = Magic::No;
+                    at_start = start_before;
+                    continue;
+                }
+                'V' => {
+                    magic = Magic::VeryNo;
+                    at_start = start_before;
+                    continue;
+                }
+                'c' => {
+                    case = Some(false);
+                    at_start = start_before;
+                    continue;
+                }
+                'C' => {
+                    case = Some(true);
+                    at_start = start_before;
+                    continue;
+                }
                 // A line break: lines in a CRLF buffer end in "\r\n". A `^`
                 // after it is the start of the next line, as in Vim.
-                'n' => { out.push_str(r"(?:\r?\n)"); at_start = true; }
+                'n' => {
+                    out.push_str(r"(?:\r?\n)");
+                    at_start = true;
+                }
                 't' => out.push_str(r"\t"),
                 'e' => out.push_str(r"\x1b"),
                 'r' => out.push_str(r"\r"),
                 '\\' => out.push_str(r"\\"),
                 '/' => out.push('/'),
-                'z' => {
-                    match chars.get(i) {
-                        Some('s') => { zs_at = Some(out.len()); i += 1; }
-                        Some('e') => { ze_at = Some(out.len()); i += 1; }
-                        _ => return Err("E68: Invalid character after \\z".into()),
+                'z' => match chars.get(i) {
+                    Some('s') => {
+                        zs_at = Some(out.len());
+                        i += 1;
                     }
-                }
-                '%' => {
-                    match chars.get(i) {
-                        Some('^') => { out.push_str(r"\A"); i += 1; }
-                        Some('$') => { out.push_str(r"\z"); i += 1; }
-                        Some('(') => { out.push_str("(?:"); depth += 1; i += 1; at_start = true; }
-                        Some('[') => return Err("E70: \\%[ is not supported".into()),
-                        Some('V' | '#') => { i += 1; }
-                        _ => return Err("E71: Invalid character after \\%".into()),
+                    Some('e') => {
+                        ze_at = Some(out.len());
+                        i += 1;
                     }
-                }
+                    _ => return Err("E68: Invalid character after \\z".into()),
+                },
+                '%' => match chars.get(i) {
+                    Some('^') => {
+                        out.push_str(r"\A");
+                        i += 1;
+                    }
+                    Some('$') => {
+                        out.push_str(r"\z");
+                        i += 1;
+                    }
+                    Some('(') => {
+                        out.push_str("(?:");
+                        depth += 1;
+                        i += 1;
+                        at_start = true;
+                    }
+                    Some('[') => return Err("E70: \\%[ is not supported".into()),
+                    Some('V' | '#') => {
+                        i += 1;
+                    }
+                    _ => return Err("E71: Invalid character after \\%".into()),
+                },
                 '_' => {
-                    let Some(&k) = chars.get(i) else { return Err("E63: Invalid use of \\_".into()); };
+                    let Some(&k) = chars.get(i) else {
+                        return Err("E63: Invalid use of \\_".into());
+                    };
                     i += 1;
                     match k {
                         '.' => out.push_str(r"(?:\r\n|(?s:.))"),
@@ -160,9 +235,41 @@ fn translate(pat: &str, opts: &Options<'_>) -> Result<(String, bool, Option<bool
                     // Characters whose meaning flips with the backslash.
                     let special_with_bs = match magic {
                         Magic::Very => false,
-                        Magic::Magic => matches!(n, '(' | ')' | '|' | '+' | '=' | '?' | '{' | '<' | '>'),
-                        Magic::No => matches!(n, '(' | ')' | '|' | '+' | '=' | '?' | '{' | '<' | '>' | '.' | '*' | '[' | '~'),
-                        Magic::VeryNo => matches!(n, '(' | ')' | '|' | '+' | '=' | '?' | '{' | '<' | '>' | '.' | '*' | '[' | '~' | '^' | '$'),
+                        Magic::Magic => {
+                            matches!(n, '(' | ')' | '|' | '+' | '=' | '?' | '{' | '<' | '>')
+                        }
+                        Magic::No => matches!(
+                            n,
+                            '(' | ')'
+                                | '|'
+                                | '+'
+                                | '='
+                                | '?'
+                                | '{'
+                                | '<'
+                                | '>'
+                                | '.'
+                                | '*'
+                                | '['
+                                | '~'
+                        ),
+                        Magic::VeryNo => matches!(
+                            n,
+                            '(' | ')'
+                                | '|'
+                                | '+'
+                                | '='
+                                | '?'
+                                | '{'
+                                | '<'
+                                | '>'
+                                | '.'
+                                | '*'
+                                | '['
+                                | '~'
+                                | '^'
+                                | '$'
+                        ),
                     };
                     if special_with_bs {
                         i -= 1;
@@ -180,7 +287,25 @@ fn translate(pat: &str, opts: &Options<'_>) -> Result<(String, bool, Option<bool
             continue;
         }
         let special_plain = match magic {
-            Magic::Very => matches!(c, '(' | ')' | '|' | '+' | '=' | '?' | '{' | '<' | '>' | '.' | '*' | '[' | '~' | '^' | '$' | '@' | '%'),
+            Magic::Very => matches!(
+                c,
+                '(' | ')'
+                    | '|'
+                    | '+'
+                    | '='
+                    | '?'
+                    | '{'
+                    | '<'
+                    | '>'
+                    | '.'
+                    | '*'
+                    | '['
+                    | '~'
+                    | '^'
+                    | '$'
+                    | '@'
+                    | '%'
+            ),
             Magic::Magic => matches!(c, '.' | '*' | '[' | '~' | '^' | '$'),
             Magic::No => matches!(c, '^' | '$'),
             Magic::VeryNo => false,
@@ -192,7 +317,12 @@ fn translate(pat: &str, opts: &Options<'_>) -> Result<(String, bool, Option<bool
         }
         match c {
             '^' => {
-                if start_before || magic == Magic::Very { out.push('^'); at_start = true; } else { out.push_str(r"\^"); }
+                if start_before || magic == Magic::Very {
+                    out.push('^');
+                    at_start = true;
+                } else {
+                    out.push_str(r"\^");
+                }
                 i += 1;
             }
             '$' => {
@@ -201,22 +331,39 @@ fn translate(pat: &str, opts: &Options<'_>) -> Result<(String, bool, Option<bool
                     || chars[i + 1..].starts_with(&['\\', ')'])
                     || chars[i + 1..].starts_with(&['\\', 'n'])
                     || (magic == Magic::Very && matches!(chars.get(i + 1), Some('|' | ')')));
-                if at_end || magic == Magic::Very { out.push('$'); } else { out.push_str(r"\$"); }
-                i += 1;
-            }
-            '.' => { out.push('.'); i += 1; }
-            '*' => {
-                if start_before { out.push_str(r"\*"); } else { out.push('*'); }
-                i += 1;
-            }
-            '[' => {
-                match bracket(&chars[i + 1..], false) {
-                    Ok((cls, used)) => { out.push_str(&cls); i += 1 + used; }
-                    Err(_) => { out.push_str(r"\["); i += 1; }
+                if at_end || magic == Magic::Very {
+                    out.push('$');
+                } else {
+                    out.push_str(r"\$");
                 }
+                i += 1;
             }
+            '.' => {
+                out.push('.');
+                i += 1;
+            }
+            '*' => {
+                if start_before {
+                    out.push_str(r"\*");
+                } else {
+                    out.push('*');
+                }
+                i += 1;
+            }
+            '[' => match bracket(&chars[i + 1..], false) {
+                Ok((cls, used)) => {
+                    out.push_str(&cls);
+                    i += 1 + used;
+                }
+                Err(_) => {
+                    out.push_str(r"\[");
+                    i += 1;
+                }
+            },
             '~' => {
-                for ch in opts.last_sub.unwrap_or("").chars() { push_lit(&mut out, ch); }
+                for ch in opts.last_sub.unwrap_or("").chars() {
+                    push_lit(&mut out, ch);
+                }
                 i += 1;
             }
             _ => {
@@ -244,13 +391,27 @@ fn translate(pat: &str, opts: &Options<'_>) -> Result<(String, bool, Option<bool
 
 /// The meaning of a special atom whose first character is at `chars[i]`
 /// (possibly preceded by a backslash at `chars[i]`). Returns (rust, consumed, branch_start).
-fn special(chars: &[char], i: usize, depth: &mut i32, opts: &Options<'_>) -> Result<(String, usize, bool), String> {
+fn special(
+    chars: &[char],
+    i: usize,
+    depth: &mut i32,
+    opts: &Options<'_>,
+) -> Result<(String, usize, bool), String> {
     let bs = chars[i] == '\\';
     let c = chars[i + usize::from(bs)];
     let mut used = 1 + usize::from(bs);
     let s = match c {
-        '(' => { *depth += 1; return Ok(("(".into(), used, true)); }
-        ')' => { *depth -= 1; if *depth < 0 { return Err("E55: Unmatched \\)".into()); } ")".into() }
+        '(' => {
+            *depth += 1;
+            return Ok(("(".into(), used, true));
+        }
+        ')' => {
+            *depth -= 1;
+            if *depth < 0 {
+                return Err("E55: Unmatched \\)".into());
+            }
+            ")".into()
+        }
         '|' => return Ok(("|".into(), used, true)),
         '+' => "+".into(),
         '=' | '?' => "?".into(),
@@ -259,7 +420,9 @@ fn special(chars: &[char], i: usize, depth: &mut i32, opts: &Options<'_>) -> Res
         '*' => "*".into(),
         '~' => {
             let mut s = String::new();
-            for ch in opts.last_sub.unwrap_or("").chars() { push_lit(&mut s, ch); }
+            for ch in opts.last_sub.unwrap_or("").chars() {
+                push_lit(&mut s, ch);
+            }
             s
         }
         '^' => "^".into(),
@@ -274,11 +437,15 @@ fn special(chars: &[char], i: usize, depth: &mut i32, opts: &Options<'_>) -> Res
             let mut j = i + used;
             let mut body = String::new();
             while j < chars.len() && chars[j] != '}' {
-                if chars[j] == '\\' && chars.get(j + 1) == Some(&'}') { break; }
+                if chars[j] == '\\' && chars.get(j + 1) == Some(&'}') {
+                    break;
+                }
                 body.push(chars[j]);
                 j += 1;
             }
-            if j >= chars.len() { return Err("E60: Missing }".into()); }
+            if j >= chars.len() {
+                return Err("E60: Missing }".into());
+            }
             j += if chars[j] == '\\' { 2 } else { 1 };
             used = j - i;
             let lazy = body.starts_with('-');
@@ -317,7 +484,9 @@ fn bracket(chars: &[char], newline: bool) -> Result<(String, usize), String> {
         i += 1;
     }
     loop {
-        let Some(&c) = chars.get(i) else { return Err("E769: Missing ]".into()); };
+        let Some(&c) = chars.get(i) else {
+            return Err("E769: Missing ]".into());
+        };
         i += 1;
         match c {
             ']' => break,
@@ -332,7 +501,10 @@ fn bracket(chars: &[char], newline: bool) -> Result<(String, usize), String> {
                 }
             }
             '\\' => {
-                let Some(&n) = chars.get(i) else { out.push_str(r"\\"); continue; };
+                let Some(&n) = chars.get(i) else {
+                    out.push_str(r"\\");
+                    continue;
+                };
                 i += 1;
                 match n {
                     'n' => out.push_str(r"\r\n"),
@@ -345,10 +517,16 @@ fn bracket(chars: &[char], newline: bool) -> Result<(String, usize), String> {
                     '-' => out.push_str(r"\-"),
                     'd' => out.push_str("0-9"),
                     's' => out.push_str(r" \t"),
-                    other => { out.push('\\'); out.push(other); }
+                    other => {
+                        out.push('\\');
+                        out.push(other);
+                    }
                 }
             }
-            '[' | '&' | '~' => { out.push('\\'); out.push(c); }
+            '[' | '&' | '~' => {
+                out.push('\\');
+                out.push(c);
+            }
             c => out.push(c),
         }
     }
@@ -366,8 +544,14 @@ pub(crate) fn compile(pat: &str, opts: &Options<'_>) -> Result<VimRegex, String>
         let mut upper = false;
         let mut chars = pat.chars();
         while let Some(c) = chars.next() {
-            if c == '\\' { chars.next(); continue; }
-            if c.is_uppercase() { upper = true; break; }
+            if c == '\\' {
+                chars.next();
+                continue;
+            }
+            if c.is_uppercase() {
+                upper = true;
+                break;
+            }
         }
         upper
     };
@@ -378,31 +562,48 @@ pub(crate) fn compile(pat: &str, opts: &Options<'_>) -> Result<VimRegex, String>
     let flags = if insensitive { "(?mRi)" } else { "(?mR)" };
     let re = Regex::new(&format!("{flags}{rust}")).map_err(|e| {
         let msg = e.to_string();
-        format!("E486: Invalid pattern: {}", msg.lines().last().unwrap_or(&msg))
+        format!(
+            "E486: Invalid pattern: {}",
+            msg.lines().last().unwrap_or(&msg)
+        )
     })?;
-    Ok(VimRegex { re, zs, source: pat.to_string() })
+    Ok(VimRegex {
+        re,
+        zs,
+        source: pat.to_string(),
+    })
 }
 
 impl VimRegex {
     /// Matches as (start_byte, end_byte) in `text`.
-    pub(crate) fn find_iter<'t>(&'t self, text: &'t str) -> impl Iterator<Item = (usize, usize)> + 't {
+    pub(crate) fn find_iter<'t>(
+        &'t self,
+        text: &'t str,
+    ) -> impl Iterator<Item = (usize, usize)> + 't {
         let mut at = 0usize;
         std::iter::from_fn(move || {
-            {
-                if at > text.len() { return None; }
-                let caps = self.re.captures_at(text, at)?;
-                let whole = caps.get(0)?;
-                let m = if self.zs { caps.name("vzs").unwrap_or(whole) } else { whole };
-                at = if whole.end() > whole.start() { whole.end() } else {
-                    let mut n = whole.end() + 1;
-                    while n < text.len() && !text.is_char_boundary(n) { n += 1; }
-                    n
-                };
-                Some((m.start(), m.end()))
+            if at > text.len() {
+                return None;
             }
+            let caps = self.re.captures_at(text, at)?;
+            let whole = caps.get(0)?;
+            let m = if self.zs {
+                caps.name("vzs").unwrap_or(whole)
+            } else {
+                whole
+            };
+            at = if whole.end() > whole.start() {
+                whole.end()
+            } else {
+                let mut n = whole.end() + 1;
+                while n < text.len() && !text.is_char_boundary(n) {
+                    n += 1;
+                }
+                n
+            };
+            Some((m.start(), m.end()))
         })
     }
-
 }
 
 /// Search the rope. `from` is a char index; forward searches start after
@@ -419,9 +620,13 @@ pub(crate) fn search(
     let from_b = rope.char_to_byte(from.min(rope.len_chars()));
     let to_chars = |(s, e): (usize, usize)| (rope.byte_to_char(s), rope.byte_to_char(e));
     if forward {
-        let start = if accept_at { from_b } else {
+        let start = if accept_at {
+            from_b
+        } else {
             let mut n = from_b + 1;
-            while n < hay.len() && !hay.is_char_boundary(n) { n += 1; }
+            while n < hay.len() && !hay.is_char_boundary(n) {
+                n += 1;
+            }
             n.min(hay.len())
         };
         let found = re.find_iter(hay).find(|&(s, _)| s >= start);
@@ -458,17 +663,36 @@ pub(crate) fn search(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum CaseMode { None, Upper, Lower }
+enum CaseMode {
+    None,
+    Upper,
+    Lower,
+}
 
 /// Expand a `:s` replacement for one match. `caps` gives `\0`..`\9`.
-pub(crate) fn expand_replacement(rep: &str, caps: &regex::Captures<'_>, re: &VimRegex, magic: bool) -> String {
+pub(crate) fn expand_replacement(
+    rep: &str,
+    caps: &regex::Captures<'_>,
+    re: &VimRegex,
+    magic: bool,
+) -> String {
     // The added `vzs` group shifts the numbers of user groups after it.
-    let vzs = if re.zs { re.re.capture_names().position(|n| n == Some("vzs")) } else { None };
+    let vzs = if re.zs {
+        re.re.capture_names().position(|n| n == Some("vzs"))
+    } else {
+        None
+    };
     let group = |n: usize| -> &str {
         if n == 0 && vzs.is_some() {
-            return caps.name("vzs").or_else(|| caps.get(0)).map_or("", |m| m.as_str());
+            return caps
+                .name("vzs")
+                .or_else(|| caps.get(0))
+                .map_or("", |m| m.as_str());
         }
-        let real = match vzs { Some(v) if n >= v => n + 1, _ => n };
+        let real = match vzs {
+            Some(v) if n >= v => n + 1,
+            _ => n,
+        };
         caps.get(real).map_or("", |m| m.as_str())
     };
     let mut out = String::new();
@@ -477,8 +701,14 @@ pub(crate) fn expand_replacement(rep: &str, caps: &regex::Captures<'_>, re: &Vim
     let push = |out: &mut String, s: &str, one: &mut CaseMode, all: CaseMode| {
         for ch in s.chars() {
             let c = match (*one, all) {
-                (CaseMode::Upper, _) => { *one = CaseMode::None; ch.to_uppercase().collect::<String>() }
-                (CaseMode::Lower, _) => { *one = CaseMode::None; ch.to_lowercase().collect::<String>() }
+                (CaseMode::Upper, _) => {
+                    *one = CaseMode::None;
+                    ch.to_uppercase().collect::<String>()
+                }
+                (CaseMode::Lower, _) => {
+                    *one = CaseMode::None;
+                    ch.to_lowercase().collect::<String>()
+                }
                 (_, CaseMode::Upper) => ch.to_uppercase().collect(),
                 (_, CaseMode::Lower) => ch.to_lowercase().collect(),
                 _ => ch.to_string(),
@@ -492,7 +722,10 @@ pub(crate) fn expand_replacement(rep: &str, caps: &regex::Captures<'_>, re: &Vim
         let c = chars[i];
         i += 1;
         if c == '\\' {
-            let Some(&n) = chars.get(i) else { out.push('\\'); break; };
+            let Some(&n) = chars.get(i) else {
+                out.push('\\');
+                break;
+            };
             i += 1;
             match n {
                 '0'..='9' => push(&mut out, group(n as usize - '0' as usize), &mut one, all),
@@ -502,9 +735,15 @@ pub(crate) fn expand_replacement(rep: &str, caps: &regex::Captures<'_>, re: &Vim
                 'l' => one = CaseMode::Lower,
                 'U' => all = CaseMode::Upper,
                 'L' => all = CaseMode::Lower,
-                'E' | 'e' => { all = CaseMode::None; one = CaseMode::None; }
+                'E' | 'e' => {
+                    all = CaseMode::None;
+                    one = CaseMode::None;
+                }
                 '&' if !magic => push(&mut out, group(0), &mut one, all),
-                other => { let s = other.to_string(); push(&mut out, &s, &mut one, all); }
+                other => {
+                    let s = other.to_string();
+                    push(&mut out, &s, &mut one, all);
+                }
             }
         } else if c == '&' && magic {
             push(&mut out, group(0), &mut one, all);
@@ -520,13 +759,17 @@ pub(crate) fn expand_replacement(rep: &str, caps: &regex::Captures<'_>, re: &Vim
 
 /// `~` in a replacement means the previous replacement string.
 pub(crate) fn resolve_tilde(rep: &str, previous: &str, magic: bool) -> String {
-    if !magic { return rep.replace("\\~", previous); }
+    if !magic {
+        return rep.replace("\\~", previous);
+    }
     let mut out = String::new();
     let mut chars = rep.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '\\' {
             out.push('\\');
-            if let Some(n) = chars.next() { out.push(n); }
+            if let Some(n) = chars.next() {
+                out.push(n);
+            }
         } else if c == '~' {
             out.push_str(previous);
         } else {
@@ -542,7 +785,9 @@ mod tests {
 
     fn m(pat: &str, text: &str) -> Vec<String> {
         let re = compile(pat, &Options::default()).unwrap();
-        re.find_iter(text).map(|(s, e)| text[s..e].to_string()).collect()
+        re.find_iter(text)
+            .map(|(s, e)| text[s..e].to_string())
+            .collect()
     }
 
     #[test]
@@ -571,20 +816,33 @@ mod tests {
 
     #[test]
     fn case_rules_follow_ignorecase_smartcase_and_overrides() {
-        let o = Options { ignorecase: true, smartcase: true, ..Options::default() };
+        let o = Options {
+            ignorecase: true,
+            smartcase: true,
+            ..Options::default()
+        };
         assert!(compile("foo", &o).unwrap().re.is_match("FOO"));
         assert!(!compile("Foo", &o).unwrap().re.is_match("FOO"));
         assert!(compile(r"Foo\c", &o).unwrap().re.is_match("FOO"));
         assert!(!compile(r"foo\C", &o).unwrap().re.is_match("FOO"));
-        assert!(compile(r"\Sx", &o).unwrap().re.is_match("AX"), "escaped classes do not trigger smartcase");
+        assert!(
+            compile(r"\Sx", &o).unwrap().re.is_match("AX"),
+            "escaped classes do not trigger smartcase"
+        );
     }
 
     #[test]
     fn replacement_expansion() {
         let re = compile(r"\(\w\+\) \(\w\+\)", &Options::default()).unwrap();
         let caps = re.re.captures("hello world").unwrap();
-        assert_eq!(expand_replacement(r"\2 \1", &caps, &re, true), "world hello");
-        assert_eq!(expand_replacement(r"\u\1-&", &caps, &re, true), "Hello-hello world");
+        assert_eq!(
+            expand_replacement(r"\2 \1", &caps, &re, true),
+            "world hello"
+        );
+        assert_eq!(
+            expand_replacement(r"\u\1-&", &caps, &re, true),
+            "Hello-hello world"
+        );
         assert_eq!(expand_replacement(r"\U\1\E!", &caps, &re, true), "HELLO!");
         assert_eq!(expand_replacement(r"a\rb", &caps, &re, true), "a\nb");
         assert_eq!(expand_replacement(r"\&", &caps, &re, true), "&");

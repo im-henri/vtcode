@@ -21,23 +21,40 @@ struct SourceFile {
 
 impl SourceFile {
     fn open(path: &Path) -> Result<Arc<Mutex<Self>>, String> {
-        Self::open_metadata(path).map(|(source, _)| source).map_err(io_error)
+        Self::open_metadata(path)
+            .map(|(source, _)| source)
+            .map_err(io_error)
     }
     fn open_metadata(path: &Path) -> std::io::Result<(Arc<Mutex<Self>>, std::fs::Metadata)> {
         let (file, metadata) = crate::fs_ops::open_document_source(path, false)?;
         let stamp = DiskStamp::from_metadata(&metadata);
-        Ok((Arc::new(Mutex::new(Self { file: Some(file), remote: None, stamp, cursor: Some(0) })), metadata))
+        Ok((
+            Arc::new(Mutex::new(Self {
+                file: Some(file),
+                remote: None,
+                stamp,
+                cursor: Some(0),
+            })),
+            metadata,
+        ))
     }
 
     fn read(&mut self, at: u64, out: &mut [u8]) -> Result<(), String> {
-        if let Some(remote) = &self.remote { return remote.read(at, out); }
+        if let Some(remote) = &self.remote {
+            return remote.read(at, out);
+        }
         let file = self.file.as_mut().ok_or("Binary source unavailable")?;
         if DiskStamp::from_metadata(&file.metadata().map_err(io_error)?) != self.stamp {
-            return Err("The file changed on disk. Reopen it before reading or saving this binary buffer.".into());
+            return Err(
+                "The file changed on disk. Reopen it before reading or saving this binary buffer."
+                    .into(),
+            );
         }
         let seek = self.cursor != Some(at);
         self.cursor = None;
-        if seek { file.seek(SeekFrom::Start(at)).map_err(io_error)?; }
+        if seek {
+            file.seek(SeekFrom::Start(at)).map_err(io_error)?;
+        }
         file.read_exact(out).map_err(io_error)?;
         self.cursor = Some(at + out.len() as u64);
         Ok(())
@@ -62,8 +79,16 @@ impl Piece {
     fn read_cached(&self, offset: u64, out: &mut [u8]) -> bool {
         match self {
             Self::Bytes { .. } => self.read(offset, out).is_ok(),
-            Self::File { source, offset: begin, .. } => source.lock().ok().is_some_and(|source|
-                source.remote.as_ref().is_some_and(|remote| remote.read_cached(begin + offset, out))),
+            Self::File {
+                source,
+                offset: begin,
+                ..
+            } => source.lock().ok().is_some_and(|source| {
+                source
+                    .remote
+                    .as_ref()
+                    .is_some_and(|remote| remote.read_cached(begin + offset, out))
+            }),
         }
     }
     fn len(&self) -> u64 {
@@ -259,14 +284,36 @@ struct RemoteDocument {
 pub(crate) struct BinaryFragment(Vec<Piece>, u64);
 
 impl BinaryDocument {
-    pub(crate) fn exit_revision(&self) -> (PathBuf, u64, u64) { (self.path.clone(), self.current.revision, self.saved_revision) }
+    pub(crate) fn exit_revision(&self) -> (PathBuf, u64, u64) {
+        (
+            self.path.clone(),
+            self.current.revision,
+            self.saved_revision,
+        )
+    }
     pub(crate) fn unsaved() -> Self {
-        let snapshot = Snapshot { pieces: Vec::new(), len: 0, revision: 0 };
+        let snapshot = Snapshot {
+            pieces: Vec::new(),
+            len: 0,
+            revision: 0,
+        };
         Self {
-            path: PathBuf::new(), stamp: DiskStamp { len: 0, modified: None },
-            current: snapshot.clone(), saved: snapshot,
-            undo: Vec::new(), redo: Vec::new(), saved_revision: 0, next_revision: 1,
-            read_only: false, amend_next: false, recovery: None, transaction: None, remote: None,
+            path: PathBuf::new(),
+            stamp: DiskStamp {
+                len: 0,
+                modified: None,
+            },
+            current: snapshot.clone(),
+            saved: snapshot,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            saved_revision: 0,
+            next_revision: 1,
+            read_only: false,
+            amend_next: false,
+            recovery: None,
+            transaction: None,
+            remote: None,
         }
     }
     pub(crate) fn open(path: &Path) -> Result<Self, String> {
@@ -311,10 +358,15 @@ impl BinaryDocument {
         })
     }
 
-    pub(crate) fn stamp(&self) -> &DiskStamp { &self.stamp }
+    pub(crate) fn stamp(&self) -> &DiskStamp {
+        &self.stamp
+    }
 
     pub(crate) fn fragment(&self, offset: u64, len: u64) -> Result<BinaryFragment, String> {
-        let end = offset.checked_add(len).filter(|end| *end <= self.current.len).ok_or("Invalid binary source range")?;
+        let end = offset
+            .checked_add(len)
+            .filter(|end| *end <= self.current.len)
+            .ok_or("Invalid binary source range")?;
         let mut pieces = Vec::new();
         let mut logical = 0;
         for piece in &self.current.pieces {
@@ -324,13 +376,26 @@ impl BinaryDocument {
                 pieces.push(piece.slice(start, (end.min(stop) - logical).saturating_sub(start)));
             }
             logical = stop;
-            if logical >= end { break; }
+            if logical >= end {
+                break;
+            }
         }
         Ok(BinaryFragment(pieces, len))
     }
     pub(crate) fn bytes_fragment(bytes: Vec<u8>) -> BinaryFragment {
         let len = bytes.len() as u64;
-        BinaryFragment(if len == 0 { Vec::new() } else { vec![Piece::Bytes { source: bytes.into(), offset: 0, len }] }, len)
+        BinaryFragment(
+            if len == 0 {
+                Vec::new()
+            } else {
+                vec![Piece::Bytes {
+                    source: bytes.into(),
+                    offset: 0,
+                    len,
+                }]
+            },
+            len,
+        )
     }
     pub(crate) fn with_fragments(&self, fragments: Vec<BinaryFragment>) -> Result<Self, String> {
         let mut result = self.clone();
@@ -340,50 +405,109 @@ impl BinaryDocument {
             len = len.checked_add(size).ok_or("Binary file size overflow")?;
             pieces.extend(part);
         }
-        result.current = Snapshot { pieces, len, revision: self.next_revision };
-        result.next_revision = self.next_revision.checked_add(1).ok_or("Too many binary saves")?;
+        result.current = Snapshot {
+            pieces,
+            len,
+            revision: self.next_revision,
+        };
+        result.next_revision = self
+            .next_revision
+            .checked_add(1)
+            .ok_or("Too many binary saves")?;
         Ok(result)
     }
 
-    pub(crate) fn open_remote(path: &Path, workspace: &crate::remote::workspace::Workspace) -> Result<Self, String> {
+    pub(crate) fn open_remote(
+        path: &Path,
+        workspace: &crate::remote::workspace::Workspace,
+    ) -> Result<Self, String> {
         let source = crate::remote::binary::Source::open(workspace, path).map_err(io_error)?;
         Ok(Self::from_remote_source(path, source, workspace))
     }
-    fn from_remote_source(path: &Path, source: Arc<crate::remote::binary::Source>, workspace: &crate::remote::workspace::Workspace) -> Self {
+    fn from_remote_source(
+        path: &Path,
+        source: Arc<crate::remote::binary::Source>,
+        workspace: &crate::remote::workspace::Workspace,
+    ) -> Self {
         let stamp = source.stamp.clone();
-        let file = Arc::new(Mutex::new(SourceFile { file: None, remote: Some(source.clone()), stamp: stamp.clone(), cursor: None }));
-        let pieces = if stamp.len == 0 { Vec::new() } else { vec![Piece::File { source: file, offset: 0, len: stamp.len }] };
-        let snapshot = Snapshot { pieces, len: stamp.len, revision: 0 };
+        let file = Arc::new(Mutex::new(SourceFile {
+            file: None,
+            remote: Some(source.clone()),
+            stamp: stamp.clone(),
+            cursor: None,
+        }));
+        let pieces = if stamp.len == 0 {
+            Vec::new()
+        } else {
+            vec![Piece::File {
+                source: file,
+                offset: 0,
+                len: stamp.len,
+            }]
+        };
+        let snapshot = Snapshot {
+            pieces,
+            len: stamp.len,
+            revision: 0,
+        };
         Self {
-            path: path.to_path_buf(), stamp,
-            current: snapshot.clone(), saved: snapshot,
-            undo: Vec::new(), redo: Vec::new(), saved_revision: 0, next_revision: 1,
-            read_only: source.read_only, amend_next: false, recovery: None, transaction: None,
-            remote: Some(RemoteDocument { source: Some(source), workspace: workspace.clone(), conflicted: false, recent: Arc::default() }),
+            path: path.to_path_buf(),
+            stamp,
+            current: snapshot.clone(),
+            saved: snapshot,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            saved_revision: 0,
+            next_revision: 1,
+            read_only: source.read_only,
+            amend_next: false,
+            recovery: None,
+            transaction: None,
+            remote: Some(RemoteDocument {
+                source: Some(source),
+                workspace: workspace.clone(),
+                conflicted: false,
+                recent: Arc::default(),
+            }),
         }
     }
 
     fn save_remote(&mut self, destination: Option<(&Path, bool)>) -> Result<(), String> {
-        let remote = self.remote.as_ref().ok_or("Remote binary source unavailable")?;
+        let remote = self
+            .remote
+            .as_ref()
+            .ok_or("Remote binary source unavailable")?;
         if destination.is_none() && remote.conflicted {
             return Err("Cannot validate the original remote file. Save a copy or reopen it before overwriting it.".into());
         }
         let mut plan = crate::remote::binary::Plan::new();
         let mut buffer = Vec::new();
         for piece in &self.current.pieces {
-            if let Piece::File { source, offset, len } = piece {
+            if let Piece::File {
+                source,
+                offset,
+                len,
+            } = piece
+            {
                 let source = source.lock().map_err(|_| "Binary source lock failed")?;
                 if let Some(source) = &source.remote {
                     plan.source(source.id, *offset, *len)?;
                     continue;
                 }
             }
-            if let Piece::Bytes { source, offset, len } = piece {
+            if let Piece::Bytes {
+                source,
+                offset,
+                len,
+            } = piece
+            {
                 let start = *offset as usize;
                 plan.bytes(&source[start..start + *len as usize])?;
                 continue;
             }
-            if buffer.is_empty() { buffer.resize(IO_CHUNK, 0); }
+            if buffer.is_empty() {
+                buffer.resize(IO_CHUNK, 0);
+            }
             let mut offset = 0u64;
             while offset < piece.len() {
                 let count = (piece.len() - offset).min(IO_CHUNK as u64) as usize;
@@ -395,32 +519,68 @@ impl BinaryDocument {
         let plan = plan.finish()?;
         let path = destination.map_or_else(|| self.path.clone(), |(path, _)| path.to_path_buf());
         let workspace = remote.workspace.clone();
-        let source = crate::remote::binary::Source::save(&workspace, remote.source.as_ref().map(|source| source.id), plan,
-            destination.map(|(_, replace)| (path.as_path(), replace)))?;
-        if source.stamp.len != self.current.len { return Err("Remote binary save acknowledged an unexpected length".into()); }
+        let source = crate::remote::binary::Source::save(
+            &workspace,
+            remote.source.as_ref().map(|source| source.id),
+            plan,
+            destination.map(|(_, replace)| (path.as_path(), replace)),
+        )?;
+        if source.stamp.len != self.current.len {
+            return Err("Remote binary save acknowledged an unexpected length".into());
+        }
         let recent = remote.recent.clone();
         let compact = self.current.pieces.len() > 1024;
-        let pages = if compact { recent.lock().unwrap().clone() } else { Default::default() };
+        let pages = if compact {
+            recent.lock().unwrap().clone()
+        } else {
+            Default::default()
+        };
         // Reuse already resident viewport pages. A successful save must not
         // force an extra round trip just to render the same bytes again.
         for page in pages {
             let offset = page * crate::remote::binary::PAGE as u64;
-            if offset >= self.current.len { continue; }
-            let mut bytes = vec![0; (self.current.len - offset).min(crate::remote::binary::PAGE as u64) as usize];
-            if Self::read_snapshot_cached(&self.current, offset, &mut bytes) { source.seed(page, bytes); }
+            if offset >= self.current.len {
+                continue;
+            }
+            let mut bytes = vec![
+                0;
+                (self.current.len - offset).min(crate::remote::binary::PAGE as u64)
+                    as usize
+            ];
+            if Self::read_snapshot_cached(&self.current, offset, &mut bytes) {
+                source.seed(page, bytes);
+            }
         }
         self.path = path;
         self.stamp = source.stamp.clone();
-        let file = Arc::new(Mutex::new(SourceFile { file: None, remote: Some(source.clone()), stamp: self.stamp.clone(), cursor: None }));
+        let file = Arc::new(Mutex::new(SourceFile {
+            file: None,
+            remote: Some(source.clone()),
+            stamp: self.stamp.clone(),
+            cursor: None,
+        }));
         // Keep resident pieces through normal saves. Periodic compaction bounds
         // fragmentation without discarding the viewport cache on every save.
         if compact {
-            self.current.pieces = if self.current.len == 0 { Vec::new() } else { vec![Piece::File { source: file, offset: 0, len: self.current.len }] };
+            self.current.pieces = if self.current.len == 0 {
+                Vec::new()
+            } else {
+                vec![Piece::File {
+                    source: file,
+                    offset: 0,
+                    len: self.current.len,
+                }]
+            };
         }
         self.saved = self.current.clone();
         self.saved_revision = self.current.revision;
         self.read_only = source.read_only;
-        self.remote = Some(RemoteDocument { source: Some(source), workspace, conflicted: false, recent });
+        self.remote = Some(RemoteDocument {
+            source: Some(source),
+            workspace,
+            conflicted: false,
+            recent,
+        });
         self.clear_recovery()
     }
 
@@ -437,14 +597,18 @@ impl BinaryDocument {
 
     pub(crate) fn read(&self, offset: u64, out: &mut [u8]) -> Result<usize, String> {
         let count = Self::read_snapshot(&self.current, offset, out)?;
-        if count > 0 && let Some(remote) = &self.remote {
+        if count > 0
+            && let Some(remote) = &self.remote
+        {
             let mut recent = remote.recent.lock().unwrap();
             let first = offset / crate::remote::binary::PAGE as u64;
             let last = (offset + count as u64 - 1) / crate::remote::binary::PAGE as u64;
             for page in first.max(last.saturating_sub(7))..=last {
                 recent.retain(|previous| *previous != page);
                 recent.push_back(page);
-                if recent.len() > 8 { recent.pop_front(); }
+                if recent.len() > 8 {
+                    recent.pop_front();
+                }
             }
         }
         Ok(count)
@@ -458,11 +622,15 @@ impl BinaryDocument {
             if end > offset && written < out.len() {
                 let start = offset.saturating_sub(logical);
                 let count = (piece.len() - start).min((out.len() - written) as u64) as usize;
-                if !piece.read_cached(start, &mut out[written..written + count]) { return false; }
+                if !piece.read_cached(start, &mut out[written..written + count]) {
+                    return false;
+                }
                 written += count;
             }
             logical = end;
-            if written == out.len() { return true; }
+            if written == out.len() {
+                return true;
+            }
         }
         written == out.len()
     }
@@ -623,7 +791,9 @@ impl BinaryDocument {
         if self.read_only {
             return Err("This file is read-only".into());
         }
-        if self.remote.is_some() { return self.save_remote(None); }
+        if self.remote.is_some() {
+            return self.save_remote(None);
+        }
         self.check_disk()?;
         let parent = self.path.parent().ok_or("The file has no parent folder")?;
         let permissions = std::fs::metadata(&self.path)
@@ -655,9 +825,17 @@ impl BinaryDocument {
             .as_file()
             .set_permissions(permissions)
             .map_err(|error| format!("Could not preserve file permissions: {error}"))?;
-        temporary.as_file().sync_all().map_err(|error| format!("Could not flush saved bytes: {error}"))?;
+        temporary
+            .as_file()
+            .sync_all()
+            .map_err(|error| format!("Could not flush saved bytes: {error}"))?;
         self.check_disk()?;
-        std::fs::rename(temporary.path(), &self.path).map_err(|error| format!("Could not atomically replace {}: {error}", self.path.display()))?;
+        std::fs::rename(temporary.path(), &self.path).map_err(|error| {
+            format!(
+                "Could not atomically replace {}: {error}",
+                self.path.display()
+            )
+        })?;
         self.stamp = DiskStamp::read(&self.path)?;
         // Undo snapshots keep their original file handles, even across atomic saves.
         let source = SourceFile::open(&self.path)?;
@@ -722,13 +900,18 @@ impl BinaryDocument {
             return Err("Finish or cancel the current document operation before reloading".into());
         }
         if self.info().dirty {
-            return Err("Unsaved document changes must be saved or discarded before reloading".into());
+            return Err(
+                "Unsaved document changes must be saved or discarded before reloading".into(),
+            );
         }
         self.reload()
     }
 
     pub(crate) fn reload(&mut self) -> Result<(), String> {
-        let fresh = match self.remote.as_ref().map_or_else(|| Self::open(&self.path), |remote| Self::open_remote(&self.path, &remote.workspace)) {
+        let fresh = match self.remote.as_ref().map_or_else(
+            || Self::open(&self.path),
+            |remote| Self::open_remote(&self.path, &remote.workspace),
+        ) {
             Ok(document) => document,
             Err(_)
                 if std::fs::metadata(&self.path)
@@ -762,7 +945,9 @@ impl BinaryDocument {
         if path == self.path {
             return self.save();
         }
-        if self.remote.is_some() { return self.save_remote(Some((&path, replace))); }
+        if self.remote.is_some() {
+            return self.save_remote(Some((&path, replace)));
+        }
         let parent = path.parent().ok_or("The file has no parent folder")?;
         let mut temporary = tempfile::Builder::new()
             .prefix(".vtcode-save-")
@@ -945,13 +1130,21 @@ impl BinaryDocument {
         })
     }
 
-    pub(crate) fn restore_remote(record: &crate::extension_recovery::RecoveryRecord, workspace: &crate::remote::workspace::Workspace) -> Result<Self, String> {
+    pub(crate) fn restore_remote(
+        record: &crate::extension_recovery::RecoveryRecord,
+        workspace: &crate::remote::workspace::Workspace,
+    ) -> Result<Self, String> {
         let mut restored = Self::restore(record)?;
         // An unavailable/replaced original must not hide durable local recovery.
         // A copy needs no original baseline; ordinary Save still refuses it.
         let source = match crate::remote::binary::Source::open(workspace, &record.original_path) {
             Err(_) => {
-                restored.remote = Some(RemoteDocument { source: None, workspace: workspace.clone(), conflicted: true, recent: Arc::default() });
+                restored.remote = Some(RemoteDocument {
+                    source: None,
+                    workspace: workspace.clone(),
+                    conflicted: true,
+                    recent: Arc::default(),
+                });
                 return Ok(restored);
             }
             Ok(source) => source,

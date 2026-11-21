@@ -228,13 +228,19 @@ fn read_rope(reader: &mut impl Read, bytes: usize) -> io::Result<Rope> {
 }
 
 pub(super) fn write_base(writer: &mut impl Write, base: &Rope) -> io::Result<[u8; 32]> {
-    let mut writer = HashWriter { output: writer, digest: Sha256::new() };
+    let mut writer = HashWriter {
+        output: writer,
+        digest: Sha256::new(),
+    };
     base.write_to(&mut writer)?;
     Ok(writer.digest.finalize().into())
 }
 
 pub(super) fn read_base(reader: impl Read) -> io::Result<(Rope, [u8; 32])> {
-    let mut reader = HashReader { input: reader, digest: Sha256::new() };
+    let mut reader = HashReader {
+        input: reader,
+        digest: Sha256::new(),
+    };
     let content = Rope::from_reader(&mut reader)?;
     Ok((content, reader.digest.finalize().into()))
 }
@@ -257,14 +263,22 @@ pub(super) fn write_with_base(
         output: writer,
         digest: Sha256::new(),
     };
-    writer.write_all(if base.is_some() { SHARED_BASE_MAGIC } else { MAGIC })?;
+    writer.write_all(if base.is_some() {
+        SHARED_BASE_MAGIC
+    } else {
+        MAGIC
+    })?;
     // Redo's newest entry is the nearest future. Traverse it backwards so
     // adjacent deltas follow editing order across the undo/redo boundary.
-    let snapshots: Vec<_> = base.into_iter().chain(undo.iter()
-        .chain(redo.iter().rev())
-        .map(|entry| &entry.0))
+    let snapshots: Vec<_> = base
+        .into_iter()
+        .chain(undo.iter().chain(redo.iter().rev()).map(|entry| &entry.0))
         .collect();
-    for (index, &rope) in snapshots.iter().enumerate().skip(usize::from(base.is_some())) {
+    for (index, &rope) in snapshots
+        .iter()
+        .enumerate()
+        .skip(usize::from(base.is_some()))
+    {
         if let Some(previous) = snapshots[..index]
             .iter()
             .position(|other| other.is_instance(rope))
@@ -328,11 +342,18 @@ pub(super) fn read_with_base(
     let mut magic = [0; MAGIC.len()];
     reader.read_exact(&mut magic)?;
     let shared_base = base.is_some();
-    if magic != if shared_base { SHARED_BASE_MAGIC } else { MAGIC } {
+    if magic
+        != if shared_base {
+            SHARED_BASE_MAGIC
+        } else {
+            MAGIC
+        }
+    {
         return Err(invalid());
     }
     let undo_len = undo.len();
-    let mut snapshots: UndoStack = Vec::with_capacity(undo.len() + redo.len() + usize::from(shared_base));
+    let mut snapshots: UndoStack =
+        Vec::with_capacity(undo.len() + redo.len() + usize::from(shared_base));
     if let Some(base) = base {
         // Reference zero is the recovery text, not an undo entry. Deltas clone
         // its tree, so the restored editor and undo history share unchanged text.
@@ -397,7 +418,9 @@ pub(super) fn read_with_base(
     {
         return Err(invalid());
     }
-    if shared_base { snapshots.remove(0); }
+    if shared_base {
+        snapshots.remove(0);
+    }
     let mut redo = snapshots.split_off(undo_len);
     redo.reverse();
     Ok((snapshots, redo))

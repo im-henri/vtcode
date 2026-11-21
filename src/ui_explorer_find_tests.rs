@@ -6,13 +6,35 @@ fn filename_highlights_keep_exact_unicode_columns_with_sparse_and_duplicate_matc
     use unicode_segmentation::UnicodeSegmentation;
     use unicode_width::UnicodeWidthStr;
     let style = Style::default().fg(Color::Blue);
-    let highlight = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-    for name in ["", "ascii_name.rs", "组件_café_e\u{301}_👩‍👩‍👧‍👦.py", "a very long filename.txt"] {
-        for indices in [vec![], vec![0], vec![0, 0, 1, 4, 4, 9], vec![1, 3, 5, 10, 300], vec![999]] {
+    let highlight = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    for name in [
+        "",
+        "ascii_name.rs",
+        "组件_café_e\u{301}_👩‍👩‍👧‍👦.py",
+        "a very long filename.txt",
+    ] {
+        for indices in [
+            vec![],
+            vec![0],
+            vec![0, 0, 1, 4, 4, 9],
+            vec![1, 3, 5, 10, 300],
+            vec![999],
+        ] {
             let spans = highlighted_name(name, &indices, style, highlight);
-            assert_eq!(spans.iter().map(|s| s.content.as_ref()).collect::<String>(), name);
-            assert_eq!(spans.iter().map(|span| UnicodeWidthStr::width(span.content.as_ref())).sum::<usize>(),
-                UnicodeWidthStr::width(name), "highlighting must preserve scroll width");
+            assert_eq!(
+                spans.iter().map(|s| s.content.as_ref()).collect::<String>(),
+                name
+            );
+            assert_eq!(
+                spans
+                    .iter()
+                    .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+                    .sum::<usize>(),
+                UnicodeWidthStr::width(name),
+                "highlighting must preserve scroll width"
+            );
             let mut column = 0;
             for span in spans {
                 assert!(matches!(span.content, std::borrow::Cow::Borrowed(_)));
@@ -114,9 +136,9 @@ fn capture(buffer: &Buffer, name: &str) {
 }
 
 fn rect_text(buffer: &Buffer, area: Rect) -> String {
-    (area.y..area.bottom()).flat_map(|y| {
-        (area.x..area.right()).map(move |x| buffer[(x, y)].symbol())
-    }).collect()
+    (area.y..area.bottom())
+        .flat_map(|y| (area.x..area.right()).map(move |x| buffer[(x, y)].symbol()))
+        .collect()
 }
 
 #[test]
@@ -130,7 +152,12 @@ fn find_mode_remains_obvious_without_focus_and_show_all_restores_the_tree() {
                 }
                 app.explorer_width = width;
                 app.sidebar_right = right;
-                let normal_paths: Vec<_> = app.explorer.entries.iter().map(|e| e.path.clone()).collect();
+                let normal_paths: Vec<_> = app
+                    .explorer
+                    .entries
+                    .iter()
+                    .map(|e| e.path.clone())
+                    .collect();
                 app.open_explorer_find();
                 app.explorer.find.filter = true;
                 query(&mut app, "app");
@@ -148,17 +175,37 @@ fn find_mode_remains_obvious_without_focus_and_show_all_restores_the_tree() {
                     assert!(rect_text(&buffer, controls.close).contains("Show All"));
                     assert!(rect_text(&buffer, controls.status).contains("3 matches"));
                 }
-                capture(&buffer, &format!("mode-width-{width}-right-{right}-light-{light}"));
-                mouse(&mut app, MouseEventKind::Down(MouseButton::Left),
-                    controls.close.x + 1, controls.close.y);
+                capture(
+                    &buffer,
+                    &format!("mode-width-{width}-right-{right}-light-{light}"),
+                );
+                mouse(
+                    &mut app,
+                    MouseEventKind::Down(MouseButton::Left),
+                    controls.close.x + 1,
+                    controls.close.y,
+                );
                 assert!(!app.explorer.find.open);
                 assert!(app.explorer.find.query.is_empty());
                 assert!(app.explorer.find.saved_view.is_none());
-                assert_eq!(app.explorer.entries.iter().map(|e| e.path.clone()).collect::<Vec<_>>(),
-                    normal_paths, "restores files immediately, before the asynchronous refresh");
+                assert_eq!(
+                    app.explorer
+                        .entries
+                        .iter()
+                        .map(|e| e.path.clone())
+                        .collect::<Vec<_>>(),
+                    normal_paths,
+                    "restores files immediately, before the asynchronous refresh"
+                );
                 let buffer = draw(&mut app, 100, 28);
-                assert!(!buffer.content.iter().map(|cell| cell.symbol()).collect::<String>()
-                    .contains("Files hidden"));
+                assert!(
+                    !buffer
+                        .content
+                        .iter()
+                        .map(|cell| cell.symbol())
+                        .collect::<String>()
+                        .contains("Files hidden")
+                );
                 wait(&mut app);
             }
         }
@@ -184,7 +231,12 @@ fn find_status_distinguishes_empty_highlight_filtered_loading_and_error_states()
     query(&mut app, "");
     let buffer = draw(&mut app, 100, 28);
     assert!(rect_text(&buffer, controls.status).contains("Filter ready"));
-    assert!(app.explorer.entries.iter().any(|entry| entry.name == "zeta.txt"));
+    assert!(
+        app.explorer
+            .entries
+            .iter()
+            .any(|entry| entry.name == "zeta.txt")
+    );
     app.explorer.find.filter = false;
     query(&mut app, "app");
     let buffer = draw(&mut app, 100, 28);
@@ -258,10 +310,19 @@ fn shortcut_typing_navigation_and_escape_stay_in_explorer() {
 
 #[test]
 fn context_menu_on_rows_headers_and_blank_space_opens_find() {
-    for location in ["file", "folder", "nested_file", "nested_folder", "root", "blank", "header"] {
+    for location in [
+        "file",
+        "folder",
+        "nested_file",
+        "nested_folder",
+        "root",
+        "blank",
+        "header",
+    ] {
         let (dir, mut app) = fixture();
         if location.starts_with("nested") {
-            app.explorer.reveal_file_deferred(&dir.path().join("src/deep/app_input.rs"));
+            app.explorer
+                .reveal_file_deferred(&dir.path().join("src/deep/app_input.rs"));
             app.refresh_explorer_tree_async();
             wait(&mut app);
         }
@@ -275,8 +336,18 @@ fn context_menu_on_rows_headers_and_blank_space_opens_find() {
             }
             "folder" => content.y,
             "nested_file" | "nested_folder" => {
-                let name = if location == "nested_file" { "app_input.rs" } else { "deep" };
-                content.y + app.explorer.entries.iter().position(|entry| entry.name == name).unwrap() as u16
+                let name = if location == "nested_file" {
+                    "app_input.rs"
+                } else {
+                    "deep"
+                };
+                content.y
+                    + app
+                        .explorer
+                        .entries
+                        .iter()
+                        .position(|entry| entry.name == name)
+                        .unwrap() as u16
             }
             "root" => tree.y,
             "header" => area.y,
@@ -299,7 +370,11 @@ fn context_menu_on_rows_headers_and_blank_space_opens_find() {
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         assert!(app.explorer.find.open, "{location}");
         assert_eq!(app.focused_text_input_id(), Some(TextInputId::ExplorerFind));
-        assert_eq!(app.explorer.find.directory, (expected != app.explorer.root).then_some(expected), "{location}");
+        assert_eq!(
+            app.explorer.find.directory,
+            (expected != app.explorer.root).then_some(expected),
+            "{location}"
+        );
     }
 }
 
@@ -327,8 +402,12 @@ fn scoped_find_displays_the_folder_and_workspace_button_reuses_the_query() {
                 assert!(rect_text(&buffer, controls.workspace).contains("Workspace"));
             }
             capture(&buffer, &format!("scoped-width-{width}-right-{right}"));
-            mouse(&mut app, MouseEventKind::Down(MouseButton::Left),
-                controls.workspace.x + 1, controls.workspace.y);
+            mouse(
+                &mut app,
+                MouseEventKind::Down(MouseButton::Left),
+                controls.workspace.x + 1,
+                controls.workspace.y,
+            );
             wait(&mut app);
             assert!(app.explorer.find.directory.is_none());
             assert_eq!(app.explorer.find.query, "app");
@@ -349,9 +428,15 @@ fn scoped_find_can_change_folder_and_reset_with_keyboard_or_root_context() {
     query(&mut app, "app");
     assert_eq!(app.explorer.find.results.count, 2);
     // Refocusing the existing search keeps its scope.
-    key(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL | KeyModifiers::ALT);
+    key(
+        &mut app,
+        KeyCode::Char('f'),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    );
     assert_eq!(app.explorer.find.directory, Some(dir.path().join("src")));
-    for _ in 0..6 { key(&mut app, KeyCode::Tab, KeyModifiers::NONE); }
+    for _ in 0..6 {
+        key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
+    }
     assert!(app.explorer.find.focus == Focus::Workspace);
     key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     wait(&mut app);
@@ -385,10 +470,15 @@ fn scoped_find_can_change_folder_and_reset_with_keyboard_or_root_context() {
 
 fn edit_path(app: &mut App, text: &str) {
     key(app, KeyCode::Char('p'), KeyModifiers::ALT);
-    assert_eq!(app.focused_text_input_id(), Some(TextInputId::ExplorerFindPath));
+    assert_eq!(
+        app.focused_text_input_id(),
+        Some(TextInputId::ExplorerFindPath)
+    );
     key(app, KeyCode::Char('a'), KeyModifiers::CONTROL);
     key(app, KeyCode::Backspace, KeyModifiers::NONE);
-    for ch in text.chars() { key(app, KeyCode::Char(ch), KeyModifiers::NONE); }
+    for ch in text.chars() {
+        key(app, KeyCode::Char(ch), KeyModifiers::NONE);
+    }
 }
 
 #[test]
@@ -400,14 +490,20 @@ fn editable_folder_path_applies_relative_absolute_and_empty_paths_on_enter() {
     assert_eq!(app.explorer.find.results.count, 2);
     let generation = app.explorer_refresh_generation;
     edit_path(&mut app, "src/deep");
-    assert_eq!(app.explorer_refresh_generation, generation, "typing a path must not start scans");
+    assert_eq!(
+        app.explorer_refresh_generation, generation,
+        "typing a path must not start scans"
+    );
     assert_eq!(app.explorer.find.directory, Some(dir.path().join("src")));
     let buffer = draw(&mut app, 100, 28);
     let controls = layout(&app, app.explorer_area.unwrap());
     assert!(rect_text(&buffer, controls.status).contains("Enter to apply"));
     key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     wait(&mut app);
-    assert_eq!(app.explorer.find.directory, Some(dir.path().join("src/deep")));
+    assert_eq!(
+        app.explorer.find.directory,
+        Some(dir.path().join("src/deep"))
+    );
     assert_eq!(app.explorer.find.results.count, 1);
     assert_eq!(app.explorer.find.query, "app");
     assert!(!app.explorer.find.path_dirty);
@@ -434,17 +530,27 @@ fn invalid_folder_paths_preserve_the_applied_scope_and_workspace_reset_clears_dr
     app.explorer.find.filter = true;
     query(&mut app, "app");
     let generation = app.explorer_refresh_generation;
-    for text in ["..".to_owned(), "src/../../outside".into(), dir.path().parent().unwrap().display().to_string()] {
+    for text in [
+        "..".to_owned(),
+        "src/../../outside".into(),
+        dir.path().parent().unwrap().display().to_string(),
+    ] {
         edit_path(&mut app, &text);
         key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         assert!(app.explorer.find.path_error.is_some());
-        assert_eq!(app.explorer.find.directory, Some(dir.path().join("src/deep")));
+        assert_eq!(
+            app.explorer.find.directory,
+            Some(dir.path().join("src/deep"))
+        );
         assert_eq!(app.explorer.find.results.count, 1);
         assert_eq!(app.explorer_refresh_generation, generation);
         let buffer = draw(&mut app, 100, 28);
         let controls = layout(&app, app.explorer_area.unwrap());
         assert_eq!(controls.error.height, 1);
-        assert_eq!(app.explorer.find.path_error.as_deref(), Some("Choose a folder inside the workspace"));
+        assert_eq!(
+            app.explorer.find.path_error.as_deref(),
+            Some("Choose a folder inside the workspace")
+        );
         assert!(rect_text(&buffer, controls.error).contains("inside the"));
     }
     edit_path(&mut app, "src");
@@ -460,12 +566,20 @@ fn invalid_folder_paths_preserve_the_applied_scope_and_workspace_reset_clears_dr
     key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     let _buffer = draw(&mut app, 100, 28);
     let controls = layout(&app, app.explorer_area.unwrap());
-    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), controls.workspace.x + 1, controls.workspace.y);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        controls.workspace.x + 1,
+        controls.workspace.y,
+    );
     assert!(app.explorer.find.directory.is_none());
     assert!(app.explorer.find.path.is_empty());
     assert!(!app.explorer.find.path_dirty);
     assert!(app.explorer.find.path_error.is_none());
-    assert_eq!(app.explorer_refresh_generation, generation, "discarding a draft does not rescan the workspace");
+    assert_eq!(
+        app.explorer_refresh_generation, generation,
+        "discarding a draft does not rescan the workspace"
+    );
     assert_eq!(app.explorer.find.query, "app");
 }
 
@@ -477,7 +591,9 @@ fn folder_path_is_editable_by_mouse_and_keyboard_on_both_sidebar_sides() {
             let folder = dir.path().join("source data/组件");
             std::fs::create_dir_all(&folder).unwrap();
             std::fs::write(folder.join("app_extra.rs"), "source").unwrap();
-            app.tabs = vec![crate::app::Tab::new_file(crate::editor::Editor::test_with_text("keep this text"))];
+            app.tabs = vec![crate::app::Tab::new_file(
+                crate::editor::Editor::test_with_text("keep this text"),
+            )];
             app.active_tab = 0;
             app.explorer_width = width;
             app.sidebar_right = right;
@@ -486,18 +602,39 @@ fn folder_path_is_editable_by_mouse_and_keyboard_on_both_sidebar_sides() {
             query(&mut app, "app");
             draw(&mut app, 100, 28);
             let controls = layout(&app, app.explorer_area.unwrap());
-            assert_eq!(controls.scope.height, 1, "the path is editable even for workspace-wide searches");
-            mouse(&mut app, MouseEventKind::Down(MouseButton::Left), controls.scope.x + 4, controls.scope.y);
-            mouse(&mut app, MouseEventKind::Up(MouseButton::Left), controls.scope.x + 4, controls.scope.y);
-            assert_eq!(app.focused_text_input_id(), Some(TextInputId::ExplorerFindPath));
-            for ch in "source data/组件".chars() { key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE); }
+            assert_eq!(
+                controls.scope.height, 1,
+                "the path is editable even for workspace-wide searches"
+            );
+            mouse(
+                &mut app,
+                MouseEventKind::Down(MouseButton::Left),
+                controls.scope.x + 4,
+                controls.scope.y,
+            );
+            mouse(
+                &mut app,
+                MouseEventKind::Up(MouseButton::Left),
+                controls.scope.x + 4,
+                controls.scope.y,
+            );
+            assert_eq!(
+                app.focused_text_input_id(),
+                Some(TextInputId::ExplorerFindPath)
+            );
+            for ch in "source data/组件".chars() {
+                key(&mut app, KeyCode::Char(ch), KeyModifiers::NONE);
+            }
             key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
             wait(&mut app);
             assert_eq!(app.explorer.find.directory, Some(folder));
             assert_eq!(app.explorer.find.results.count, 1);
             assert_eq!(app.editor().unwrap().rope.to_string(), "keep this text");
             key(&mut app, KeyCode::Tab, KeyModifiers::NONE);
-            assert_eq!(app.focused_text_input_id(), Some(TextInputId::ExplorerFindPath));
+            assert_eq!(
+                app.focused_text_input_id(),
+                Some(TextInputId::ExplorerFindPath)
+            );
             key(&mut app, KeyCode::BackTab, KeyModifiers::SHIFT);
             assert_eq!(app.focused_text_input_id(), Some(TextInputId::ExplorerFind));
             key(&mut app, KeyCode::Esc, KeyModifiers::NONE);

@@ -82,7 +82,9 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             (app.colors.ui.fg_tab_inactive, app.colors.bg_tab_inactive)
         };
-        let mut style = Style::default().fg(app.colors.ui.readable_foreground(fg, bg, 4.5)).bg(bg);
+        let mut style = Style::default()
+            .fg(app.colors.ui.readable_foreground(fg, bg, 4.5))
+            .bg(bg);
         if selected {
             style = style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
         }
@@ -222,7 +224,14 @@ pub(super) fn draw_tooltip(f: &mut Frame, app: &App, body: Rect) {
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(c.ui.hover_colors.border.border(style.bg.unwrap()).unwrap_or(style.bg.unwrap()))),
+                .border_style(
+                    Style::default().fg(c
+                        .ui
+                        .hover_colors
+                        .border
+                        .border(style.bg.unwrap())
+                        .unwrap_or(style.bg.unwrap())),
+                ),
         ),
         area,
     );

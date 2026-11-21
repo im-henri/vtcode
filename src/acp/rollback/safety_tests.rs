@@ -7,7 +7,10 @@ fn checkpoint_rejects_embedded_drive_and_stream_names() {
     let workspace = tempfile::tempdir().unwrap();
     let root = workspace.path().canonicalize().unwrap();
     for name in [r"missing\X:\outside.txt", r"missing\file.txt:stream"] {
-        assert!(storage::checked_path(&root, Path::new(name)).is_err(), "{name}");
+        assert!(
+            storage::checked_path(&root, Path::new(name)).is_err(),
+            "{name}"
+        );
     }
 }
 
@@ -130,7 +133,10 @@ fn recovery_refuses_to_install_a_replaced_rollback_backup() {
     let mut interrupted = f.journal.state.clone();
     f.decline(Selection::All).unwrap();
     let plan = f.journal.state.completed.last().unwrap().plan.clone();
-    let backup = f.root.path().join(plan.replacements[0].backup.as_ref().unwrap());
+    let backup = f
+        .root
+        .path()
+        .join(plan.replacements[0].backup.as_ref().unwrap());
     let retained = f.root.path().join("retained-displaced-file");
     fs::rename(&backup, &retained).unwrap();
     fs::write(&backup, "unrelated file").unwrap();
@@ -138,14 +144,21 @@ fn recovery_refuses_to_install_a_replaced_rollback_backup() {
     interrupted.next = f.journal.state.next;
     interrupted.transaction = Some(plan);
     f.journal.save(interrupted).unwrap();
-    let Fixture { root, data, journal } = f;
+    let Fixture {
+        root,
+        data,
+        journal,
+    } = f;
     drop(journal);
     let mut journal = Journal::open(root.path(), data.path()).unwrap();
 
     let error = journal.recover().unwrap_err();
     assert!(error.contains("Rollback backup was replaced"), "{error}");
     assert!(journal.interrupted());
-    assert_eq!(fs::read_to_string(root.path().join("a")).unwrap(), "original");
+    assert_eq!(
+        fs::read_to_string(root.path().join("a")).unwrap(),
+        "original"
+    );
     assert_eq!(fs::read_to_string(retained).unwrap(), "agent");
     assert_eq!(fs::read_to_string(backup).unwrap(), "unrelated file");
 }

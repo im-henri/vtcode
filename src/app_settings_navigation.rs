@@ -10,7 +10,10 @@ impl App {
     pub(crate) fn settings_editor_has_focus(&self) -> bool {
         self.active_pane == crate::app::ActivePane::Editor
             && !self.docked_terminal_has_focus()
-            && self.tabs.get(self.active_tab).is_some_and(|tab| tab.kind == crate::app::TabKind::Settings)
+            && self
+                .tabs
+                .get(self.active_tab)
+                .is_some_and(|tab| tab.kind == crate::app::TabKind::Settings)
     }
 
     /// The compact picker exposes the same pages as the expanded tree.
@@ -29,13 +32,7 @@ impl App {
 
     pub(crate) fn settings_sections(category: usize) -> &'static [&'static str] {
         match category {
-            1 => &[
-                "Editing",
-                "Cursor",
-                "Whitespace",
-                "Minimap",
-                "Formatting",
-            ],
+            1 => &["Editing", "Cursor", "Whitespace", "Minimap", "Formatting"],
             2 => &["Appearance", "Layout", "Editor Management"],
             3 => &["Code Decorations", "Navigation", "Search", "Focus"],
             4 => &["Saving", "File Associations", "Exclusions", "Large Files"],
@@ -54,7 +51,9 @@ impl App {
     pub(crate) fn settings_section_for_id(id: &str) -> Option<&'static str> {
         if let Some(field) = crate::app_vtcomplete_settings::field(id) {
             return Some(match field.0 {
-                "vtcomplete_inline_predictions" | "vtcomplete_inline_eagerness" => GPTCOMPLETE_SECTION,
+                "vtcomplete_inline_predictions" | "vtcomplete_inline_eagerness" => {
+                    GPTCOMPLETE_SECTION
+                }
                 _ => VTCOMPLETE_SECTION,
             });
         }

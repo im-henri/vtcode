@@ -19,24 +19,24 @@ use tabs::ChatView;
 #[path = "app_acp_pointer.rs"]
 mod pointer;
 pub(crate) use pointer::{ChatScrollbar, ScrollDrag};
-#[path = "app_acp_layout.rs"]
-pub(crate) mod layout;
+#[path = "app_acp_agent_close.rs"]
+mod agent_close;
+#[path = "app_acp_agents.rs"]
+mod agents;
+#[path = "app_acp_control.rs"]
+mod control;
 #[path = "app_acp_history.rs"]
 mod history;
 #[path = "app_acp_history_filter.rs"]
 mod history_filter;
-#[path = "app_acp_rollback.rs"]
-pub(crate) mod rollback;
-#[path = "app_acp_queue.rs"]
-pub(crate) mod queue;
-#[path = "app_acp_agents.rs"]
-mod agents;
-#[path = "app_acp_agent_close.rs"]
-mod agent_close;
-#[path = "app_acp_control.rs"]
-mod control;
+#[path = "app_acp_layout.rs"]
+pub(crate) mod layout;
 #[path = "app_acp_permissions.rs"]
 mod permissions;
+#[path = "app_acp_queue.rs"]
+pub(crate) mod queue;
+#[path = "app_acp_rollback.rs"]
+pub(crate) mod rollback;
 pub(crate) type AgentId = u64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -164,10 +164,18 @@ pub(crate) enum OutputDetail {
 }
 impl OutputDetail {
     pub fn label(self) -> &'static str {
-        match self { Self::Minimal => "Minimal", Self::Compact => "Compact", Self::Full => "Full" }
+        match self {
+            Self::Minimal => "Minimal",
+            Self::Compact => "Compact",
+            Self::Full => "Full",
+        }
     }
     pub fn parse(value: &str) -> Self {
-        match value { "minimal" => Self::Minimal, "full" => Self::Full, _ => Self::Compact }
+        match value {
+            "minimal" => Self::Minimal,
+            "full" => Self::Full,
+            _ => Self::Compact,
+        }
     }
 }
 
@@ -376,34 +384,59 @@ impl Default for AgentState {
 // and rollback remain in place when switch_connection swaps AgentState.
 impl std::ops::Deref for ChatState {
     type Target = AgentState;
-    fn deref(&self) -> &AgentState { &self.connection }
+    fn deref(&self) -> &AgentState {
+        &self.connection
+    }
 }
 impl std::ops::DerefMut for ChatState {
-    fn deref_mut(&mut self) -> &mut AgentState { &mut self.connection }
+    fn deref_mut(&mut self) -> &mut AgentState {
+        &mut self.connection
+    }
 }
 
 impl ChatState {
     pub(crate) fn entry_expanded(&self, index: usize) -> bool {
-        self.expanded.contains(&index) || (!self.collapsed.contains(&index)
-            && self.session().is_some_and(|s| match s.entries.get(index) {
-                Some(ChatEntry::Thought(_)) => self.thinking_expanded,
-                Some(ChatEntry::Tool(_) | ChatEntry::Terminal(_)) => self.output_detail == OutputDetail::Full,
-                _ => false,
-            }))
+        self.expanded.contains(&index)
+            || (!self.collapsed.contains(&index)
+                && self.session().is_some_and(|s| match s.entries.get(index) {
+                    Some(ChatEntry::Thought(_)) => self.thinking_expanded,
+                    Some(ChatEntry::Tool(_) | ChatEntry::Terminal(_)) => {
+                        self.output_detail == OutputDetail::Full
+                    }
+                    _ => false,
+                }))
     }
 
     /// Reset only the affected card type, including conversations in other panes.
     fn reset_expansion(&mut self, thoughts: bool) {
-        let clear = |session: Option<&Session>, expanded: &mut HashSet<usize>, collapsed: &mut HashSet<usize>| {
-            let keep = |index: &usize| session.is_some_and(|s| s.entries.get(*index)
-                .is_some_and(|entry| matches!(entry, ChatEntry::Thought(_)) != thoughts));
+        let clear = |session: Option<&Session>,
+                     expanded: &mut HashSet<usize>,
+                     collapsed: &mut HashSet<usize>| {
+            let keep = |index: &usize| {
+                session.is_some_and(|s| {
+                    s.entries
+                        .get(*index)
+                        .is_some_and(|entry| matches!(entry, ChatEntry::Thought(_)) != thoughts)
+                })
+            };
             expanded.retain(keep);
             collapsed.retain(keep);
         };
         for state in std::iter::once(&mut self.connection).chain(self.connections.values_mut()) {
-            clear(state.selected.as_ref().and_then(|id| state.sessions.get(id)), &mut state.expanded, &mut state.collapsed);
+            clear(
+                state
+                    .selected
+                    .as_ref()
+                    .and_then(|id| state.sessions.get(id)),
+                &mut state.expanded,
+                &mut state.collapsed,
+            );
             for (id, view) in &mut state.views {
-                clear(id.as_ref().and_then(|id| state.sessions.get(id)), &mut view.expanded, &mut view.collapsed);
+                clear(
+                    id.as_ref().and_then(|id| state.sessions.get(id)),
+                    &mut view.expanded,
+                    &mut view.collapsed,
+                );
             }
         }
     }
@@ -422,12 +455,20 @@ impl ChatState {
                     }
                 })
     }
-    pub(crate) fn with_composer_input<R>(&mut self, apply: impl FnOnce(&mut String, &mut usize, &mut Option<usize>, &mut TextInputHistory) -> R) -> R {
+    pub(crate) fn with_composer_input<R>(
+        &mut self,
+        apply: impl FnOnce(&mut String, &mut usize, &mut Option<usize>, &mut TextInputHistory) -> R,
+    ) -> R {
         let state = &mut self.connection;
         if let Some((text, cursor, anchor, history)) = &mut state.saved_draft {
             apply(text, cursor, anchor, history)
         } else {
-            apply(&mut state.input, &mut state.cursor, &mut state.anchor, &mut state.input_history)
+            apply(
+                &mut state.input,
+                &mut state.cursor,
+                &mut state.anchor,
+                &mut state.input_history,
+            )
         }
     }
 
@@ -463,12 +504,17 @@ impl ChatState {
         self.selected.as_ref().and_then(|id| self.sessions.get(id))
     }
     pub fn session_mut(&mut self) -> Option<&mut Session> {
-        self.connection.selected
+        self.connection
+            .selected
             .as_ref()
             .and_then(|id| self.connection.sessions.get_mut(id))
     }
     pub fn busy(&self) -> bool {
-        self.session().is_some_and(|s| s.busy) || self.selected.as_ref().is_some_and(|id| self.files.preparing.contains_key(id))
+        self.session().is_some_and(|s| s.busy)
+            || self
+                .selected
+                .as_ref()
+                .is_some_and(|id| self.files.preparing.contains_key(id))
     }
     pub fn connected(&self) -> bool {
         self.client.is_some() && self.initialized.is_some()
@@ -567,7 +613,9 @@ pub(crate) fn config_changeable(option: &p::SessionConfigOption) -> bool {
 }
 
 fn thinking_readonly_reason(value: &str) -> String {
-    format!("The agent reports {value} and offers no other effort settings. It cannot be changed here.")
+    format!(
+        "The agent reports {value} and offers no other effort settings. It cannot be changed here."
+    )
 }
 
 pub(crate) fn config_supported(option: &p::SessionConfigOption) -> bool {
@@ -694,7 +742,9 @@ impl App {
                 self.chat.switch_connection(view.agent);
                 self.activate_editor_chat(&view.session);
             }
-        } else { self.chat.layout.dock_visible = true; }
+        } else {
+            self.chat.layout.dock_visible = true;
+        }
         if self.zen_mode {
             self.execute_palette_command("toggle_zen");
         }
@@ -710,8 +760,11 @@ impl App {
     pub(crate) fn execute_acp_command(&mut self, id: &str) -> bool {
         let action = match id {
             "acp_chat" => {
-                if self.chat.visible && self.chat.layout.dock_visible
-                    && self.active_pane == ActivePane::Chat && self.chat.layout.active.is_none() {
+                if self.chat.visible
+                    && self.chat.layout.dock_visible
+                    && self.active_pane == ActivePane::Chat
+                    && self.chat.layout.active.is_none()
+                {
                     self.chat_action(ChatAction::Hide);
                 } else {
                     // The workbench button targets the dock, even when a
@@ -761,13 +814,18 @@ impl App {
     }
 
     fn start_acp_connection(&mut self, config: AgentConfig, reconnect: bool) {
-        if self.chat.closing { return; }
+        if self.chat.closing {
+            return;
+        }
         if self.chat.rollback.changing_workspace(&self.explorer.root) {
-            self.chat.error = Some("Wait for the previous workspace's checkpoint capture before connecting.".into());
+            self.chat.error = Some(
+                "Wait for the previous workspace's checkpoint capture before connecting.".into(),
+            );
             return;
         }
         if reconnect && self.chat.queues.values().any(|queue| !queue.is_empty()) {
-            self.chat.error = Some("Edit or remove queued messages before reconnecting this agent.".into());
+            self.chat.error =
+                Some("Edit or remove queued messages before reconnecting this agent.".into());
             return;
         }
         if reconnect && self.chat.rollback.agent_busy(self.chat.active_agent) {
@@ -784,7 +842,10 @@ impl App {
         self.chat.sessions.clear();
         self.chat.queues.clear();
         let agent = self.chat.active_agent;
-        self.chat.layout.editors.retain(|_, view| view.agent != agent);
+        self.chat
+            .layout
+            .editors
+            .retain(|_, view| view.agent != agent);
         self.chat.layout.active = None;
         self.chat.layout.dock_agent = agent;
         self.chat.layout.dock_visible = true;
@@ -833,8 +894,16 @@ impl App {
         let terminal_storage =
             crate::portable::workspace_dir(&self.explorer.root).join("agent-terminals");
         let result = if let Some(workspace) = &self.remote_workspace {
-            crate::remote::agent::connect(workspace.clone(), config.clone(), wake).map_err(|error| error.to_string())
-        } else { Client::connect_with_terminal_storage(config.clone(), &self.explorer.root, &terminal_storage, move || wake.notify()) };
+            crate::remote::agent::connect(workspace.clone(), config.clone(), wake)
+                .map_err(|error| error.to_string())
+        } else {
+            Client::connect_with_terminal_storage(
+                config.clone(),
+                &self.explorer.root,
+                &terminal_storage,
+                move || wake.notify(),
+            )
+        };
         match result {
             Ok(client) => {
                 self.initialize_chat_rollback(&config);
@@ -859,17 +928,26 @@ impl App {
         let active = self.chat.active_agent;
         let background = self.chat.background;
         let mut ids = self.chat.agent_order.clone();
-        if !ids.contains(&active) { ids.push(active); }
+        if !ids.contains(&active) {
+            ids.push(active);
+        }
         let mut changed = self.poll_chat_rollback();
         let mut remaining = 64;
         for visited in 0..ids.len() {
             let index = self.chat.next_poll_agent % ids.len();
             self.chat.next_poll_agent = (index + 1) % ids.len();
             let id = ids[index];
-            let connection_changed = self.with_agent_context(id, background || id != active,
-                |app| app.poll_acp_connection(deadline, &mut remaining)).unwrap_or(false);
+            let connection_changed = self
+                .with_agent_context(id, background || id != active, |app| {
+                    app.poll_acp_connection(deadline, &mut remaining)
+                })
+                .unwrap_or(false);
             changed |= connection_changed;
-            if visited + 1 < ids.len() && (remaining == 0 || ((remaining < 64 || connection_changed) && std::time::Instant::now() >= deadline)) {
+            if visited + 1 < ids.len()
+                && (remaining == 0
+                    || ((remaining < 64 || connection_changed)
+                        && std::time::Instant::now() >= deadline))
+            {
                 self.background.wake_handle().notify();
                 break;
             }
@@ -902,7 +980,9 @@ impl App {
             changed = true;
             *remaining -= 1;
             self.apply_acp_event(event);
-            if std::time::Instant::now() >= deadline { break; }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
         }
         // There may be more events queued; never lose a wake after a bounded drain.
         self.background.wake_handle().notify();
@@ -1027,7 +1107,8 @@ impl App {
                 self.chat.permissions.retain(|p| p.request.session_id != id);
                 self.chat.views.remove(&Some(id.clone()));
                 self.chat.unread_tabs.remove(&id);
-                self.chat.finish_control(&Operation::CloseSession, Some(&id));
+                self.chat
+                    .finish_control(&Operation::CloseSession, Some(&id));
             }
             Event::SessionDeleted(id) => {
                 let history_open = self.chat.picker == Some(Picker::Sessions);
@@ -1123,9 +1204,21 @@ impl App {
                 session_id,
                 response,
             } => {
-                if let Some(session) = self.chat.sessions.get(&session_id).filter(|session| session.busy) {
-                    let title = if session.title.is_empty() { "Agent Chat" } else { &session.title };
-                    self.record_workspace_event(format!("{title}: agent finished"), crate::app_workspaces::Level::Done);
+                if let Some(session) = self
+                    .chat
+                    .sessions
+                    .get(&session_id)
+                    .filter(|session| session.busy)
+                {
+                    let title = if session.title.is_empty() {
+                        "Agent Chat"
+                    } else {
+                        &session.title
+                    };
+                    self.record_workspace_event(
+                        format!("{title}: agent finished"),
+                        crate::app_workspaces::Level::Done,
+                    );
                 }
                 if response.stop_reason != p::StopReason::EndTurn
                     && let Some(queue) = self.chat.queues.get_mut(&session_id)
@@ -1143,7 +1236,11 @@ impl App {
                     self.chat.status = "Ready".into();
                 }
             }
-            Event::Permission { id, ticket, request } => {
+            Event::Permission {
+                id,
+                ticket,
+                request,
+            } => {
                 self.receive_chat_permission(id, ticket, request, Self::send_acp);
             }
             Event::PermissionResponded { id, ticket, option } => {
@@ -1151,39 +1248,68 @@ impl App {
             }
             Event::PermissionResolved(id, ticket) => {
                 let visible_request = self.chat.permissions.iter().any(|pending| {
-                    pending.id == id && pending.ticket == ticket && self.chat.selected.as_ref() == Some(&pending.request.session_id)
+                    pending.id == id
+                        && pending.ticket == ticket
+                        && self.chat.selected.as_ref() == Some(&pending.request.session_id)
                 });
-                if self.chat.yolo_approvals.get(&id).is_some_and(|approval| approval.ticket == ticket) { self.chat.yolo_approvals.remove(&id); }
-                self.chat.permissions.retain(|p| p.id != id || p.ticket != ticket);
-                if visible_request { self.chat.focus = None; }
+                if self
+                    .chat
+                    .yolo_approvals
+                    .get(&id)
+                    .is_some_and(|approval| approval.ticket == ticket)
+                {
+                    self.chat.yolo_approvals.remove(&id);
+                }
+                self.chat
+                    .permissions
+                    .retain(|p| p.id != id || p.ticket != ticket);
+                if visible_request {
+                    self.chat.focus = None;
+                }
             }
-            Event::FileRequest { id, ticket, request } => self.acp_file_request(id, ticket, request),
+            Event::FileRequest {
+                id,
+                ticket,
+                request,
+            } => self.acp_file_request(id, ticket, request),
             Event::FileEdited(edit) => {
-                self.chat.mark_tab_unread(&edit.session_id, self.terminal_has_focus);
+                self.chat
+                    .mark_tab_unread(&edit.session_id, self.terminal_has_focus);
                 self.chat.rollback.note_agent_write(
                     self.chat.active_agent,
                     &edit.session_id,
                     &edit.path,
                 );
-                let paths: Vec<_> = self.acp_file_editors(&edit.path).into_iter()
+                let paths: Vec<_> = self
+                    .acp_file_editors(&edit.path)
+                    .into_iter()
                     .filter_map(|tab| tab.editor.file_path.as_ref())
-                    .collect::<rustc_hash::FxHashSet<_>>().into_iter().cloned()
+                    .collect::<rustc_hash::FxHashSet<_>>()
+                    .into_iter()
+                    .cloned()
                     .collect();
                 for path in paths {
-                    if self.workspace_visible { self.queue_file_reload(path); }
-                    else { self.defer_workspace_file_check(&path); }
+                    if self.workspace_visible {
+                        self.queue_file_reload(path);
+                    } else {
+                        self.defer_workspace_file_check(&path);
+                    }
                 }
                 // An ordinary write changes content, not file eligibility or
                 // name-sorted directories. Empty-before also covers newly
                 // created files, so conservatively refresh structure there.
-                self.refresh_explorer_changed_path_states([(edit.path.as_path(), Some(false))], edit.before.is_empty());
+                self.refresh_explorer_changed_path_states(
+                    [(edit.path.as_path(), Some(false))],
+                    edit.before.is_empty(),
+                );
                 self.refresh_source_control_changed_paths([edit.path.clone()]);
                 if let Some(session) = self.chat.sessions.get_mut(&edit.session_id) {
                     session.push(ChatEntry::Edit(edit));
                 }
             }
             Event::Terminal(snapshot) => {
-                self.chat.mark_tab_unread(&snapshot.session_id, self.terminal_has_focus);
+                self.chat
+                    .mark_tab_unread(&snapshot.session_id, self.terminal_has_focus);
                 if self.chat.selected.as_ref() == Some(&snapshot.session_id)
                     && self.chat.terminal_input.as_ref() == Some(&snapshot.id)
                     && (snapshot.released || snapshot.exit_status.is_some() || snapshot.killed)
@@ -1205,7 +1331,10 @@ impl App {
                 session_id,
                 error,
             } => {
-                self.record_workspace_event(format!("Agent {:?}: {}", operation, error.message), crate::app_workspaces::Level::Attention);
+                self.record_workspace_event(
+                    format!("Agent {:?}: {}", operation, error.message),
+                    crate::app_workspaces::Level::Attention,
+                );
                 let control_finished = self.chat.finish_control(&operation, session_id.as_ref());
                 if operation == Operation::SetConfig
                     && self.chat.model_change.is_some()
@@ -1275,7 +1404,10 @@ impl App {
                 }
             }
             Event::Disconnected(reason) => {
-                self.record_workspace_event(format!("Agent disconnected: {reason}"), crate::app_workspaces::Level::Attention);
+                self.record_workspace_event(
+                    format!("Agent disconnected: {reason}"),
+                    crate::app_workspaces::Level::Attention,
+                );
                 self.chat.discard_history_load();
                 self.chat.model_change = None;
                 self.pause_chat_queues();
@@ -1298,7 +1430,10 @@ impl App {
         }
         self.discard_empty_chat_history();
         let invalid_picker = match &self.chat.picker {
-            Some(Picker::Tasks) => !self.chat.session().and_then(|s| s.tasks.as_ref())
+            Some(Picker::Tasks) => !self
+                .chat
+                .session()
+                .and_then(|s| s.tasks.as_ref())
                 .is_some_and(|tasks| !tasks.entries.is_empty()),
             Some(Picker::Values(id)) => !self.chat.session().is_some_and(|s| {
                 s.config_options
@@ -1306,7 +1441,8 @@ impl App {
                     .any(|o| o.id.to_string() == *id && config_supported(o))
             }),
             Some(Picker::Message(index, epoch)) => !self.chat.session().is_some_and(|s| {
-                s.history_epoch == *epoch && matches!(s.entries.get(*index), Some(ChatEntry::User(_)))
+                s.history_epoch == *epoch
+                    && matches!(s.entries.get(*index), Some(ChatEntry::User(_)))
             }),
             _ => false,
         };
@@ -1331,38 +1467,89 @@ impl App {
 
     pub(super) fn acp_editor_identity(&self, editor: &crate::editor::Editor) -> Option<PathBuf> {
         if let Some(workspace) = &self.remote_workspace
-            && let Some(path) = editor.remote_checkpoint.as_ref().and_then(|checkpoint| checkpoint.identity.as_ref())
-        { return Some(workspace.view_key(path)); }
+            && let Some(path) = editor
+                .remote_checkpoint
+                .as_ref()
+                .and_then(|checkpoint| checkpoint.identity.as_ref())
+        {
+            return Some(workspace.view_key(path));
+        }
         editor.file_path.clone()
     }
 
     fn acp_editor_matches(&self, editor: &crate::editor::Editor, path: &std::path::Path) -> bool {
-        editor.file_path.as_ref().is_some_and(|open| Self::same_acp_file_path(open, path))
-            || self.acp_editor_identity(editor).is_some_and(|identity| Self::same_acp_file_path(&identity, path))
+        editor
+            .file_path
+            .as_ref()
+            .is_some_and(|open| Self::same_acp_file_path(open, path))
+            || self
+                .acp_editor_identity(editor)
+                .is_some_and(|identity| Self::same_acp_file_path(&identity, path))
     }
 
     pub(super) fn unresolved_agent_files(&self) -> bool {
-        self.remote_workspace.is_some() && self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
-            .any(|tab| tab.kind == TabKind::File && tab.editor.bg_loading && tab.editor.file_path.as_ref().is_some_and(|path| crate::remote::workspace::is_view_key(path)))
+        self.remote_workspace.is_some()
+            && self
+                .tabs
+                .iter()
+                .chain(self.groups.iter().flat_map(|group| &group.tabs))
+                .any(|tab| {
+                    tab.kind == TabKind::File
+                        && tab.editor.bg_loading
+                        && tab
+                            .editor
+                            .file_path
+                            .as_ref()
+                            .is_some_and(|path| crate::remote::workspace::is_view_key(path))
+                })
     }
 
     pub(super) fn agent_open_paths(&self) -> Vec<PathBuf> {
-        self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
-            .filter(|tab| tab.kind == TabKind::File).filter_map(|tab| tab.editor.file_path.clone())
-            .chain(self.pending_file_saves.keys().cloned()).filter(|path| crate::remote::workspace::is_view_key(path))
-            .collect::<std::collections::BTreeSet<_>>().into_iter().collect()
+        self.tabs
+            .iter()
+            .chain(self.groups.iter().flat_map(|group| &group.tabs))
+            .filter(|tab| tab.kind == TabKind::File)
+            .filter_map(|tab| tab.editor.file_path.clone())
+            .chain(self.pending_file_saves.keys().cloned())
+            .filter(|path| crate::remote::workspace::is_view_key(path))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     pub(super) fn record_agent_aliases(&mut self, aliases: &[(PathBuf, Option<PathBuf>)]) {
-        let Some(workspace) = &self.remote_workspace else { return; };
-        let identities: HashMap<_, _> = aliases.iter().filter_map(|(path, identity)| Some((path, workspace.remote_path(identity.as_ref()?).ok()?))).collect();
-        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
-            let Some(identity) = tab.editor.file_path.as_ref().and_then(|path| identities.get(path)) else { continue; };
-            let Some(checkpoint) = &tab.editor.remote_checkpoint else { continue; };
-            if checkpoint.identity.as_ref() == Some(identity) { continue; }
+        let Some(workspace) = &self.remote_workspace else {
+            return;
+        };
+        let identities: HashMap<_, _> = aliases
+            .iter()
+            .filter_map(|(path, identity)| {
+                Some((path, workspace.remote_path(identity.as_ref()?).ok()?))
+            })
+            .collect();
+        for tab in self
+            .tabs
+            .iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+        {
+            let Some(identity) = tab
+                .editor
+                .file_path
+                .as_ref()
+                .and_then(|path| identities.get(path))
+            else {
+                continue;
+            };
+            let Some(checkpoint) = &tab.editor.remote_checkpoint else {
+                continue;
+            };
+            if checkpoint.identity.as_ref() == Some(identity) {
+                continue;
+            }
             let mut checkpoint = (**checkpoint).clone();
             checkpoint.identity = Some(identity.clone());
-            tab.editor.set_remote_checkpoint(Some(std::sync::Arc::new(checkpoint)));
+            tab.editor
+                .set_remote_checkpoint(Some(std::sync::Arc::new(checkpoint)));
         }
     }
 
@@ -1385,39 +1572,82 @@ impl App {
             || editors
                 .iter()
                 .any(|tab| tab.editor.modified || tab.editor.read_only || tab.editor.bg_loading)
-            || self
-                .pending_file_saves
-                .keys()
-                .any(|p| Self::same_acp_file_path(p, path)
-                    || (self.remote_workspace.is_some() && crate::remote::workspace::is_view_key(p)))
+            || self.pending_file_saves.keys().any(|p| {
+                Self::same_acp_file_path(p, path)
+                    || (self.remote_workspace.is_some() && crate::remote::workspace::is_view_key(p))
+            })
     }
 
     fn acp_file_request(&mut self, id: p::RequestId, ticket: u64, request: FileRequest) {
-        if self.remote_workspace.is_none() { self.acp_file_request_ready(id, ticket, request, None); return; }
-        let Some(client) = &self.chat.client else { return; };
+        if self.remote_workspace.is_none() {
+            self.acp_file_request_ready(id, ticket, request, None);
+            return;
+        }
+        let Some(client) = &self.chat.client else {
+            return;
+        };
         let workspace = client.workspace().for_request(id.clone(), ticket);
         let handle = client.handle();
         let paths = self.agent_open_paths();
         let sender = self.background.sender.clone();
         let agent = self.chat.active_agent;
         self.background.spawn("agent-file-aliases", move || {
-            let aliases = workspace.resolve_many(&paths).map(|resolved| paths.into_iter().zip(resolved).collect());
-            let _ = sender.send(crate::background::BackgroundResult::AgentFileResolved { agent, handle, id, ticket, request, aliases });
+            let aliases = workspace
+                .resolve_many(&paths)
+                .map(|resolved| paths.into_iter().zip(resolved).collect());
+            let _ = sender.send(crate::background::BackgroundResult::AgentFileResolved {
+                agent,
+                handle,
+                id,
+                ticket,
+                request,
+                aliases,
+            });
         });
     }
 
-    pub(crate) fn apply_agent_file_resolved(&mut self, agent: AgentId, handle: vtcode::acp::ClientHandle, id: p::RequestId, ticket: u64, request: FileRequest, aliases: Result<Vec<(PathBuf, Option<PathBuf>)>, p::Error>) {
+    pub(crate) fn apply_agent_file_resolved(
+        &mut self,
+        agent: AgentId,
+        handle: vtcode::acp::ClientHandle,
+        id: p::RequestId,
+        ticket: u64,
+        request: FileRequest,
+        aliases: Result<Vec<(PathBuf, Option<PathBuf>)>, p::Error>,
+    ) {
         self.with_agent_context(agent, true, |app| {
-            if app.chat.client.as_ref().is_none_or(|client| !client.handle().same_connection(&handle)) { return; }
+            if app
+                .chat
+                .client
+                .as_ref()
+                .is_none_or(|client| !client.handle().same_connection(&handle))
+            {
+                return;
+            }
             match aliases {
                 Ok(aliases) => app.acp_file_request_ready(id, ticket, request, Some(&aliases)),
-                Err(error) => { let _ = handle.send(Command::FileResponse { id, ticket, result: Err(error), edit: None }); }
+                Err(error) => {
+                    let _ = handle.send(Command::FileResponse {
+                        id,
+                        ticket,
+                        result: Err(error),
+                        edit: None,
+                    });
+                }
             }
         });
     }
 
-    fn acp_file_request_ready(&mut self, id: p::RequestId, ticket: u64, request: FileRequest, aliases: Option<&[(PathBuf, Option<PathBuf>)]>) {
-        if let Some(aliases) = aliases { self.record_agent_aliases(aliases); }
+    fn acp_file_request_ready(
+        &mut self,
+        id: p::RequestId,
+        ticket: u64,
+        request: FileRequest,
+        aliases: Option<&[(PathBuf, Option<PathBuf>)]>,
+    ) {
+        if let Some(aliases) = aliases {
+            self.record_agent_aliases(aliases);
+        }
         let Some(client) = &self.chat.client else {
             return;
         };
@@ -1429,32 +1659,67 @@ impl App {
             // Resolve once on the node per request, then inspect *current*
             // buffers on the UI. Renames and retargeted symlinks cannot leave a
             // stale load-time identity granting access to the wrong document.
-            let aliases: HashMap<_, _> = aliases.iter().map(|(path, identity)| (path, identity)).collect();
+            let aliases: HashMap<_, _> = aliases
+                .iter()
+                .map(|(path, identity)| (path, identity))
+                .collect();
             let mut missing = false;
-            let editors = self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs)).filter(|tab| {
-                if tab.kind != TabKind::File { return false; }
-                let Some(open) = &tab.editor.file_path else { return false; };
-                if !crate::remote::workspace::is_view_key(open) { return false; }
-                let Some(identity) = aliases.get(open) else { missing = true; return false; };
-                if identity.is_none() && (tab.editor.modified || tab.editor.bg_loading || tab.editor.read_only) { missing = true; }
-                identity.as_deref().is_some_and(|identity| Self::same_open_path(identity, path))
-            }).collect();
+            let editors = self
+                .tabs
+                .iter()
+                .chain(self.groups.iter().flat_map(|group| &group.tabs))
+                .filter(|tab| {
+                    if tab.kind != TabKind::File {
+                        return false;
+                    }
+                    let Some(open) = &tab.editor.file_path else {
+                        return false;
+                    };
+                    if !crate::remote::workspace::is_view_key(open) {
+                        return false;
+                    }
+                    let Some(identity) = aliases.get(open) else {
+                        missing = true;
+                        return false;
+                    };
+                    if identity.is_none()
+                        && (tab.editor.modified || tab.editor.bg_loading || tab.editor.read_only)
+                    {
+                        missing = true;
+                    }
+                    identity
+                        .as_deref()
+                        .is_some_and(|identity| Self::same_open_path(identity, path))
+                })
+                .collect();
             if missing {
                 let error = p::Error::new(
                     p::ErrorCode::InternalError.into(),
                     "Open files changed while validating this request. Retry after file operations finish.",
                 );
-                let _ = handle.send(Command::FileResponse { id, ticket, result: Err(error), edit: None });
+                let _ = handle.send(Command::FileResponse {
+                    id,
+                    ticket,
+                    result: Err(error),
+                    edit: None,
+                });
                 return;
             }
             editors
-        } else { self.acp_file_editors(path) };
+        } else {
+            self.acp_file_editors(path)
+        };
         if self.unresolved_agent_files() || editors.iter().any(|tab| tab.editor.bg_loading) {
             let error = p::Error::new(
                 p::ErrorCode::InternalError.into(),
                 "Wait for the open files to finish loading, then retry this file request.",
             );
-            let _ = handle.send(Command::FileResponse { id, ticket, result: Err(error), edit: None });
+            let _ = handle.send(Command::FileResponse {
+                id,
+                ticket,
+                result: Err(error),
+                edit: None,
+            });
             return;
         }
         let buffer = self.acp_read_buffer(&editors);
@@ -1465,7 +1730,10 @@ impl App {
             .is_some_and(|s| s.cancelling)
         {
             Some(p::Error::request_cancelled())
-        } else if buffer.as_ref().is_some_and(|rope| rope.len_bytes() > vtcode::acp::MAX_FILE_BYTES) {
+        } else if buffer
+            .as_ref()
+            .is_some_and(|rope| rope.len_bytes() > vtcode::acp::MAX_FILE_BYTES)
+        {
             Some(p::Error::new(
                 p::ErrorCode::InternalError.into(),
                 "The open buffer exceeds the 8 MiB text limit",
@@ -1487,10 +1755,19 @@ impl App {
                 p::ErrorCode::InternalError.into(),
                 "The file has unsaved edits, is read-only, or has a pending save. Save or revert it before the agent retries.",
             );
-            let _ = handle.send(Command::FileResponse { id, ticket, result: Err(error), edit: None });
+            let _ = handle.send(Command::FileResponse {
+                id,
+                ticket,
+                result: Err(error),
+                edit: None,
+            });
             return;
         }
-        let modified_buffers: Vec<_> = editors.iter().filter(|tab| tab.editor.modified).map(|tab| tab.editor.rope.clone()).collect();
+        let modified_buffers: Vec<_> = editors
+            .iter()
+            .filter(|tab| tab.editor.modified)
+            .map(|tab| tab.editor.rope.clone())
+            .collect();
         // Disk IO is isolated from the UI; open buffers are snapshotted above.
         let failure_handle = handle.clone();
         let failure_id = id.clone();
@@ -1544,8 +1821,11 @@ impl App {
     fn acp_read_buffer(&self, editors: &[&crate::app::Tab]) -> Option<ropey::Rope> {
         // Hidden clean buffers deliberately do not follow filesystem events.
         // Agent reads must consult disk on demand; unsaved text stays authoritative.
-        editors.iter().filter(|tab| self.workspace_visible || tab.editor.modified)
-            .max_by_key(|tab| tab.editor.modified).map(|tab| tab.editor.rope.clone())
+        editors
+            .iter()
+            .filter(|tab| self.workspace_visible || tab.editor.modified)
+            .max_by_key(|tab| tab.editor.modified)
+            .map(|tab| tab.editor.rope.clone())
     }
 
     pub(crate) fn chat_action(&mut self, action: ChatAction) {
@@ -2106,7 +2386,9 @@ impl App {
     }
 
     fn build_chat_choices(&mut self, picker: Picker) {
-        if self.build_rollback_choices(&picker) { return; }
+        if self.build_rollback_choices(&picker) {
+            return;
+        }
         let mut choices = Vec::new();
         let mut add = |label: String, detail: String, action| {
             choices.push(Choice {
@@ -2118,21 +2400,52 @@ impl App {
         match &picker {
             Picker::Display => {
                 for (detail, description) in [
-                    (OutputDetail::Minimal, "Show tool summaries and commands. Expand individual cards for output."),
-                    (OutputDetail::Compact, "Show a short output preview. Expand a card to read more."),
-                    (OutputDetail::Full, "Expand tool output by default. Terminals keep their scrollable viewport."),
+                    (
+                        OutputDetail::Minimal,
+                        "Show tool summaries and commands. Expand individual cards for output.",
+                    ),
+                    (
+                        OutputDetail::Compact,
+                        "Show a short output preview. Expand a card to read more.",
+                    ),
+                    (
+                        OutputDetail::Full,
+                        "Expand tool output by default. Terminals keep their scrollable viewport.",
+                    ),
                 ] {
-                    let mark = if self.chat.output_detail == detail { "✓ " } else { "" };
-                    add(format!("{mark}Tool output: {}", detail.label()), description.into(),
-                        ChatAction::SetOutputDetail(detail));
+                    let mark = if self.chat.output_detail == detail {
+                        "✓ "
+                    } else {
+                        ""
+                    };
+                    add(
+                        format!("{mark}Tool output: {}", detail.label()),
+                        description.into(),
+                        ChatAction::SetOutputDetail(detail),
+                    );
                 }
                 for (expanded, label, description) in [
-                    (false, "Collapsed", "Keep thinking text folded. Individual thinking cards can still be expanded."),
-                    (true, "Expanded", "Show thinking text as it streams, before the answer. This does not change model effort."),
+                    (
+                        false,
+                        "Collapsed",
+                        "Keep thinking text folded. Individual thinking cards can still be expanded.",
+                    ),
+                    (
+                        true,
+                        "Expanded",
+                        "Show thinking text as it streams, before the answer. This does not change model effort.",
+                    ),
                 ] {
-                    let mark = if self.chat.thinking_expanded == expanded { "✓ " } else { "" };
-                    add(format!("{mark}Thinking text: {label}"), description.into(),
-                        ChatAction::SetThinkingDetail(expanded));
+                    let mark = if self.chat.thinking_expanded == expanded {
+                        "✓ "
+                    } else {
+                        ""
+                    };
+                    add(
+                        format!("{mark}Thinking text: {label}"),
+                        description.into(),
+                        ChatAction::SetThinkingDetail(expanded),
+                    );
                 }
             }
             Picker::Tasks => {
@@ -2144,9 +2457,11 @@ impl App {
                             Some(p::PlanEntryPriority::Low) => "Low priority",
                             _ => "Priority not reported",
                         };
-                        add(entry.content.lines().next().unwrap_or_default().into(),
+                        add(
+                            entry.content.lines().next().unwrap_or_default().into(),
                             format!("{} · {priority}\n{}", entry.status.label(), entry.content),
-                            ChatAction::TaskDetails(index));
+                            ChatAction::TaskDetails(index),
+                        );
                     }
                 }
             }
@@ -2158,10 +2473,22 @@ impl App {
                         }
                     } else {
                         let (value, reason) = self.chat.thinking_status();
-                        add(format!("Thinking: {value}"), reason.unwrap_or_default(), ChatAction::DismissPicker);
+                        add(
+                            format!("Thinking: {value}"),
+                            reason.unwrap_or_default(),
+                            ChatAction::DismissPicker,
+                        );
                     }
-                    if self.chat.primary_config(p::SessionConfigOptionCategory::Model).is_some() {
-                        add("← Models".into(), "Choose a different model".into(), ChatAction::Picker(Picker::Models));
+                    if self
+                        .chat
+                        .primary_config(p::SessionConfigOptionCategory::Model)
+                        .is_some()
+                    {
+                        add(
+                            "← Models".into(),
+                            "Choose a different model".into(),
+                            ChatAction::Picker(Picker::Models),
+                        );
                     }
                 }
             }
@@ -2170,7 +2497,11 @@ impl App {
                     && session.history_epoch == *epoch
                     && matches!(session.entries.get(*index), Some(ChatEntry::User(_)))
                 {
-                    add("Copy message".into(), String::new(), ChatAction::Copy(*index));
+                    add(
+                        "Copy message".into(),
+                        String::new(),
+                        ChatAction::Copy(*index),
+                    );
                     if let Some(id) = session.checkpoints.get(index) {
                         add(
                             "Restore files before this message".into(),
@@ -2200,13 +2531,34 @@ impl App {
             Picker::Agents => {
                 for &id in &self.chat.agent_order {
                     if let Some(state) = self.chat.agent_state(id) {
-                        add(format!("{}{}", if id == self.chat.active_agent { "✓ " } else { "" }, state.tab_name()),
-                            format!("{} · Switch to open agent", state.activity()), ChatAction::SwitchAgent(id));
+                        add(
+                            format!(
+                                "{}{}",
+                                if id == self.chat.active_agent {
+                                    "✓ "
+                                } else {
+                                    ""
+                                },
+                                state.tab_name()
+                            ),
+                            format!("{} · Switch to open agent", state.activity()),
+                            ChatAction::SwitchAgent(id),
+                        );
                     }
                 }
-                for (index, agent) in self.settings_effective.acp_agents.iter().flatten().enumerate() {
+                for (index, agent) in self
+                    .settings_effective
+                    .acp_agents
+                    .iter()
+                    .flatten()
+                    .enumerate()
+                {
                     if self.chat.configured_agent(agent).is_none() {
-                        add(agent.name.clone(), "Open in a new agent tab".into(), ChatAction::Connect(index));
+                        add(
+                            agent.name.clone(),
+                            "Open in a new agent tab".into(),
+                            ChatAction::Connect(index),
+                        );
                     }
                 }
                 add(
@@ -2214,13 +2566,30 @@ impl App {
                     String::new(),
                     ChatAction::Configure,
                 );
-                if self.chat.initialized.as_ref().is_some_and(|info| !info.auth_methods.is_empty()) {
-                    add("Authenticate…".into(), "Sign in to this agent".into(), ChatAction::Picker(Picker::Auth));
+                if self
+                    .chat
+                    .initialized
+                    .as_ref()
+                    .is_some_and(|info| !info.auth_methods.is_empty())
+                {
+                    add(
+                        "Authenticate…".into(),
+                        "Sign in to this agent".into(),
+                        ChatAction::Picker(Picker::Auth),
+                    );
                 }
                 if self.chat.connected() {
-                    add("Disconnect this agent".into(), String::new(), ChatAction::Disconnect);
+                    add(
+                        "Disconnect this agent".into(),
+                        String::new(),
+                        ChatAction::Disconnect,
+                    );
                 } else if self.chat.agent.is_some() && !self.chat.closing {
-                    add("Reconnect this agent".into(), String::new(), ChatAction::Reconnect);
+                    add(
+                        "Reconnect this agent".into(),
+                        String::new(),
+                        ChatAction::Reconnect,
+                    );
                 }
             }
             Picker::Sessions => {
@@ -2309,7 +2678,9 @@ impl App {
                 if let Some(option) = self.chat.primary_config(category.clone()) {
                     for choice in config_choices(option) {
                         let action = match choice.action {
-                            ChatAction::Config(id, value) if picker == Picker::Models => ChatAction::Model(id, value),
+                            ChatAction::Config(id, value) if picker == Picker::Models => {
+                                ChatAction::Model(id, value)
+                            }
                             action => action,
                         };
                         add(choice.label, choice.detail, action);
@@ -2328,9 +2699,12 @@ impl App {
                     }
                     if picker == Picker::Models {
                         let (value, reason) = self.chat.thinking_status();
-                        add(format!("Thinking: {value}…"),
-                            reason.unwrap_or_else(|| "Change thinking for the current model".into()),
-                            ChatAction::Picker(Picker::Thinking));
+                        add(
+                            format!("Thinking: {value}…"),
+                            reason
+                                .unwrap_or_else(|| "Change thinking for the current model".into()),
+                            ChatAction::Picker(Picker::Thinking),
+                        );
                     }
                 } else if picker == Picker::Modes
                     && let Some(modes) = self.chat.session().and_then(|s| s.modes.as_ref())
@@ -2371,7 +2745,9 @@ impl App {
                         .iter()
                         .filter(|option| config_supported(option))
                     {
-                        let readonly_thinking = self.chat.thinking_option()
+                        let readonly_thinking = self
+                            .chat
+                            .thinking_option()
                             .is_some_and(|o| o.id == option.id)
                             && !config_changeable(option);
                         add(
@@ -2379,8 +2755,11 @@ impl App {
                             config_value_name(option).into(),
                             ChatAction::Picker(if readonly_thinking {
                                 Picker::ThinkingInfo
-                            } else if self.chat.primary_config(p::SessionConfigOptionCategory::Model)
-                                .is_some_and(|o| o.id == option.id) {
+                            } else if self
+                                .chat
+                                .primary_config(p::SessionConfigOptionCategory::Model)
+                                .is_some_and(|o| o.id == option.id)
+                            {
                                 Picker::Models
                             } else {
                                 Picker::Values(option.id.to_string())
@@ -2420,9 +2799,14 @@ impl App {
             }
             Picker::Commands => {
                 if let Some(session) = self.chat.session() {
-                    if self.chat.rollback.enabled && session.rollback.edits.iter().any(|edit| edit.pending() > 0) {
-                        add("Review agent changes…".into(), "Review pending changes by file or chunk.".into(),
-                            ChatAction::Picker(Picker::Changes));
+                    if self.chat.rollback.enabled
+                        && session.rollback.edits.iter().any(|edit| edit.pending() > 0)
+                    {
+                        add(
+                            "Review agent changes…".into(),
+                            "Review pending changes by file or chunk.".into(),
+                            ChatAction::Picker(Picker::Changes),
+                        );
                     }
                     for command in &session.commands {
                         add(
@@ -2440,7 +2824,11 @@ impl App {
             }
             Picker::Permissions => {
                 if let Some(permission) = self.chat.permission() {
-                    add("View full request details".into(), String::new(), ChatAction::PermissionDetails);
+                    add(
+                        "View full request details".into(),
+                        String::new(),
+                        ChatAction::PermissionDetails,
+                    );
                     for option in &permission.request.options {
                         add(
                             option.name.clone(),
@@ -2459,7 +2847,13 @@ impl App {
                     );
                 }
             }
-            Picker::Unreviewed | Picker::Changes | Picker::ChangedFile(_) | Picker::Change(_) | Picker::ChangeChunk(_, _) | Picker::Checkpoints | Picker::Restore(_) => unreachable!(),
+            Picker::Unreviewed
+            | Picker::Changes
+            | Picker::ChangedFile(_)
+            | Picker::Change(_)
+            | Picker::ChangeChunk(_, _)
+            | Picker::Checkpoints
+            | Picker::Restore(_) => unreachable!(),
         }
         self.chat.choices = choices;
         self.chat.picker = Some(picker);
@@ -2746,16 +3140,23 @@ impl App {
             return false;
         }
         let point = (mouse.column, mouse.row).into();
-        if self.handle_chat_tab_drag(mouse) { return true; }
+        if self.handle_chat_tab_drag(mouse) {
+            return true;
+        }
         // A workbench tab dragged over a conversation must reach the normal
         // tab move/split handler, including drops inside its own chat pane.
         if self.dragged_chat_key().is_some()
-            && matches!(mouse.kind, MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left))
+            && matches!(
+                mouse.kind,
+                MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+            )
         {
             return false;
         }
         self.activate_chat_surface(mouse);
-        if self.handle_chat_scrollbar(mouse) { return true; }
+        if self.handle_chat_scrollbar(mouse) {
+            return true;
+        }
         if self.chat.resizing {
             match mouse.kind {
                 MouseEventKind::Drag(MouseButton::Left) => {
@@ -2830,7 +3231,9 @@ impl App {
         match mouse.kind {
             MouseEventKind::Moved if self.chat.picker.is_some() => {
                 if let Some(index) = self.chat.hits.iter().rev().find_map(|hit| {
-                    if hit.area.contains(point) && let ChatAction::Pick(index) = hit.action {
+                    if hit.area.contains(point)
+                        && let ChatAction::Pick(index) = hit.action
+                    {
                         Some(index)
                     } else {
                         None
@@ -2843,13 +3246,21 @@ impl App {
             }
             MouseEventKind::Down(MouseButton::Middle) if self.chat.picker.is_none() => {
                 if let Some(action) = self.chat.hits.iter().rev().find_map(|h| {
-                    if !h.area.contains(point) { return None; }
+                    if !h.area.contains(point) {
+                        return None;
+                    }
                     match &h.action {
-                        ChatAction::Switch(id) | ChatAction::CloseTab(id) => Some(ChatAction::CloseTab(id.clone())),
-                        ChatAction::SwitchAgent(id) | ChatAction::CloseAgent(id) => Some(ChatAction::CloseAgent(*id)),
+                        ChatAction::Switch(id) | ChatAction::CloseTab(id) => {
+                            Some(ChatAction::CloseTab(id.clone()))
+                        }
+                        ChatAction::SwitchAgent(id) | ChatAction::CloseAgent(id) => {
+                            Some(ChatAction::CloseAgent(*id))
+                        }
                         _ => None,
                     }
-                }) { self.chat_action(action); }
+                }) {
+                    self.chat_action(action);
+                }
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 self.chat.files.dismiss();
@@ -2882,12 +3293,20 @@ impl App {
                         (self.chat.picker_selected + 2)
                             .min(self.chat.choices.len().saturating_sub(1))
                     };
-                } else if self.chat.agent_tab_area.is_some_and(|area| area.contains(point)) {
+                } else if self
+                    .chat
+                    .agent_tab_area
+                    .is_some_and(|area| area.contains(point))
+                {
                     self.chat_action(ChatAction::AgentPage(up));
                 } else if self.chat.tab_area.is_some_and(|area| area.contains(point)) {
                     self.chat_action(ChatAction::TabPage(up));
-                } else if let Some((id, _)) = self.chat.terminal_areas.iter()
-                    .find(|(_, area)| area.contains(point)).cloned()
+                } else if let Some((id, _)) = self
+                    .chat
+                    .terminal_areas
+                    .iter()
+                    .find(|(_, area)| area.contains(point))
+                    .cloned()
                 {
                     self.scroll_chat_terminal(&id, if up { -3 } else { 3 });
                 } else {
@@ -2899,11 +3318,21 @@ impl App {
                     self.chat.follow = self.chat.scroll == self.chat.max_scroll;
                 }
             }
-            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight if self.chat.picker.is_none() => {
-                if let Some((id, _)) = self.chat.terminal_areas.iter()
-                    .find(|(_, area)| area.contains(point)).cloned()
+            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight
+                if self.chat.picker.is_none() =>
+            {
+                if let Some((id, _)) = self
+                    .chat
+                    .terminal_areas
+                    .iter()
+                    .find(|(_, area)| area.contains(point))
+                    .cloned()
                 {
-                    let amount = if mouse.kind == MouseEventKind::ScrollLeft { -8 } else { 8 };
+                    let amount = if mouse.kind == MouseEventKind::ScrollLeft {
+                        -8
+                    } else {
+                        8
+                    };
                     self.pan_chat_terminal(&id, amount);
                 }
             }

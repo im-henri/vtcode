@@ -16,10 +16,16 @@ fn input_acknowledgements_keep_unsent_and_partially_consumed_bytes_pending() {
     assert_eq!(stream.state.lock().unwrap().input_pending, 12);
     stream.input_consumed(3).unwrap();
     assert_eq!(stream.state.lock().unwrap().input_pending, 9);
-    assert_eq!(stream.state.lock().unwrap().input_pending_since, Some(started));
+    assert_eq!(
+        stream.state.lock().unwrap().input_pending_since,
+        Some(started)
+    );
     stream.input_consumed(6).unwrap();
     assert_eq!(stream.state.lock().unwrap().input_pending, 3);
-    assert_eq!(stream.state.lock().unwrap().input_pending_since, Some(started));
+    assert_eq!(
+        stream.state.lock().unwrap().input_pending_since,
+        Some(started)
+    );
     assert_eq!(stream.state.lock().unwrap().input_credit, WINDOW);
     stream.state.lock().unwrap().input_credit -= 3;
     let generation = wake.generation();
@@ -27,7 +33,11 @@ fn input_acknowledgements_keep_unsent_and_partially_consumed_bytes_pending() {
     assert_eq!(stream.state.lock().unwrap().input_pending, 0);
     assert_eq!(stream.state.lock().unwrap().input_pending_since, None);
     assert!(stream.state.lock().unwrap().input_acknowledged.is_some());
-    assert_ne!(wake.generation(), generation, "an acknowledgement without output must wake the UI");
+    assert_ne!(
+        wake.generation(),
+        generation,
+        "an acknowledgement without output must wake the UI"
+    );
 }
 
 #[test]

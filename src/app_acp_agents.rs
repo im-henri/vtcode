@@ -77,7 +77,10 @@ impl ChatState {
     }
 
     pub(crate) fn any_agent_running(&self) -> bool {
-        self.all_sessions().any(|session| session.busy) || self.agents().any(|(_, state)| !state.files.preparing.is_empty())
+        self.all_sessions().any(|session| session.busy)
+            || self
+                .agents()
+                .any(|(_, state)| !state.files.preparing.is_empty())
     }
 
     pub(crate) fn checkpoint_pending(&self) -> bool {

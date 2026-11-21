@@ -19,7 +19,10 @@ pub(crate) enum Source {
 
 impl Source {
     pub(crate) fn requires_file(self) -> bool {
-        matches!(self, Self::FileCommand | Self::EditorLink { file_only: true })
+        matches!(
+            self,
+            Self::FileCommand | Self::EditorLink { file_only: true }
+        )
     }
 }
 
@@ -75,8 +78,12 @@ impl Origin {
                 )
             }),
             overlays: Self::overlays(app),
-            terminal: (source == Source::Terminal).then(|| app.focused_terminal_index()
-                .map(|index| app.terminals[index].find.id)).flatten(),
+            terminal: (source == Source::Terminal)
+                .then(|| {
+                    app.focused_terminal_index()
+                        .map(|index| app.terminals[index].find.id)
+                })
+                .flatten(),
         }
     }
     fn caret(app: &App) -> Option<Caret> {
@@ -177,12 +184,20 @@ impl Drop for State {
 
 impl App {
     pub(crate) fn file_browser_open_pending(&self) -> bool {
-        self.remote_navigation.pending.as_ref().is_some_and(|request| request.source == Source::PathDialog)
+        self.remote_navigation
+            .pending
+            .as_ref()
+            .is_some_and(|request| request.source == Source::PathDialog)
     }
 
     pub(crate) fn cancel_remote_terminal_location(&mut self) {
         self.cancel_terminal_directory_reveal();
-        if self.remote_navigation.pending.as_ref().is_some_and(|request| request.source == Source::Terminal) {
+        if self
+            .remote_navigation
+            .pending
+            .as_ref()
+            .is_some_and(|request| request.source == Source::Terminal)
+        {
             self.cancel_remote_location();
         }
     }
@@ -195,9 +210,10 @@ impl App {
         if let Some((_, cancel)) = &self.remote_navigation.retiring {
             cancel.cancel();
         }
-        if let Some(request) = self.remote_navigation.pending.take()
-        {
-            if self.status_message == request.status { self.status_message = request.previous_status; }
+        if let Some(request) = self.remote_navigation.pending.take() {
+            if self.status_message == request.status {
+                self.status_message = request.previous_status;
+            }
         }
     }
 
@@ -225,17 +241,32 @@ impl App {
     }
 
     pub(crate) fn open_remote_location_at(
-        &mut self, path: PathBuf, line: Option<u32>, column: u32, source: Source,
+        &mut self,
+        path: PathBuf,
+        line: Option<u32>,
+        column: u32,
+        source: Source,
     ) {
-        if self.remote_workspace.is_some() { self.open_location_at(path, line, column, source, VecDeque::new()); }
+        if self.remote_workspace.is_some() {
+            self.open_location_at(path, line, column, source, VecDeque::new());
+        }
     }
 
-    pub(crate) fn open_terminal_location_at(&mut self, path: PathBuf, line: Option<u32>, column: u32) {
+    pub(crate) fn open_terminal_location_at(
+        &mut self,
+        path: PathBuf,
+        line: Option<u32>,
+        column: u32,
+    ) {
         self.open_location_at(path, line, column, Source::Terminal, VecDeque::new());
     }
 
     pub(crate) fn open_editor_paths(
-        &mut self, mut paths: VecDeque<PathBuf>, line: Option<u32>, column: u32, file_only: bool,
+        &mut self,
+        mut paths: VecDeque<PathBuf>,
+        line: Option<u32>,
+        column: u32,
+        file_only: bool,
     ) {
         if let Some(path) = paths.pop_front() {
             self.open_location_at(path, line, column, Source::EditorLink { file_only }, paths);
@@ -243,20 +274,32 @@ impl App {
     }
 
     pub(crate) fn open_path_dialog_location(&mut self, path: PathBuf) {
-        if !self.file_browser_active() || self.file_browser_open_pending() { return; }
+        if !self.file_browser_active() || self.file_browser_open_pending() {
+            return;
+        }
         self.folder_browser.error = None;
         self.open_location_at(path, None, 0, Source::PathDialog, VecDeque::new());
     }
 
     fn open_location_at(
-        &mut self, path: PathBuf, line: Option<u32>, column: u32, source: Source, fallback: VecDeque<PathBuf>,
+        &mut self,
+        path: PathBuf,
+        line: Option<u32>,
+        column: u32,
+        source: Source,
+        fallback: VecDeque<PathBuf>,
     ) {
         self.cancel_remote_location();
         let workspace = self.remote_workspace.clone();
         let remote_key = crate::remote::workspace::is_view_key(&path);
-        let local_source = matches!(source, Source::PathDialog | Source::EditorLink { .. }) && !remote_key;
-        if !local_source && ((remote_key && workspace.is_none())
-            || workspace.as_ref().is_some_and(|workspace| workspace.remote_path(&path).is_err())) {
+        let local_source =
+            matches!(source, Source::PathDialog | Source::EditorLink { .. }) && !remote_key;
+        if !local_source
+            && ((remote_key && workspace.is_none())
+                || workspace
+                    .as_ref()
+                    .is_some_and(|workspace| workspace.remote_path(&path).is_err()))
+        {
             self.remote_location_error(
                 source,
                 "This path belongs to a different remote workspace.".into(),
@@ -275,8 +318,11 @@ impl App {
                 );
                 return;
             }
-            if source == Source::Terminal { self.reveal_terminal_directory(&path); }
-            else { self.reveal_remote_directory(&path); }
+            if source == Source::Terminal {
+                self.reveal_terminal_directory(&path);
+            } else {
+                self.reveal_remote_directory(&path);
+            }
             self.hide_chat_after_remote_location(source);
             return;
         }
@@ -339,9 +385,16 @@ impl App {
             self.remote_navigation.retiring = self.remote_navigation.running.take();
         }
         let request = self.remote_navigation.pending.as_ref().unwrap();
-        let (id, workspace, path, root, source) = (request.id,
-            request.workspace.clone().filter(|_| crate::remote::workspace::is_view_key(&request.path)),
-            request.path.clone(), request.root.clone(), request.source);
+        let (id, workspace, path, root, source) = (
+            request.id,
+            request
+                .workspace
+                .clone()
+                .filter(|_| crate::remote::workspace::is_view_key(&request.path)),
+            request.path.clone(),
+            request.root.clone(),
+            request.source,
+        );
         let sender = self.background.sender.clone();
         let cancel = self
             .background
@@ -355,14 +408,26 @@ impl App {
                     });
                 });
                 let result = match workspace {
-                    Some(workspace) => workspace.open_location(&path, &cancel,
-                        matches!(source, Source::PathDialog | Source::EditorLink { file_only: true }), progress),
-                    None => crate::app_terminal_links::open_local_location(&path, &root, &cancel, source),
+                    Some(workspace) => workspace.open_location(
+                        &path,
+                        &cancel,
+                        matches!(
+                            source,
+                            Source::PathDialog | Source::EditorLink { file_only: true }
+                        ),
+                        progress,
+                    ),
+                    None => crate::app_terminal_links::open_local_location(
+                        &path, &root, &cancel, source,
+                    ),
                 };
                 // A cancelled large result is freed here, never on the input thread.
                 let result = if cancel.is_cancelled() {
                     drop(result);
-                    Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "File open cancelled"))
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "File open cancelled",
+                    ))
                 } else {
                     result
                 };
@@ -413,12 +478,14 @@ impl App {
         }
         let valid = request.generation == self.workspace_generation
             && request.origin.matches(self)
-            && (request.source != Source::PathDialog || (self.file_browser_active()
-                && crate::ui_modal::active(self).is_none()))
+            && (request.source != Source::PathDialog
+                || (self.file_browser_active() && crate::ui_modal::active(self).is_none()))
             && request.root == self.explorer.root
             && match (&self.remote_workspace, &request.workspace) {
-                (Some(workspace), Some(original)) => workspace.view_root == original.view_root
-                    && workspace.client.same_connection(&original.client),
+                (Some(workspace), Some(original)) => {
+                    workspace.view_root == original.view_root
+                        && workspace.client.same_connection(&original.client)
+                }
                 (None, None) => true,
                 _ => false,
             };
@@ -427,8 +494,13 @@ impl App {
             return true;
         }
         let result = match result {
-            Ok(Location::Directory(_)) if matches!(request.source, Source::EditorLink { file_only: true }) => {
-                Err(std::io::Error::new(std::io::ErrorKind::IsADirectory, "Expected a file"))
+            Ok(Location::Directory(_))
+                if matches!(request.source, Source::EditorLink { file_only: true }) =>
+            {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::IsADirectory,
+                    "Expected a file",
+                ))
             }
             result => result,
         };
@@ -453,21 +525,41 @@ impl App {
                 }
                 self.push_nav_history();
                 self.open_file_with_preloaded(&request.path, loaded);
-                self.place_location_cursor(&request.path, request.line, request.column, request.source);
+                self.place_location_cursor(
+                    &request.path,
+                    request.line,
+                    request.column,
+                    request.source,
+                );
             }
             Err(error) => {
                 use std::io::ErrorKind::{IsADirectory, NotADirectory, NotFound};
                 if matches!(error.kind(), NotFound | NotADirectory | IsADirectory)
                     && let Some(path) = request.fallback.pop_front()
                 {
-                    self.open_location_at(path, request.line, request.column, request.source, request.fallback);
+                    self.open_location_at(
+                        path,
+                        request.line,
+                        request.column,
+                        request.source,
+                        request.fallback,
+                    );
                     return true;
                 }
                 if request.source == Source::Terminal {
-                    crate::app_terminal_links::show_path_error(self, &request.path, error.to_string());
+                    crate::app_terminal_links::show_path_error(
+                        self,
+                        &request.path,
+                        error.to_string(),
+                    );
                 } else if matches!(request.source, Source::EditorLink { .. }) {
-                    self.notify_warn(format!("Cannot open {}: {error}", self.display_path(&request.path)));
-                } else { self.remote_location_error(request.source, error.to_string()); }
+                    self.notify_warn(format!(
+                        "Cannot open {}: {error}",
+                        self.display_path(&request.path)
+                    ));
+                } else {
+                    self.remote_location_error(request.source, error.to_string());
+                }
             }
         }
         self.hide_chat_after_remote_location(request.source);
@@ -521,15 +613,27 @@ impl App {
         }
     }
 
-    fn place_location_cursor(&mut self, path: &Path, line: Option<u32>, column: u32, source: Source) {
+    fn place_location_cursor(
+        &mut self,
+        path: &Path,
+        line: Option<u32>,
+        column: u32,
+        source: Source,
+    ) {
         let center = matches!(source, Source::Terminal | Source::EditorLink { .. });
         if center {
             self.terminal_panel_focused = false;
         }
-        if let Some(line) = line && let Some(editor) = self.editor_mut() {
+        if let Some(line) = line
+            && let Some(editor) = self.editor_mut()
+        {
             if !center {
                 editor.set_cursor(line as usize, column as usize);
-            } else if editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, path)) {
+            } else if editor
+                .file_path
+                .as_deref()
+                .is_some_and(|other| Self::same_open_path(other, path))
+            {
                 editor.set_centered_cursor(line as usize, column as usize);
             }
         }
@@ -549,7 +653,9 @@ impl App {
     fn remote_location_error(&mut self, source: Source, error: String) {
         match source {
             Source::Chat => self.chat.error = Some(error),
-            Source::Markdown | Source::FileCommand | Source::EditorLink { .. } => self.notify_warn(error),
+            Source::Markdown | Source::FileCommand | Source::EditorLink { .. } => {
+                self.notify_warn(error)
+            }
             Source::PathDialog => self.folder_browser.error = Some(error),
             Source::Terminal => crate::app_terminal_links::show_error(self, error),
         }

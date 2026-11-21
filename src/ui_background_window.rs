@@ -83,7 +83,11 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, window: WindowId) {
         app.save_active_group();
         // Background windows share the workbench's pane storage. Their cell
         // coordinates must never become hit targets in the foreground window.
-        for group in app.groups.iter_mut().filter(|group| group.desk == target_desk) {
+        for group in app
+            .groups
+            .iter_mut()
+            .filter(|group| group.desk == target_desk)
+        {
             group.clear_hit_areas();
         }
         layout.swap_presentation(app);

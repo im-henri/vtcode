@@ -26,8 +26,12 @@ fn action_area(app: &App, label: &str) -> Rect {
     if area.is_empty() {
         let peek = app.hunk_peek.as_ref().unwrap();
         quick_actions(peek, layout, matches!(app.hunk_popup_status, 'N' | 'S'))
-            .find(|action| action.hunk == peek.selected && action.button == index).unwrap().area
-    } else { area }
+            .find(|action| action.hunk == peek.selected && action.button == index)
+            .unwrap()
+            .area
+    } else {
+        area
+    }
 }
 
 fn action(app: &mut App, label: &str) {
@@ -121,13 +125,21 @@ fn copy_old_lines_shows_result_in_place_and_restores_the_button_on_expiry() {
             let original = rendered_text(&before, button);
             if copied {
                 action(&mut app, "Copy Old Lines");
-                assert_eq!(crate::clipboard::get_text().unwrap(), "let old = 1;\nremoved();\n");
+                assert_eq!(
+                    crate::clipboard::get_text().unwrap(),
+                    "let old = 1;\nremoved();\n"
+                );
             } else {
                 selection::copy_with(&mut app, true, |text| {
                     assert_eq!(text, "let old = 1;\nremoved();\n");
-                    Err(arboard::Error::Unknown { description: "clipboard busy".into() })
+                    Err(arboard::Error::Unknown {
+                        description: "clipboard busy".into(),
+                    })
                 });
-                assert_eq!(app.notification_history.last().unwrap().1, crate::app::NotifyLevel::Error);
+                assert_eq!(
+                    app.notification_history.last().unwrap().1,
+                    crate::app::NotifyLevel::Error
+                );
             }
             let after = render(&mut app);
             assert_eq!(action_area(&app, "Copy Old Lines"), button);
@@ -141,13 +153,18 @@ fn copy_old_lines_shows_result_in_place_and_restores_the_button_on_expiry() {
             let layout = input_layout(&app);
             let title = Rect::new(layout.panel.x, layout.panel.y + 1, layout.panel.width, 1);
             if !layout.quick_actions.is_empty() {
-                let message = if copied { "Copied old lines" } else { "Could not copy old lines" };
+                let message = if copied {
+                    "Copied old lines"
+                } else {
+                    "Could not copy old lines"
+                };
                 assert!(rendered_text(&after, title).contains(message));
                 let revert_only = matches!(app.hunk_popup_status, 'N' | 'S');
                 let peek = app.hunk_peek.as_ref().unwrap();
                 let other = quick_actions(peek, layout, revert_only)
                     .find(|action| action.hunk == 1 && action.area.x == button.x)
-                    .unwrap().area;
+                    .unwrap()
+                    .area;
                 assert_eq!(rendered_text(&after, other).trim(), "⧉");
             }
             let peek = app.hunk_peek.as_mut().unwrap();
@@ -354,7 +371,13 @@ fn pure_additions_disable_old_copy_and_empty_selection_never_copies_underlying_e
         .unwrap();
     assert!(!button_enabled(&app, index));
     action(&mut app, "Copy Old Lines");
-    assert!(app.hunk_peek.as_ref().unwrap().copy_feedback_deadline().is_none());
+    assert!(
+        app.hunk_peek
+            .as_ref()
+            .unwrap()
+            .copy_feedback_deadline()
+            .is_none()
+    );
     for code in [KeyCode::Char('c'), KeyCode::Char('x')] {
         keyboard(&mut app, code, KeyModifiers::CONTROL);
     }
@@ -429,7 +452,9 @@ fn copy_button_stays_within_narrow_toolbars_and_is_keyboard_accessible() {
         let mut previous_right = layout.panel.x;
         for index in 0..actions.len() {
             let area = button_rect(&app, layout.panel, index, actions);
-            if area.is_empty() { continue; }
+            if area.is_empty() {
+                continue;
+            }
             assert_eq!(area.intersection(layout.panel), area);
             assert!(area.x >= previous_right);
             previous_right = area.right();
@@ -437,7 +462,11 @@ fn copy_button_stays_within_narrow_toolbars_and_is_keyboard_accessible() {
         let title = (layout.panel.x..layout.panel.right())
             .map(|x| terminal.backend().buffer()[(x, layout.panel.y + 1)].symbol())
             .collect::<String>();
-        assert_eq!(title.contains("Copy"), layout.quick_actions.is_empty(), "copy moves beside the hunk when it fits");
+        assert_eq!(
+            title.contains("Copy"),
+            layout.quick_actions.is_empty(),
+            "copy moves beside the hunk when it fits"
+        );
         let count = actions.len();
         for _ in 0..count - 1 {
             keyboard(&mut app, KeyCode::Tab, KeyModifiers::NONE);

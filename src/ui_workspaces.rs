@@ -113,7 +113,11 @@ fn choose_folder(app: &mut App, add: bool) {
     }
     dismiss(app);
     use crate::folder_browser::Mode;
-    app.open_path_browser(if add { Mode::AddFolder } else { Mode::OpenFolder });
+    app.open_path_browser(if add {
+        Mode::AddFolder
+    } else {
+        Mode::OpenFolder
+    });
 }
 pub(crate) fn close(app: &mut App) {
     if !can_close(app) {
@@ -168,7 +172,12 @@ fn entries(app: &App) -> Vec<crate::app_workspaces::Entry> {
         .collect()
 }
 
-fn move_workspace(app: &mut App, entries: &[crate::app_workspaces::Entry], index: usize, delta: isize) {
+fn move_workspace(
+    app: &mut App,
+    entries: &[crate::app_workspaces::Entry],
+    index: usize,
+    delta: isize,
+) {
     if let Some(target) = index.checked_add_signed(delta)
         && let (Some(entry), Some(neighbor)) = (entries.get(index), entries.get(target))
         && app.swap_workspace_order(entry.id, neighbor.id)
@@ -342,16 +351,20 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         dismiss(app);
         return false;
     }
-    if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Right)
-        | MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
-        | MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight)
-        && [
-            crate::text_input::TextInputId::WorkspaceFilter,
-            crate::text_input::TextInputId::WorkspaceName,
-        ]
-        .into_iter()
-        .filter_map(|id| app.text_input_area(id))
-        .any(|area| area.contains((mouse.column, mouse.row).into()))
+    if matches!(
+        mouse.kind,
+        MouseEventKind::Down(MouseButton::Right)
+            | MouseEventKind::ScrollUp
+            | MouseEventKind::ScrollDown
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight
+    ) && [
+        crate::text_input::TextInputId::WorkspaceFilter,
+        crate::text_input::TextInputId::WorkspaceName,
+    ]
+    .into_iter()
+    .filter_map(|id| app.text_input_area(id))
+    .any(|area| area.contains((mouse.column, mouse.row).into()))
         && app.handle_overlay_text_input_mouse(mouse.kind, mouse.column, mouse.row, mouse.modifiers)
     {
         return true;
@@ -364,7 +377,11 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
         && app.workspaces.popup.sets.mode.is_none()
         && mouse.kind == MouseEventKind::Down(MouseButton::Left)
     {
-        if let Some(&(_, id, delta)) = app.workspaces.popup.move_hits.iter()
+        if let Some(&(_, id, delta)) = app
+            .workspaces
+            .popup
+            .move_hits
+            .iter()
             .find(|(rect, _, _)| rect.contains(point))
         {
             let entries = entries(app);
@@ -373,7 +390,11 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
             }
             return true;
         }
-        if let Some(&(_, id)) = app.workspaces.popup.close_hits.iter()
+        if let Some(&(_, id)) = app
+            .workspaces
+            .popup
+            .close_hits
+            .iter()
             .find(|(rect, _)| rect.contains(point))
         {
             close_folder(app, id);
@@ -383,8 +404,8 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: MouseEvent) -> bool {
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
         let saved = app.workspaces.popup.tabs[1].contains(point);
         let workspaces = app.workspaces.popup.tabs[0].contains(point);
-        let directory_button = crate::ui_chrome::workspace_button_area(app)
-            .is_some_and(|rect| rect.contains(point));
+        let directory_button =
+            crate::ui_chrome::workspace_button_area(app).is_some_and(|rect| rect.contains(point));
         if app.workspaces.popup.dismiss.contains(point) {
             dismiss(app);
             return true;
@@ -546,9 +567,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         if let Some(entry) = entries.get(index) {
             let show_close = !entry.path.is_empty() && row.width >= 12;
             let show_move = entries.len() > 1 && row.width >= 26;
-            let button_width = ROW_BUTTON_WIDTH * (u16::from(show_close) + 2 * u16::from(show_move));
+            let button_width =
+                ROW_BUTTON_WIDTH * (u16::from(show_close) + 2 * u16::from(show_move));
             let content = Rect {
-                width: row.width.saturating_sub(button_width + 2 * u16::from(button_width > 0)),
+                width: row
+                    .width
+                    .saturating_sub(button_width + 2 * u16::from(button_width > 0)),
                 ..row
             };
             let mut badges = Vec::new();
@@ -580,16 +604,27 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             if show_move {
                 let mut x = row.right() - button_width - 1;
                 for (delta, label) in [(-1, " ↑ "), (1, " ↓ ")] {
-                    if index.checked_add_signed(delta).is_some_and(|target| target < entries.len()) {
+                    if index
+                        .checked_add_signed(delta)
+                        .is_some_and(|target| target < entries.len())
+                    {
                         let button = Rect::new(x, row.y, ROW_BUTTON_WIDTH, 1);
                         draw_row_button(f, app, button, label);
-                        app.workspaces.popup.move_hits.push((button, entry.id, delta));
+                        app.workspaces
+                            .popup
+                            .move_hits
+                            .push((button, entry.id, delta));
                     }
                     x += ROW_BUTTON_WIDTH;
                 }
             }
             if show_close {
-                let close = Rect::new(row.right() - ROW_BUTTON_WIDTH - 1, row.y, ROW_BUTTON_WIDTH, 1);
+                let close = Rect::new(
+                    row.right() - ROW_BUTTON_WIDTH - 1,
+                    row.y,
+                    ROW_BUTTON_WIDTH,
+                    1,
+                );
                 draw_row_button(f, app, close, " × ");
                 app.workspaces.popup.close_hits.push((close, entry.id));
             }
@@ -677,7 +712,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
 
 fn draw_row_button(f: &mut Frame, app: &App, rect: Rect, label: &str) {
     let hovered = rect.contains((app.mouse_col, app.mouse_row).into());
-    let style = app.colors.ui.button_style(picker::base(app).bg.unwrap(), false, hovered, true);
+    let style = app
+        .colors
+        .ui
+        .button_style(picker::base(app).bg.unwrap(), false, hovered, true);
     f.render_widget(Paragraph::new(label).style(style), rect);
 }
 

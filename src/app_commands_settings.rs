@@ -12,12 +12,18 @@ impl App {
             return;
         }
         if id == "source_control_enabled" {
-            let enabled = self.selected_scope_settings().source_control_enabled.unwrap_or(true);
+            let enabled = self
+                .selected_scope_settings()
+                .source_control_enabled
+                .unwrap_or(true);
             self.save_source_control_enabled(self.settings_scope, !enabled);
             return;
         }
         if id == "source_control_show_untracked" {
-            let show = self.selected_scope_settings().source_control_show_untracked.unwrap_or(true);
+            let show = self
+                .selected_scope_settings()
+                .source_control_show_untracked
+                .unwrap_or(true);
             self.save_source_control_show_untracked(self.settings_scope, !show);
             return;
         }
@@ -53,7 +59,9 @@ impl App {
             "lsp_enabled" => self.lsp_enabled = !self.lsp_enabled,
             "animation_copy" => {
                 self.copy_animation.enabled = !self.copy_animation.enabled;
-                if !self.copy_animation.enabled { self.copy_animation.clear(); }
+                if !self.copy_animation.enabled {
+                    self.copy_animation.clear();
+                }
             }
             "animation_cursor_smear_when_typing" => {
                 self.animation_settings.cursor_smear_when_typing =
@@ -66,7 +74,8 @@ impl App {
                 self.animation_settings.scope_fill = !self.animation_settings.scope_fill;
             }
             id if crate::animation_config::AnimationSettings::effect_for_id(id).is_some() => {
-                if let Some(effect) = crate::animation_config::AnimationSettings::effect_for_id(id) {
+                if let Some(effect) = crate::animation_config::AnimationSettings::effect_for_id(id)
+                {
                     let enabled = !self.animation_settings.enabled(effect);
                     self.animation_settings.set(effect, enabled);
                 }
@@ -548,7 +557,8 @@ impl App {
                 }
                 // Handle keybinding editing from settings
                 if id.starts_with("kb_") {
-                    if let Some(index) = id.strip_prefix("kb_").and_then(|index| index.parse().ok()) {
+                    if let Some(index) = id.strip_prefix("kb_").and_then(|index| index.parse().ok())
+                    {
                         self.begin_shortcut_edit(index, true);
                     }
                     return;
@@ -605,11 +615,24 @@ impl App {
                 .collect(),
             ),
             "comment_whitespace" => Some(
-                ["Inherit", "None", "Boundary", "Selection", "Trailing", "All"]
-                    .into_iter().map(str::to_string).collect(),
+                [
+                    "Inherit",
+                    "None",
+                    "Boundary",
+                    "Selection",
+                    "Trailing",
+                    "All",
+                ]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
             ),
-            "diff_algorithm" => Some(crate::diff_algorithm::DiffAlgorithm::ALL
-                .into_iter().map(|algorithm| algorithm.label().into()).collect()),
+            "diff_algorithm" => Some(
+                crate::diff_algorithm::DiffAlgorithm::ALL
+                    .into_iter()
+                    .map(|algorithm| algorithm.label().into())
+                    .collect(),
+            ),
             "sidebar_pos" => Some(vec!["Left".to_string(), "Right".to_string()]),
             "activity_bar_position" => Some(vec!["Top".into(), "Left".into()]),
             "rulers" => Some(vec![
@@ -636,12 +659,14 @@ impl App {
         if !matches!(Self::setting_field_kind(id), "number" | "language-list") {
             return;
         }
-        self.text_input_histories.remove(&crate::text_input::TextInputId::SettingsValue);
+        self.text_input_histories
+            .remove(&crate::text_input::TextInputId::SettingsValue);
         self.settings_value_editing = true;
         self.settings_value_setting_id = Some(id.to_string());
         self.settings_value_buffer = current.trim().to_string();
         self.settings_value_cursor = self.settings_value_buffer.len();
-        self.settings_value_selection_anchor = Some(0).filter(|_| !self.settings_value_buffer.is_empty());
+        self.settings_value_selection_anchor =
+            Some(0).filter(|_| !self.settings_value_buffer.is_empty());
         self.settings_dropdown_open = false;
     }
 
@@ -670,8 +695,12 @@ impl App {
         if id == "animation_scope_bubble_disabled_languages" {
             let value = crate::settings::Settings {
                 animation_scope_bubble_disabled_languages: Some(
-                    self.settings_value_buffer.split(',').map(str::trim)
-                        .filter(|language| !language.is_empty()).map(str::to_owned).collect(),
+                    self.settings_value_buffer
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|language| !language.is_empty())
+                        .map(str::to_owned)
+                        .collect(),
                 ),
                 ..Default::default()
             };
@@ -696,7 +725,9 @@ impl App {
 
         let mut value = crate::settings::Settings::default();
         match id.as_str() {
-            "animation_copy_duration_ms" => value.animation_copy_duration_ms = Some(clamp_animation_duration_ms(raw)),
+            "animation_copy_duration_ms" => {
+                value.animation_copy_duration_ms = Some(clamp_animation_duration_ms(raw))
+            }
             id if crate::animation_config::AnimationSettings::effect_for_duration_id(id)
                 .is_some() =>
             {
@@ -714,7 +745,11 @@ impl App {
             }
             "tab_size" => value.tab_size = Some(raw.clamp(1, 8) as u8),
             "word_wrap_column" => {
-                value.word_wrap_column = Some(if raw == 0 { 0 } else { raw.clamp(40, 500) as usize })
+                value.word_wrap_column = Some(if raw == 0 {
+                    0
+                } else {
+                    raw.clamp(40, 500) as usize
+                })
             }
             "minimap_width" => {
                 value.minimap_width = Some(raw.clamp(
@@ -728,9 +763,7 @@ impl App {
                 value.max_global_search_results = Some(raw.max(1) as usize)
             }
             "search_debounce_ms" => value.search_debounce_ms = Some(raw),
-            "large_file_threshold_mb" => {
-                value.large_file_threshold_mb = Some(raw.clamp(1, 16_384))
-            }
+            "large_file_threshold_mb" => value.large_file_threshold_mb = Some(raw.clamp(1, 16_384)),
             "large_file_analysis_timeout_ms" => {
                 value.large_file_analysis_timeout_ms = Some(raw.clamp(100, 60_000))
             }
@@ -739,7 +772,9 @@ impl App {
             }
             "scroll_speed" => value.scroll_speed = Some(raw.clamp(1, 10) as usize),
             "auto_save_delay" => value.auto_save_delay = Some(raw.clamp(100, 3_600_000)),
-            "lsp_diagnostic_delay_ms" => value.lsp_diagnostic_delay_ms = Some(raw.min(crate::lsp::diagnostics::MAX_DELAY_MS)),
+            "lsp_diagnostic_delay_ms" => {
+                value.lsp_diagnostic_delay_ms = Some(raw.min(crate::lsp::diagnostics::MAX_DELAY_MS))
+            }
             "animation_duration_ms" => {
                 value.animation_duration_ms = Some(clamp_animation_duration_ms(raw))
             }
@@ -765,13 +800,29 @@ impl App {
             .unwrap_or(0);
         self.theme_management.delete_hits.clear();
         self.theme_management.picker_removable = if id == "theme" {
-            self.loaded_themes.iter().map(|theme| !theme.builtin).collect()
-        } else { Vec::new() };
+            self.loaded_themes
+                .iter()
+                .map(|theme| !theme.builtin)
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.theme_management.picker_keys = if id == "theme" {
-            selected = self.loaded_themes.iter().position(|theme| theme.config_key == self.theme_key
-                && theme.name.eq_ignore_ascii_case(current.trim())).unwrap_or(selected);
-            self.loaded_themes.iter().map(|theme| theme.config_key.clone()).collect()
-        } else { Vec::new() };
+            selected = self
+                .loaded_themes
+                .iter()
+                .position(|theme| {
+                    theme.config_key == self.theme_key
+                        && theme.name.eq_ignore_ascii_case(current.trim())
+                })
+                .unwrap_or(selected);
+            self.loaded_themes
+                .iter()
+                .map(|theme| theme.config_key.clone())
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.settings_dropdown_open = true;
         self.settings_dropdown_setting_id = Some(id.to_string());
         self.settings_dropdown_options = options;
@@ -793,9 +844,13 @@ impl App {
         self.settings_focus_control = false;
         self.settings_dropdown_open = true;
         let pages = Self::settings_page_options();
-        self.settings_dropdown_selected = pages.iter().position(|(category, section, _)| {
-            *category == self.settings_category_selected && *section == self.settings_selected_section(*category)
-        }).unwrap_or(0);
+        self.settings_dropdown_selected = pages
+            .iter()
+            .position(|(category, section, _)| {
+                *category == self.settings_category_selected
+                    && *section == self.settings_selected_section(*category)
+            })
+            .unwrap_or(0);
         self.settings_dropdown_options = pages.into_iter().map(|(_, _, label)| label).collect();
     }
 
@@ -804,7 +859,9 @@ impl App {
             self.settings_dropdown_selected = option_idx;
             if let Some(id) = self.settings_dropdown_setting_id.clone() {
                 self.apply_settings_dropdown_value(&id, &value);
-            } else if let Some(&(category, section, _)) = Self::settings_page_options().get(option_idx) {
+            } else if let Some(&(category, section, _)) =
+                Self::settings_page_options().get(option_idx)
+            {
                 self.settings_category_collapsed[category] = false;
                 self.select_settings_page(category, section);
             }
@@ -849,7 +906,8 @@ impl App {
         self.flush_live_settings();
         self.settings_dropdown_committed = true;
         if id == "diff_algorithm" {
-            if let Some(algorithm) = crate::diff_algorithm::DiffAlgorithm::ALL.into_iter()
+            if let Some(algorithm) = crate::diff_algorithm::DiffAlgorithm::ALL
+                .into_iter()
                 .find(|algorithm| algorithm.label() == value)
             {
                 self.save_diff_algorithm(self.settings_scope, algorithm);
@@ -965,22 +1023,37 @@ mod tests {
         app.settings_workspace_path = directory.path().join("workspace.json");
         app.settings_persistence_enabled = true;
         let id = "animation_scope_bubble_disabled_languages";
-        app.settings_global.animation_scope_bubble_disabled_languages = Some(vec!["python".into()]);
+        app.settings_global
+            .animation_scope_bubble_disabled_languages = Some(vec!["python".into()]);
         app.apply_effective_settings();
         app.settings_scope = crate::settings::SettingsScope::Workspace;
         assert_eq!(app.setting_source_label(id), "Inherited · Global");
         app.begin_numeric_setting_edit(id, "python");
         app.settings_value_buffer = "JavaScript, C++, javascript".into();
         assert!(app.commit_numeric_setting_edit());
-        assert_eq!(app.animation_settings.scope_disabled_languages, ["cpp", "javascript"]);
-        assert_eq!(app.settings_global.animation_scope_bubble_disabled_languages, Some(vec!["python".into()]));
+        assert_eq!(
+            app.animation_settings.scope_disabled_languages,
+            ["cpp", "javascript"]
+        );
+        assert_eq!(
+            app.settings_global
+                .animation_scope_bubble_disabled_languages,
+            Some(vec!["python".into()])
+        );
         let persisted = crate::settings::load_from_file(&app.settings_workspace_path);
-        assert_eq!(persisted.animation_scope_bubble_disabled_languages, Some(vec!["cpp".into(), "javascript".into()]));
+        assert_eq!(
+            persisted.animation_scope_bubble_disabled_languages,
+            Some(vec!["cpp".into(), "javascript".into()])
+        );
         app.begin_numeric_setting_edit(id, "cpp, javascript");
         app.settings_value_buffer.clear();
         assert!(app.commit_numeric_setting_edit());
         assert!(app.animation_settings.scope_disabled_languages.is_empty());
-        assert_eq!(app.settings_workspace.animation_scope_bubble_disabled_languages, Some(vec![]));
+        assert_eq!(
+            app.settings_workspace
+                .animation_scope_bubble_disabled_languages,
+            Some(vec![])
+        );
         assert!(app.reset_setting_in_selected_scope(id));
         assert_eq!(app.animation_settings.scope_disabled_languages, ["python"]);
     }
@@ -993,12 +1066,18 @@ mod tests {
         for effect in AnimationEffect::ALL {
             app.toggle_setting(effect.id());
             for other in AnimationEffect::ALL {
-                assert_eq!(app.animation_settings.enabled(other), defaults.enabled(other) ^ (other == effect));
+                assert_eq!(
+                    app.animation_settings.enabled(other),
+                    defaults.enabled(other) ^ (other == effect)
+                );
             }
             assert_eq!(app.setting_source_label(effect.id()), "Global");
             assert!(app.reset_setting_in_selected_scope(effect.id()));
             for other in AnimationEffect::ALL {
-                assert_eq!(app.animation_settings.enabled(other), defaults.enabled(other));
+                assert_eq!(
+                    app.animation_settings.enabled(other),
+                    defaults.enabled(other)
+                );
             }
             assert_eq!(app.setting_source_label(effect.id()), "Default");
         }
@@ -1017,7 +1096,10 @@ mod tests {
         assert!(!app.animation_settings.enabled(AnimationEffect::CursorSmear));
         assert!(app.reset_setting_in_selected_scope("animation_cursor_smear"));
         assert!(app.animation_settings.enabled(AnimationEffect::CursorSmear));
-        assert_eq!(app.setting_source_label("animation_cursor_smear"), "Inherited · Global");
+        assert_eq!(
+            app.setting_source_label("animation_cursor_smear"),
+            "Inherited · Global"
+        );
     }
 
     #[test]
@@ -1039,7 +1121,10 @@ mod tests {
         assert!(app.reset_setting_in_selected_scope("animation_cursor_fire"));
         assert!(app.animation_settings.enabled(AnimationEffect::CursorFire));
         assert_eq!(app.settings_workspace.animation_cursor_fire, None);
-        assert_eq!(app.setting_source_label("animation_cursor_fire"), "Inherited · Global");
+        assert_eq!(
+            app.setting_source_label("animation_cursor_fire"),
+            "Inherited · Global"
+        );
         assert!(app.animation_settings.enabled(AnimationEffect::CursorSmear));
     }
 
@@ -1061,15 +1146,26 @@ mod tests {
             app.begin_numeric_setting_edit(id, default);
             app.settings_value_buffer = input.into();
             assert!(app.commit_numeric_setting_edit());
-            let value = app.settings_items().into_iter()
-                .find(|(_, _, setting_id)| setting_id == id).unwrap().1;
+            let value = app
+                .settings_items()
+                .into_iter()
+                .find(|(_, _, setting_id)| setting_id == id)
+                .unwrap()
+                .1;
             assert_eq!(value, expected);
             assert!(app.reset_setting_in_selected_scope(id));
-            let value = app.settings_items().into_iter()
-                .find(|(_, _, setting_id)| setting_id == id).unwrap().1;
+            let value = app
+                .settings_items()
+                .into_iter()
+                .find(|(_, _, setting_id)| setting_id == id)
+                .unwrap()
+                .1;
             assert_eq!(value, default);
             for effect in crate::animation_config::AnimationEffect::ALL {
-                assert_eq!(app.animation_settings.enabled(effect), defaults.enabled(effect));
+                assert_eq!(
+                    app.animation_settings.enabled(effect),
+                    defaults.enabled(effect)
+                );
             }
         }
     }
@@ -1162,8 +1258,14 @@ mod tests {
         app.toggle_setting("animation_scope_bubble_fill");
         assert!(app.animation_settings.scope_fill);
         assert!(!app.animation_settings.scope_tight);
-        assert_eq!(app.current_settings().animation_scope_bubble_fill, Some(true));
-        assert_eq!(app.settings_workspace.animation_scope_bubble_fill, Some(true));
+        assert_eq!(
+            app.current_settings().animation_scope_bubble_fill,
+            Some(true)
+        );
+        assert_eq!(
+            app.settings_workspace.animation_scope_bubble_fill,
+            Some(true)
+        );
         assert!(app.reset_setting_in_selected_scope("animation_scope_bubble_fill"));
         assert!(!app.animation_settings.scope_fill);
         app.settings_global.animation_scope_bubble_fill = Some(true);
@@ -1244,7 +1346,8 @@ mod tests {
     #[test]
     fn toggle_language_features_clear_stale_results() {
         let mut app = make_app();
-        app.lsp_inlay_hints.push(crate::app::InlayHintDisplay::new(0, 0, "hint", None));
+        app.lsp_inlay_hints
+            .push(crate::app::InlayHintDisplay::new(0, 0, "hint", None));
         app.lsp_code_lenses.push((0, "1 reference".into()));
         app.lsp_semantic_tokens
             .push(crate::lsp::DecodedSemanticToken {
@@ -1516,23 +1619,58 @@ mod tests {
         app.settings_scope = crate::settings::SettingsScope::Workspace;
         app.apply_effective_settings();
         let options = app.setting_dropdown_options("comment_whitespace").unwrap();
-        assert_eq!(options, ["Inherit", "None", "Boundary", "Selection", "Trailing", "All"]);
+        assert_eq!(
+            options,
+            [
+                "Inherit",
+                "None",
+                "Boundary",
+                "Selection",
+                "Trailing",
+                "All"
+            ]
+        );
         for value in options {
             app.open_settings_dropdown("comment_whitespace", &value);
-            assert_eq!(app.settings_dropdown_options[app.settings_dropdown_selected], value);
+            assert_eq!(
+                app.settings_dropdown_options[app.settings_dropdown_selected],
+                value
+            );
             app.apply_settings_dropdown_value("comment_whitespace", &value);
             app.close_settings_dropdown();
-            assert_eq!(app.comment_whitespace_mode.map_or("Inherit", |mode| mode.name()), value);
-            assert_eq!(app.current_settings().comment_whitespace_mode, Some(value.to_lowercase()));
-            assert_eq!(app.settings_workspace.comment_whitespace_mode, Some(value.to_lowercase()));
-            assert_eq!(app.default_whitespace_mode, crate::app::WhitespaceMode::Boundary);
-            assert_eq!(app.settings_global.comment_whitespace_mode.as_deref(), Some("none"));
+            assert_eq!(
+                app.comment_whitespace_mode
+                    .map_or("Inherit", |mode| mode.name()),
+                value
+            );
+            assert_eq!(
+                app.current_settings().comment_whitespace_mode,
+                Some(value.to_lowercase())
+            );
+            assert_eq!(
+                app.settings_workspace.comment_whitespace_mode,
+                Some(value.to_lowercase())
+            );
+            assert_eq!(
+                app.default_whitespace_mode,
+                crate::app::WhitespaceMode::Boundary
+            );
+            assert_eq!(
+                app.settings_global.comment_whitespace_mode.as_deref(),
+                Some("none")
+            );
         }
         assert!(app.reset_setting_in_selected_scope("comment_whitespace"));
-        assert_eq!(app.comment_whitespace_mode, Some(crate::app::WhitespaceMode::None));
+        assert_eq!(
+            app.comment_whitespace_mode,
+            Some(crate::app::WhitespaceMode::None)
+        );
         app.settings_scope = crate::settings::SettingsScope::Global;
         assert!(app.reset_setting_in_selected_scope("comment_whitespace"));
-        assert_eq!(app.comment_whitespace_mode, Some(crate::app::WhitespaceMode::All));
+        assert_eq!(
+            app.comment_whitespace_mode,
+            Some(crate::app::WhitespaceMode::All)
+        );
     }
 
     #[test]
@@ -1542,15 +1680,24 @@ mod tests {
         app.settings_workspace.whitespace_mode = Some("all".into());
         app.apply_effective_settings();
         let options = app.setting_dropdown_options("whitespace").unwrap();
-        assert_eq!(options, ["None", "Boundary", "Selection", "Trailing", "All"]);
+        assert_eq!(
+            options,
+            ["None", "Boundary", "Selection", "Trailing", "All"]
+        );
         for value in options {
             app.open_settings_dropdown("whitespace", &value);
-            assert_eq!(app.settings_dropdown_options[app.settings_dropdown_selected], value);
+            assert_eq!(
+                app.settings_dropdown_options[app.settings_dropdown_selected],
+                value
+            );
             app.apply_settings_dropdown_value("whitespace", &value);
             app.close_settings_dropdown();
             assert_eq!(app.default_whitespace_mode.name(), value);
             assert_eq!(app.tabs[0].editor.whitespace_mode.name(), value);
-            assert_eq!(app.settings_workspace.whitespace_mode, Some(value.to_lowercase()));
+            assert_eq!(
+                app.settings_workspace.whitespace_mode,
+                Some(value.to_lowercase())
+            );
         }
     }
 
@@ -1725,7 +1872,12 @@ mod tests {
 
         assert_eq!(app.settings_global.word_wrap, None);
         assert_eq!(app.settings_workspace.word_wrap, Some(true));
-        assert_eq!(app.settings_global.keybindings.as_ref().unwrap()[0].key.as_deref(), Some("Shift+F6"));
+        assert_eq!(
+            app.settings_global.keybindings.as_ref().unwrap()[0]
+                .key
+                .as_deref(),
+            Some("Shift+F6")
+        );
         assert!(app.default_word_wrap);
 
         app.settings_scope = crate::settings::SettingsScope::Workspace;

@@ -161,48 +161,94 @@ const C: &str = "int sum_values(int left, int right) {\n    return left + right;
 fn associated_file_workflow(language: &str) {
     // clangd uses the project's compile command, not LSP languageId, to parse
     // custom extensions. Preserve that contract instead of overriding build flags.
-    let clang_config = format!("If:\n  PathMatch: '.*\\.custom-type'\nCompileFlags:\n  Add: [-x{}]\n", if language == "c" { "c" } else { "c++" });
+    let clang_config = format!(
+        "If:\n  PathMatch: '.*\\.custom-type'\nCompileFlags:\n  Add: [-x{}]\n",
+        if language == "c" { "c" } else { "c++" }
+    );
     let files = [(".clangd", clang_config.as_str())];
-    let mut session = Session::configured(language, if language == "python" { PYTHON } else { C }, None,
-        if language == "python" { &[] } else { &files }, 0);
+    let mut session = Session::configured(
+        language,
+        if language == "python" { PYTHON } else { C },
+        None,
+        if language == "python" { &[] } else { &files },
+        0,
+    );
     let path = session.root.join("associated.custom-type");
     std::fs::write(&path, &session.source).unwrap();
-    session.manager.file_associations = Arc::new([
-        ("*.custom-type".into(), language.into()),
-    ].into_iter().collect());
+    session.manager.file_associations = Arc::new(
+        [("*.custom-type".into(), language.into())]
+            .into_iter()
+            .collect(),
+    );
     for client in &mut session.manager.clients {
         client.file_associations = Arc::clone(&session.manager.file_associations);
     }
     assert_eq!(session.manager.ensure_client_for_file(&path), Some(0));
-    assert_eq!(session.manager.clients[0].document_language(&path), language);
-    session.manager.sync_document_owned(&path, 1, session.source.clone());
+    assert_eq!(
+        session.manager.clients[0].document_language(&path),
+        language
+    );
+    session
+        .manager
+        .sync_document_owned(&path, 1, session.source.clone());
     let (line, col) = session.position("sum_values(2", 3);
     assert!(session.manager.request_hover(&path, line, col));
-    wait(&mut session.manager, "associated-file hover", |manager| manager.hover_content.is_some());
-    assert!(session.manager.hover_content.as_ref().unwrap().contains("sum_values"));
+    wait(&mut session.manager, "associated-file hover", |manager| {
+        manager.hover_content.is_some()
+    });
+    assert!(
+        session
+            .manager
+            .hover_content
+            .as_ref()
+            .unwrap()
+            .contains("sum_values")
+    );
     assert!(session.manager.request_completion(&path, line, col, "sum"));
-    wait(&mut session.manager, "associated-file completion", |manager| !manager.completion_items.is_empty());
-    assert!(session.manager.completion_items.iter().any(|item| item.label.contains("sum_values")));
+    wait(
+        &mut session.manager,
+        "associated-file completion",
+        |manager| !manager.completion_items.is_empty(),
+    );
+    assert!(
+        session
+            .manager
+            .completion_items
+            .iter()
+            .any(|item| item.label.contains("sum_values"))
+    );
 }
 
 #[test]
 #[ignore = "requires installed pyright-langserver"]
-fn real_lsp_pyright_file_associations() { associated_file_workflow("python"); }
+fn real_lsp_pyright_file_associations() {
+    associated_file_workflow("python");
+}
 
 #[test]
 #[ignore = "requires installed clangd"]
-fn real_lsp_clangd_c_file_associations() { associated_file_workflow("c"); }
+fn real_lsp_clangd_c_file_associations() {
+    associated_file_workflow("c");
+}
 
 #[test]
 #[ignore = "requires installed clangd"]
-fn real_lsp_clangd_cpp_file_associations() { associated_file_workflow("cpp"); }
+fn real_lsp_clangd_cpp_file_associations() {
+    associated_file_workflow("cpp");
+}
 
 fn diagnostics_during_completion(language: &str) {
     let python = language == "python";
-    let clean = if python { "digest = 1\nprint(digest)\n" }
-        else { "int digest = 1;\nint main(void) { return digest; }\n" };
-    let partial = if python { clean.replace("print(digest)", "print(dige)") }
-        else { clean.replace("return digest;", "return dige;") };
+    let clean = if python {
+        "digest = 1\nprint(digest)\n"
+    } else {
+        "int digest = 1;\nint main(void) { return digest; }\n"
+    };
+    let partial = if python {
+        clean.replace("print(digest)", "print(dige)")
+    } else {
+        clean.replace("return digest;", "return dige;")
+    };
     let mut session = Session::new(language, clean);
     session.diagnostics(false);
     let published = session.manager.diagnostics_version;
@@ -210,28 +256,69 @@ fn diagnostics_during_completion(language: &str) {
     // Leave enough room for real server work without sleeping for the delay.
     session.manager.diagnostic_publication.set_delay_ms(10_000);
     session.change(partial.clone(), 2);
-    let (line, col) = session.position(if python { "print(dige)" } else { "return dige;" }, if python { 10 } else { 11 });
+    let (line, col) = session.position(
+        if python {
+            "print(dige)"
+        } else {
+            "return dige;"
+        },
+        if python { 10 } else { 11 },
+    );
     session.manager.request_completion(&path, line, col, "dige");
-    wait(&mut session.manager, "completion and buffered diagnostics", |manager| {
-        manager.completion_items.iter().any(|item| item.label.contains("digest"))
-            && manager.current_diagnostic_context(&path).is_some_and(|items| {
-                items.iter().any(|item| item.severity == Some(DiagnosticSeverity::ERROR))
-            })
-    });
+    wait(
+        &mut session.manager,
+        "completion and buffered diagnostics",
+        |manager| {
+            manager
+                .completion_items
+                .iter()
+                .any(|item| item.label.contains("digest"))
+                && manager
+                    .current_diagnostic_context(&path)
+                    .is_some_and(|items| {
+                        items
+                            .iter()
+                            .any(|item| item.severity == Some(DiagnosticSeverity::ERROR))
+                    })
+        },
+    );
     assert_eq!(session.manager.diagnostics_version, published);
     assert!(session.manager.get_diagnostics(&path).unwrap().is_empty());
-    assert!(session.manager.diagnostic_publication.next_wait(Instant::now()).is_some());
+    assert!(
+        session
+            .manager
+            .diagnostic_publication
+            .next_wait(Instant::now())
+            .is_some()
+    );
     session.change(clean.into(), 3);
-    wait(&mut session.manager, "corrected diagnostic context", |manager| {
-        manager.current_diagnostic_context(&path).is_some_and(|items| items.is_empty())
-    });
-    assert_eq!(session.manager.diagnostics_version, published, "unfinished code never became a displayed problem");
-    session.manager.publish_pending_diagnostics(Instant::now() + Duration::from_secs(10));
+    wait(
+        &mut session.manager,
+        "corrected diagnostic context",
+        |manager| {
+            manager
+                .current_diagnostic_context(&path)
+                .is_some_and(|items| items.is_empty())
+        },
+    );
+    assert_eq!(
+        session.manager.diagnostics_version, published,
+        "unfinished code never became a displayed problem"
+    );
+    session
+        .manager
+        .publish_pending_diagnostics(Instant::now() + Duration::from_secs(10));
     assert!(session.manager.get_diagnostics(&path).unwrap().is_empty());
-    assert_eq!(session.manager.diagnostics_version, published, "unchanged clean diagnostics keep render caches intact");
+    assert_eq!(
+        session.manager.diagnostics_version, published,
+        "unchanged clean diagnostics keep render caches intact"
+    );
 
     // A real error left in place still appears after the normal quiet period.
-    session.manager.diagnostic_publication.set_delay_ms(super::diagnostics::DEFAULT_DELAY_MS);
+    session
+        .manager
+        .diagnostic_publication
+        .set_delay_ms(super::diagnostics::DEFAULT_DELAY_MS);
     session.change(partial, 4);
     session.diagnostics(true);
 }
@@ -270,15 +357,26 @@ fn editing_workflow(language: &str, source: &str) {
         "{:?}",
         s.manager.completion_items
     );
-    let index = s.manager.completion_items.iter()
-        .position(|item| item.label.contains("sum_values")).unwrap();
+    let index = s
+        .manager
+        .completion_items
+        .iter()
+        .position(|item| item.label.contains("sum_values"))
+        .unwrap();
     let resolves = s.manager.clients[0].supports_request("completionItem/resolve");
     assert!(s.manager.request_completion_resolve(&s.path, index));
-    wait(&mut s.manager, "completion details", |manager| manager.active_resolve_id.is_none());
-    if resolves { assert!(s.manager.completion_resolve_dirty); }
+    wait(&mut s.manager, "completion details", |manager| {
+        manager.active_resolve_id.is_none()
+    });
+    if resolves {
+        assert!(s.manager.completion_resolve_dirty);
+    }
     for _ in 0..32 {
         assert!(s.manager.request_completion_resolve(&s.path, index));
-        assert!(s.manager.active_resolve_id.is_none(), "resolved items must stay cached");
+        assert!(
+            s.manager.active_resolve_id.is_none(),
+            "resolved items must stay cached"
+        );
     }
     assert!(s.manager.request_hover(&s.path, line, col));
     wait(&mut s.manager, "hover", |m| m.hover_content.is_some());
@@ -977,33 +1075,71 @@ fn real_lsp_clangd_cpp_typed_dot_completion_uses_unsaved_text() {
 
 fn incremental_burst(language: &str) {
     let python = language == "python";
-    let header = if python { "# 😀 café\r\nvalue: int = 1\r\nprint(value)\r\n" }
-        else { "// 😀 café\r\nint value = 1;\r\nint main(void) { return value; }\r\n" };
-    let source = format!("{header}{}", if python { "# filler\r\n" } else { "// filler\r\n" }.repeat(6_000));
+    let header = if python {
+        "# 😀 café\r\nvalue: int = 1\r\nprint(value)\r\n"
+    } else {
+        "// 😀 café\r\nint value = 1;\r\nint main(void) { return value; }\r\n"
+    };
+    let source = format!(
+        "{header}{}",
+        if python {
+            "# filler\r\n"
+        } else {
+            "// filler\r\n"
+        }
+        .repeat(6_000)
+    );
     let mut session = Session::new(language, &source);
     session.diagnostics(false);
-    let sync = &session.manager.clients[0].capabilities.as_ref().unwrap().text_document_sync;
-    assert!(matches!(sync, Some(TextDocumentSyncCapability::Kind(kind)) if *kind == TextDocumentSyncKind::INCREMENTAL)
-        || matches!(sync, Some(TextDocumentSyncCapability::Options(options)) if options.change == Some(TextDocumentSyncKind::INCREMENTAL)));
+    let sync = &session.manager.clients[0]
+        .capabilities
+        .as_ref()
+        .unwrap()
+        .text_document_sync;
+    assert!(
+        matches!(sync, Some(TextDocumentSyncCapability::Kind(kind)) if *kind == TextDocumentSyncKind::INCREMENTAL)
+            || matches!(sync, Some(TextDocumentSyncCapability::Options(options)) if options.change == Some(TextDocumentSyncKind::INCREMENTAL))
+    );
     let mut rope = Rope::from_str(&source);
     let start = Instant::now();
     for version in 2..=51 {
         // Repeated insertions after a non-BMP character exercise UTF-16 ranges
         // without copying the rest of the file. Remove them again to test undo.
         let at = if python { 3 } else { 4 };
-        if version % 2 == 0 { rope.insert(at, "終"); } else { rope.remove(at..at+1); }
-        session.manager.sync_document(&session.path, version, rope.clone());
+        if version % 2 == 0 {
+            rope.insert(at, "終");
+        } else {
+            rope.remove(at..at + 1);
+        }
+        session
+            .manager
+            .sync_document(&session.path, version, rope.clone());
     }
     let declaration = rope.line_to_char(1) + if python { 0 } else { 4 };
-    rope.remove(declaration..declaration+5);
+    rope.remove(declaration..declaration + 5);
     rope.insert(declaration, "latest_value");
     let call = rope.line_to_char(2) + if python { 6 } else { 24 };
-    rope.remove(call..call+5);
+    rope.remove(call..call + 5);
     rope.insert(call, "latest_value");
-    session.manager.sync_document(&session.path, 52, rope.clone());
-    session.manager.request_hover(&session.path, 1, if python { 2 } else { 6 });
-    wait(&mut session.manager, "hover after 51 incremental changes", |m| m.hover_content.as_ref().is_some_and(|text| text.contains("latest_value")));
-    println!("{language}: 51 incremental updates plus hover in {:?}", start.elapsed());
+    session
+        .manager
+        .sync_document(&session.path, 52, rope.clone());
+    session
+        .manager
+        .request_hover(&session.path, 1, if python { 2 } else { 6 });
+    wait(
+        &mut session.manager,
+        "hover after 51 incremental changes",
+        |m| {
+            m.hover_content
+                .as_ref()
+                .is_some_and(|text| text.contains("latest_value"))
+        },
+    );
+    println!(
+        "{language}: 51 incremental updates plus hover in {:?}",
+        start.elapsed()
+    );
     session.diagnostics(false);
     assert_eq!(std::fs::read_to_string(&session.path).unwrap(), source);
     assert!(session.manager.request_errors.is_empty());
@@ -1011,12 +1147,18 @@ fn incremental_burst(language: &str) {
 
 #[test]
 #[ignore = "requires installed pyright-langserver"]
-fn real_lsp_pyright_incremental_unicode_burst() { incremental_burst("python"); }
+fn real_lsp_pyright_incremental_unicode_burst() {
+    incremental_burst("python");
+}
 
 #[test]
 #[ignore = "requires installed clangd"]
-fn real_lsp_clangd_c_incremental_unicode_burst() { incremental_burst("c"); }
+fn real_lsp_clangd_c_incremental_unicode_burst() {
+    incremental_burst("c");
+}
 
 #[test]
 #[ignore = "requires installed clangd"]
-fn real_lsp_clangd_cpp_incremental_unicode_burst() { incremental_burst("cpp"); }
+fn real_lsp_clangd_cpp_incremental_unicode_burst() {
+    incremental_burst("cpp");
+}

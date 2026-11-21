@@ -49,7 +49,11 @@ pub(super) fn restore_target_key(path: &Path) -> Result<PathBuf> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("{}: {error}", path.display())),
         }
-        missing.push(ancestor.file_name().ok_or("Missing rollback target parent")?);
+        missing.push(
+            ancestor
+                .file_name()
+                .ok_or("Missing rollback target parent")?,
+        );
         ancestor = ancestor.parent().ok_or("Missing rollback target parent")?;
     }
 }
@@ -147,8 +151,13 @@ pub(super) fn fresh_backup_path(parent: &Path, prefix: &str) -> Result<PathBuf> 
 }
 
 pub(super) fn displace_to_backup(source: &Path, backup: &Path) -> Result<()> {
-    crate::file_source::rename_no_replace(source, backup)
-        .map_err(|e| format!("Cannot retain {} at {}: {e}", source.display(), backup.display()))?;
+    crate::file_source::rename_no_replace(source, backup).map_err(|e| {
+        format!(
+            "Cannot retain {} at {}: {e}",
+            source.display(),
+            backup.display()
+        )
+    })?;
     sync_directory(source.parent().ok_or("Missing rollback backup directory")?)
 }
 
@@ -231,7 +240,9 @@ fn classify_path(root: &Path, relative: &Path) -> Result<CheckedPath> {
     checked_root(root)?;
     if relative.as_os_str().is_empty()
         || relative.components().any(|part| match part {
-            Component::Normal(name) => metadata_name(name) || crate::acp::files::has_windows_stream_separator(name),
+            Component::Normal(name) => {
+                metadata_name(name) || crate::acp::files::has_windows_stream_separator(name)
+            }
             _ => true,
         })
     {
@@ -242,10 +253,16 @@ fn classify_path(root: &Path, relative: &Path) -> Result<CheckedPath> {
         result.push(part);
         match fs::symlink_metadata(&result) {
             Ok(meta) if is_link(&meta) => {
-                return Ok(CheckedPath::Boundary(result, "Rollback does not follow links"));
+                return Ok(CheckedPath::Boundary(
+                    result,
+                    "Rollback does not follow links",
+                ));
             }
             Ok(meta) if meta.is_dir() && result.join(".git").exists() => {
-                return Ok(CheckedPath::Boundary(result, "Rollback does not cross nested repositories"));
+                return Ok(CheckedPath::Boundary(
+                    result,
+                    "Rollback does not cross nested repositories",
+                ));
             }
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -652,7 +669,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let repo = git2::Repository::init_bare(directory.path().join("git")).unwrap();
         let path = directory.path().join("file.bin");
-        let bytes: Vec<_> = (0..(128 * 1024 + 3)).map(|index| (index % 251) as u8).collect();
+        let bytes: Vec<_> = (0..(128 * 1024 + 3))
+            .map(|index| (index % 251) as u8)
+            .collect();
         fs::write(&path, &bytes).unwrap();
 
         let expected = git2::Oid::hash_object(git2::ObjectType::Blob, &bytes).unwrap();
@@ -685,7 +704,10 @@ mod tests {
                 .unwrap();
         });
 
-        assert!(result.is_err(), "a different file cannot enter the checkpoint");
+        assert!(
+            result.is_err(),
+            "a different file cannot enter the checkpoint"
+        );
         let unexpected = git2::Oid::hash_object(git2::ObjectType::Blob, replacement).unwrap();
         assert!(!repo.odb().unwrap().exists(unexpected));
         assert_eq!(fs::read(&path).unwrap(), replacement);

@@ -1,6 +1,8 @@
 use super::*;
 use crate::terminal::TerminalEmulator;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::{Terminal, backend::TestBackend};
 use std::sync::mpsc::Sender;
 
@@ -16,7 +18,10 @@ fn key(app: &mut App, code: KeyCode) {
 }
 
 fn confirm_close(app: &mut App) {
-    assert_eq!(crate::ui_modal::active(app), Some(crate::ui_modal::Kind::CloseTerminal));
+    assert_eq!(
+        crate::ui_modal::active(app),
+        Some(crate::ui_modal::Kind::CloseTerminal)
+    );
     key(app, KeyCode::Left);
     key(app, KeyCode::Enter);
     assert!(app.terminal_close.is_none());
@@ -58,16 +63,30 @@ fn editor_terminal_close_button_asks_before_stopping_session() {
         .draw(|frame| crate::ui::draw(frame, &mut app))
         .unwrap();
 
-    assert!(running.send(()).is_ok(), "the job must survive until confirmation");
+    assert!(
+        running.send(()).is_ok(),
+        "the job must survive until confirmation"
+    );
     assert_eq!(app.modal.focus, 1, "Cancel must be selected by default");
-    let screen: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+    let screen: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
     assert!(screen.contains("Close Running Terminal"));
     assert!(screen.contains("any running jobs"));
     let close = app.modal.buttons[0].0;
-    crate::mouse::handle_mouse(&mut app, MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left), column: close.x, row: close.y,
-        modifiers: KeyModifiers::NONE,
-    });
+    crate::mouse::handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: close.x,
+            row: close.y,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
 
     assert!(
         running.send(()).is_err(),
@@ -218,20 +237,37 @@ fn live_terminal_close_can_be_cancelled_without_losing_focus_selection_or_input(
     for editor_tab in [false, true] {
         for cancel in [KeyCode::Esc, KeyCode::Enter] {
             let mut app = App::test_new();
-            if editor_tab { app.new_terminal_in_editor_tab(); } else { app.toggle_terminal_sidebar(); }
+            if editor_tab {
+                app.new_terminal_in_editor_tab();
+            } else {
+                app.toggle_terminal_sidebar();
+            }
             let running = running_terminal(&mut app, 0);
-            let input = app.terminals[0].terminal_pty.as_mut().unwrap().test_capture_input();
-            let focus = (app.active_pane, app.active_tab, app.active_terminal, app.terminal_panel_focused);
+            let input = app.terminals[0]
+                .terminal_pty
+                .as_mut()
+                .unwrap()
+                .test_capture_input();
+            let focus = (
+                app.active_pane,
+                app.active_tab,
+                app.active_terminal,
+                app.terminal_panel_focused,
+            );
             let count = app.tabs.len();
 
             app.execute_palette_command("close_terminal");
             assert!(running.send(()).is_ok());
             crate::app_event_loop::handle_paste_input(&mut app, "do not send this to the shell");
             // Repeated input from a held key cannot accept a destructive action.
-            crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new_with_kind(
-                KeyCode::Left, KeyModifiers::NONE, KeyEventKind::Repeat));
-            crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new_with_kind(
-                KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Repeat));
+            crate::input_keyboard::handle_keyboard_event(
+                &mut app,
+                KeyEvent::new_with_kind(KeyCode::Left, KeyModifiers::NONE, KeyEventKind::Repeat),
+            );
+            crate::input_keyboard::handle_keyboard_event(
+                &mut app,
+                KeyEvent::new_with_kind(KeyCode::Enter, KeyModifiers::NONE, KeyEventKind::Repeat),
+            );
             assert!(app.terminal_close.is_some());
             assert_eq!(app.modal.focus, 1);
             key(&mut app, cancel);
@@ -239,8 +275,19 @@ fn live_terminal_close_can_be_cancelled_without_losing_focus_selection_or_input(
             assert!(app.terminal_close.is_none());
             assert!(running.send(()).is_ok());
             assert_eq!(app.tabs.len(), count);
-            assert_eq!((app.active_pane, app.active_tab, app.active_terminal, app.terminal_panel_focused), focus);
-            assert!(input.lock().unwrap().is_empty(), "dialog keys must not reach the shell");
+            assert_eq!(
+                (
+                    app.active_pane,
+                    app.active_tab,
+                    app.active_terminal,
+                    app.terminal_panel_focused
+                ),
+                focus
+            );
+            assert!(
+                input.lock().unwrap().is_empty(),
+                "dialog keys must not reach the shell"
+            );
         }
     }
 }
@@ -251,9 +298,12 @@ fn empty_failed_and_exited_terminals_close_without_confirmation() {
         let mut app = App::test_new();
         app.new_terminal_in_editor_tab();
         match state {
-            0 => {},
+            0 => {}
             1 => app.terminals[0].terminal_launch_error = Some("Shell unavailable".into()),
-            _ => app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(40, 10, "finished")),
+            _ => {
+                app.terminals[0].terminal_pty =
+                    Some(TerminalEmulator::test_with_output(40, 10, "finished"))
+            }
         }
         app.close_tab(app.active_tab);
         assert!(app.terminal_close.is_none());
@@ -273,7 +323,11 @@ fn terminal_exits_during_confirmation_never_close_a_different_session() {
         app.close_terminal_tab_at(1);
         assert!(app.terminal_close.is_some());
 
-        let (exited, survivor) = if exits_target { (second, first) } else { (first, second) };
+        let (exited, survivor) = if exits_target {
+            (second, first)
+        } else {
+            (first, second)
+        };
         exited.send(()).unwrap();
         app.process_terminals();
         assert!(exited.send(()).is_err());
@@ -284,24 +338,41 @@ fn terminal_exits_during_confirmation_never_close_a_different_session() {
             assert!(survivor.send(()).is_ok());
         } else {
             confirm_close(&mut app);
-            assert!(survivor.send(()).is_err(), "confirmation must follow the original session");
+            assert!(
+                survivor.send(()).is_err(),
+                "confirmation must follow the original session"
+            );
         }
     }
 }
 
 #[test]
 fn bulk_close_cancel_preserves_saved_files_and_live_terminal_views() {
-    for close in [App::close_saved_tabs as fn(&mut App), App::close_all_tabs, |app| app.close_tabs_matching(|_| true)] {
+    for close in [
+        App::close_saved_tabs as fn(&mut App),
+        App::close_all_tabs,
+        |app| app.close_tabs_matching(|_| true),
+    ] {
         let mut app = App::test_new();
         app.tabs = vec![Tab::new_file(Editor::test_with_text("saved"))];
         app.new_terminal_in_editor_tab();
         let running = running_terminal(&mut app, 0);
-        let views: Vec<_> = app.tabs.iter().map(|tab| tab.editor.navigation_id).collect();
+        let views: Vec<_> = app
+            .tabs
+            .iter()
+            .map(|tab| tab.editor.navigation_id)
+            .collect();
         close(&mut app);
         assert!(running.send(()).is_ok());
         assert!(app.terminal_close.is_some());
         key(&mut app, KeyCode::Esc);
-        assert_eq!(app.tabs.iter().map(|tab| tab.editor.navigation_id).collect::<Vec<_>>(), views);
+        assert_eq!(
+            app.tabs
+                .iter()
+                .map(|tab| tab.editor.navigation_id)
+                .collect::<Vec<_>>(),
+            views
+        );
         assert!(running.send(()).is_ok());
     }
 }
@@ -359,18 +430,41 @@ fn dock_close_button_can_cancel_then_close_only_the_named_terminal() {
     app.terminal_panel_focused = false;
     let mut terminal = Terminal::new(TestBackend::new(160, 40)).unwrap();
     let click = |app: &mut App, area: ratatui::layout::Rect| {
-        crate::mouse::handle_mouse(app, MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left), column: area.x, row: area.y,
-            modifiers: KeyModifiers::NONE,
-        });
+        crate::mouse::handle_mouse(
+            app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: area.x,
+                row: area.y,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
     };
     for confirm in [false, true] {
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-        let close = app.terminal_sidebar_close_areas.iter().find(|(_, index)| *index == 0).unwrap().0;
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        let close = app
+            .terminal_sidebar_close_areas
+            .iter()
+            .find(|(_, index)| *index == 0)
+            .unwrap()
+            .0;
         click(&mut app, close);
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
-        assert_eq!(crate::ui_modal::active(&app), Some(crate::ui_modal::Kind::CloseTerminal));
-        let screen: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        assert_eq!(
+            crate::ui_modal::active(&app),
+            Some(crate::ui_modal::Kind::CloseTerminal)
+        );
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
         assert!(screen.contains("Long build"));
         let button = app.modal.buttons[usize::from(!confirm)].0;
         click(&mut app, button);

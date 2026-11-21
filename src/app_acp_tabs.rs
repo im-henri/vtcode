@@ -32,11 +32,17 @@ impl AgentState {
     pub(super) fn has_chat_drafts(&self) -> bool {
         !self.input.trim().is_empty()
             || !self.files.attached.is_empty()
-            || self.saved_draft.as_ref().is_some_and(|draft| !draft.0.trim().is_empty())
+            || self
+                .saved_draft
+                .as_ref()
+                .is_some_and(|draft| !draft.0.trim().is_empty())
             || self.views.values().any(|view| {
                 !view.input.trim().is_empty()
                     || !view.attachments.is_empty()
-                    || view.saved_draft.as_ref().is_some_and(|draft| !draft.0.trim().is_empty())
+                    || view
+                        .saved_draft
+                        .as_ref()
+                        .is_some_and(|draft| !draft.0.trim().is_empty())
             })
     }
 }
@@ -121,12 +127,16 @@ impl ChatState {
         }
         // Keep a draft typed before connecting when the first session opens.
         if self.selected.is_none() && !self.views.contains_key(&Some(id.clone())) {
-            if let Some(job) = self.files.attaching.remove(&None) { self.files.attaching.insert(Some(id.clone()), job); }
+            if let Some(job) = self.files.attaching.remove(&None) {
+                self.files.attaching.insert(Some(id.clone()), job);
+            }
             self.selected = Some(id.clone());
         }
         self.select_tab(Some(id));
         self.dock_selected = self.selected.clone();
-        if self.background && let Some(id) = self.selected.clone() {
+        if self.background
+            && let Some(id) = self.selected.clone()
+        {
             self.unread_tabs.insert(id);
         }
         if !self.background {
@@ -148,21 +158,32 @@ impl ChatState {
             self.select_tab(next);
         }
         if self.dock_selected.as_ref() == Some(id) {
-            self.dock_selected = self.open_tabs.get(index).or_else(|| self.open_tabs.last()).cloned();
+            self.dock_selected = self
+                .open_tabs
+                .get(index)
+                .or_else(|| self.open_tabs.last())
+                .cloned();
         }
         self.tab_offset = self.tab_offset.min(self.open_tabs.len().saturating_sub(1));
         self.reveal_tab = true;
     }
 
     pub(super) fn mark_tab_unread(&mut self, id: &p::SessionId, window_focused: bool) {
-        if self.background || self.selected.as_ref() != Some(id) || !self.visible || self.area.is_none()
-            || !window_focused || !self.follow {
+        if self.background
+            || self.selected.as_ref() != Some(id)
+            || !self.visible
+            || self.area.is_none()
+            || !window_focused
+            || !self.follow
+        {
             self.unread_tabs.insert(id.clone());
         }
     }
 
     pub(crate) fn acknowledge_selected_activity(&mut self) {
-        if self.follow && let Some(id) = &self.connection.selected {
+        if self.follow
+            && let Some(id) = &self.connection.selected
+        {
             self.connection.unread_tabs.remove(id);
         }
     }
@@ -175,22 +196,41 @@ impl App {
         if !self.terminal_has_focus || self.change_dir_active {
             return;
         }
-        let seen: Vec<_> = self.chat.layout.surfaces.iter()
+        let seen: Vec<_> = self
+            .chat
+            .layout
+            .surfaces
+            .iter()
             .filter(|surface| match surface.key {
-                None => self.chat.layout.dock_visible && !self.zen_mode
-                    && surface.agent == self.chat.layout.dock_agent
-                    && self.chat.agent_state(surface.agent)
-                        .is_some_and(|state| state.dock_selected == surface.session),
+                None => {
+                    self.chat.layout.dock_visible
+                        && !self.zen_mode
+                        && surface.agent == self.chat.layout.dock_agent
+                        && self
+                            .chat
+                            .agent_state(surface.agent)
+                            .is_some_and(|state| state.dock_selected == surface.session)
+                }
                 Some(key) => {
                     let kind = crate::app::TabKind::Chat(key);
-                    self.tabs.get(self.active_tab).is_some_and(|tab| tab.kind == kind)
+                    self.tabs
+                        .get(self.active_tab)
+                        .is_some_and(|tab| tab.kind == kind)
                         || self.groups.iter().enumerate().any(|(i, group)| {
-                            !self.zen_mode && i != self.active_group
-                                && group.tabs.get(group.active_tab).is_some_and(|tab| tab.kind == kind)
+                            !self.zen_mode
+                                && i != self.active_group
+                                && group
+                                    .tabs
+                                    .get(group.active_tab)
+                                    .is_some_and(|tab| tab.kind == kind)
                         })
                 }
             })
-            .filter(|surface| surface.transcript.is_some_and(|area| area.width > 0 && area.height > 0))
+            .filter(|surface| {
+                surface
+                    .transcript
+                    .is_some_and(|area| area.width > 0 && area.height > 0)
+            })
             .filter_map(|surface| Some((surface.agent, surface.session.clone()?)))
             .collect();
         for (agent, id) in seen {
@@ -198,11 +238,16 @@ impl App {
                 &mut self.chat.connection
             } else if let Some(state) = self.chat.connections.get_mut(&agent) {
                 state
-            } else { continue; };
+            } else {
+                continue;
+            };
             let following = if state.selected.as_ref() == Some(&id) {
                 state.follow
             } else {
-                state.views.get(&Some(id.clone())).is_none_or(|view| !view.scrolled_back)
+                state
+                    .views
+                    .get(&Some(id.clone()))
+                    .is_none_or(|view| !view.scrolled_back)
             };
             if following {
                 state.unread_tabs.remove(&id);

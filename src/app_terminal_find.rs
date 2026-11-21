@@ -58,7 +58,10 @@ pub(crate) struct Controller {
 impl Controller {
     pub(crate) fn contains(&self, point: (u16, u16)) -> bool {
         self.areas.iter().any(|area| area.contains(point.into()))
-            || self.controls.iter().any(|(area, _, _)| area.contains(point.into()))
+            || self
+                .controls
+                .iter()
+                .any(|(area, _, _)| area.contains(point.into()))
     }
 
     pub fn begin_frame(&mut self) {

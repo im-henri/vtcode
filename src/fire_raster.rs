@@ -131,7 +131,9 @@ impl RasterScratch {
         // Clear only touched cells using the old origin, before resizing or
         // moving the viewport. Large/synthetic rectangles stay sparse.
         for &(key, _) in &self.fields[..self.used] {
-            if let Some(index) = self.slot(key) { self.slots[index] = 0; }
+            if let Some(index) = self.slot(key) {
+                self.slots[index] = 0;
+            }
         }
         self.index.clear();
         self.used = 0;
@@ -151,14 +153,18 @@ impl RasterScratch {
 
     // Field keys are (row, column), preserving the original output order.
     fn slot(&self, (y, x): (u16, u16)) -> Option<usize> {
-        self.area.contains((x, y).into()).then(||
-            usize::from(y - self.area.y) * usize::from(self.area.width) + usize::from(x - self.area.x))
+        self.area.contains((x, y).into()).then(|| {
+            usize::from(y - self.area.y) * usize::from(self.area.width)
+                + usize::from(x - self.area.x)
+        })
     }
 
     fn field(&mut self, key: (u16, u16)) -> Option<&mut Field> {
         let slot = self.slot(key);
-        let existing = slot.map_or_else(|| self.index.get(&key).copied(),
-            |slot| usize::from(self.slots[slot]).checked_sub(1));
+        let existing = slot.map_or_else(
+            || self.index.get(&key).copied(),
+            |slot| usize::from(self.slots[slot]).checked_sub(1),
+        );
         let index = if let Some(index) = existing {
             index
         } else {
@@ -167,8 +173,11 @@ impl RasterScratch {
             }
             let index = self.used;
             self.used += 1;
-            if let Some(slot) = slot { self.slots[slot] = (index + 1) as u16; }
-            else { self.index.insert(key, index); }
+            if let Some(slot) = slot {
+                self.slots[slot] = (index + 1) as u16;
+            } else {
+                self.index.insert(key, index);
+            }
             if index == self.fields.len() {
                 self.fields.push((key, Field::default()));
             } else {
@@ -575,7 +584,9 @@ fn finish(fields: &mut RasterScratch, emit: &mut impl FnMut(FireCell)) {
     // fields in their slots, including across frames with changing geometry.
     fields.order.clear();
     fields.order.extend(0..fields.used);
-    fields.order.sort_unstable_by_key(|&index| fields.fields[index].0);
+    fields
+        .order
+        .sort_unstable_by_key(|&index| fields.fields[index].0);
     let mut tone = None;
     for &index in &fields.order {
         let ((y, x), field) = &fields.fields[index];
@@ -593,9 +604,13 @@ fn finish(fields: &mut RasterScratch, emit: &mut impl FnMut(FireCell)) {
         let flame_light = opacity * glyph.count as f32 / SAMPLES as f32;
         // Spark selection uses a hard visibility threshold. There are only
         // eight dots per cell, so keep their tone map exact at that edge.
-        let sparks = if field.has_embers { field
-            .ember_energy
-            .map(|energy| -(-energy.min(16.0)).exp_m1()) } else { [0.0; 8] };
+        let sparks = if field.has_embers {
+            field
+                .ember_energy
+                .map(|energy| -(-energy.min(16.0)).exp_m1())
+        } else {
+            [0.0; 8]
+        };
         let peak = sparks.into_iter().fold(0.0_f32, f32::max);
         if peak > 0.035 && flame_light < 0.14 + peak * 0.18 {
             // Unicode's dot order differs from our row-major 2×4 grid.
@@ -940,11 +955,17 @@ mod tests {
                 3 => Rect::new(11, 5, 7, 4),
                 _ => Rect::new(0, 0, 1, 1),
             };
-            let input: Vec<_> = (0..45).map(|i| {
-                let x = (i * 7 % 21) as f32 + step as f32 * 0.013;
-                let y = (i * 3 % 13) as f32 + 0.7;
-                if (i + step) % 3 == 0 { ember(x, y) } else { particle(x, y) }
-            }).collect();
+            let input: Vec<_> = (0..45)
+                .map(|i| {
+                    let x = (i * 7 % 21) as f32 + step as f32 * 0.013;
+                    let y = (i * 3 % 13) as f32 + 0.7;
+                    if (i + step) % 3 == 0 {
+                        ember(x, y)
+                    } else {
+                        particle(x, y)
+                    }
+                })
+                .collect();
             let mut actual = Vec::new();
             let mut expected = Vec::new();
             REFERENCE_INDEX.set(false);
@@ -953,7 +974,11 @@ mod tests {
             rasterize_cached(area, &input, &mut sparse, &mut |cell| expected.push(cell));
             REFERENCE_INDEX.set(false);
             assert_eq!(actual, expected, "step={step}");
-            assert!(actual.windows(2).all(|pair| (pair[0].y, pair[0].x) < (pair[1].y, pair[1].x)));
+            assert!(
+                actual
+                    .windows(2)
+                    .all(|pair| (pair[0].y, pair[0].x) < (pair[1].y, pair[1].x))
+            );
             assert!(dense.slots.len() <= MAX_INDEX_CELLS);
             assert!(dense.used <= MAX_CELLS);
         }
@@ -970,7 +995,14 @@ mod tests {
         let pointer = scratch.fields.as_ptr();
         finish(&mut scratch, &mut |_| {});
         assert_eq!(scratch.fields.as_ptr(), pointer);
-        assert_eq!(scratch.fields.iter().map(|entry| entry.0).collect::<Vec<_>>(), keys);
+        assert_eq!(
+            scratch
+                .fields
+                .iter()
+                .map(|entry| entry.0)
+                .collect::<Vec<_>>(),
+            keys
+        );
         assert_eq!(scratch.order, [1, 2, 0]);
         scratch.prepare(Rect::new(2, 3, 20, 15));
         assert!(scratch.slots.iter().all(|&slot| slot == 0));

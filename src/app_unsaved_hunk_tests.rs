@@ -28,18 +28,38 @@ fn open(app: &mut App, line: usize) {
 
 #[test]
 fn hunk_reverts_in_every_order_preserve_other_changes_and_round_trip_history() {
-    let orders = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+    let orders = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
     for ending in ["\n", "\r\n", "\r"] {
         for last_newline in [false, true] {
             for kind in ["replacement", "insertion", "deletion"] {
                 for order in orders {
-                    let old = [format!("old α{ending}"), format!("old β{ending}"), format!("old 界{}", if last_newline { ending } else { "" })];
-                    let mut parts = [format!("new α{ending}"), match kind {
-                        "insertion" => format!("old β{ending}inserted{ending}"),
-                        "deletion" => String::new(),
-                        _ => format!("new β{ending}"),
-                    }, format!("new 界{}", if last_newline { ending } else { "" })];
-                    let join = |parts: &[String; 3]| format!("header{ending}{}keep a{ending}keep b{ending}{}keep c{ending}keep d{ending}{}", parts[0], parts[1], parts[2]);
+                    let old = [
+                        format!("old α{ending}"),
+                        format!("old β{ending}"),
+                        format!("old 界{}", if last_newline { ending } else { "" }),
+                    ];
+                    let mut parts = [
+                        format!("new α{ending}"),
+                        match kind {
+                            "insertion" => format!("old β{ending}inserted{ending}"),
+                            "deletion" => String::new(),
+                            _ => format!("new β{ending}"),
+                        },
+                        format!("new 界{}", if last_newline { ending } else { "" }),
+                    ];
+                    let join = |parts: &[String; 3]| {
+                        format!(
+                            "header{ending}{}keep a{ending}keep b{ending}{}keep c{ending}keep d{ending}{}",
+                            parts[0], parts[1], parts[2]
+                        )
+                    };
                     let saved = join(&old);
                     let original = join(&parts);
                     let mut app = unsaved_app(&saved, &original);
@@ -48,17 +68,25 @@ fn hunk_reverts_in_every_order_preserve_other_changes_and_round_trip_history() {
                     let mut versions = vec![original];
                     for which in order {
                         let current = join(&parts);
-                        let line = (0..app.editor().unwrap().line_count()).find(|&line| {
-                            crate::ui_hunk_peek::HunkPeek::from_texts(&saved, &current, line, 4).is_ok()
-                        }).expect("a remaining hunk must be reachable");
+                        let line = (0..app.editor().unwrap().line_count())
+                            .find(|&line| {
+                                crate::ui_hunk_peek::HunkPeek::from_texts(&saved, &current, line, 4)
+                                    .is_ok()
+                            })
+                            .expect("a remaining hunk must be reachable");
                         open(&mut app, line);
                         assert_eq!(app.hunk_peek.as_ref().unwrap().hunks.len(), remaining.len());
-                        app.hunk_peek.as_mut().unwrap().selected = remaining.iter().position(|&index| index == which).unwrap();
+                        app.hunk_peek.as_mut().unwrap().selected =
+                            remaining.iter().position(|&index| index == which).unwrap();
                         app.revert_unsaved_hunk().unwrap();
                         parts[which] = old[which].clone();
                         remaining.retain(|&index| index != which);
                         let expected = join(&parts);
-                        assert_eq!(app.editor().unwrap().rope, expected, "{ending:?}/{kind}/{order:?}");
+                        assert_eq!(
+                            app.editor().unwrap().rope,
+                            expected,
+                            "{ending:?}/{kind}/{order:?}"
+                        );
                         versions.push(expected);
                     }
                     let editor = app.editor_mut().unwrap();
@@ -154,8 +182,32 @@ fn unsaved_minus_click_reverts_the_clicked_hunk_and_preserves_the_other() {
 #[test]
 fn unsaved_reverts_advance_after_line_shifts_and_close_after_the_last_change() {
     for ending in ["\n", "\r\n", "\r"] {
-        let saved = ["header", "first α", "keep 1", "keep 2", "middle β", "keep 3", "keep 4", "last 界", "tail", ""].join(ending);
-        let changed = ["header", "FIRST α", "keep 1", "keep 2", "INSERTED", "MIDDLE β", "keep 3", "keep 4", "tail", ""].join(ending);
+        let saved = [
+            "header",
+            "first α",
+            "keep 1",
+            "keep 2",
+            "middle β",
+            "keep 3",
+            "keep 4",
+            "last 界",
+            "tail",
+            "",
+        ]
+        .join(ending);
+        let changed = [
+            "header",
+            "FIRST α",
+            "keep 1",
+            "keep 2",
+            "INSERTED",
+            "MIDDLE β",
+            "keep 3",
+            "keep 4",
+            "tail",
+            "",
+        ]
+        .join(ending);
         let mut app = unsaved_app(&saved, &changed);
         open(&mut app, 4);
         assert_eq!(app.hunk_peek.as_ref().unwrap().selected, 1);
@@ -171,7 +223,9 @@ fn unsaved_reverts_advance_after_line_shifts_and_close_after_the_last_change() {
         }
         assert_eq!(app.editor().unwrap().rope.to_string(), saved);
         assert!(!app.editor().unwrap().modified);
-        for _ in 0..3 { app.editor_mut().unwrap().undo(); }
+        for _ in 0..3 {
+            app.editor_mut().unwrap().undo();
+        }
         assert_eq!(app.editor().unwrap().rope.to_string(), changed);
     }
 }

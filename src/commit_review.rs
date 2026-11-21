@@ -139,7 +139,9 @@ impl HorizontalDrag {
 
 pub(crate) fn target_scroll_width(cache: &DiffRenderCache, aligned: bool) -> usize {
     if aligned {
-        cache.max_right_text_width.saturating_add(cache.change_marker_width())
+        cache
+            .max_right_text_width
+            .saturating_add(cache.change_marker_width())
     } else {
         cache.max_inline_text_width
     }
@@ -262,10 +264,20 @@ pub(crate) fn file_height(
     animations: &crate::animation_config::AnimationSettings,
 ) -> usize {
     let widths = crate::ui_diff_display::measure_wrap(
-        cache, editor, mode, width, split_ratio, None, animations.scope_enabled_for(editor),
+        cache,
+        editor,
+        mode,
+        width,
+        split_ratio,
+        None,
+        animations.scope_enabled_for(editor),
     );
     scroll.prepare_wrap(cache, mode == DiffMode::SideBySide, widths);
-    scroll.wrap.first_row(rows(cache, mode)).max(1).saturating_add(4)
+    scroll
+        .wrap
+        .first_row(rows(cache, mode))
+        .max(1)
+        .saturating_add(4)
 }
 
 pub(crate) fn mode(app: &App, width: u16) -> DiffMode {
@@ -373,10 +385,10 @@ impl App {
         let expanded = self.commit_details.diff_file.map_or(&[][..], |file| {
             self.commit_details.review.expanded_context_for(file)
         });
-        if !self.diff_render_cache.matches_context(
-            context.changes_only.then_some(context.lines),
-            expanded,
-        ) {
+        if !self
+            .diff_render_cache
+            .matches_context(context.changes_only.then_some(context.lines), expanded)
+        {
             self.diff_render_cache = context.project(full, None, expanded);
             self.commit_details.context_revealed_line = None;
             self.diff_inline_scroll = Default::default();

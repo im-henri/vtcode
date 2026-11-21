@@ -212,14 +212,18 @@ fn shared_duplication_copies_multiline_selections_as_whole_blocks() {
                 } else {
                     ((1, 1), (2, 2))
                 };
-                let expected = format!("head{ending}{middle}{ending}tail{ending}{middle}{ending}tail");
+                let expected =
+                    format!("head{ending}{middle}{ending}tail{ending}{middle}{ending}tail");
                 for duplicate_up in [false, true] {
                     let mut editor = Editor::test_with_text(&source);
                     editor.detect_line_ending();
                     editor.selection_anchor = Some(anchor);
                     (editor.cursor_line, editor.cursor_col) = cursor;
-                    if duplicate_up { editor.duplicate_line_up(); }
-                    else { editor.duplicate_line(); }
+                    if duplicate_up {
+                        editor.duplicate_line_up();
+                    } else {
+                        editor.duplicate_line();
+                    }
                     assert_eq!(editor.rope.to_string(), expected);
                     let copied_cursor = (cursor.0 + 2 * usize::from(!duplicate_up), cursor.1);
                     assert_eq!((editor.cursor_line, editor.cursor_col), copied_cursor);
@@ -248,15 +252,21 @@ fn duplicate_line_copies_each_cursor_line_once_with_multiple_selections() {
         editor.selection_anchor = Some((1, 2));
         editor.extra_cursors = vec![(1, 8), (3, 5)];
         editor.extra_cursor_anchors = vec![Some((1, 6)), Some((3, 8))];
-        if duplicate_up { editor.duplicate_line_up(); }
-        else { editor.duplicate_line(); }
+        if duplicate_up {
+            editor.duplicate_line_up();
+        } else {
+            editor.duplicate_line();
+        }
         let expected = "head\nalpha beta\nalpha beta\ngap\ngamma delta\ngamma delta\ntail";
         let offset = usize::from(!duplicate_up);
         assert_eq!(editor.rope.to_string(), expected);
         assert_eq!((editor.cursor_line, editor.cursor_col), (1 + offset, 5));
         assert_eq!(editor.selection_anchor, Some((1 + offset, 2)));
         assert_eq!(editor.extra_cursors, [(1 + offset, 8), (4 + offset, 5)]);
-        assert_eq!(editor.extra_cursor_anchors, [Some((1 + offset, 6)), Some((4 + offset, 8))]);
+        assert_eq!(
+            editor.extra_cursor_anchors,
+            [Some((1 + offset, 6)), Some((4 + offset, 8))]
+        );
         editor.undo();
         assert_eq!(editor.rope.to_string(), source);
         assert_eq!((editor.cursor_line, editor.cursor_col), (1, 5));
@@ -266,7 +276,10 @@ fn duplicate_line_copies_each_cursor_line_once_with_multiple_selections() {
         editor.redo();
         assert_eq!(editor.rope.to_string(), expected);
         assert_eq!(editor.extra_cursors, [(1 + offset, 8), (4 + offset, 5)]);
-        assert_eq!(editor.extra_cursor_anchors, [Some((1 + offset, 6)), Some((4 + offset, 8))]);
+        assert_eq!(
+            editor.extra_cursor_anchors,
+            [Some((1 + offset, 6)), Some((4 + offset, 8))]
+        );
     }
 }
 

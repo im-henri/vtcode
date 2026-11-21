@@ -4,12 +4,12 @@ use ratatui::{Terminal, backend::TestBackend};
 use std::time::{Duration, Instant};
 use vtcode::acp::Session;
 
-#[path = "app_acp_live_tests.rs"]
-mod live_tests;
-#[path = "app_acp_history_review_tests.rs"]
-mod history_review_tests;
 #[path = "app_acp_background_review_tests.rs"]
 mod background_review_tests;
+#[path = "app_acp_history_review_tests.rs"]
+mod history_review_tests;
+#[path = "app_acp_live_tests.rs"]
+mod live_tests;
 
 #[cfg(windows)]
 #[test]
@@ -826,7 +826,12 @@ fn chat_rollback_buttons_resolve_chunks_and_clear_file_markers() {
             .any(|h| h.action == ChatAction::Picker(Picker::Message(0, 0)))
     );
     app.chat_action(ChatAction::Picker(Picker::Message(0, 0)));
-    assert!(app.chat.choices.iter().any(|c| c.action == ChatAction::Picker(Picker::Restore(cp))));
+    assert!(
+        app.chat
+            .choices
+            .iter()
+            .any(|c| c.action == ChatAction::Picker(Picker::Restore(cp)))
+    );
     app.chat_action(ChatAction::Picker(Picker::ChangeChunk(id, 0)));
     terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
     let index = app
@@ -882,8 +887,12 @@ fn unreviewed_file_opens_inline_review_and_stays_until_its_last_decision() {
     let mut files = app.chat.hits.iter().filter(|hit| hit.action == action);
     let hit = files.next().unwrap();
     assert!(files.next().is_none());
-    let attachment = app.chat.hits.iter()
-        .find(|hit| hit.action == ChatAction::OpenFile(context.clone(), None)).unwrap();
+    let attachment = app
+        .chat
+        .hits
+        .iter()
+        .find(|hit| hit.action == ChatAction::OpenFile(context.clone(), None))
+        .unwrap();
     let input = app.text_input_area(TextInputId::Chat).unwrap();
     assert!(attachment.area.bottom() < hit.area.y && hit.area.bottom() < input.y);
     let row: String = (hit.area.x..hit.area.right())
@@ -908,7 +917,12 @@ fn unreviewed_file_opens_inline_review_and_stays_until_its_last_decision() {
     assert_eq!(app.chat.session().unwrap().rollback.edits[0].pending(), 1);
 
     terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
-    let hit = app.chat.hits.iter().find(|hit| hit.action == action).unwrap();
+    let hit = app
+        .chat
+        .hits
+        .iter()
+        .find(|hit| hit.action == action)
+        .unwrap();
     let row: String = (hit.area.x..hit.area.right())
         .map(|x| terminal.backend().buffer()[(x, hit.area.y)].symbol())
         .collect();
@@ -922,10 +936,14 @@ fn unreviewed_file_opens_inline_review_and_stays_until_its_last_decision() {
     assert_eq!(app.editor().unwrap().cursor_line, 2);
     click_editor_review(&mut app, Some((edit, 1)), false);
     terminal.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
-    assert!(!app.chat.hits.iter().any(|hit| matches!(hit.action,
+    assert!(!app.chat.hits.iter().any(|hit| matches!(
+        hit.action,
         ChatAction::ReviewFile(_) | ChatAction::Picker(Picker::Unreviewed)
     )));
-    assert_eq!(std::fs::read_to_string(path).unwrap(), "FIRST\nkeep\nlast\n");
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "FIRST\nkeep\nlast\n"
+    );
 }
 
 #[test]
@@ -937,17 +955,23 @@ fn unreviewed_files_page_by_conversation_and_keep_non_text_chunks_reviewable() {
     let binary = root.path().join("c.bin");
     std::fs::write(&deleted, "deleted text\n").unwrap();
     let other = p::SessionId::new("other");
-    app.chat.sessions.insert(other.clone(), Session::new(other.clone()));
+    app.chat
+        .sessions
+        .insert(other.clone(), Session::new(other.clone()));
     let journal = app.chat.rollback.journal.clone().unwrap();
     {
         let mut journal = journal.lock().unwrap();
-        journal.begin("", "chat", "more files", BTreeSet::new()).unwrap();
+        journal
+            .begin("", "chat", "more files", BTreeSet::new())
+            .unwrap();
         std::fs::remove_file(&deleted).unwrap();
         std::fs::write(&binary, [0, 255, 1]).unwrap();
         std::fs::write(root.path().join("d.txt"), "").unwrap();
         std::fs::write(root.path().join("a.txt"), "FIRST\nkeep\nLAST\nextra\n").unwrap();
         journal.finish(BTreeSet::new()).unwrap();
-        journal.begin("", "other", "change another file", BTreeSet::new()).unwrap();
+        journal
+            .begin("", "other", "change another file", BTreeSet::new())
+            .unwrap();
         std::fs::write(root.path().join("other.txt"), "other conversation\n").unwrap();
         journal.finish(BTreeSet::new()).unwrap();
         app.chat.rollback.inline_reviews = Arc::new(journal.inline_reviews());
@@ -955,53 +979,115 @@ fn unreviewed_files_page_by_conversation_and_keep_non_text_chunks_reviewable() {
     app.refresh_chat_rollback();
     let mut terminal = Terminal::new(TestBackend::new(40, 20)).unwrap();
     let draw = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
-        terminal.draw(|f| crate::ui_chat::draw(f, app, f.area())).unwrap();
+        terminal
+            .draw(|f| crate::ui_chat::draw(f, app, f.area()))
+            .unwrap();
     };
     let file_action = |name: &str| ChatAction::ReviewFile(PathBuf::from(name));
     draw(&mut terminal, &mut app);
-    assert!(app.chat.hits.iter().any(|hit| hit.action == file_action("a.txt")));
-    assert!(!app.chat.hits.iter().any(|hit| hit.action == file_action("d.txt")));
-    let page = app.chat.hits.iter().find(|hit| matches!(hit.action, ChatAction::ReviewFilesPage(_)))
-        .unwrap().action.clone();
+    assert!(
+        app.chat
+            .hits
+            .iter()
+            .any(|hit| hit.action == file_action("a.txt"))
+    );
+    assert!(
+        !app.chat
+            .hits
+            .iter()
+            .any(|hit| hit.action == file_action("d.txt"))
+    );
+    let page = app
+        .chat
+        .hits
+        .iter()
+        .find(|hit| matches!(hit.action, ChatAction::ReviewFilesPage(_)))
+        .unwrap()
+        .action
+        .clone();
     app.chat_action(page);
     draw(&mut terminal, &mut app);
-    assert!(app.chat.hits.iter().any(|hit| hit.action == file_action("d.txt")));
+    assert!(
+        app.chat
+            .hits
+            .iter()
+            .any(|hit| hit.action == file_action("d.txt"))
+    );
 
     app.chat_action(ChatAction::Switch(other));
     draw(&mut terminal, &mut app);
-    assert_eq!(app.chat.hits.iter().filter(|hit| matches!(hit.action, ChatAction::ReviewFile(_)))
-        .map(|hit| hit.action.clone()).collect::<Vec<_>>(), vec![file_action("other.txt")]);
+    assert_eq!(
+        app.chat
+            .hits
+            .iter()
+            .filter(|hit| matches!(hit.action, ChatAction::ReviewFile(_)))
+            .map(|hit| hit.action.clone())
+            .collect::<Vec<_>>(),
+        vec![file_action("other.txt")]
+    );
     app.chat_action(ChatAction::Switch(p::SessionId::new("chat")));
     draw(&mut terminal, &mut app);
-    assert!(app.chat.hits.iter().any(|hit| hit.action == file_action("d.txt")));
+    assert!(
+        app.chat
+            .hits
+            .iter()
+            .any(|hit| hit.action == file_action("d.txt"))
+    );
 
     let mut compact = Terminal::new(TestBackend::new(36, 12)).unwrap();
     draw(&mut compact, &mut app);
-    assert!(app.text_input_area(TextInputId::Chat).is_some_and(|area| area.height >= 2));
-    assert!(app.chat.hits.iter().any(|hit| hit.action == ChatAction::Picker(Picker::Unreviewed)));
+    assert!(
+        app.text_input_area(TextInputId::Chat)
+            .is_some_and(|area| area.height >= 2)
+    );
+    assert!(
+        app.chat
+            .hits
+            .iter()
+            .any(|hit| hit.action == ChatAction::Picker(Picker::Unreviewed))
+    );
     app.chat_action(ChatAction::Picker(Picker::Unreviewed));
     assert_eq!(app.chat.choices.len(), 4);
     assert_eq!(app.chat.choices[0].action, file_action("a.txt"));
     assert_eq!(app.chat.choices[0].detail, "3 pending chunks");
 
     for (name, accept) in [("b.txt", false), ("c.bin", true)] {
-        let choice = app.chat.choices.iter().position(|choice| choice.action == file_action(name)).unwrap();
+        let choice = app
+            .chat
+            .choices
+            .iter()
+            .position(|choice| choice.action == file_action(name))
+            .unwrap();
         app.chat_action(ChatAction::Pick(choice));
         let Some(Picker::ChangeChunk(id, index)) = app.chat.picker else {
             panic!("{name} must open its chunk review");
         };
-        let decision = app.chat.choices.iter().position(|choice| {
-            choice.action == ChatAction::Resolve(Selection::Chunk(id, index), accept)
-        }).unwrap();
+        let decision = app
+            .chat
+            .choices
+            .iter()
+            .position(|choice| {
+                choice.action == ChatAction::Resolve(Selection::Chunk(id, index), accept)
+            })
+            .unwrap();
         app.chat_action(ChatAction::Pick(decision));
         settle(&mut app);
         assert!(app.chat.error.is_none(), "{:?}", app.chat.error);
         app.chat_action(ChatAction::Picker(Picker::Unreviewed));
-        assert!(!app.chat.choices.iter().any(|choice| choice.action == file_action(name)));
+        assert!(
+            !app.chat
+                .choices
+                .iter()
+                .any(|choice| choice.action == file_action(name))
+        );
     }
     assert_eq!(std::fs::read_to_string(&deleted).unwrap(), "deleted text\n");
     assert_eq!(std::fs::read(&binary).unwrap(), [0, 255, 1]);
-    assert!(app.editor_file_review(&root.path().join("d.txt")).unwrap().has_text);
+    assert!(
+        app.editor_file_review(&root.path().join("d.txt"))
+            .unwrap()
+            .has_text
+    );
 }
 
 #[test]
@@ -1041,7 +1127,8 @@ fn chat_rollback_protects_unsaved_split_buffers_and_pending_saves() {
         .unwrap()
         .editor
         .modified = false;
-    app.pending_file_saves.insert(path.clone(), (app.workspace_generation, 1.into()));
+    app.pending_file_saves
+        .insert(path.clone(), (app.workspace_generation, 1.into()));
     app.chat_action(ChatAction::Resolve(Selection::All, false));
     settle(&mut app);
     assert!(app.chat.error.as_ref().unwrap().contains("pending save"));
@@ -1213,7 +1300,8 @@ fn acp_chat_sdk_early_prompt_waits_for_storage_without_pausing_or_sending_twice(
         wait.recv_timeout(Duration::from_secs(30)).unwrap();
         Journal::open(&workspace, &directory).map(|journal| Reply::Loaded(Some(Box::new(journal))))
     });
-    let python = std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
+    let python = std::env::var("VTCODE_ACP_TEST_PYTHON")
+        .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
     let mut config = AgentConfig::new("Checkpoint wait SDK", python);
     config.args = vec![
         "-u".into(),
@@ -1343,7 +1431,8 @@ fn chat_rollback_ignores_transient_and_stale_watcher_deletions() {
     app.open_file(&path);
     let observed_at = Instant::now();
     app.chat.rollback.write_paths = vec![app.chat.rollback.path_key(&path)];
-    let missing = crate::background::WorkspacePathChange { is_dir: false,
+    let missing = crate::background::WorkspacePathChange {
+        is_dir: false,
         path: path.clone(),
         observed_at,
         exists: false,
@@ -1373,7 +1462,8 @@ fn chat_rollback_ignores_transient_and_stale_watcher_deletions() {
         !app.editor().unwrap().modified,
         "an old missing-path observation cannot turn a restored buffer into unsaved content"
     );
-    let current = crate::background::WorkspacePathChange { is_dir: false,
+    let current = crate::background::WorkspacePathChange {
+        is_dir: false,
         path,
         observed_at: Instant::now(),
         exists: false,
@@ -1397,7 +1487,8 @@ fn acp_chat_sdk_round_trip_rollback_shell_and_no_git() {
         std::fs::write(root.path().join("shell.txt"), "first\nkeep\nlast\n").unwrap();
         let mut app = App::test_new();
         app.explorer.root = root.path().into();
-        let python = std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
+        let python = std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md");
         let mut config = AgentConfig::new("Rollback SDK", python);
         config.args = vec![
             "-u".into(),
@@ -1460,17 +1551,32 @@ fn acp_chat_sdk_round_trip_rollback_shell_and_no_git() {
     }
 }
 
-
 #[test]
 fn checkpoint_finishing_waits_only_for_its_own_file_writes() {
     let (_root, _data, mut app, _) = seeded();
     let first = p::SessionId::new("chat");
     let second = p::SessionId::new("second");
-    app.chat.sessions.insert(second.clone(), Session::new(second.clone()));
+    app.chat
+        .sessions
+        .insert(second.clone(), Session::new(second.clone()));
     for id in [&first, &second] {
-        let cp = app.chat.rollback.journal.as_ref().unwrap().lock().unwrap()
-            .begin("", &id.to_string(), "new message", BTreeSet::new()).unwrap();
-        app.chat.rollback.turns.insert((0, id.clone()), TurnCapture { checkpoint: Some(cp), ..Default::default() });
+        let cp = app
+            .chat
+            .rollback
+            .journal
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .begin("", &id.to_string(), "new message", BTreeSet::new())
+            .unwrap();
+        app.chat.rollback.turns.insert(
+            (0, id.clone()),
+            TurnCapture {
+                checkpoint: Some(cp),
+                ..Default::default()
+            },
+        );
     }
     let write = app.chat.rollback.file_request_guard(0, &first, true);
     // Identical session IDs belonging to other agents have independent write counters.
@@ -1495,8 +1601,18 @@ fn close_agent_waits_for_file_writes_and_keeps_the_finished_checkpoint() {
     let id = p::SessionId::new("chat");
     app.chat.agent_order = vec![0];
     let journal = app.chat.rollback.journal.as_ref().unwrap().clone();
-    let cp = journal.lock().unwrap().begin("", "chat", "another change", BTreeSet::new()).unwrap();
-    app.chat.rollback.turns.insert((0, id.clone()), TurnCapture { checkpoint: Some(cp), ..Default::default() });
+    let cp = journal
+        .lock()
+        .unwrap()
+        .begin("", "chat", "another change", BTreeSet::new())
+        .unwrap();
+    app.chat.rollback.turns.insert(
+        (0, id.clone()),
+        TurnCapture {
+            checkpoint: Some(cp),
+            ..Default::default()
+        },
+    );
     app.chat.session_mut().unwrap().busy = true;
     let write = app.chat.rollback.file_request_guard(0, &id, true);
     app.chat_action(ChatAction::CloseAgent(0));
@@ -1511,9 +1627,17 @@ fn close_agent_waits_for_file_writes_and_keeps_the_finished_checkpoint() {
     let journal = journal.lock().unwrap();
     assert!(journal.active().is_none());
     let summary = journal.summary("", "chat");
-    assert!(summary.checkpoints.iter().any(|checkpoint| checkpoint.id == cp));
+    assert!(
+        summary
+            .checkpoints
+            .iter()
+            .any(|checkpoint| checkpoint.id == cp)
+    );
     assert!(!summary.edits.is_empty());
-    assert_eq!(std::fs::read_to_string(root.path().join("a.txt")).unwrap(), "A final file write\n");
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("a.txt")).unwrap(),
+        "A final file write\n"
+    );
 }
 
 #[test]
@@ -1521,14 +1645,35 @@ fn close_agent_keeps_failed_checkpoints_available_for_retry() {
     let (_root, _data, mut app, _) = seeded();
     let id = p::SessionId::new("chat");
     app.chat.agent_order = vec![0];
-    let cp = app.chat.rollback.journal.as_ref().unwrap().lock().unwrap()
-        .begin("", "chat", "another change", BTreeSet::new()).unwrap();
-    app.chat.rollback.turns.insert((0, id), TurnCapture { checkpoint: Some(cp), failed: true, ..Default::default() });
+    let cp = app
+        .chat
+        .rollback
+        .journal
+        .as_ref()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .begin("", "chat", "another change", BTreeSet::new())
+        .unwrap();
+    app.chat.rollback.turns.insert(
+        (0, id),
+        TurnCapture {
+            checkpoint: Some(cp),
+            failed: true,
+            ..Default::default()
+        },
+    );
     app.chat_action(ChatAction::CloseAgent(0));
     app.confirm_close_chat_agent();
     assert!(app.chat.agent_state(0).is_some());
     assert!(!app.chat.closing);
-    assert!(app.chat.error.as_ref().unwrap().contains("Retry the checkpoint"));
+    assert!(
+        app.chat
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("Retry the checkpoint")
+    );
     app.chat_action(ChatAction::RetryCheckpoint);
     settle(&mut app);
     app.chat_action(ChatAction::CloseAgent(0));

@@ -361,12 +361,21 @@ fn dismissing_a_connection_notice_lasts_through_failed_retries_and_recovery() {
         assert!(!f.app.side_notice.visible());
     }
     f.resume();
-    assert!(!f.app.side_notice.visible(), "recovery must not reopen a dismissed notice");
+    assert!(
+        !f.app.side_notice.visible(),
+        "recovery must not reopen a dismissed notice"
+    );
     f.app.begin_remote_disconnect();
-    assert!(f.app.side_notice.visible(), "a new outage deserves its own notice");
+    assert!(
+        f.app.side_notice.visible(),
+        "a new outage deserves its own notice"
+    );
     f.app.side_notice.dismiss(NOTICE_ID);
     f.app.execute_palette_command("remote_connection_status");
-    assert!(f.app.side_notice.visible(), "status can be reopened explicitly");
+    assert!(
+        f.app.side_notice.visible(),
+        "status can be reopened explicitly"
+    );
 }
 
 #[test]

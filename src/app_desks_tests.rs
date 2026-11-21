@@ -38,7 +38,10 @@ fn desk_switch_restores_panes_tools_and_keeps_shared_settings() {
     assert!(app.show_explorer);
     assert!(app.search_query.is_empty());
     assert_eq!(app.build_session().search_history, ["needle"]);
-    assert_eq!(app.build_session().global_search_history, ["workspace needle"]);
+    assert_eq!(
+        app.build_session().global_search_history,
+        ["workspace needle"]
+    );
     app.show_line_numbers = false;
     app.switch_desk(old);
     assert_eq!(app.split_tree, tree);
@@ -168,20 +171,27 @@ fn empty_desk_closes_without_confirmation_from_dropdown_and_command() {
         if dropdown {
             crate::ui_desks::open(&mut app, crate::ui_desks::Mode::Switch);
             let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-            terminal.draw(|f| crate::ui_desks::draw(f, &mut app)).unwrap();
+            terminal
+                .draw(|f| crate::ui_desks::draw(f, &mut app))
+                .unwrap();
             let popup = app.desks.popup.area;
-            let y = (popup.y..popup.bottom()).find(|&y| {
-                let row = (popup.x..popup.right())
-                    .map(|x| terminal.backend().buffer()[(x, y)].symbol())
-                    .collect::<String>();
-                row.contains("Close desk")
-            }).unwrap();
-            assert!(crate::ui_desks::handle_mouse(&mut app, MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: popup.x + 2,
-                row: y,
-                modifiers: KeyModifiers::empty(),
-            }));
+            let y = (popup.y..popup.bottom())
+                .find(|&y| {
+                    let row = (popup.x..popup.right())
+                        .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+                        .collect::<String>();
+                    row.contains("Close desk")
+                })
+                .unwrap();
+            assert!(crate::ui_desks::handle_mouse(
+                &mut app,
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: popup.x + 2,
+                    row: y,
+                    modifiers: KeyModifiers::empty(),
+                }
+            ));
         } else {
             assert!(crate::ui_desks::command(&mut app, "desk_close"));
         }
@@ -196,7 +206,11 @@ fn empty_desk_closes_without_confirmation_from_dropdown_and_command() {
     assert!(empty.tabs.is_empty());
     assert!(crate::ui_desks::command(&mut empty, "desk_close"));
     assert!(empty.desks.popup.mode.is_none());
-    assert_eq!(empty.desk_count(), 1, "keep a usable desk after closing the last one");
+    assert_eq!(
+        empty.desk_count(),
+        1,
+        "keep a usable desk after closing the last one"
+    );
 }
 
 #[test]
@@ -206,14 +220,22 @@ fn closing_desk_still_confirms_tabs_in_inactive_panes_and_untitled_documents() {
     app.editor_mut().unwrap().insert_char('!');
     app.create_split_group_dir(2, SplitDirection::Horizontal);
     app.tabs.clear();
-    assert!(!app.current_desk_is_empty(), "another pane still contains files");
+    assert!(
+        !app.current_desk_is_empty(),
+        "another pane still contains files"
+    );
     let desk = app.desks.active;
     assert!(crate::ui_desks::command(&mut app, "desk_close"));
     assert_eq!(app.desks.popup.mode, Some(crate::ui_desks::Mode::Close));
     assert_eq!(app.desks.active, desk);
     crate::ui_desks::handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()));
     assert_eq!(app.desks.active, desk);
-    assert!(app.groups.iter().flat_map(|g| &g.tabs).any(|t| t.has_unsaved_changes()));
+    assert!(
+        app.groups
+            .iter()
+            .flat_map(|g| &g.tabs)
+            .any(|t| t.has_unsaved_changes())
+    );
 
     let untitled = app.new_desk("Untitled", false);
     app.new_file();
@@ -466,7 +488,9 @@ fn desk_picker_keeps_pane_counts_and_unsaved_markers_visible_for_long_names() {
             app.tab_bar_area = Some(Rect::new(0, 0, width, 1));
             crate::ui_desks::open(&mut app, crate::ui_desks::Mode::Switch);
             let mut terminal = Terminal::new(TestBackend::new(width, 12)).unwrap();
-            terminal.draw(|f| crate::ui_desks::draw(f, &mut app)).unwrap();
+            terminal
+                .draw(|f| crate::ui_desks::draw(f, &mut app))
+                .unwrap();
             let popup = app.desks.popup.area;
             let y = app.desks.popup.input.bottom();
             let row = (popup.x..popup.right())
@@ -474,12 +498,17 @@ fn desk_picker_keeps_pane_counts_and_unsaved_markers_visible_for_long_names() {
                 .collect::<String>();
             assert!(row.contains('…'), "long name needs an ellipsis: {row}");
             assert!(row.contains('●'), "unsaved marker must fit: {row}");
-            assert!(row.contains(if width >= 32 { "3 panes" } else { "3" }), "count must fit: {row}");
+            assert!(
+                row.contains(if width >= 32 { "3 panes" } else { "3" }),
+                "count must fit: {row}"
+            );
 
             // Filtering uses the full name, and clicking the clipped row still
             // selects the right desk, including when only its suffix matches.
             crate::ui_desks::paste(&mut app, "unique-tail");
-            terminal.draw(|f| crate::ui_desks::draw(f, &mut app)).unwrap();
+            terminal
+                .draw(|f| crate::ui_desks::draw(f, &mut app))
+                .unwrap();
             let click = MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: app.desks.popup.area.x + 2,
@@ -505,7 +534,10 @@ fn desk_name_clipping_does_not_split_unicode_graphemes() {
         assert!(clipped.width() <= width);
         let prefix = clipped.strip_suffix('…').unwrap_or(&clipped);
         assert!(name.starts_with(prefix));
-        assert!(name.grapheme_indices(true).any(|(byte, _)| byte == prefix.len()));
+        assert!(
+            name.grapheme_indices(true)
+                .any(|(byte, _)| byte == prefix.len())
+        );
     }
 }
 
@@ -528,7 +560,8 @@ fn render_desk_controls_and_group_popups() {
             }
             "picker" => crate::ui_desks::open(&mut app, crate::ui_desks::Mode::Switch),
             "long-name" => {
-                app.desks.items[0].name = "A really long desk name for a feature implementation".repeat(2);
+                app.desks.items[0].name =
+                    "A really long desk name for a feature implementation".repeat(2);
                 crate::ui_desks::open(&mut app, crate::ui_desks::Mode::Switch);
             }
             "new" => crate::ui_desks::open(&mut app, crate::ui_desks::Mode::New),
@@ -729,7 +762,9 @@ fn corrupt_desk_layout_is_repaired_without_losing_active_files() {
                 .all(|&i| restored.groups.get(i).is_some_and(|g| g.desk == id))
         );
         assert!(
-            restored.panel_height >= 3 && matches!(restored.panel_tab, 1 | 3) && restored.explorer_width >= 15
+            restored.panel_height >= 3
+                && matches!(restored.panel_tab, 1 | 3)
+                && restored.explorer_width >= 15
         );
     }
 }
@@ -779,16 +814,27 @@ fn desk_creation_and_multiselect_use_the_drawn_hit_targets() {
         .unwrap();
     assert_eq!(app.desks.popup.selected, 1);
     let buffer = terminal.backend().buffer();
-    assert_ne!(buffer[(popup.x + 2, copy_row)].bg, buffer[(popup.x + 2, empty_row)].bg);
+    assert_ne!(
+        buffer[(popup.x + 2, copy_row)].bg,
+        buffer[(popup.x + 2, empty_row)].bg
+    );
     for x in popup.x + 1..popup.right() - 1 {
-        assert!(!buffer[(x, copy_row)].modifier.contains(Modifier::UNDERLINED));
+        assert!(
+            !buffer[(x, copy_row)]
+                .modifier
+                .contains(Modifier::UNDERLINED)
+        );
     }
     assert!(crate::ui_desks::handle_mouse(
         &mut app,
         click(popup.x + 2, copy_row, KeyModifiers::empty()),
     ));
     assert_eq!(app.current_desk_name(), name);
-    assert_eq!(app.tabs.len(), 3, "Copy layout uses the bottom row's hit target");
+    assert_eq!(
+        app.tabs.len(),
+        3,
+        "Copy layout uses the bottom row's hit target"
+    );
 
     app.desks.host = app.active_group;
     app.tab_bar_area = Some(area);
@@ -805,7 +851,9 @@ fn desk_creation_and_multiselect_use_the_drawn_hit_targets() {
         click(picker.right() - 1, picker.y, KeyModifiers::empty()),
     ));
     assert_eq!(app.desks.popup.mode, Some(crate::ui_desks::Mode::Switch));
-    terminal.draw(|f| crate::ui_desks::draw(f, &mut app)).unwrap();
+    terminal
+        .draw(|f| crate::ui_desks::draw(f, &mut app))
+        .unwrap();
     let popup = app.desks.popup.area;
     let find_row = |label: &str| {
         (popup.y..popup.bottom())

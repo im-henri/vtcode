@@ -200,7 +200,13 @@ fn benchmark_mapped_diff_scrollbar() {
                             active: false,
                         };
                         if optimized {
-                            draw_mapped_scrollbar(frame, params, &mapping, &Default::default(), None);
+                            draw_mapped_scrollbar(
+                                frame,
+                                params,
+                                &mapping,
+                                &Default::default(),
+                                None,
+                            );
                         } else {
                             draw_scrollbar(frame, params);
                         }

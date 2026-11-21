@@ -1,4 +1,7 @@
-use crate::{app::{ActivePane, App, Tab, WhitespaceMode}, editor::Editor};
+use crate::{
+    app::{ActivePane, App, Tab, WhitespaceMode},
+    editor::Editor,
+};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer, layout::Rect};
 
@@ -20,7 +23,9 @@ fn fixture(text: &str, tab_size: usize, wrapped: bool) -> App {
 
 fn draw(app: &mut App, width: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, 14)).unwrap();
-    terminal.draw(|frame| crate::ui_editor::draw_editor(frame, app, Rect::new(0, 0, width, 14))).unwrap();
+    terminal
+        .draw(|frame| crate::ui_editor::draw_editor(frame, app, Rect::new(0, 0, width, 14)))
+        .unwrap();
     terminal.backend().buffer().clone()
 }
 
@@ -30,14 +35,24 @@ fn cell(buffer: &Buffer, area: Rect, needle: &str) -> (u16, u16) {
             if needle.chars().enumerate().all(|(i, ch)| {
                 x as usize + i < area.right() as usize
                     && buffer[(x + i as u16, y)].symbol() == ch.to_string()
-            }) { return (x, y); }
+            }) {
+                return (x, y);
+            }
         }
     }
     panic!("{needle} was not rendered in {area:?}");
 }
 
 fn mouse(app: &mut App, at: (u16, u16), kind: MouseEventKind, modifiers: KeyModifiers) {
-    crate::mouse::handle_mouse(app, MouseEvent { kind, column: at.0, row: at.1, modifiers });
+    crate::mouse::handle_mouse(
+        app,
+        MouseEvent {
+            kind,
+            column: at.0,
+            row: at.1,
+            modifiers,
+        },
+    );
 }
 
 #[test]
@@ -45,10 +60,15 @@ fn tabs_and_spaces_map_cells_to_source_before_paint_and_after_cache_changes() {
     let mut app = fixture(" \t\tX \tY\r\n", 4, false);
     let expected = [0, 1, 1, 1, 2, 2, 2, 2, 3, 4, 5, 5, 6, 7, 7];
     for painted in [false, true] {
-        if painted { draw(&mut app, 80); }
+        if painted {
+            draw(&mut app, 80);
+        }
         let editor = app.editor().unwrap();
         for (x, &column) in expected.iter().enumerate() {
-            assert_eq!(editor.source_column_at_cell(0, 0, usize::MAX, x), (column, x < 13));
+            assert_eq!(
+                editor.source_column_at_cell(0, 0, usize::MAX, x),
+                (column, x < 13)
+            );
         }
         for (x, column) in [2, 2, 2, 2, 3, 4, 5, 5, 6, 7].into_iter().enumerate() {
             assert_eq!(editor.source_column_at_cell(0, 2, 7, x).0, column);
@@ -56,7 +76,10 @@ fn tabs_and_spaces_map_cells_to_source_before_paint_and_after_cache_changes() {
     }
     app.editor_mut().unwrap().tab_size = 2;
     for (x, column) in [0, 1, 2, 2, 3, 4, 5, 5, 6, 7].into_iter().enumerate() {
-        assert_eq!(app.editor().unwrap().source_column_at_cell(0, 0, 7, x).0, column);
+        assert_eq!(
+            app.editor().unwrap().source_column_at_cell(0, 0, 7, x).0,
+            column
+        );
     }
     // Text edits invalidate the painted glyph cache, including equal-length edits.
     let editor = app.editor_mut().unwrap();
@@ -66,7 +89,15 @@ fn tabs_and_spaces_map_cells_to_source_before_paint_and_after_cache_changes() {
 
 #[test]
 fn clicks_double_clicks_and_alt_clicks_hit_the_painted_word_after_indentation() {
-    for prefix in ["\t", " \t", "\t \t", "  \t\t ", "\t\t\t", "界\t", "e\u{301}\t"] {
+    for prefix in [
+        "\t",
+        " \t",
+        "\t \t",
+        "  \t\t ",
+        "\t\t\t",
+        "界\t",
+        "e\u{301}\t",
+    ] {
         for tab_size in [2, 4, 8] {
             for pan in [0, 1] {
                 for large in [false, true] {
@@ -76,19 +107,60 @@ fn clicks_double_clicks_and_alt_clicks_hit_the_painted_word_after_indentation() 
                     let buffer = draw(&mut app, 80);
                     let at = cell(&buffer, app.code_area.unwrap(), "TARGET");
                     let column = prefix.chars().count();
-                    assert_eq!(crate::app_lsp_links::editor_position_at(&mut app, at.0, at.1), Some((0, column)));
-                    mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
-                    mouse(&mut app, at, MouseEventKind::Up(MouseButton::Left), KeyModifiers::NONE);
-                    assert_eq!(app.editor().unwrap().horizontal_scroll, pan, "click moved the text under the pointer");
-                    assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col),
-                        (0, column), "prefix={prefix:?}, tabs={tab_size}, pan={pan}, large={large}");
-                    mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
-                    mouse(&mut app, at, MouseEventKind::Up(MouseButton::Left), KeyModifiers::NONE);
-                    assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some("TARGET"));
+                    assert_eq!(
+                        crate::app_lsp_links::editor_position_at(&mut app, at.0, at.1),
+                        Some((0, column))
+                    );
+                    mouse(
+                        &mut app,
+                        at,
+                        MouseEventKind::Down(MouseButton::Left),
+                        KeyModifiers::NONE,
+                    );
+                    mouse(
+                        &mut app,
+                        at,
+                        MouseEventKind::Up(MouseButton::Left),
+                        KeyModifiers::NONE,
+                    );
+                    assert_eq!(
+                        app.editor().unwrap().horizontal_scroll,
+                        pan,
+                        "click moved the text under the pointer"
+                    );
+                    assert_eq!(
+                        (
+                            app.editor().unwrap().cursor_line,
+                            app.editor().unwrap().cursor_col
+                        ),
+                        (0, column),
+                        "prefix={prefix:?}, tabs={tab_size}, pan={pan}, large={large}"
+                    );
+                    mouse(
+                        &mut app,
+                        at,
+                        MouseEventKind::Down(MouseButton::Left),
+                        KeyModifiers::NONE,
+                    );
+                    mouse(
+                        &mut app,
+                        at,
+                        MouseEventKind::Up(MouseButton::Left),
+                        KeyModifiers::NONE,
+                    );
+                    assert_eq!(
+                        app.editor().unwrap().selected_text().as_deref(),
+                        Some("TARGET")
+                    );
                     let editor = app.editor_mut().unwrap();
                     editor.clear_selection();
                     editor.cursor_col = 0;
-                    mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), KeyModifiers::ALT);
+                    mouse(
+                        &mut app,
+                        at,
+                        MouseEventKind::Down(MouseButton::Left),
+                        KeyModifiers::ALT,
+                    );
                     assert_eq!(app.editor().unwrap().extra_cursors, [(0, column)]);
                 }
             }
@@ -124,15 +196,28 @@ fn clicks_on_short_unwrapped_lines_reveal_the_caret_without_vertical_scrolling()
             let row = area.y + (line - scroll) as u16;
             let at = (area.x + 20, row);
 
-            mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), modifiers);
+            mouse(
+                &mut app,
+                at,
+                MouseEventKind::Down(MouseButton::Left),
+                modifiers,
+            );
             let editor = app.editor().unwrap();
             assert_eq!((editor.cursor_line, editor.cursor_col), (line, end));
             assert_eq!(editor.scroll_offset, scroll);
             assert_eq!(editor.horizontal_scroll, end.saturating_sub(4));
             let column = editor.cell_at_source_column(line, editor.horizontal_scroll, end);
             let buffer = draw(&mut app, 80);
-            assert_eq!(buffer[(area.x + column as u16, row)].bg, app.colors.bg_cursor);
-            mouse(&mut app, at, MouseEventKind::Up(MouseButton::Left), modifiers);
+            assert_eq!(
+                buffer[(area.x + column as u16, row)].bg,
+                app.colors.bg_cursor
+            );
+            mouse(
+                &mut app,
+                at,
+                MouseEventKind::Up(MouseButton::Left),
+                modifiers,
+            );
         }
     }
 }
@@ -144,7 +229,12 @@ fn click_at_the_left_edge_of_a_panned_line_keeps_the_text_in_place() {
     draw(&mut app, 80);
     let area = app.code_area.unwrap();
     let at = (area.x, area.y);
-    mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
+    mouse(
+        &mut app,
+        at,
+        MouseEventKind::Down(MouseButton::Left),
+        KeyModifiers::NONE,
+    );
     let editor = app.editor().unwrap();
     assert_eq!((editor.cursor_col, editor.horizontal_scroll), (100, 100));
 }
@@ -158,8 +248,18 @@ fn double_click_reveals_a_word_end_beyond_the_right_edge() {
     let area = app.code_area.unwrap();
     let at = (area.x + 6, area.y);
     for _ in 0..2 {
-        mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
-        mouse(&mut app, at, MouseEventKind::Up(MouseButton::Left), KeyModifiers::NONE);
+        mouse(
+            &mut app,
+            at,
+            MouseEventKind::Down(MouseButton::Left),
+            KeyModifiers::NONE,
+        );
+        mouse(
+            &mut app,
+            at,
+            MouseEventKind::Up(MouseButton::Left),
+            KeyModifiers::NONE,
+        );
     }
     let editor = app.editor().unwrap();
     assert_eq!(editor.selected_text().as_deref(), Some(word.as_str()));
@@ -168,7 +268,10 @@ fn double_click_reveals_a_word_end_beyond_the_right_edge() {
     let column = editor.cell_at_source_column(0, editor.horizontal_scroll, editor.cursor_col);
     assert!(column < usize::from(area.width));
     let buffer = draw(&mut app, 80);
-    assert_eq!(buffer[(area.x + column as u16, area.y)].bg, app.colors.bg_cursor);
+    assert_eq!(
+        buffer[(area.x + column as u16, area.y)].bg,
+        app.colors.bg_cursor
+    );
 }
 
 #[test]
@@ -180,15 +283,43 @@ fn drag_and_shift_selection_use_the_same_tab_mapping_as_clicks() {
         let end = (at.0 + 6, at.1);
         for shifted in [false, true] {
             app.last_click_time = std::time::Instant::now() - std::time::Duration::from_secs(1);
-            mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
+            mouse(
+                &mut app,
+                at,
+                MouseEventKind::Down(MouseButton::Left),
+                KeyModifiers::NONE,
+            );
             if shifted {
-                mouse(&mut app, at, MouseEventKind::Up(MouseButton::Left), KeyModifiers::NONE);
-                mouse(&mut app, end, MouseEventKind::Down(MouseButton::Left), KeyModifiers::SHIFT);
+                mouse(
+                    &mut app,
+                    at,
+                    MouseEventKind::Up(MouseButton::Left),
+                    KeyModifiers::NONE,
+                );
+                mouse(
+                    &mut app,
+                    end,
+                    MouseEventKind::Down(MouseButton::Left),
+                    KeyModifiers::SHIFT,
+                );
             } else {
-                mouse(&mut app, end, MouseEventKind::Drag(MouseButton::Left), KeyModifiers::NONE);
+                mouse(
+                    &mut app,
+                    end,
+                    MouseEventKind::Drag(MouseButton::Left),
+                    KeyModifiers::NONE,
+                );
             }
-            mouse(&mut app, end, MouseEventKind::Up(MouseButton::Left), KeyModifiers::NONE);
-            assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some("TARGET"));
+            mouse(
+                &mut app,
+                end,
+                MouseEventKind::Up(MouseButton::Left),
+                KeyModifiers::NONE,
+            );
+            assert_eq!(
+                app.editor().unwrap().selected_text().as_deref(),
+                Some("TARGET")
+            );
         }
     }
 }
@@ -200,21 +331,52 @@ fn rectangular_selection_matches_visual_columns_with_mixed_indentation() {
             let mut app = fixture("\t\tabcdef\n  \t    abcdef\n        abcdef\n", 4, wrapped);
             let buffer = draw(&mut app, 80);
             let at = cell(&buffer, app.code_area.unwrap(), "abcdef");
-            let (button, modifiers) = if middle { (MouseButton::Middle, KeyModifiers::NONE) }
-                else { (MouseButton::Left, KeyModifiers::ALT | KeyModifiers::SHIFT) };
+            let (button, modifiers) = if middle {
+                (MouseButton::Middle, KeyModifiers::NONE)
+            } else {
+                (MouseButton::Left, KeyModifiers::ALT | KeyModifiers::SHIFT)
+            };
             mouse(&mut app, at, MouseEventKind::Down(button), modifiers);
-            for (delta, last_row) in [(3i16, 1), (3, 2), (3, 1), (3, 2),
-                (-1, 2), (-1, 1), (-1, 2), (0, 2), (3, 2)] {
-                mouse(&mut app, (at.0.checked_add_signed(delta).unwrap(), at.1 + last_row), MouseEventKind::Drag(button), modifiers);
+            for (delta, last_row) in [
+                (3i16, 1),
+                (3, 2),
+                (3, 1),
+                (3, 2),
+                (-1, 2),
+                (-1, 1),
+                (-1, 2),
+                (0, 2),
+                (3, 2),
+            ] {
+                mouse(
+                    &mut app,
+                    (at.0.checked_add_signed(delta).unwrap(), at.1 + last_row),
+                    MouseEventKind::Drag(button),
+                    modifiers,
+                );
                 let editor = app.editor().unwrap();
-                let positions: Vec<_> = std::iter::once(((editor.cursor_line, editor.cursor_col), editor.selection_anchor))
-                    .chain(editor.extra_cursors.iter().copied().zip(editor.extra_cursor_anchors.iter().copied()))
-                    .collect();
+                let positions: Vec<_> = std::iter::once((
+                    (editor.cursor_line, editor.cursor_col),
+                    editor.selection_anchor,
+                ))
+                .chain(
+                    editor
+                        .extra_cursors
+                        .iter()
+                        .copied()
+                        .zip(editor.extra_cursor_anchors.iter().copied()),
+                )
+                .collect();
                 assert_eq!(positions.len(), usize::from(last_row) + 1);
                 for ((line, column), anchor) in positions {
                     let prefix = [2usize, 7, 8][line];
-                    assert_eq!((column, anchor), (prefix.checked_add_signed(isize::from(delta)).unwrap(),
-                        (delta != 0).then_some((line, prefix))));
+                    assert_eq!(
+                        (column, anchor),
+                        (
+                            prefix.checked_add_signed(isize::from(delta)).unwrap(),
+                            (delta != 0).then_some((line, prefix))
+                        )
+                    );
                 }
             }
         }
@@ -226,8 +388,12 @@ fn rectangular_character_selections_match_ordinary_caret_and_paint() {
     for wrapped in [false, true] {
         for middle in [false, true] {
             // Ordinary characters, a tab, a wide glyph, and the final character.
-            for (source, left, right) in [("abcdef\n", 1, 2), ("a\tbc\n", 1, 4),
-                ("a界bc\n", 1, 3), ("ab\n", 1, 2)] {
+            for (source, left, right) in [
+                ("abcdef\n", 1, 2),
+                ("a\tbc\n", 1, 4),
+                ("a界bc\n", 1, 3),
+                ("ab\n", 1, 2),
+            ] {
                 for backward in [false, true] {
                     let text = source.repeat(6);
                     let mut ordinary = fixture(&text, 4, wrapped);
@@ -243,40 +409,81 @@ fn rectangular_character_selections_match_ordinary_caret_and_paint() {
                     }
                     let area = ordinary.code_area.unwrap();
                     assert_eq!(area, block.code_area.unwrap());
-                    let (start, end) = if backward { (right, left) } else { (left, right) };
-                    mouse(&mut ordinary, (area.x + start, area.y),
-                        MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
-                    mouse(&mut ordinary, (area.x + end, area.y),
-                        MouseEventKind::Drag(MouseButton::Left), KeyModifiers::NONE);
+                    let (start, end) = if backward {
+                        (right, left)
+                    } else {
+                        (left, right)
+                    };
+                    mouse(
+                        &mut ordinary,
+                        (area.x + start, area.y),
+                        MouseEventKind::Down(MouseButton::Left),
+                        KeyModifiers::NONE,
+                    );
+                    mouse(
+                        &mut ordinary,
+                        (area.x + end, area.y),
+                        MouseEventKind::Drag(MouseButton::Left),
+                        KeyModifiers::NONE,
+                    );
                     let expected_paint = draw(&mut ordinary, 80);
                     let expected = ordinary.editor().unwrap();
                     let column = expected.cursor_col;
                     let anchor = expected.selection_anchor.unwrap().1;
                     assert_ne!(column, anchor);
                     if !backward {
-                        assert_ne!(expected_paint[(area.x + left, area.y)].bg,
+                        assert_ne!(
+                            expected_paint[(area.x + left, area.y)].bg,
                             expected_paint[(area.x + right, area.y)].bg,
-                            "the one-character selection must remain visible beside the caret");
+                            "the one-character selection must remain visible beside the caret"
+                        );
                     }
-                    let (button, modifiers) = if middle { (MouseButton::Middle, KeyModifiers::NONE) }
-                        else { (MouseButton::Left, KeyModifiers::ALT | KeyModifiers::SHIFT) };
-                    mouse(&mut block, (area.x + start, area.y), MouseEventKind::Down(button), modifiers);
+                    let (button, modifiers) = if middle {
+                        (MouseButton::Middle, KeyModifiers::NONE)
+                    } else {
+                        (MouseButton::Left, KeyModifiers::ALT | KeyModifiers::SHIFT)
+                    };
+                    mouse(
+                        &mut block,
+                        (area.x + start, area.y),
+                        MouseEventKind::Down(button),
+                        modifiers,
+                    );
                     // Exercise cold projection, cached extension/shrink, and the indexed
                     // renderer used when more than four secondary cursors are visible.
                     for last_row in [1, 5, 2, 5] {
-                        mouse(&mut block, (area.x + end, area.y + last_row), MouseEventKind::Drag(button), modifiers);
+                        mouse(
+                            &mut block,
+                            (area.x + end, area.y + last_row),
+                            MouseEventKind::Drag(button),
+                            modifiers,
+                        );
                         let actual_paint = draw(&mut block, 80);
                         let editor = block.editor().unwrap();
-                        let positions = std::iter::once(((editor.cursor_line, editor.cursor_col), editor.selection_anchor))
-                            .chain(editor.extra_cursors.iter().copied().zip(editor.extra_cursor_anchors.iter().copied()));
+                        let positions = std::iter::once((
+                            (editor.cursor_line, editor.cursor_col),
+                            editor.selection_anchor,
+                        ))
+                        .chain(
+                            editor
+                                .extra_cursors
+                                .iter()
+                                .copied()
+                                .zip(editor.extra_cursor_anchors.iter().copied()),
+                        );
                         assert_eq!(editor.extra_cursors.len(), usize::from(last_row));
                         for (row, ((line, col), selection_anchor)) in positions.enumerate() {
-                            assert_eq!((line, col, selection_anchor), (row, column, Some((row, anchor))),
-                                "source={source:?}, wrap={wrapped}, middle={middle}, backward={backward}");
+                            assert_eq!(
+                                (line, col, selection_anchor),
+                                (row, column, Some((row, anchor))),
+                                "source={source:?}, wrap={wrapped}, middle={middle}, backward={backward}"
+                            );
                             for x in left..=right {
-                                assert_eq!(actual_paint[(area.x + x, area.y + row as u16)],
+                                assert_eq!(
+                                    actual_paint[(area.x + x, area.y + row as u16)],
                                     expected_paint[(area.x + x, area.y)],
-                                    "selection/caret paint at column {x}, row {row}, source={source:?}");
+                                    "selection/caret paint at column {x}, row {row}, source={source:?}"
+                                );
                             }
                         }
                     }
@@ -288,16 +495,39 @@ fn rectangular_character_selections_match_ordinary_caret_and_paint() {
 
 #[test]
 fn wrapped_continuation_and_folded_rows_hit_the_rendered_source() {
-    for text in ["prefix prefix prefix prefix \tTARGET tail\n", "first\n hidden\n hidden\n \tTARGET\n"] {
+    for text in [
+        "prefix prefix prefix prefix \tTARGET tail\n",
+        "first\n hidden\n hidden\n \tTARGET\n",
+    ] {
         let mut app = fixture(text, 4, true);
-        if text.starts_with("first") { app.editor_mut().unwrap().folded_ranges.insert(0, 3); }
+        if text.starts_with("first") {
+            app.editor_mut().unwrap().folded_ranges.insert(0, 3);
+        }
         let buffer = draw(&mut app, 38);
         let at = cell(&buffer, app.code_area.unwrap(), "TARGET");
         assert!(at.1 > app.code_area.unwrap().y);
         let line = if text.starts_with("first") { 3 } else { 0 };
-        let column = app.editor().unwrap().rope.line(line).chars().position(|ch| ch == 'T').unwrap();
-        mouse(&mut app, at, MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
-        assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (line, column));
+        let column = app
+            .editor()
+            .unwrap()
+            .rope
+            .line(line)
+            .chars()
+            .position(|ch| ch == 'T')
+            .unwrap();
+        mouse(
+            &mut app,
+            at,
+            MouseEventKind::Down(MouseButton::Left),
+            KeyModifiers::NONE,
+        );
+        assert_eq!(
+            (
+                app.editor().unwrap().cursor_line,
+                app.editor().unwrap().cursor_col
+            ),
+            (line, column)
+        );
     }
 }
 
@@ -306,13 +536,41 @@ fn changing_tab_size_during_column_drag_reprojects_every_selected_line() {
     let mut app = fixture("\t\tabcdef\n\t\tabcdef\n\t\tabcdef\n", 4, false);
     draw(&mut app, 80);
     let area = app.code_area.unwrap();
-    mouse(&mut app, (area.x, area.y), MouseEventKind::Down(MouseButton::Middle), KeyModifiers::NONE);
-    mouse(&mut app, (area.x + 4, area.y + 1), MouseEventKind::Drag(MouseButton::Middle), KeyModifiers::NONE);
-    assert_eq!((app.editor().unwrap().cursor_col, app.editor().unwrap().selection_anchor), (1, Some((0, 0))));
+    mouse(
+        &mut app,
+        (area.x, area.y),
+        MouseEventKind::Down(MouseButton::Middle),
+        KeyModifiers::NONE,
+    );
+    mouse(
+        &mut app,
+        (area.x + 4, area.y + 1),
+        MouseEventKind::Drag(MouseButton::Middle),
+        KeyModifiers::NONE,
+    );
+    assert_eq!(
+        (
+            app.editor().unwrap().cursor_col,
+            app.editor().unwrap().selection_anchor
+        ),
+        (1, Some((0, 0)))
+    );
     app.editor_mut().unwrap().tab_size = 2;
-    mouse(&mut app, (area.x + 4, area.y + 2), MouseEventKind::Drag(MouseButton::Middle), KeyModifiers::NONE);
+    mouse(
+        &mut app,
+        (area.x + 4, area.y + 2),
+        MouseEventKind::Drag(MouseButton::Middle),
+        KeyModifiers::NONE,
+    );
     let editor = app.editor().unwrap();
-    assert_eq!((editor.cursor_line, editor.cursor_col, editor.selection_anchor), (0, 2, Some((0, 0))));
+    assert_eq!(
+        (
+            editor.cursor_line,
+            editor.cursor_col,
+            editor.selection_anchor
+        ),
+        (0, 2, Some((0, 0)))
+    );
     assert_eq!(editor.extra_cursors, [(1, 2), (2, 2)]);
     assert_eq!(editor.extra_cursor_anchors, [Some((1, 0)), Some((2, 0))]);
 }
@@ -323,16 +581,45 @@ fn double_click_inside_a_tab_selects_the_mixed_whitespace_run() {
     draw(&mut app, 80);
     let area = app.code_area.unwrap();
     for _ in 0..2 {
-        mouse(&mut app, (area.x + 2, area.y), MouseEventKind::Down(MouseButton::Left), KeyModifiers::NONE);
-        mouse(&mut app, (area.x + 2, area.y), MouseEventKind::Up(MouseButton::Left), KeyModifiers::NONE);
+        mouse(
+            &mut app,
+            (area.x + 2, area.y),
+            MouseEventKind::Down(MouseButton::Left),
+            KeyModifiers::NONE,
+        );
+        mouse(
+            &mut app,
+            (area.x + 2, area.y),
+            MouseEventKind::Up(MouseButton::Left),
+            KeyModifiers::NONE,
+        );
     }
-    assert_eq!(app.editor().unwrap().selected_text().as_deref(), Some("\t  \t"));
+    assert_eq!(
+        app.editor().unwrap().selected_text().as_deref(),
+        Some("\t  \t")
+    );
 }
 
 #[test]
 fn distant_plain_text_hit_does_not_need_a_decoded_prefix() {
     let editor = Editor::test_with_text(&"a".repeat(2_000_000));
-    assert_eq!(editor.source_column_at_cell(0, 1_900_000, 2_000_000, 17), (1_900_017, true));
-    assert!(editor.render_line_cache.borrow().pointer_glyphs(0,
-        (editor.content_version, editor.wrap_revision, editor.tab_size), &editor.rope).is_none());
+    assert_eq!(
+        editor.source_column_at_cell(0, 1_900_000, 2_000_000, 17),
+        (1_900_017, true)
+    );
+    assert!(
+        editor
+            .render_line_cache
+            .borrow()
+            .pointer_glyphs(
+                0,
+                (
+                    editor.content_version,
+                    editor.wrap_revision,
+                    editor.tab_size
+                ),
+                &editor.rope
+            )
+            .is_none()
+    );
 }

@@ -10,15 +10,23 @@ fn tokens(network: &Network<'_>, text: &str) -> Vec<u16> {
 }
 
 fn synthetic(count: usize) -> Vec<u16> {
-    (0..count).map(|at| (300 + (at * 37) % 4000) as u16).collect()
+    (0..count)
+        .map(|at| (300 + (at * 37) % 4000) as u16)
+        .collect()
 }
 
-fn read(network: &Network<'_>, session: &mut Session, passages: &Passages, tokens: &[u16]) -> Vec<f32> {
+fn read(
+    network: &Network<'_>,
+    session: &mut Session,
+    passages: &Passages,
+    tokens: &[u16],
+) -> Vec<f32> {
     assert!(network.read(session, passages, tokens, 0, 1, &|| false));
     network.probabilities(session).to_vec()
 }
 
-const SOURCE: &str = "fn area(width: u32, height: u32) -> u32 {\n    let total = width * height;\n    total";
+const SOURCE: &str =
+    "fn area(width: u32, height: u32) -> u32 {\n    let total = width * height;\n    total";
 
 #[test]
 fn damaged_model_files_are_rejected() {
@@ -29,7 +37,11 @@ fn damaged_model_files_are_rejected() {
         return; // No model asset in this build.
     }
     let network = Network::decode(bytes).unwrap();
-    assert!(bytes.as_ptr_range().contains(&network.token.cells.as_ptr().cast()));
+    assert!(
+        bytes
+            .as_ptr_range()
+            .contains(&network.token.cells.as_ptr().cast())
+    );
     assert!(Network::decode(&bytes[..bytes.len() - 1]).is_none());
     let mut longer = bytes.to_vec();
     longer.push(0);
@@ -95,7 +107,11 @@ fn the_window_slides_along_instead_of_starting_over() {
         let from = network.start(&session, typed);
         assert!(network.read(&mut session, &none, &text[from..typed], from, 1, &|| false));
         assert!(session.held() <= window, "{}", session.held());
-        typed += if typed == text.len() { 1 } else { 37.min(text.len() - typed) };
+        typed += if typed == text.len() {
+            1
+        } else {
+            37.min(text.len() - typed)
+        };
     }
     // Typing through two windows computed every token once, never again.
     assert_eq!(session.computed, text.len());
@@ -150,7 +166,10 @@ fn the_model_writes_on_from_what_was_typed() {
     let Some(network) = embedded() else { return };
     let none = Passages::default();
     let mut session = Session::default();
-    let text = tokens(network, "fn main() {\n    let total = 1;\n    let other = 2;\n   ");
+    let text = tokens(
+        network,
+        "fn main() {\n    let total = 1;\n    let other = 2;\n   ",
+    );
     read(network, &mut session, &none, &text);
     let mark = session.mark();
     // The unfinished piece is spelled out first, capitals aside, and the
@@ -170,12 +189,19 @@ fn the_model_writes_on_from_what_was_typed() {
     // of the chances it wrote it with.
     let tail = std::str::from_utf8(&written.bytes[3..]).unwrap_or("");
     if !tail.is_empty() && written.bytes[..3] == *b" le" {
-        let chance = network.chance(&mut session, mark, b" le", tail.as_bytes(), &|| false).unwrap();
+        let chance = network
+            .chance(&mut session, mark, b" le", tail.as_bytes(), &|| false)
+            .unwrap();
         let product: f32 = written.steps.iter().map(|step| step.1).product();
-        assert!((chance - product).abs() < 0.02 + product * 0.2, "{chance} {product}");
+        assert!(
+            (chance - product).abs() < 0.02 + product * 0.2,
+            "{chance} {product}"
+        );
     }
     // Text it would never write has next to no chance.
-    let odd = network.chance(&mut session, mark, b" le", b"qzx9#", &|| false).unwrap();
+    let odd = network
+        .chance(&mut session, mark, b" le", b"qzx9#", &|| false)
+        .unwrap();
     assert!(odd < 0.01, "{odd}");
     // A cancelled writing still returns, and the session reads on.
     network.cut(&mut session, mark);
@@ -216,22 +242,38 @@ fn a_cancelled_computation_leaves_the_session_usable() {
 
 #[test]
 fn the_blocked_product_matches_plain_inner_products_for_any_shape() {
-    for (rows, cols, tokens) in [(1, 8, 1), (3, 16, 5), (6, 24, 4), (7, 40, 9), (9, 12, 3), (32, 64, 130), (64, 128, 64), (37, 64, 1)] {
+    for (rows, cols, tokens) in [
+        (1, 8, 1),
+        (3, 16, 5),
+        (6, 24, 4),
+        (7, 40, 9),
+        (9, 12, 3),
+        (32, 64, 130),
+        (64, 128, 64),
+        (37, 64, 1),
+    ] {
         let cells: Vec<i8> = (0..rows * cols).map(|i| (i * 31 % 17) as i8 - 8).collect();
         let weights = Matrix {
             scale: 0.125,
             cells: &cells,
         };
-        let input: Vec<f32> = (0..tokens * cols).map(|i| ((i * 13 % 11) as f32 - 5.) * 0.25).collect();
+        let input: Vec<f32> = (0..tokens * cols)
+            .map(|i| ((i * 13 % 11) as f32 - 5.) * 0.25)
+            .collect();
         let mut output = Vec::new();
         matmul(&weights, cols, &input, tokens, &mut output);
         assert_eq!(output.len(), rows * tokens);
         let weights = weights.floats();
         for token in 0..tokens {
             for row in 0..rows {
-                let exact: f32 = (0..cols).map(|k| weights[row * cols + k] * input[token * cols + k]).sum();
+                let exact: f32 = (0..cols)
+                    .map(|k| weights[row * cols + k] * input[token * cols + k])
+                    .sum();
                 let got = output[token * rows + row];
-                assert!((got - exact).abs() <= 1e-3 * (1. + exact.abs()), "{rows}x{cols}x{tokens} at {row},{token}");
+                assert!(
+                    (got - exact).abs() <= 1e-3 * (1. + exact.abs()),
+                    "{rows}x{cols}x{tokens} at {row},{token}"
+                );
             }
         }
     }
@@ -242,19 +284,30 @@ fn the_blocked_product_matches_plain_inner_products_for_any_shape() {
         scale: 0.01,
         cells: &cells,
     };
-    let input: Vec<f32> = (0..tokens * cols).map(|i| ((i * 5 % 9) as f32 - 4.) * 0.1).collect();
+    let input: Vec<f32> = (0..tokens * cols)
+        .map(|i| ((i * 5 % 9) as f32 - 4.) * 0.1)
+        .collect();
     let mut output = Vec::new();
     matmul(&weights, cols, &input, tokens, &mut output);
     let weights = weights.floats();
     for (token, row) in [(0, 0), (63, 511), (17, 300), (40, 1)] {
-        let exact: f32 = (0..cols).map(|k| weights[row * cols + k] * input[token * cols + k]).sum();
+        let exact: f32 = (0..cols)
+            .map(|k| weights[row * cols + k] * input[token * cols + k])
+            .sum();
         assert!((output[token * rows + row] - exact).abs() <= 1e-3 * (1. + exact.abs()));
     }
 }
 
 #[test]
 fn attention_weighs_positions_the_same_with_and_without_the_fast_path() {
-    for (heads, head, count) in [(8, 32, 1), (8, 32, 7), (8, 32, 133), (4, 16, 9), (6, 64, 20), (3, 12, 5)] {
+    for (heads, head, count) in [
+        (8, 32, 1),
+        (8, 32, 7),
+        (8, 32, 133),
+        (4, 16, 9),
+        (6, 64, 20),
+        (3, 12, 5),
+    ] {
         let width = heads * head;
         let cell = |i: usize, a: usize, b: usize| ((i * a % b) as f32 - (b / 2) as f32) * 0.07;
         let query: Vec<f32> = (0..width).map(|i| cell(i, 31, 17)).collect();
@@ -262,13 +315,25 @@ fn attention_weighs_positions_the_same_with_and_without_the_fast_path() {
         let values: Vec<f32> = (0..count * width).map(|i| cell(i, 7, 19)).collect();
         let scale = 1. / (head as f32).sqrt();
         let mut out = vec![0.5f32; width];
-        attend(&query, &keys, &values, heads, scale, &mut out, &mut Vec::new());
+        attend(
+            &query,
+            &keys,
+            &values,
+            heads,
+            scale,
+            &mut out,
+            &mut Vec::new(),
+        );
         for part in 0..heads {
             let span = part * head..(part + 1) * head;
             let scores: Vec<f64> = keys
                 .chunks_exact(width)
                 .map(|key| {
-                    let dot: f64 = query[span.clone()].iter().zip(&key[span.clone()]).map(|(a, b)| f64::from(*a) * f64::from(*b)).sum();
+                    let dot: f64 = query[span.clone()]
+                        .iter()
+                        .zip(&key[span.clone()])
+                        .map(|(a, b)| f64::from(*a) * f64::from(*b))
+                        .sum();
                     dot * f64::from(scale)
                 })
                 .collect();
@@ -281,7 +346,10 @@ fn attention_weighs_positions_the_same_with_and_without_the_fast_path() {
                         .zip(values.chunks_exact(width))
                         .map(|(score, value)| (score - peak).exp() / total * f64::from(value[cell]))
                         .sum::<f64>();
-                assert!((f64::from(out[cell]) - exact).abs() < 1e-4, "{heads}x{head}x{count} at {cell}");
+                assert!(
+                    (f64::from(out[cell]) - exact).abs() < 1e-4,
+                    "{heads}x{head}x{count} at {cell}"
+                );
             }
         }
     }
@@ -300,14 +368,21 @@ fn shared_work_runs_every_index_once_whoever_asks() {
                     parallel(count, &|index| {
                         hits[index].fetch_add(1, Ordering::Relaxed);
                     });
-                    assert!(hits.iter().all(|hit| hit.load(Ordering::Relaxed) == 1), "{caller} {count}");
+                    assert!(
+                        hits.iter().all(|hit| hit.load(Ordering::Relaxed) == 1),
+                        "{caller} {count}"
+                    );
                 }
             });
         }
     });
     let bytes: Vec<i8> = (0..37).map(|i| (i * 7 % 23) as i8 - 11).collect();
     let values: Vec<f32> = (0..37).map(|i| (i % 5) as f32 * 0.5).collect();
-    let exact: f32 = bytes.iter().zip(&values).map(|(&b, v)| f32::from(b) * v).sum();
+    let exact: f32 = bytes
+        .iter()
+        .zip(&values)
+        .map(|(&b, v)| f32::from(b) * v)
+        .sum();
     assert!((dot_bytes(&bytes, &values) - exact).abs() < 1e-3);
 }
 
@@ -326,16 +401,28 @@ fn the_cache_keeps_a_distribution_and_remembers_what_slid_away() {
     let mut session = Session::default();
     read(network, &mut session, &none, &long);
     assert!(!session.memory_next.is_empty());
-    assert_eq!(session.memory.len(), session.memory_next.len() * network.width);
+    assert_eq!(
+        session.memory.len(),
+        session.memory_next.len() * network.width
+    );
     assert!(session.memory_next.len() <= MEMORY);
 }
 
 #[test]
 fn a_line_weighed_against_the_text_below_is_whole_and_stays_read() {
     let Some(network) = embedded() else { return };
-    let text = tokens(network, "def area(width, height):\n    if width < 0:\n        raise ValueError(width)\n   ");
-    let below = tokens(network, "\n    return width * height\n\n\ndef perimeter(width, height):\n    return 2 * (width + height)\n");
-    let passages = Passages { elsewhere: Vec::new(), below: below.clone() };
+    let text = tokens(
+        network,
+        "def area(width, height):\n    if width < 0:\n        raise ValueError(width)\n   ",
+    );
+    let below = tokens(
+        network,
+        "\n    return width * height\n\n\ndef perimeter(width, height):\n    return 2 * (width + height)\n",
+    );
+    let passages = Passages {
+        elsewhere: Vec::new(),
+        below: below.clone(),
+    };
     let mut session = Session::default();
     read(network, &mut session, &passages, &text);
     let mark = session.mark();
@@ -343,7 +430,10 @@ fn a_line_weighed_against_the_text_below_is_whole_and_stays_read() {
     assert!(!written.steps.is_empty());
     let mut end = 0;
     for &(step, probability) in &written.steps {
-        assert!(step > end && probability > 0. && probability <= 1.0001, "{written:?}");
+        assert!(
+            step > end && probability > 0. && probability <= 1.0001,
+            "{written:?}"
+        );
         end = step;
     }
     assert_eq!(end, written.bytes.len());
@@ -363,7 +453,10 @@ fn a_line_weighed_against_the_text_below_is_whole_and_stays_read() {
 fn writing_into_an_open_block_goes_on_past_line_ends() {
     let Some(network) = embedded() else { return };
     let none = Passages::default();
-    let text = tokens(network, "fn check(value: i32) -> bool {\n    if value < 0 {\n        return false;\n    }\n    if value > 9 {");
+    let text = tokens(
+        network,
+        "fn check(value: i32) -> bool {\n    if value < 0 {\n        return false;\n    }\n    if value > 9 {",
+    );
     let mut session = Session::default();
     read(network, &mut session, &none, &text);
     let mark = session.mark();

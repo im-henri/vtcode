@@ -35,7 +35,10 @@ pub(super) struct Selection {
 
 impl Selection {
     fn bounds(self) -> (Position, Position) {
-        (self.anchor.start.min(self.head.start), self.anchor.end.max(self.head.end))
+        (
+            self.anchor.start.min(self.head.start),
+            self.anchor.end.max(self.head.end),
+        )
     }
 }
 
@@ -76,11 +79,15 @@ impl TermGrid {
     }
 
     pub(crate) fn extend_selection(&mut self, row: usize, column: usize) {
-        let Some(unit) = self.selection.map(|selection| selection.unit) else { return; };
+        let Some(unit) = self.selection.map(|selection| selection.unit) else {
+            return;
+        };
         let Some(position) = self.selection_position(row, column) else {
             return;
         };
-        let Some(extent) = self.selection_extent(position, unit) else { return; };
+        let Some(extent) = self.selection_extent(position, unit) else {
+            return;
+        };
         if let Some(mut selection) = self.selection {
             selection.head = extent;
             selection.active |= extent != selection.anchor;
@@ -92,18 +99,31 @@ impl TermGrid {
 
     fn selection_has_text(&self, start: Position, end: Position) -> bool {
         (start.row..=end.row).any(|index| {
-            let Some((cells, _)) = self.selection_row(index) else { return false; };
+            let Some((cells, _)) = self.selection_row(index) else {
+                return false;
+            };
             let left = if index == start.row { start.column } else { 0 };
-            let right = if index == end.row { end.column.saturating_add(1) } else { self.width };
-            cells.get(left..right.min(cells.len())).is_some_and(|selected| {
-                selected.iter().any(|cell| cell.ch != '\0' && !cell.ch.is_whitespace())
-            })
+            let right = if index == end.row {
+                end.column.saturating_add(1)
+            } else {
+                self.width
+            };
+            cells
+                .get(left..right.min(cells.len()))
+                .is_some_and(|selected| {
+                    selected
+                        .iter()
+                        .any(|cell| cell.ch != '\0' && !cell.ch.is_whitespace())
+                })
         })
     }
 
     fn selection_row(&self, index: usize) -> Option<(&[TermCell], bool)> {
         if index < self.scrollback.len() {
-            Some((self.scrollback.get(index)?, *self.scrollback_wrapped.get(index)?))
+            Some((
+                self.scrollback.get(index)?,
+                *self.scrollback_wrapped.get(index)?,
+            ))
         } else {
             let row = index - self.scrollback.len();
             Some((self.cells.get(row)?, *self.wrapped.get(row)?))
@@ -114,37 +134,70 @@ impl TermGrid {
         let (cells, wrapped) = self.selection_row(position.row)?;
         if forward {
             if position.column + 1 < cells.len().min(self.width) {
-                Some(Position { column: position.column + 1, ..position })
+                Some(Position {
+                    column: position.column + 1,
+                    ..position
+                })
             } else if wrapped && !self.selection_row(position.row + 1)?.0.is_empty() {
-                Some(Position { row: position.row + 1, column: 0 })
-            } else { None }
+                Some(Position {
+                    row: position.row + 1,
+                    column: 0,
+                })
+            } else {
+                None
+            }
         } else if position.column > 0 {
-            Some(Position { column: position.column - 1, ..position })
+            Some(Position {
+                column: position.column - 1,
+                ..position
+            })
         } else if position.row > 0 {
             let (previous, wrapped) = self.selection_row(position.row - 1)?;
             (wrapped && !previous.is_empty()).then(|| Position {
-                row: position.row - 1, column: previous.len().min(self.width) - 1,
+                row: position.row - 1,
+                column: previous.len().min(self.width) - 1,
             })
-        } else { None }
+        } else {
+            None
+        }
     }
 
     fn selection_extent(&self, position: Position, unit: Unit) -> Option<Extent> {
-        let mut extent = Extent { start: position, end: position };
+        let mut extent = Extent {
+            start: position,
+            end: position,
+        };
         match unit {
             Unit::Character => {}
             Unit::Word => {
                 // Terminal separators leave identifiers, paths and URLs intact.
-                let class = |ch: char| if ch == '\0' || ch.is_whitespace() { 0 }
-                    else if " ()[]{}',\"`".contains(ch) { 1 } else { 2 };
-                let cell_class = |at: Position| self.selection_row(at.row)?.0.get(at.column).map(|cell| class(cell.ch));
+                let class = |ch: char| {
+                    if ch == '\0' || ch.is_whitespace() {
+                        0
+                    } else if " ()[]{}',\"`".contains(ch) {
+                        1
+                    } else {
+                        2
+                    }
+                };
+                let cell_class = |at: Position| {
+                    self.selection_row(at.row)?
+                        .0
+                        .get(at.column)
+                        .map(|cell| class(cell.ch))
+                };
                 let kind = cell_class(position)?;
                 if kind != 1 {
                     while let Some(previous) = self.selection_neighbor(extent.start, false) {
-                        if cell_class(previous) != Some(kind) { break; }
+                        if cell_class(previous) != Some(kind) {
+                            break;
+                        }
                         extent.start = previous;
                     }
                     while let Some(next) = self.selection_neighbor(extent.end, true) {
-                        if cell_class(next) != Some(kind) { break; }
+                        if cell_class(next) != Some(kind) {
+                            break;
+                        }
                         extent.end = next;
                     }
                 }
@@ -154,11 +207,17 @@ impl TermGrid {
                     extent.start.row -= 1;
                 }
                 while self.selection_row(extent.end.row)?.1
-                    && self.selection_row(extent.end.row + 1).is_some() {
+                    && self.selection_row(extent.end.row + 1).is_some()
+                {
                     extent.end.row += 1;
                 }
                 extent.start.column = 0;
-                extent.end.column = self.selection_row(extent.end.row)?.0.len().min(self.width).saturating_sub(1);
+                extent.end.column = self
+                    .selection_row(extent.end.row)?
+                    .0
+                    .len()
+                    .min(self.width)
+                    .saturating_sub(1);
             }
         }
         Some(extent)
@@ -175,30 +234,49 @@ impl TermGrid {
     }
 
     pub(crate) fn has_selection(&self) -> bool {
-        self.selection.is_some_and(|selection| selection.active && selection.has_text)
+        self.selection
+            .is_some_and(|selection| selection.active && selection.has_text)
     }
 
     #[cfg(test)]
     pub(crate) fn selection_contains(&self, row: usize, column: usize) -> bool {
-        let Some(selection) = self.selection.filter(|selection| selection.active && selection.has_text) else {
+        let Some(selection) = self
+            .selection
+            .filter(|selection| selection.active && selection.has_text)
+        else {
             return false;
         };
         let Some(position) = self.selection_position(row, column) else {
             return false;
         };
         let (start, end) = selection.bounds();
-        position >= start && position <= end && self.selection_row(position.row).is_some_and(|(cells, wrapped)| {
-            let right = if position.row == end.row { end.column + 1 } else { self.width };
-            wrapped || cells.get(position.column..right.min(cells.len())).is_some_and(|tail| {
-                tail.iter().any(|cell| cell.ch != '\0' && !cell.ch.is_whitespace())
-            })
-        })
+        position >= start
+            && position <= end
+            && self
+                .selection_row(position.row)
+                .is_some_and(|(cells, wrapped)| {
+                    let right = if position.row == end.row {
+                        end.column + 1
+                    } else {
+                        self.width
+                    };
+                    wrapped
+                        || cells
+                            .get(position.column..right.min(cells.len()))
+                            .is_some_and(|tail| {
+                                tail.iter()
+                                    .any(|cell| cell.ch != '\0' && !cell.ch.is_whitespace())
+                            })
+                })
     }
 
     /// Resolve a row once for rendering instead of rebasing and ordering the
     /// selection for every cell. The returned columns are half-open.
     pub(crate) fn selection_columns(&self, row: usize) -> std::ops::Range<usize> {
-        let Some(selection) = self.selection.filter(|selection| selection.active && selection.has_text) else {
+        let Some(selection) = self
+            .selection
+            .filter(|selection| selection.active && selection.has_text)
+        else {
             return 0..0;
         };
         let Some(position) = self.selection_position(row, 0) else {
@@ -208,34 +286,60 @@ impl TermGrid {
         self.selection_row_columns(position.row, start, end)
     }
 
-    fn selection_row_columns(&self, row: usize, start: Position, end: Position) -> std::ops::Range<usize> {
+    fn selection_row_columns(
+        &self,
+        row: usize,
+        start: Position,
+        end: Position,
+    ) -> std::ops::Range<usize> {
         if row < start.row || row > end.row {
             return 0..0;
         }
-        let Some((cells, wrapped)) = self.selection_row(row) else { return 0..0; };
+        let Some((cells, wrapped)) = self.selection_row(row) else {
+            return 0..0;
+        };
         let left = if row == start.row { start.column } else { 0 };
-        let right = if row == end.row { end.column.saturating_add(1) } else { self.width };
+        let right = if row == end.row {
+            end.column.saturating_add(1)
+        } else {
+            self.width
+        };
         let right = right.min(self.width).min(cells.len());
-        let Some(selected) = cells.get(left..right) else { return 0..0; };
+        let Some(selected) = cells.get(left..right) else {
+            return 0..0;
+        };
         // Spaces on soft-wrapped rows belong to the logical command, while
         // padding after a hard line is neither painted nor copied.
-        let length = if wrapped { selected.len() } else {
-            selected.iter().rposition(|cell| cell.ch != '\0' && !cell.ch.is_whitespace())
+        let length = if wrapped {
+            selected.len()
+        } else {
+            selected
+                .iter()
+                .rposition(|cell| cell.ch != '\0' && !cell.ch.is_whitespace())
                 .map_or(0, |last| last + 1)
         };
-        if length == 0 { 0..0 } else { left..left + length }
+        if length == 0 {
+            0..0
+        } else {
+            left..left + length
+        }
     }
 
     /// Copy plain text; soft wrapping never inserts an artificial newline.
     pub(crate) fn selected_text(&self) -> Option<String> {
-        let selection = self.selection.filter(|selection| selection.active && selection.has_text)?;
+        let selection = self
+            .selection
+            .filter(|selection| selection.active && selection.has_text)?;
         let (start, end) = selection.bounds();
         let mut result = String::new();
         for index in start.row..=end.row {
             let (cells, wrapped) = self.selection_row(index)?;
             let columns = self.selection_row_columns(index, start, end);
-            result.extend(cells[columns].iter()
-                .map(|cell| if cell.ch == '\0' { ' ' } else { cell.ch }));
+            result.extend(
+                cells[columns]
+                    .iter()
+                    .map(|cell| if cell.ch == '\0' { ' ' } else { cell.ch }),
+            );
             if !wrapped && index < end.row {
                 result.push('\n');
             }

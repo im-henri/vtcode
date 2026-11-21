@@ -31,7 +31,11 @@ impl ClosedTab {
             position: (tab.kind == TabKind::File && !tab.editor.load_failed)
                 .then(|| crate::editor_view_state::ViewState::capture(&mut tab.editor)),
             view: tab.extension_view.clone(),
-            terminal_idx: if tab.kind == TabKind::Terminal { tab.terminal_idx } else { None },
+            terminal_idx: if tab.kind == TabKind::Terminal {
+                tab.terminal_idx
+            } else {
+                None
+            },
         }
     }
 }
@@ -42,7 +46,10 @@ impl App {
         if let Some(index) = position(&self.tabs) {
             return Some((self.active_group, index));
         }
-        self.groups.iter().enumerate().filter(|(group, _)| *group != self.active_group)
+        self.groups
+            .iter()
+            .enumerate()
+            .filter(|(group, _)| *group != self.active_group)
             .find_map(|(group, state)| position(&state.tabs).map(|index| (group, index)))
     }
 
@@ -51,30 +58,51 @@ impl App {
         if let Some(index) = position(&self.tabs) {
             return Some((self.active_group, index));
         }
-        self.groups.iter().enumerate().filter(|(group, _)| *group != self.active_group)
+        self.groups
+            .iter()
+            .enumerate()
+            .filter(|(group, _)| *group != self.active_group)
             .find_map(|(group, state)| position(&state.tabs).map(|index| (group, index)))
     }
 
     pub(crate) fn confirm_close_is_amend(&self) -> bool {
-        self.tabs.get(self.confirm_close_tab).is_some_and(|tab| tab.kind == TabKind::AmendCommit)
+        self.tabs
+            .get(self.confirm_close_tab)
+            .is_some_and(|tab| tab.kind == TabKind::AmendCommit)
     }
 
     pub(crate) fn close_remote_connection_tabs(&mut self, id: u64) {
         let kind = TabKind::RemoteConnection(id);
-        let plan = std::iter::once(self.active_group).chain((0..self.groups.len()).filter(|&group| group != self.active_group)).map(|group| {
-            let tabs = if group == self.active_group { &self.tabs } else { &self.groups[group].tabs };
-            (group, tabs.iter().enumerate().filter_map(|(index, tab)| (tab.kind == kind).then_some(index)).collect())
-        }).collect();
+        let plan = std::iter::once(self.active_group)
+            .chain((0..self.groups.len()).filter(|&group| group != self.active_group))
+            .map(|group| {
+                let tabs = if group == self.active_group {
+                    &self.tabs
+                } else {
+                    &self.groups[group].tabs
+                };
+                (
+                    group,
+                    tabs.iter()
+                        .enumerate()
+                        .filter_map(|(index, tab)| (tab.kind == kind).then_some(index))
+                        .collect(),
+                )
+            })
+            .collect();
         self.close_tab_batch(plan);
     }
 
     pub(crate) fn tab_operation_pending(&self, tab: &Tab) -> bool {
-        self.pending_save_as.contains_key(&tab.editor.save_identity) || tab.editor.file_path.as_ref().is_some_and(|path| {
-            self.pending_file_saves.contains_key(path) || self.deferred_file_saves.contains_key(path)
-        }) || tab.extension_view.as_ref().is_some_and(|view| {
-            self.extension_manager
-                .view_input_pending(&view.extension_id, &view.view_id)
-        })
+        self.pending_save_as.contains_key(&tab.editor.save_identity)
+            || tab.editor.file_path.as_ref().is_some_and(|path| {
+                self.pending_file_saves.contains_key(path)
+                    || self.deferred_file_saves.contains_key(path)
+            })
+            || tab.extension_view.as_ref().is_some_and(|view| {
+                self.extension_manager
+                    .view_input_pending(&view.extension_id, &view.view_id)
+            })
     }
 
     pub(crate) fn close_tab(&mut self, idx: usize) {
@@ -83,7 +111,11 @@ impl App {
             return;
         };
         if tab.kind == TabKind::AmendCommit {
-            if self.amend_commits.get(&tab.editor.navigation_id).is_some_and(|draft| draft.submitting) {
+            if self
+                .amend_commits
+                .get(&tab.editor.navigation_id)
+                .is_some_and(|draft| draft.submitting)
+            {
                 self.notify("Amend is already in progress.");
             } else {
                 self.confirm_close_active = true;
@@ -93,8 +125,17 @@ impl App {
             self.notify("Tab is pinned — unpin first");
         } else if self.tab_operation_pending(tab) {
             self.notify("Wait for the current save or extension operation before closing this tab");
-        } else if tab.has_unsaved_changes() && !self.tabs.iter().chain(self.groups.iter().flat_map(|g|&g.tabs)).any(|peer|
-            peer.editor.navigation_id!=tab.editor.navigation_id && peer.kind==TabKind::File && peer.editor.save_identity==tab.editor.save_identity) {
+        } else if tab.has_unsaved_changes()
+            && !self
+                .tabs
+                .iter()
+                .chain(self.groups.iter().flat_map(|g| &g.tabs))
+                .any(|peer| {
+                    peer.editor.navigation_id != tab.editor.navigation_id
+                        && peer.kind == TabKind::File
+                        && peer.editor.save_identity == tab.editor.save_identity
+                })
+        {
             self.confirm_close_active = true;
             self.confirm_close_tab = idx;
         } else {
@@ -137,7 +178,9 @@ impl App {
 
     pub(crate) fn force_close_tab_view(&mut self, view: u64) {
         if let Some((group, index)) = self.tab_location(view) {
-            let confirming = self.tabs.get(self.confirm_close_tab)
+            let confirming = self
+                .tabs
+                .get(self.confirm_close_tab)
                 .filter(|tab| self.confirm_close_active && tab.editor.navigation_id != view)
                 .map(|tab| tab.editor.navigation_id);
             self.close_tab_batch(vec![(group, vec![index])]);
@@ -214,11 +257,20 @@ impl App {
         self.request_tab_close(plan, deferred, false);
     }
 
-    fn request_tab_close(&mut self, plan: Vec<(usize, Vec<usize>)>, deferred: Option<u64>, notify: bool) {
+    fn request_tab_close(
+        &mut self,
+        plan: Vec<(usize, Vec<usize>)>,
+        deferred: Option<u64>,
+        notify: bool,
+    ) {
         let mut terminals = Vec::new();
         let mut views = Vec::new();
         for (group, indices) in &plan {
-            let tabs = if *group == self.active_group { &self.tabs } else { &self.groups[*group].tabs };
+            let tabs = if *group == self.active_group {
+                &self.tabs
+            } else {
+                &self.groups[*group].tabs
+            };
             for &index in indices {
                 let tab = &tabs[index];
                 views.push(tab.editor.navigation_id);
@@ -229,8 +281,14 @@ impl App {
         }
         let names = self.live_terminal_names(terminals);
         if !names.is_empty() {
-            self.request_terminal_close(names, crate::app_terminal::TerminalCloseAction::Tabs(
-                CloseTabs { views, deferred, notify }));
+            self.request_terminal_close(
+                names,
+                crate::app_terminal::TerminalCloseAction::Tabs(CloseTabs {
+                    views,
+                    deferred,
+                    notify,
+                }),
+            );
             return;
         }
         self.finish_tab_close(plan, deferred, notify);
@@ -242,11 +300,19 @@ impl App {
         let views: rustc_hash::FxHashSet<_> = request.views.into_iter().collect();
         let mut deferred = request.deferred;
         let mut plan = Vec::new();
-        for group in std::iter::once(self.active_group).chain((0..self.groups.len()).filter(|&group| group != self.active_group)) {
-            let tabs = if group == self.active_group { &self.tabs } else { &self.groups[group].tabs };
+        for group in std::iter::once(self.active_group)
+            .chain((0..self.groups.len()).filter(|&group| group != self.active_group))
+        {
+            let tabs = if group == self.active_group {
+                &self.tabs
+            } else {
+                &self.groups[group].tabs
+            };
             let mut indices = Vec::new();
             for (index, tab) in tabs.iter().enumerate().rev() {
-                if !views.contains(&tab.editor.navigation_id) || tab.pinned { continue; }
+                if !views.contains(&tab.editor.navigation_id) || tab.pinned {
+                    continue;
+                }
                 if tab.needs_close_confirmation() || self.tab_operation_pending(tab) {
                     deferred.get_or_insert(tab.editor.navigation_id);
                 } else {
@@ -258,12 +324,21 @@ impl App {
         self.finish_tab_close(plan, deferred, request.notify);
     }
 
-    fn finish_tab_close(&mut self, plan: Vec<(usize, Vec<usize>)>, deferred: Option<u64>, notify: bool) {
+    fn finish_tab_close(
+        &mut self,
+        plan: Vec<(usize, Vec<usize>)>,
+        deferred: Option<u64>,
+        notify: bool,
+    ) {
         let count = self.close_tab_batch(plan);
-        if notify { self.notify(format!("Closed {count} saved tabs")); }
+        if notify {
+            self.notify(format!("Closed {count} saved tabs"));
+        }
         if let Some(id) = deferred {
             if let Some((group, index)) = self.tab_location(id) {
-                if group != self.active_group { self.switch_group(group); }
+                if group != self.active_group {
+                    self.switch_group(group);
+                }
                 self.close_tab(index);
             }
         }
@@ -342,7 +417,11 @@ impl App {
             self.forget_editor_view_caches(tab.navigation_id);
             self.desks.membership.remove(&tab.navigation_id);
             self.desks.selected_tabs.remove(&tab.navigation_id);
-            let still_open = self.tabs.iter().chain(self.groups.iter().flat_map(|g|&g.tabs)).any(|t|t.kind==tab.kind);
+            let still_open = self
+                .tabs
+                .iter()
+                .chain(self.groups.iter().flat_map(|g| &g.tabs))
+                .any(|t| t.kind == tab.kind);
             if !still_open && self.source_control_preview.tab == Some(tab.kind) {
                 self.source_control_preview.tab = None;
             }
@@ -352,7 +431,12 @@ impl App {
                         self.remote_connection.details = false;
                         self.remote_connection.area = None;
                         self.remote_connection.buttons.clear();
-                    } else if self.remote_targets.attempt.as_ref().is_some_and(|attempt| attempt.id == id) {
+                    } else if self
+                        .remote_targets
+                        .attempt
+                        .as_ref()
+                        .is_some_and(|attempt| attempt.id == id)
+                    {
                         self.remote_targets.attempt = None;
                     }
                     self.remote_targets.connection_hits.clear();
@@ -370,7 +454,9 @@ impl App {
                 }
                 TabKind::Settings => self.settings_editor_active = false,
                 TabKind::CommitDetails if !still_open => self.reset_commit_details(),
-                TabKind::AmendCommit => { self.amend_commits.remove(&tab.navigation_id); }
+                TabKind::AmendCommit => {
+                    self.amend_commits.remove(&tab.navigation_id);
+                }
                 TabKind::Diff(id) if !still_open => self.forget_diff_tab(id),
                 TabKind::MarkdownPreview => preview_closed = true,
                 _ => {}
@@ -399,7 +485,7 @@ impl App {
         }
         if !self.desks.groups.is_empty() {
             let used: rustc_hash::FxHashSet<_> = self.desks.membership.values().copied().collect();
-            self.desks.groups.retain(|id,_|used.contains(id));
+            self.desks.groups.retain(|id, _| used.contains(id));
         }
         // One remaining-document index for the entire batch, with no filesystem
         // work. Keep the path identity used by the LSP manager and open tabs.

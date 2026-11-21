@@ -17,11 +17,11 @@ const FILE_LIMIT: usize = 128 * 1024;
 const TOTAL_LIMIT: usize = 1024 * 1024;
 const ATTACHMENT_LIMIT: usize = 32;
 const SUGGESTION_LIMIT: usize = 40;
+#[path = "app_chat_files_remote.rs"]
+pub(crate) mod hosted;
 #[cfg(test)]
 #[path = "chat_input_performance_tests.rs"]
 mod input_performance_tests;
-#[path = "app_chat_files_remote.rs"]
-pub(crate) mod hosted;
 
 #[derive(Default)]
 pub(crate) struct ChatFiles {
@@ -111,7 +111,9 @@ fn current_mention(text: &str, cursor: usize) -> Option<Mention> {
 }
 
 pub(crate) fn file_label(path: &Path, root: &Path) -> String {
-    if let Some(label) = crate::remote::workspace::display_key(path) { return label; }
+    if let Some(label) = crate::remote::workspace::display_key(path) {
+        return label;
+    }
     path.strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
@@ -161,10 +163,13 @@ fn pasted_paths(text: &str, root: &Path) -> Option<Vec<PathBuf>> {
     {
         return Some(vec![path]);
     }
-    pasted_path_values(text)?.into_iter().map(|value| {
-        let path = resolve_path(root, &value).ok()?;
-        path.is_file().then_some(path)
-    }).collect()
+    pasted_path_values(text)?
+        .into_iter()
+        .map(|value| {
+            let path = resolve_path(root, &value).ok()?;
+            path.is_file().then_some(path)
+        })
+        .collect()
 }
 
 /// Parse terminal clipboard tokens without interpreting shell code or probing
@@ -296,16 +301,33 @@ fn search_files(
 impl App {
     pub(crate) fn open_chat_location(&mut self, path: &Path, line: Option<u32>) {
         if let Some(workspace) = &self.remote_workspace {
-            let path = if crate::remote::workspace::is_view_key(path) { Ok(path.to_path_buf()) }
-                else { workspace.target_key(&path.to_string_lossy()) };
-            let path = match path { Ok(path) => path, Err(error) => { self.chat.error = Some(error.to_string()); return; } };
+            let path = if crate::remote::workspace::is_view_key(path) {
+                Ok(path.to_path_buf())
+            } else {
+                workspace.target_key(&path.to_string_lossy())
+            };
+            let path = match path {
+                Ok(path) => path,
+                Err(error) => {
+                    self.chat.error = Some(error.to_string());
+                    return;
+                }
+            };
             self.open_remote_location(path, line, crate::app_remote_navigation::Source::Chat);
             return;
         }
-        let path = if path.is_absolute() { path.to_path_buf() } else { self.explorer.root.join(path) };
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.explorer.root.join(path)
+        };
         if path.is_dir() {
             let relative = self.explorer.root.canonicalize().ok().and_then(|root| {
-                path.canonicalize().ok()?.strip_prefix(root).ok().map(Path::to_path_buf)
+                path.canonicalize()
+                    .ok()?
+                    .strip_prefix(root)
+                    .ok()
+                    .map(Path::to_path_buf)
             });
             let Some(relative) = relative else {
                 self.chat.error = Some("This directory is outside the current workspace.".into());
@@ -325,7 +347,9 @@ impl App {
             }
         } else {
             self.open_file(&path);
-            if let Some(line) = line && let Some(editor) = self.editor_mut() {
+            if let Some(line) = line
+                && let Some(editor) = self.editor_mut()
+            {
                 // File loading is asynchronous; set_cursor also records the
                 // requested location until the file's contents arrive.
                 editor.set_cursor(line as usize, 0);
@@ -559,7 +583,9 @@ impl App {
         if self.chat.terminal_input.is_some() || self.chat.loading_id {
             return false;
         }
-        if self.remote_workspace.is_some() { return self.defer_remote_chat_file_paste(text); }
+        if self.remote_workspace.is_some() {
+            return self.defer_remote_chat_file_paste(text);
+        }
         let Some(paths) = pasted_paths(text, self.chat_file_root()) else {
             return false;
         };
@@ -644,7 +670,9 @@ impl App {
 
     /// Atomic batch: a bad drop or paste preserves the entire existing draft.
     pub(crate) fn attach_chat_files(&mut self, paths: Vec<PathBuf>) -> bool {
-        if self.remote_workspace.is_some() { return self.attach_remote_chat_files(paths, None); }
+        if self.remote_workspace.is_some() {
+            return self.attach_remote_chat_files(paths, None);
+        }
         let candidates = self
             .chat
             .files
@@ -671,7 +699,11 @@ impl App {
         self.chat_prompt_with_files_for(&self.chat.input, &self.chat.files.attached)
     }
 
-    pub(crate) fn chat_prompt_with_files_for(&self, input: &str, attached: &[PathBuf]) -> Result<(Vec<p::ContentBlock>, String), String> {
+    pub(crate) fn chat_prompt_with_files_for(
+        &self,
+        input: &str,
+        attached: &[PathBuf],
+    ) -> Result<(Vec<p::ContentBlock>, String), String> {
         let mut paths = attached.to_vec();
         for mention in mentions(input) {
             if !mention.closed {
@@ -680,9 +712,7 @@ impl App {
             paths.push(resolve_path(self.chat_file_root(), &mention.path)?);
         }
         let prepared = self.prepare_chat_files(paths)?;
-        let mut content = vec![p::ContentBlock::Text(p::TextContent::new(
-            input.to_owned(),
-        ))];
+        let mut content = vec![p::ContentBlock::Text(p::TextContent::new(input.to_owned()))];
         let embedded = self
             .chat
             .initialized
@@ -821,7 +851,10 @@ mod tests {
         app.sidebar_view = crate::app::SidebarView::SourceControl;
         app.chat_action(ChatAction::OpenFile(target.clone(), None));
         app.wait_for_background(Duration::from_secs(5), |app| {
-            app.explorer.entries.get(app.explorer.selected).is_some_and(|e| e.path == target)
+            app.explorer
+                .entries
+                .get(app.explorer.selected)
+                .is_some_and(|e| e.path == target)
         });
         assert!(app.show_explorer);
         assert_eq!(app.sidebar_view, crate::app::SidebarView::Explorer);
@@ -840,7 +873,13 @@ mod tests {
         let original_tabs = app.tabs.len();
         for path in [outside.path().to_path_buf(), root.path().join("..")] {
             app.chat_action(ChatAction::OpenFile(path, None));
-            assert!(app.chat.error.as_deref().unwrap().contains("outside the current workspace"));
+            assert!(
+                app.chat
+                    .error
+                    .as_deref()
+                    .unwrap()
+                    .contains("outside the current workspace")
+            );
             assert_eq!(app.explorer.root, root.path());
             assert_eq!(app.tabs.len(), original_tabs);
             assert_eq!(app.active_pane, ActivePane::Chat);
@@ -852,7 +891,9 @@ mod tests {
         let (root, mut app) = setup();
         let path = file(root.path(), "src/example.rs", "one\ntwo\nthree\nfour\n");
         app.chat_action(ChatAction::OpenFile("src/example.rs".into(), Some(2)));
-        app.wait_for_background(Duration::from_secs(5), |app| app.editor().is_some_and(|e| !e.bg_loading));
+        app.wait_for_background(Duration::from_secs(5), |app| {
+            app.editor().is_some_and(|e| !e.bg_loading)
+        });
         let editor = app.editor().unwrap();
         assert!(same_file(editor.file_path.as_ref().unwrap(), &path));
         assert_eq!(editor.cursor_line, 2);
@@ -1327,7 +1368,11 @@ mod tests {
             truncated: false,
             exit_status: None,
             released: false,
-            cwd: Default::default(), history: None, history_version: 0, killed: false, error: None,
+            cwd: Default::default(),
+            history: None,
+            history_version: 0,
+            killed: false,
+            error: None,
         });
         app.chat.sessions.insert(id.clone(), session);
         app.chat.selected = Some(id);

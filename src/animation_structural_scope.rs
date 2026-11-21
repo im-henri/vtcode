@@ -158,8 +158,13 @@ impl StructuralScopeRequest {
             language: editor.syntax_language_token().map(str::to_owned),
             path: editor.syntax_file_path().map(PathBuf::from),
             dialect,
-            delimiters: rule.and_then(|rule| rule.delimiters)
-                .unwrap_or(if dialect == Dialect::Python { 0 } else { Delimiter::Braces.bit() }),
+            delimiters: rule.and_then(|rule| rule.delimiters).unwrap_or(
+                if dialect == Dialect::Python {
+                    0
+                } else {
+                    Delimiter::Braces.bit()
+                },
+            ),
             language_blocks: rule.is_none_or(|rule| rule.language_blocks),
             rules: editor.scope_bubble_rules.clone(),
         })
@@ -291,7 +296,9 @@ impl StructuralScopeRequest {
             };
             let (offset, delimiter, opening) = match next {
                 Some(LexEvent::Brace(offset, opening)) => (offset, Delimiter::Braces, opening),
-                Some(LexEvent::Delimiter(offset, delimiter, opening)) => (offset, delimiter, opening),
+                Some(LexEvent::Delimiter(offset, delimiter, opening)) => {
+                    (offset, delimiter, opening)
+                }
                 Some(LexEvent::Directive(offset, kind)) => {
                     branches
                         .directive(&mut result.nodes, &mut head, offset, kind, Some(&control))
@@ -339,7 +346,9 @@ impl StructuralScopeRequest {
                     break;
                 }
                 let node = head;
-                if result.nodes[node].delimiter != delimiter { break; }
+                if result.nodes[node].delimiter != delimiter {
+                    break;
+                }
                 head = result.nodes[node].parent;
                 branches.close(&mut result.nodes, node, offset);
                 closed += 1;
@@ -384,10 +393,11 @@ impl StructuralScopeIndex {
         self.has_scopes
     }
     pub(crate) fn keyword_scopes_first(&self) -> bool {
-        self.request.language_blocks && matches!(
-            self.request.dialect,
-            Dialect::C | Dialect::Cpp | Dialect::CSharp
-        )
+        self.request.language_blocks
+            && matches!(
+                self.request.dialect,
+                Dialect::C | Dialect::Cpp | Dialect::CSharp
+            )
     }
 
     /// The interval tree finds the rightmost enclosing pair in
@@ -444,7 +454,7 @@ impl StructuralScopeIndex {
                 .request
                 .source
                 .get_char(lexer.index - 1)
-            .is_some_and(checkpoint_boundary)
+                .is_some_and(checkpoint_boundary)
         {
             return;
         }
@@ -588,8 +598,12 @@ impl Dialect {
 }
 
 fn dialect(editor: &Editor, rule: Option<crate::scope_bubble_config::Rule>) -> Option<Dialect> {
-    if rule.is_some_and(|rule| rule.syntax == Syntax::Disabled) { return None; }
-    let language = rule.and_then(|rule| rule.syntax_for(editor).language()).or_else(|| editor.syntax_language_token());
+    if rule.is_some_and(|rule| rule.syntax == Syntax::Disabled) {
+        return None;
+    }
+    let language = rule
+        .and_then(|rule| rule.syntax_for(editor).language())
+        .or_else(|| editor.syntax_language_token());
     if let Some(language) = language {
         return match language.to_ascii_lowercase().as_str() {
             "python" | "python 3" | "python3" | "py" => Some(Dialect::Python),
@@ -727,7 +741,9 @@ impl ImmediateScopeIndex {
                     break;
                 }
                 let node = head;
-                if nodes[node].delimiter != delimiter { break; }
+                if nodes[node].delimiter != delimiter {
+                    break;
+                }
                 head = nodes[node].parent;
                 branches.close(&mut nodes, node, index);
             }
@@ -953,8 +969,13 @@ impl<'a> Lexer<'a> {
 
     fn next_event(&mut self) -> Result<Option<LexEvent>, ()> {
         while let Some(ch) = self.chars.get(self.index) {
-            if self.control.is_some() && self.index >= self.checkpoint_at
-                && self.chars.get(self.index - 1).is_some_and(checkpoint_boundary) {
+            if self.control.is_some()
+                && self.index >= self.checkpoint_at
+                && self
+                    .chars
+                    .get(self.index - 1)
+                    .is_some_and(checkpoint_boundary)
+            {
                 // Keep the deadline pending until a safe token boundary. Otherwise
                 // delimiter-dense code can repeatedly miss checkpoints and reparse
                 // a large unchanged prefix after a tiny edit at the end.
@@ -1076,12 +1097,16 @@ impl<'a> Lexer<'a> {
                 '{' => {
                     self.regex_allowed = true;
                     self.control_word = false;
-                    if self.delimiters & Delimiter::Braces.bit() != 0 { return Ok(Some(LexEvent::Brace(at, true))); }
+                    if self.delimiters & Delimiter::Braces.bit() != 0 {
+                        return Ok(Some(LexEvent::Brace(at, true)));
+                    }
                 }
                 '}' => {
                     self.regex_allowed = true;
                     self.control_word = false;
-                    if self.delimiters & Delimiter::Braces.bit() != 0 { return Ok(Some(LexEvent::Brace(at, false))); }
+                    if self.delimiters & Delimiter::Braces.bit() != 0 {
+                        return Ok(Some(LexEvent::Brace(at, false)));
+                    }
                 }
                 '(' if self.dialect == Dialect::JavaScript => {
                     self.control_parens.push(self.control_word);
@@ -1099,7 +1124,9 @@ impl<'a> Lexer<'a> {
             }
             self.control_word = false;
             if let Some((delimiter, opening)) = Delimiter::token(ch)
-                && delimiter != Delimiter::Braces && self.delimiters & delimiter.bit() != 0 {
+                && delimiter != Delimiter::Braces
+                && self.delimiters & delimiter.bit() != 0
+            {
                 return Ok(Some(LexEvent::Delimiter(at, delimiter, opening)));
             }
         }
@@ -1111,20 +1138,29 @@ impl<'a> Lexer<'a> {
         let ch = self.chars.get(at).unwrap();
         if self.dialect == Dialect::Python {
             let quote = match ch {
-                'f' | 'F' | 't' | 'T' => at + 1 + usize::from(matches!(self.chars.get(at + 1), Some('r' | 'R'))),
-                'r' | 'R' if matches!(self.chars.get(at + 1), Some('f' | 'F' | 't' | 'T')) => at + 2,
+                'f' | 'F' | 't' | 'T' => {
+                    at + 1 + usize::from(matches!(self.chars.get(at + 1), Some('r' | 'R')))
+                }
+                'r' | 'R' if matches!(self.chars.get(at + 1), Some('f' | 'F' | 't' | 'T')) => {
+                    at + 2
+                }
                 _ => at,
             };
             if quote > at && matches!(self.chars.get(quote), Some('\'' | '"')) {
-                return indentation::formatted_string_end(self.chars, quote, self.control).map(|end| Some(Literal::End(end)));
+                return indentation::formatted_string_end(self.chars, quote, self.control)
+                    .map(|end| Some(Literal::End(end)));
             }
         }
-        if self.dialect == Dialect::Python && matches!(ch, '\'' | '"')
-            && starts(self.chars, at, &[ch, ch, ch]) {
+        if self.dialect == Dialect::Python
+            && matches!(ch, '\'' | '"')
+            && starts(self.chars, at, &[ch, ch, ch])
+        {
             let mut end = at + 3;
             while let Some(next) = self.chars.get(end) {
                 check_work(self.control)?;
-                if starts(self.chars, end, &[ch, ch, ch]) { return Ok(Some(Literal::End(end + 3))); }
+                if starts(self.chars, end, &[ch, ch, ch]) {
+                    return Ok(Some(Literal::End(end + 3)));
+                }
                 end += if next == '\\' { 2 } else { 1 };
             }
             return Err(());

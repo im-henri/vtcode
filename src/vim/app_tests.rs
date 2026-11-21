@@ -39,7 +39,9 @@ fn keys(app: &mut App, text: &str) {
     }
 }
 
-fn text(app: &App) -> String { app.editor().unwrap().rope.to_string() }
+fn text(app: &App) -> String {
+    app.editor().unwrap().rope.to_string()
+}
 fn cursor(app: &App) -> (usize, usize) {
     let ed = app.editor().unwrap();
     (ed.cursor_line, ed.cursor_col)
@@ -65,9 +67,17 @@ fn normal_insert_round_trip_uses_native_typing() {
     assert_eq!(text(&app), "hello world (x)");
     keys(&mut app, "<Esc>");
     assert_eq!(app.vim.mode, Mode::Normal);
-    assert_eq!(cursor(&app), (0, 13), "Esc moves left onto the last typed character");
+    assert_eq!(
+        cursor(&app),
+        (0, 13),
+        "Esc moves left onto the last typed character"
+    );
     keys(&mut app, "u");
-    assert_eq!(text(&app), "hello world", "one undo step for the whole insert");
+    assert_eq!(
+        text(&app),
+        "hello world",
+        "one undo step for the whole insert"
+    );
 }
 
 #[test]
@@ -100,14 +110,24 @@ fn ex_commands_reach_the_workbench() {
     keys(&mut app, ":set nornu<CR>");
     assert!(!app.relative_line_numbers);
     keys(&mut app, ":nosuchcommand<CR>");
-    assert!(app.vim.message.as_ref().is_some_and(|m| m.error && m.text.starts_with("E492")));
+    assert!(
+        app.vim
+            .message
+            .as_ref()
+            .is_some_and(|m| m.error && m.text.starts_with("E492"))
+    );
 }
 
 #[test]
 fn quit_with_unsaved_changes_reports_e37() {
     let mut app = vim_app("abc");
     keys(&mut app, "x:q<CR>");
-    assert!(app.vim.message.as_ref().is_some_and(|m| m.text.starts_with("E37")));
+    assert!(
+        app.vim
+            .message
+            .as_ref()
+            .is_some_and(|m| m.text.starts_with("E37"))
+    );
     assert_eq!(app.tabs.len(), 1);
 }
 
@@ -125,11 +145,20 @@ fn visual_selection_is_mirrored_for_rendering_and_commands() {
 fn with_explorer(app: &mut App) -> tempfile::TempDir {
     let root = tempfile::tempdir().unwrap();
     app.explorer.root = root.path().into();
-    app.explorer.entries = (0..5).map(|i| {
-        let name = format!("f{i}.txt");
-        FileEntry { path: root.path().join(&name), name, is_dir: false, depth: 0, expanded: false,
-            git_status: GitStatus::Unmodified, git_status_summary: Default::default() }
-    }).collect();
+    app.explorer.entries = (0..5)
+        .map(|i| {
+            let name = format!("f{i}.txt");
+            FileEntry {
+                path: root.path().join(&name),
+                name,
+                is_dir: false,
+                depth: 0,
+                expanded: false,
+                git_status: GitStatus::Unmodified,
+                git_status_summary: Default::default(),
+            }
+        })
+        .collect();
     app.show_explorer = true;
     app.sidebar_view = SidebarView::Explorer;
     root
@@ -182,7 +211,8 @@ fn toggling_the_setting_resets_editor_state() {
 #[test]
 fn switching_tabs_leaves_insert_mode() {
     let mut app = vim_app("abc");
-    app.tabs.push(Tab::new_file(Editor::test_with_text("second")));
+    app.tabs
+        .push(Tab::new_file(Editor::test_with_text("second")));
     keys(&mut app, "i");
     assert_eq!(app.vim.mode, Mode::Insert);
     super::app_host::activate_tab(&mut app, 1);
@@ -199,7 +229,12 @@ fn status_item_names_the_mode() {
     keys(&mut app, "i");
     assert!(super::ui::status_item(&app).unwrap().0.contains("INSERT"));
     keys(&mut app, "<Esc>qa");
-    assert!(super::ui::status_item(&app).unwrap().0.contains("recording @a"));
+    assert!(
+        super::ui::status_item(&app)
+            .unwrap()
+            .0
+            .contains("recording @a")
+    );
     keys(&mut app, "q2d");
     assert!(super::ui::status_item(&app).unwrap().0.contains("2d"));
 }
@@ -208,7 +243,13 @@ fn frame(app: &mut App) -> (Vec<String>, Option<ratatui::layout::Position>) {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 24)).unwrap();
     terminal.draw(|f| crate::ui::draw(f, app)).unwrap();
     let buf = terminal.backend().buffer();
-    let rows = (0..buf.area.height).map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect();
+    let rows = (0..buf.area.height)
+        .map(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().to_string())
+                .collect()
+        })
+        .collect();
     let cursor = ratatui::backend::Backend::get_cursor_position(terminal.backend_mut()).ok();
     (rows, app.vim_cursor_shape.map(|_| cursor.unwrap()))
 }
@@ -223,7 +264,11 @@ fn full_frame_shows_mode_command_line_and_insert_caret() {
 
     keys(&mut app, ":s/ma");
     let (rows, _) = frame(&mut app);
-    assert!(rows.last().unwrap().trim_start().starts_with(":s/ma"), "command line: {}", rows.last().unwrap());
+    assert!(
+        rows.last().unwrap().trim_start().starts_with(":s/ma"),
+        "command line: {}",
+        rows.last().unwrap()
+    );
     keys(&mut app, "<Esc>");
 
     keys(&mut app, "jwi");
@@ -231,12 +276,22 @@ fn full_frame_shows_mode_command_line_and_insert_caret() {
     assert!(rows.last().unwrap().contains("INSERT"));
     let caret = caret.expect("Insert mode shows the terminal bar cursor");
     // The caret sits on the p of println.
-    assert_eq!(rows[caret.y as usize].chars().nth(caret.x as usize), Some('p'));
-    assert_eq!(app.vim_cursor_shape, Some(crossterm::cursor::SetCursorStyle::BlinkingBar));
+    assert_eq!(
+        rows[caret.y as usize].chars().nth(caret.x as usize),
+        Some('p')
+    );
+    assert_eq!(
+        app.vim_cursor_shape,
+        Some(crossterm::cursor::SetCursorStyle::BlinkingBar)
+    );
 
     keys(&mut app, "<Esc>:nosuch<CR>");
     let (rows, _) = frame(&mut app);
-    assert!(rows.last().unwrap().contains("E492"), "error message: {}", rows.last().unwrap());
+    assert!(
+        rows.last().unwrap().contains("E492"),
+        "error message: {}",
+        rows.last().unwrap()
+    );
 
     keys(&mut app, ":reg<CR>");
     let (rows, _) = frame(&mut app);
@@ -271,7 +326,15 @@ fn ctrl_backslash_ctrl_n_leaves_a_focused_terminal() {
 fn with_problems(app: &mut App) {
     let id = app.editor().unwrap().navigation_id;
     app.cached_problems = (1..=3)
-        .map(|line| ("a.rs".to_string(), line * 2, "TODO".to_string(), format!("item {line}"), id))
+        .map(|line| {
+            (
+                "a.rs".to_string(),
+                line * 2,
+                "TODO".to_string(),
+                format!("item {line}"),
+                id,
+            )
+        })
         .collect();
     app.panel_area = Some(ratatui::layout::Rect::new(0, 20, 80, 8));
     app.editor_area = Some(ratatui::layout::Rect::new(0, 0, 80, 20));
@@ -288,7 +351,10 @@ fn copen_focuses_problems_and_j_enter_jump_to_the_location() {
     assert_eq!(app.active_pane, ActivePane::Panel);
     with_problems(&mut app);
     keys(&mut app, "jj");
-    assert_eq!(app.problem_selected, 3, "the third problem row (after the summary)");
+    assert_eq!(
+        app.problem_selected, 3,
+        "the third problem row (after the summary)"
+    );
     keys(&mut app, "k");
     assert_eq!(app.problem_selected, 2);
     keys(&mut app, "G");
@@ -358,7 +424,10 @@ fn agent_chat_leaves_with_ctrl_backslash_ctrl_n_and_ctrl_w() {
     app.active_pane = ActivePane::Chat;
     keys(&mut app, "<C-w>c");
     assert_eq!(app.active_pane, ActivePane::Editor);
-    assert!(!app.chat.layout.dock_visible || !app.chat.visible, "Ctrl-W c hides the docked chat");
+    assert!(
+        !app.chat.layout.dock_visible || !app.chat.visible,
+        "Ctrl-W c hides the docked chat"
+    );
     assert_eq!(app.tabs.len(), 1, "the file tab stays open");
     keys(&mut app, "x");
     assert_eq!(text(&app), "bc");
@@ -372,7 +441,11 @@ fn commands_that_reveal_a_sidebar_move_focus_there() {
     app.editor_area = Some(ratatui::layout::Rect::new(20, 0, 60, 30));
     keys(&mut app, ":VT source_control<CR>");
     assert_eq!(app.sidebar_view, SidebarView::SourceControl);
-    assert_eq!(app.active_pane, ActivePane::Explorer, "Source Control takes the keyboard");
+    assert_eq!(
+        app.active_pane,
+        ActivePane::Explorer,
+        "Source Control takes the keyboard"
+    );
     keys(&mut app, "q");
     assert_eq!(app.active_pane, ActivePane::Editor);
     // Ctrl-W h returns to the view that is showing, not the file tree.
@@ -382,7 +455,11 @@ fn commands_that_reveal_a_sidebar_move_focus_there() {
     keys(&mut app, "<C-w>l");
     assert_eq!(app.active_pane, ActivePane::Editor);
     keys(&mut app, ":VT extensions<CR>");
-    assert!(app.vim.message.is_none(), "{:?}", app.vim.message.as_ref().map(|m| &m.text));
+    assert!(
+        app.vim.message.is_none(),
+        "{:?}",
+        app.vim.message.as_ref().map(|m| &m.text)
+    );
     assert_eq!(app.sidebar_view, SidebarView::Extensions);
     assert_eq!(app.active_pane, ActivePane::Explorer);
     // Focus starts in the filter; Esc leaves it for the list, q for the editor.
@@ -410,7 +487,11 @@ fn text_fields_take_ctrl_w_and_ctrl_u_like_the_vim_command_line() {
 #[test]
 fn settings_and_settings_dialogs_close_with_esc() {
     let mut app = vim_app("abc");
-    let settings_open = |app: &App| app.tabs.iter().any(|t| t.kind == crate::app::TabKind::Settings);
+    let settings_open = |app: &App| {
+        app.tabs
+            .iter()
+            .any(|t| t.kind == crate::app::TabKind::Settings)
+    };
     keys(&mut app, ":VT settings<CR>");
     assert!(settings_open(&app));
     keys(&mut app, "<Esc>");
@@ -423,21 +504,34 @@ fn settings_and_settings_dialogs_close_with_esc() {
     assert!(!settings_open(&app));
     // Formatter settings are a dialog.
     keys(&mut app, ":VT configure_formatter<CR>");
-    assert!(crate::ui_modal::active(&app).is_some(), "the formatter dialog opens");
+    assert!(
+        crate::ui_modal::active(&app).is_some(),
+        "the formatter dialog opens"
+    );
     keys(&mut app, "<Esc>");
     assert!(crate::ui_modal::active(&app).is_none(), "Esc closes it");
-    assert_eq!(app.active_pane, ActivePane::Editor, "focus is back in the editor");
+    assert_eq!(
+        app.active_pane,
+        ActivePane::Editor,
+        "focus is back in the editor"
+    );
     keys(&mut app, "x");
     assert_eq!(text(&app), "bc");
 }
 
 #[test]
 fn vt_accepts_shortcut_ids_for_commands() {
-    let mut app = vim_app("one
+    let mut app = vim_app(
+        "one
 two
-three");
+three",
+    );
     keys(&mut app, ":VT go_to_line<CR>");
-    assert!(app.vim.message.is_none(), "{:?}", app.vim.message.as_ref().map(|m| &m.text));
+    assert!(
+        app.vim.message.is_none(),
+        "{:?}",
+        app.vim.message.as_ref().map(|m| &m.text)
+    );
     assert!(app.goto_line_active);
     keys(&mut app, "3<CR>");
     assert_eq!(cursor(&app).0, 2);
@@ -460,7 +554,15 @@ fn colon_opens_the_command_line_from_sidebars_and_panels() {
 }
 
 fn mouse_at(app: &mut App, kind: crossterm::event::MouseEventKind, x: u16, y: u16) {
-    crate::mouse::handle_mouse(app, crossterm::event::MouseEvent { kind, column: x, row: y, modifiers: KeyModifiers::NONE });
+    crate::mouse::handle_mouse(
+        app,
+        crossterm::event::MouseEvent {
+            kind,
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
 }
 
 #[test]
@@ -478,7 +580,11 @@ fn a_mouse_drag_selects_the_dragged_characters_in_visual_mode() {
     mouse_at(&mut app, M::Up(MouseButton::Left), x + 2, y);
     assert_eq!(app.vim.mode, Mode::Visual(super::VisualKind::Char));
     keys(&mut app, "d");
-    assert_eq!(text(&app), "alpha\nma\n", "Visual mode includes the character under the pointer, as in Vim");
+    assert_eq!(
+        text(&app),
+        "alpha\nma\n",
+        "Visual mode includes the character under the pointer, as in Vim"
+    );
     // Dragging leftwards includes both ends too.
     keys(&mut app, "u");
     mouse_at(&mut app, M::Down(MouseButton::Left), x + 4, y);
@@ -502,19 +608,42 @@ fn cd_changes_where_relative_ex_paths_start() {
     std::fs::create_dir(root_path.join("sub")).unwrap();
     app.explorer.root = root_path.clone();
     keys(&mut app, ":cd sub<CR>");
-    assert!(app.vim.message.is_none(), "{:?}", app.vim.message.as_ref().map(|m| &m.text));
-    assert_eq!(super::app_host::vim_cwd(&app), root_path.join("sub").as_path());
+    assert!(
+        app.vim.message.is_none(),
+        "{:?}",
+        app.vim.message.as_ref().map(|m| &m.text)
+    );
+    assert_eq!(
+        super::app_host::vim_cwd(&app),
+        root_path.join("sub").as_path()
+    );
     keys(&mut app, ":pwd<CR>");
-    assert!(app.vim.message.as_ref().is_some_and(|m| m.text.ends_with("sub")));
+    assert!(
+        app.vim
+            .message
+            .as_ref()
+            .is_some_and(|m| m.text.ends_with("sub"))
+    );
     keys(&mut app, ":cd -<CR>");
     keys(&mut app, ":pwd<CR>");
-    assert_eq!(app.vim.message.as_ref().map(|m| m.text.clone()), Some(root_path.display().to_string()));
+    assert_eq!(
+        app.vim.message.as_ref().map(|m| m.text.clone()),
+        Some(root_path.display().to_string())
+    );
     keys(&mut app, ":cd nowhere<CR>");
-    assert!(app.vim.message.as_ref().is_some_and(|m| m.error && m.text.starts_with("E344")));
+    assert!(
+        app.vim
+            .message
+            .as_ref()
+            .is_some_and(|m| m.error && m.text.starts_with("E344"))
+    );
     // Opening another folder starts from that folder again.
     keys(&mut app, ":cd sub<CR>");
     app.explorer.root = std::env::temp_dir();
-    assert_eq!(super::app_host::vim_cwd(&app), std::env::temp_dir().as_path());
+    assert_eq!(
+        super::app_host::vim_cwd(&app),
+        std::env::temp_dir().as_path()
+    );
 }
 
 /// Pretend the current prefix has waited long enough for its hints.
@@ -525,7 +654,9 @@ fn wait_for_hints(app: &mut App) {
     }
 }
 
-fn screen_text(app: &mut App) -> String { frame(app).0.join("\n") }
+fn screen_text(app: &mut App) -> String {
+    frame(app).0.join("\n")
+}
 
 #[test]
 fn the_badge_names_the_focused_pane() {
@@ -548,15 +679,25 @@ fn ctrl_w_shows_as_pending_and_then_lists_window_commands() {
     app.active_pane = ActivePane::Explorer;
     keys(&mut app, "<C-w>");
     let (rows, _) = frame(&mut app);
-    assert!(rows.last().unwrap().contains("^W"), "pending ^W in the status bar: {}", rows.last().unwrap());
-    assert!(!screen_text(&mut app).contains("move left / down"), "no popup before the pause");
+    assert!(
+        rows.last().unwrap().contains("^W"),
+        "pending ^W in the status bar: {}",
+        rows.last().unwrap()
+    );
+    assert!(
+        !screen_text(&mut app).contains("move left / down"),
+        "no popup before the pause"
+    );
     wait_for_hints(&mut app);
     let screen = screen_text(&mut app);
     assert!(screen.contains("^W window"), "{screen}");
     assert!(screen.contains("move left / down / up / right"));
     assert!(screen.contains("split vertically"));
     keys(&mut app, "l");
-    assert!(!screen_text(&mut app).contains("move left / down"), "the popup closes with the command");
+    assert!(
+        !screen_text(&mut app).contains("move left / down"),
+        "the popup closes with the command"
+    );
     assert_eq!(app.active_pane, ActivePane::Editor);
 }
 
@@ -588,13 +729,29 @@ fn editor_prefixes_list_what_can_follow() {
 fn keys_that_are_not_commands_say_so() {
     let mut app = vim_app("abc");
     keys(&mut app, "<C-w>Z");
-    let message = app.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    let message = app
+        .vim
+        .message
+        .as_ref()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
     assert!(message.contains("not a window command"), "{message}");
     assert!(super::feedback::bell_active(&app), "the badge flashes");
     keys(&mut app, "gX");
-    let message = app.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    let message = app
+        .vim
+        .message
+        .as_ref()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
     assert_eq!(message, "gX: not a command");
-    assert!(frame(&mut app).0.last().unwrap().contains("gX: not a command"));
+    assert!(
+        frame(&mut app)
+            .0
+            .last()
+            .unwrap()
+            .contains("gX: not a command")
+    );
     // The message goes with the next key; editing is unaffected.
     keys(&mut app, "x");
     assert!(app.vim.message.is_none());
@@ -603,7 +760,12 @@ fn keys_that_are_not_commands_say_so() {
     let _root = with_explorer(&mut app);
     app.active_pane = ActivePane::Explorer;
     keys(&mut app, "<C-w>Z");
-    assert!(app.vim.message.as_ref().is_some_and(|m| m.text.contains("not a window command")));
+    assert!(
+        app.vim
+            .message
+            .as_ref()
+            .is_some_and(|m| m.text.contains("not a window command"))
+    );
 }
 
 #[test]
@@ -620,7 +782,12 @@ fn insert_mode_prefixes_and_one_shot_normal_commands_are_shown() {
     // <C-o> runs one Normal-mode command: Vim shows "(insert)".
     keys(&mut app, "<C-o>");
     let status = frame(&mut app).0.last().unwrap().clone();
-    assert!(status.contains("(INSERT)"), "status: {status} mode={:?} oneshot={}", app.vim.mode, app.vim.insert_oneshot.is_some());
+    assert!(
+        status.contains("(INSERT)"),
+        "status: {status} mode={:?} oneshot={}",
+        app.vim.mode,
+        app.vim.insert_oneshot.is_some()
+    );
     keys(&mut app, "$");
     assert!(frame(&mut app).0.last().unwrap().contains("INSERT"));
     assert_eq!(app.vim.mode, Mode::Insert);
@@ -635,14 +802,21 @@ fn a_window_move_outlines_the_pane_it_lands_in() {
     assert_eq!(app.active_pane, ActivePane::Explorer);
     let (_, area) = app.vim_focus_flash.expect("the Explorer is outlined");
     assert_eq!(Some(area), app.explorer_area);
-    assert!(super::feedback::next_deadline(&app).is_some(), "a redraw is scheduled to clear it");
+    assert!(
+        super::feedback::next_deadline(&app).is_some(),
+        "a redraw is scheduled to clear it"
+    );
 }
 
 #[test]
 fn ctrl_o_in_insert_mode_runs_one_normal_command() {
     let mut app = vim_app("abc def");
     keys(&mut app, "i<C-o>");
-    assert_eq!(app.vim.mode, Mode::Normal, "<C-o> waits for one Normal-mode command");
+    assert_eq!(
+        app.vim.mode,
+        Mode::Normal,
+        "<C-o> waits for one Normal-mode command"
+    );
     keys(&mut app, "w");
     assert_eq!(app.vim.mode, Mode::Insert, "then Insert mode resumes");
     keys(&mut app, "X<Esc>");
@@ -653,24 +827,41 @@ fn ctrl_o_in_insert_mode_runs_one_normal_command() {
     assert_eq!(text(&app), "Xdef");
 }
 
-
 #[test]
 fn visual_mode_shows_the_selection_size_and_search_shows_its_count() {
     let mut app = vim_app("one two\nthree four\nfive\n");
     let status = |app: &mut App| frame(app).0.last().unwrap().clone();
     keys(&mut app, "vll");
-    assert!(status(&mut app).contains("VISUAL  3"), "{}", status(&mut app));
+    assert!(
+        status(&mut app).contains("VISUAL  3"),
+        "{}",
+        status(&mut app)
+    );
     keys(&mut app, "j");
     assert!(status(&mut app).contains("VISUAL  2"));
     keys(&mut app, "<Esc>Vj");
     assert!(status(&mut app).contains("V-LINE  2"));
     keys(&mut app, "<Esc>gg<C-v>jl");
-    assert!(status(&mut app).contains("V-BLOCK  2x2"), "{}", status(&mut app));
+    assert!(
+        status(&mut app).contains("V-BLOCK  2x2"),
+        "{}",
+        status(&mut app)
+    );
     keys(&mut app, "<Esc>gg/o<CR>");
-    let message = app.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    let message = app
+        .vim
+        .message
+        .as_ref()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
     assert_eq!(message, "/o  [2/3]", "o in one, two, four: the second");
     keys(&mut app, "nn");
-    let message = app.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
+    let message = app
+        .vim
+        .message
+        .as_ref()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
     assert_eq!(message, "search hit BOTTOM, continuing at TOP  [1/3]");
 }
 
@@ -679,15 +870,28 @@ fn lists_say_which_keys_they_take() {
     let mut app = vim_app(&"line\n".repeat(10));
     with_problems(&mut app);
     keys(&mut app, ":copen<CR>x");
-    let message = app.vim.message.as_ref().map(|m| m.text.clone()).unwrap_or_default();
-    assert!(message.starts_with("x: not a key here (j k gg G move"), "{message}");
+    let message = app
+        .vim
+        .message
+        .as_ref()
+        .map(|m| m.text.clone())
+        .unwrap_or_default();
+    assert!(
+        message.starts_with("x: not a key here (j k gg G move"),
+        "{message}"
+    );
     assert!(super::feedback::bell_active(&app));
     assert_eq!(app.active_pane, ActivePane::Panel, "focus stays");
     keys(&mut app, "q");
     let _root = with_explorer(&mut app);
     app.active_pane = ActivePane::Explorer;
     keys(&mut app, "gX");
-    assert!(app.vim.message.as_ref().is_some_and(|m| m.text.starts_with("gX: not a key here")));
+    assert!(
+        app.vim
+            .message
+            .as_ref()
+            .is_some_and(|m| m.text.starts_with("gX: not a key here"))
+    );
     keys(&mut app, "j");
     assert!(app.vim.message.is_none(), "the next key clears it");
 }
@@ -713,10 +917,18 @@ fn sidebar_views_switch_from_any_sidebar_view() {
     assert_eq!(app.sidebar_view, SidebarView::SourceControl);
     assert_eq!(app.active_pane, ActivePane::Explorer);
     // The usual VTCode shortcut works from a sidebar view too.
-    press(&mut app, KeyCode::Char('E'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    press(
+        &mut app,
+        KeyCode::Char('E'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
     assert_eq!(app.sidebar_view, SidebarView::Explorer);
     assert_eq!(app.active_pane, ActivePane::Explorer);
-    press(&mut app, KeyCode::Char('G'), KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+    press(
+        &mut app,
+        KeyCode::Char('G'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
     assert_eq!(app.sidebar_view, SidebarView::SourceControl);
     keys(&mut app, ":VT global_search<CR>");
     assert_eq!(app.sidebar_view, SidebarView::Search);
@@ -735,7 +947,13 @@ fn the_command_line_opens_from_a_sidebar_with_no_file_open() {
     app.active_pane = ActivePane::Explorer;
     keys(&mut app, ":");
     assert!(app.vim.cmdline.is_some(), "':' opens the command line");
-    assert!(screen_text(&mut app).lines().last().is_some_and(|l| l.starts_with(":")), "it shows at the bottom");
+    assert!(
+        screen_text(&mut app)
+            .lines()
+            .last()
+            .is_some_and(|l| l.starts_with(":")),
+        "it shows at the bottom"
+    );
     keys(&mut app, "Explore<CR>");
     assert!(app.vim.cmdline.is_none());
     assert_eq!(app.sidebar_view, SidebarView::Explorer);
@@ -749,7 +967,6 @@ fn the_command_line_opens_from_a_sidebar_with_no_file_open() {
     assert!(app.vim.cmdline.is_none());
     assert_eq!(app.active_pane, ActivePane::Explorer);
 }
-
 
 #[test]
 fn x_and_zz_close_an_unchanged_buffer_without_a_name() {
@@ -765,5 +982,10 @@ fn x_and_zz_close_an_unchanged_buffer_without_a_name() {
     // A changed one still needs a name.
     let mut app = vim_app("abc");
     keys(&mut app, "x:x<CR>");
-    assert!(app.vim.message.as_ref().is_some_and(|m| m.text.starts_with("E32")));
+    assert!(
+        app.vim
+            .message
+            .as_ref()
+            .is_some_and(|m| m.text.starts_with("E32"))
+    );
 }

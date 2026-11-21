@@ -86,26 +86,47 @@ impl NativeInput {
         assert_eq!(written as usize, records.len());
     }
 
-    pub(super) fn stream_send(&self, records: &[windows_sys::Win32::System::Console::INPUT_RECORD]) {
+    pub(super) fn stream_send(
+        &self,
+        records: &[windows_sys::Win32::System::Console::INPUT_RECORD],
+    ) {
         static RAW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if !*RAW.get_or_init(|| std::env::var_os("VTCODE_STREAM_RAW").is_some()) {
             self.send(records);
             return;
         }
-        use windows_sys::Win32::System::Console::{INPUT_RECORD, INPUT_RECORD_0, KEY_EVENT, KEY_EVENT_RECORD, KEY_EVENT_RECORD_0, MOUSE_EVENT, MOUSE_MOVED};
+        use windows_sys::Win32::System::Console::{
+            INPUT_RECORD, INPUT_RECORD_0, KEY_EVENT, KEY_EVENT_RECORD, KEY_EVENT_RECORD_0,
+            MOUSE_EVENT, MOUSE_MOVED,
+        };
         let mut encoded = Vec::new();
         for record in records {
             assert_eq!(record.EventType, MOUSE_EVENT as u16);
             // SAFETY: the checked tag identifies the active union member.
             let mouse = unsafe { record.Event.MouseEvent };
-            let code = if mouse.dwEventFlags == MOUSE_MOVED { 32 } else { 0 };
-            let text = format!("\x1b[<{code};{};{}{}", mouse.dwMousePosition.X + 1, mouse.dwMousePosition.Y + 1, if mouse.dwButtonState == 0 { 'm' } else { 'M' });
+            let code = if mouse.dwEventFlags == MOUSE_MOVED {
+                32
+            } else {
+                0
+            };
+            let text = format!(
+                "\x1b[<{code};{};{}{}",
+                mouse.dwMousePosition.X + 1,
+                mouse.dwMousePosition.Y + 1,
+                if mouse.dwButtonState == 0 { 'm' } else { 'M' }
+            );
             encoded.extend(text.encode_utf16().map(|unit| INPUT_RECORD {
                 EventType: KEY_EVENT as u16,
-                Event: INPUT_RECORD_0 { KeyEvent: KEY_EVENT_RECORD {
-                    bKeyDown: 1, wRepeatCount: 1, wVirtualKeyCode: 0, wVirtualScanCode: 0,
-                    uChar: KEY_EVENT_RECORD_0 { UnicodeChar: unit }, dwControlKeyState: 0,
-                } },
+                Event: INPUT_RECORD_0 {
+                    KeyEvent: KEY_EVENT_RECORD {
+                        bKeyDown: 1,
+                        wRepeatCount: 1,
+                        wVirtualKeyCode: 0,
+                        wVirtualScanCode: 0,
+                        uChar: KEY_EVENT_RECORD_0 { UnicodeChar: unit },
+                        dwControlKeyState: 0,
+                    },
+                },
             }));
         }
         self.send(&encoded);

@@ -105,17 +105,30 @@ fn terminal_selection_highlights_text_without_painting_trailing_padding() {
         for (row, columns) in [0..3, 0..5, 0..0, 0..4, 0..0, 0..0].into_iter().enumerate() {
             for column in 0..16 {
                 let at = (area.x + column as u16, area.y + row as u16);
-                if columns.contains(&column) { assert_eq!(selected[at].bg, Color::Blue); }
-                else { assert_eq!(selected[at], plain[at], "padding at {row}:{column} must keep its original style"); }
+                if columns.contains(&column) {
+                    assert_eq!(selected[at].bg, Color::Blue);
+                } else {
+                    assert_eq!(
+                        selected[at], plain[at],
+                        "padding at {row}:{column} must keep its original style"
+                    );
+                }
             }
         }
-        assert_eq!(pty.grid.selected_text().as_deref(), Some("one\n  two\n\nlast"));
+        assert_eq!(
+            pty.grid.selected_text().as_deref(),
+            Some("one\n  two\n\nlast")
+        );
         compare(&pty, &palette, area, true);
     }
     pty.grid.begin_selection(0, 6);
     pty.grid.extend_selection(0, 15);
     assert_eq!(render(&pty, &palette, area, true, false).0, plain);
-    assert_eq!(conversions(&pty), initial_conversions, "selection must reuse the cached terminal text");
+    assert_eq!(
+        conversions(&pty),
+        initial_conversions,
+        "selection must reuse the cached terminal text"
+    );
 }
 
 #[test]

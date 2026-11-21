@@ -1,5 +1,9 @@
 use super::*;
-use crate::{app::{Tab, TabKind}, editor::Editor, terminal::TerminalEmulator};
+use crate::{
+    app::{Tab, TabKind},
+    editor::Editor,
+    terminal::TerminalEmulator,
+};
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use std::{path::Path, time::Duration};
 
@@ -12,16 +16,28 @@ fn fixture(output: &str) -> App {
     app.show_terminal_sidebar = true;
     app.terminal_panel_focused = true;
     app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(200, 8, output));
-    app.terminal_surfaces = vec![TerminalSurface { index: 0, area: Rect::new(2, 3, 200, 8), group: None }];
+    app.terminal_surfaces = vec![TerminalSurface {
+        index: 0,
+        area: Rect::new(2, 3, 200, 8),
+        group: None,
+    }];
     app
 }
 
 fn event(kind: MouseEventKind, modifiers: KeyModifiers, column: u16) -> MouseEvent {
-    MouseEvent { kind, modifiers, column: column + 2, row: 3 }
+    MouseEvent {
+        kind,
+        modifiers,
+        column: column + 2,
+        row: 3,
+    }
 }
 
 fn click(app: &mut App, column: u16, modifiers: KeyModifiers) {
-    for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
         crate::mouse::handle_mouse(app, event(kind, modifiers, column));
     }
 }
@@ -46,20 +62,45 @@ fn ctrl_click_opens_a_local_diagnostic_at_the_exact_line_and_column_in_docks_and
         assert!(!app.terminal_links.captured);
         assert!(app.terminal_selection_drag.is_none());
         assert!(app.terminal_mouse_capture.is_none());
-        assert!(input.lock().unwrap().is_empty(), "link presses/releases must not reach the child");
-        app.wait_for_background(Duration::from_secs(10), |app| app.editor().is_some_and(|editor|
-            !editor.bg_loading && editor.file_path.as_deref().is_some_and(|other| App::same_open_path(other, &path))));
+        assert!(
+            input.lock().unwrap().is_empty(),
+            "link presses/releases must not reach the child"
+        );
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.editor().is_some_and(|editor| {
+                !editor.bg_loading
+                    && editor
+                        .file_path
+                        .as_deref()
+                        .is_some_and(|other| App::same_open_path(other, &path))
+            })
+        });
         assert_eq!(app.tabs[app.active_tab].kind, TabKind::File);
-        assert!(App::same_open_path(app.editor().unwrap().file_path.as_ref().unwrap(), &path));
-        assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (4754, 48));
+        assert!(App::same_open_path(
+            app.editor().unwrap().file_path.as_ref().unwrap(),
+            &path
+        ));
+        assert_eq!(
+            (
+                app.editor().unwrap().cursor_line,
+                app.editor().unwrap().cursor_col
+            ),
+            (4754, 48)
+        );
         assert!(!app.terminal_panel_focused);
-        if detached { assert!(app.tabs.iter().any(|tab| tab.kind == TabKind::Terminal)); }
+        if detached {
+            assert!(app.tabs.iter().any(|tab| tab.kind == TabKind::Terminal));
+        }
     }
 }
 
 #[test]
 fn ordinary_terminal_clicks_and_selection_modifiers_do_not_open_files() {
-    for modifiers in [KeyModifiers::NONE, KeyModifiers::SHIFT, KeyModifiers::CONTROL | KeyModifiers::SHIFT] {
+    for modifiers in [
+        KeyModifiers::NONE,
+        KeyModifiers::SHIFT,
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ] {
         let mut app = fixture("source.c:12:7");
         click(&mut app, 4, modifiers);
         assert_eq!(app.tabs.len(), 1);
@@ -77,22 +118,50 @@ fn ctrl_hover_is_a_cached_frame_overlay_and_idle_frames_do_no_detection() {
     let mut terminal = Terminal::new(TestBackend::new(204, 12)).unwrap();
     let draw = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
         app.terminal_links.begin_frame();
-        terminal.draw(|frame| {
-            crate::ui_helpers::draw_terminal_emulator(frame, app.terminals[0].terminal_pty.as_ref().unwrap(),
-                surface.area, &app.colors.ui, true);
-            super::draw(frame, app, surface);
-        }).unwrap();
+        terminal
+            .draw(|frame| {
+                crate::ui_helpers::draw_terminal_emulator(
+                    frame,
+                    app.terminals[0].terminal_pty.as_ref().unwrap(),
+                    surface.area,
+                    &app.colors.ui,
+                    true,
+                );
+                super::draw(frame, app, surface);
+            })
+            .unwrap();
     };
-    for _ in 0..100 { draw(&mut terminal, &mut app); }
+    for _ in 0..100 {
+        draw(&mut terminal, &mut app);
+    }
     assert_eq!(app.terminal_links.cache.scans, 0);
     app.update_link_hover_modifiers(KeyModifiers::CONTROL);
-    for _ in 0..100 { draw(&mut terminal, &mut app); }
+    for _ in 0..100 {
+        draw(&mut terminal, &mut app);
+    }
     assert_eq!(app.terminal_links.cache.scans, 1);
-    assert!(terminal.backend().buffer()[(16, 3)].modifier.contains(Modifier::UNDERLINED));
-    assert!(!app.terminals[0].terminal_pty.as_ref().unwrap().grid.display_row(0).unwrap()[14].underline);
+    assert!(
+        terminal.backend().buffer()[(16, 3)]
+            .modifier
+            .contains(Modifier::UNDERLINED)
+    );
+    assert!(
+        !app.terminals[0]
+            .terminal_pty
+            .as_ref()
+            .unwrap()
+            .grid
+            .display_row(0)
+            .unwrap()[14]
+            .underline
+    );
     app.update_link_hover_modifiers(KeyModifiers::NONE);
     draw(&mut terminal, &mut app);
-    assert!(!terminal.backend().buffer()[(16, 3)].modifier.contains(Modifier::UNDERLINED));
+    assert!(
+        !terminal.backend().buffer()[(16, 3)]
+            .modifier
+            .contains(Modifier::UNDERLINED)
+    );
 }
 
 #[test]
@@ -103,8 +172,14 @@ fn shell_directory_hints_resolve_relative_links_without_filesystem_queries() {
     let uri = url::Url::from_directory_path(&nested).unwrap();
     let mut app = fixture(&format!("\x1b]7;{uri}\x07source.c:3:4"));
     app.terminals[0].terminal_cwd = directory.path().into();
-    assert_eq!(resolve_path(&app, 0, "source.c").unwrap(), nested.join("source.c"));
-    assert_eq!(resolve_path(&app, 0, "../other.c").unwrap(), nested.join("../other.c"));
+    assert_eq!(
+        resolve_path(&app, 0, "source.c").unwrap(),
+        nested.join("source.c")
+    );
+    assert_eq!(
+        resolve_path(&app, 0, "../other.c").unwrap(),
+        nested.join("../other.c")
+    );
     assert_eq!(app.terminal_links.cache.scans, 0);
     assert!(Path::new(&resolve_path(&app, 0, "source.c").unwrap()).is_absolute());
 }
@@ -112,8 +187,14 @@ fn shell_directory_hints_resolve_relative_links_without_filesystem_queries() {
 #[cfg(windows)]
 #[test]
 fn windows_bash_directory_hints_map_drives_and_preserve_escaped_names() {
-    for uri in ["file:///c/work/my%20dir%20%231", "file:///cygdrive/c/work/my%20dir%20%231"] {
-        assert_eq!(local_directory(uri), Some(PathBuf::from(r"c:\work\my dir #1")));
+    for uri in [
+        "file:///c/work/my%20dir%20%231",
+        "file:///cygdrive/c/work/my%20dir%20%231",
+    ] {
+        assert_eq!(
+            local_directory(uri),
+            Some(PathBuf::from(r"c:\work\my dir #1"))
+        );
     }
 }
 
@@ -145,8 +226,12 @@ fn directory_links_expand_select_and_scroll_the_workspace_explorer_from_docks_an
         }
         let tabs = app.tabs.len();
         click(&mut app, 8, KeyModifiers::CONTROL);
-        app.wait_for_background(Duration::from_secs(10), |app| app.explorer.entries.get(app.explorer.selected)
-            .is_some_and(|entry| entry.path == target && entry.expanded));
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.explorer
+                .entries
+                .get(app.explorer.selected)
+                .is_some_and(|entry| entry.path == target && entry.expanded)
+        });
         assert_eq!(app.explorer.root, root.path());
         assert_eq!(app.tabs.len(), tabs);
         assert!(app.show_explorer);
@@ -156,7 +241,11 @@ fn directory_links_expand_select_and_scroll_the_workspace_explorer_from_docks_an
         assert!(!app.explorer.find.filter);
         assert_eq!(app.explorer.find.query, "unrelated");
         assert!(app.explorer.scroll_offset > 0);
-        assert!(app.explorer.viewport_indices(5).contains(&app.explorer.selected));
+        assert!(
+            app.explorer
+                .viewport_indices(5)
+                .contains(&app.explorer.selected)
+        );
         assert!(!app.side_notice.visible());
     }
 }
@@ -184,18 +273,34 @@ fn outside_directory_is_rejected_with_a_small_explanatory_notice_and_success_cle
     failure(&mut app);
     assert!(!app.show_explorer);
     assert_eq!(app.explorer.root, workspace);
-    assert!(app.notification_history.last().unwrap().0.contains("outside the current workspace"));
+    assert!(
+        app.notification_history
+            .last()
+            .unwrap()
+            .0
+            .contains("outside the current workspace")
+    );
     let mut output = Terminal::new(TestBackend::new(90, 14)).unwrap();
     app.status_bar_area = Some(Rect::new(0, 13, 90, 1));
-    output.draw(|frame| crate::ui_side_notice::draw(frame, &mut app)).unwrap();
-    let text: String = output.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+    output
+        .draw(|frame| crate::ui_side_notice::draw(frame, &mut app))
+        .unwrap();
+    let text: String = output
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
     assert!(text.contains("Cannot open terminal path"));
     assert!(text.contains("outside the current workspace"));
     assert!(text.contains("Details"));
     assert_eq!(app.side_notice.area.unwrap().height, 5);
     app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(200, 8, "workspace/"));
     click(&mut app, 4, KeyModifiers::CONTROL);
-    app.wait_for_background(Duration::from_secs(10), |app| app.active_pane == ActivePane::Explorer);
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.active_pane == ActivePane::Explorer
+    });
     assert_eq!(app.active_pane, ActivePane::Explorer);
     assert!(!app.side_notice.visible());
     assert_eq!(app.explorer.root, workspace);
@@ -226,7 +331,13 @@ fn a_folder_excluded_from_the_explorer_has_visible_failure_feedback() {
     click(&mut app, 4, KeyModifiers::CONTROL);
     app.wait_for_background(Duration::from_secs(10), |app| app.side_notice.visible());
     assert!(app.side_notice.visible());
-    assert!(app.notification_history.last().unwrap().0.contains("excluded"));
+    assert!(
+        app.notification_history
+            .last()
+            .unwrap()
+            .0
+            .contains("excluded")
+    );
     assert!(app.terminal_panel_focused);
     assert_eq!(app.active_pane, ActivePane::Editor);
     assert_eq!(app.explorer.root, root.path());

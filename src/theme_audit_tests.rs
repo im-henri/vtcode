@@ -45,10 +45,24 @@ fn translucent_foregrounds_follow_independently_customized_surfaces() {
     for (foreground, expected) in [
         (palette.ui.fg_activity_badge, 208),
         (palette.ui.fg_quick_selected, 224),
-        (palette.ui.suggest_selection.foreground.over(Color::Rgb(224, 224, 224)).unwrap(), 240),
+        (
+            palette
+                .ui
+                .suggest_selection
+                .foreground
+                .over(Color::Rgb(224, 224, 224))
+                .unwrap(),
+            240,
+        ),
         (palette.ui.fg_tab_hover, 144),
         (palette.ui.fg_unfocused_tab, 160),
-        (palette.ui.inlay_colors[0].foreground.over(Color::Rgb(96, 96, 96)).unwrap(), 176),
+        (
+            palette.ui.inlay_colors[0]
+                .foreground
+                .over(Color::Rgb(96, 96, 96))
+                .unwrap(),
+            176,
+        ),
         (palette.ui.fg_breadcrumb, 192),
         (palette.ui.fg_title, 208),
         (palette.ui.fg_terminal_selection.unwrap(), 224),
@@ -192,7 +206,8 @@ fn activity_badges_and_panel_tabs_do_not_inherit_list_colors() {
         "panelTitle.activeBorder":"#006600", "terminal.tab.activeBorder":"#880000",
         "list.activeSelectionForeground":"#ffff00", "list.hoverBackground":"#00ff00"
     }), "vs-dark").to_theme_colors();
-    app.source_control_files.push(crate::app::GitFileChange { directory: false,
+    app.source_control_files.push(crate::app::GitFileChange {
+        directory: false,
         path: "example.rs".into(),
         original_path: None,
         status: 'M',
@@ -294,11 +309,21 @@ fn semantic_transparency_recomposites_when_editor_background_changes() {
         serde_json::from_value(serde_json::json!({"editor.background":"#e0e0e0"})).unwrap();
     let changed = crate::vscode_theme::customized_theme(&original, &overrides);
     assert_eq!(
-        original.semantic_colors.as_ref().unwrap().color("type").unwrap(),
+        original
+            .semantic_colors
+            .as_ref()
+            .unwrap()
+            .color("type")
+            .unwrap(),
         (136, 136, 136)
     );
     assert_eq!(
-        changed.semantic_colors.as_ref().unwrap().color("type").unwrap(),
+        changed
+            .semantic_colors
+            .as_ref()
+            .unwrap()
+            .color("type")
+            .unwrap(),
         (240, 240, 240)
     );
     let reset = crate::vscode_theme::customized_theme(&original, &Default::default());
@@ -414,11 +439,18 @@ fn default_button_hover_colors_preserve_hue_and_high_contrast_fill() {
     for kind in ["hc-black", "hc-light"] {
         let palette = theme(serde_json::json!({}), kind).to_theme_colors();
         assert_eq!(
-            palette.ui.primary_button_hover.or(palette.ui.primary_button.background).over(palette.bg_sc_button),
+            palette
+                .ui
+                .primary_button_hover
+                .or(palette.ui.primary_button.background)
+                .over(palette.bg_sc_button),
             Some(palette.bg_sc_button)
         );
         assert_eq!(
-            palette.ui.button_style(palette.bg_sc_button_secondary, false, true, true).bg,
+            palette
+                .ui
+                .button_style(palette.bg_sc_button_secondary, false, true, true)
+                .bg,
             Some(palette.bg_sc_button_secondary)
         );
     }
@@ -604,15 +636,35 @@ fn bundled_controls_render_their_registered_foregrounds_and_fills() {
                         );
                     })
                     .unwrap();
-                let control = if primary { palette.ui.primary_button } else { palette.ui.secondary_button };
-                let fill = if !hovered { control.background } else if primary {
+                let control = if primary {
+                    palette.ui.primary_button
+                } else {
+                    palette.ui.secondary_button
+                };
+                let fill = if !hovered {
+                    control.background
+                } else if primary {
                     palette.ui.primary_button_hover.or(control.background)
-                } else { palette.ui.secondary_button_hover.or(control.background) };
-                let bg = fill.over(palette.ui.bg_widget).unwrap_or(palette.ui.bg_widget);
+                } else {
+                    palette.ui.secondary_button_hover.or(control.background)
+                };
+                let bg = fill
+                    .over(palette.ui.bg_widget)
+                    .unwrap_or(palette.ui.bg_widget);
                 let cell = &terminal.backend().buffer()[(5, 0)];
                 assert_eq!(cell.bg, bg, "{}: button fill", theme.name);
-                assert_eq!(cell.fg, control.foreground.over(bg).unwrap(), "{}: button text", theme.name);
-                assert_eq!(terminal.backend().buffer()[(1, 1)].fg, palette.ui.fg_sidebar, "{}: toolbar text", theme.name);
+                assert_eq!(
+                    cell.fg,
+                    control.foreground.over(bg).unwrap(),
+                    "{}: button text",
+                    theme.name
+                );
+                assert_eq!(
+                    terminal.backend().buffer()[(1, 1)].fg,
+                    palette.ui.fg_sidebar,
+                    "{}: toolbar text",
+                    theme.name
+                );
             }
         }
     }
@@ -642,7 +694,9 @@ fn chat_markdown_preserves_authored_text_even_when_the_theme_is_low_contrast() {
         if !cell.symbol().trim().is_empty() {
             let expected = if cell.bg == Color::Rgb(17, 17, 17) {
                 Color::Rgb(34, 34, 34)
-            } else { Color::Rgb(238, 238, 238) };
+            } else {
+                Color::Rgb(238, 238, 238)
+            };
             assert_eq!(cell.fg, expected);
         }
     }

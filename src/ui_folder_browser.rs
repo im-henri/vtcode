@@ -76,20 +76,38 @@ fn label(f: &mut Frame, area: Rect, text: impl Into<String>, style: Style) {
 }
 
 fn surface_at(f: &mut Frame, app: &App, area: Rect) -> ratatui::style::Color {
-    f.buffer_mut().cell((area.x, area.y)).map_or(app.colors.ui.bg_widget, |cell| cell.bg)
+    f.buffer_mut()
+        .cell((area.x, area.y))
+        .map_or(app.colors.ui.bg_widget, |cell| cell.bg)
 }
 
 fn control(f: &mut Frame, app: &mut App, area: Rect, text: &str, action: Action, enabled: bool) {
     let hovered = area.contains((app.mouse_col, app.mouse_row).into());
-    let focused = matches!(action, Action::SwitchDevice) && app.folder_browser.focus == Focus::Device;
+    let focused =
+        matches!(action, Action::SwitchDevice) && app.folder_browser.focus == Focus::Device;
     let surface = surface_at(f, app, area);
-    let mut style = app.colors.ui.toolbar_layer_style(app.colors.ui.widget_foreground, surface,
-        (hovered || focused) && enabled, false, false);
-    if focused && enabled { style = style.add_modifier(Modifier::BOLD); }
+    let mut style = app.colors.ui.toolbar_layer_style(
+        app.colors.ui.widget_foreground,
+        surface,
+        (hovered || focused) && enabled,
+        false,
+        false,
+    );
+    if focused && enabled {
+        style = style.add_modifier(Modifier::BOLD);
+    }
     if !enabled {
         let fg = style.fg.unwrap();
         style = style.fg(crate::ui_colors::disabled_text_color(
-            app.colors.ui.disabled_foreground.over(surface).unwrap_or(fg), fg, surface, app.colors.ui.contrast_colors()));
+            app.colors
+                .ui
+                .disabled_foreground
+                .over(surface)
+                .unwrap_or(fg),
+            fg,
+            surface,
+            app.colors.ui.contrast_colors(),
+        ));
     }
     label(f, area, text, style);
     if enabled && !area.is_empty() {
@@ -105,8 +123,13 @@ fn input(f: &mut Frame, app: &mut App, area: Rect, id: TextInputId, placeholder:
     let style = app.colors.ui.input_style(surface_at(f, app, area));
     let bg = style.bg.unwrap();
     let fg = style.fg.unwrap();
-    let border = (if focused { app.colors.ui.focus_border } else { app.colors.ui.input_colors.border })
-        .border(bg).unwrap_or(bg);
+    let border = (if focused {
+        app.colors.ui.focus_border
+    } else {
+        app.colors.ui.input_colors.border
+    })
+    .border(bg)
+    .unwrap_or(bg);
     let mut inner = if area.height >= 3 {
         let block = Block::default()
             .borders(Borders::ALL)
@@ -147,9 +170,7 @@ fn input(f: &mut Frame, app: &mut App, area: Rect, id: TextInputId, placeholder:
         .cursor_marker(if focused { "│" } else { "" })
         .cursor_pos(cursor.min(text.len()));
     if focused {
-        field = field.selection_range(
-            App::inline_selection_range(cursor, anchor),
-        );
+        field = field.selection_range(App::inline_selection_range(cursor, anchor));
     }
     let map = field.render(f, inner);
     app.register_text_input(id, map);
@@ -165,7 +186,9 @@ fn breadcrumbs(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             Borders::NONE
         })
-        .border_style(Style::default().fg(app.colors.ui.input_colors.border.border(bg).unwrap_or(bg)))
+        .border_style(
+            Style::default().fg(app.colors.ui.input_colors.border.border(bg).unwrap_or(bg)),
+        )
         .style(style);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -176,7 +199,9 @@ fn breadcrumbs(f: &mut Frame, app: &mut App, area: Rect) {
     let mut parts: Vec<_> = if app.folder_browser_is_computer() {
         Vec::new()
     } else if let Some(remote) = app.folder_browser_remote() {
-        remote.breadcrumbs(&app.folder_browser_path).unwrap_or_default()
+        remote
+            .breadcrumbs(&app.folder_browser_path)
+            .unwrap_or_default()
     } else {
         let mut parts: Vec<_> = app
             .folder_browser_path
@@ -223,8 +248,19 @@ fn breadcrumbs(f: &mut Frame, app: &mut App, area: Rect) {
             f,
             area,
             truncate_to_width(&name, width as usize),
-            app.colors.ui.toolbar_layer_style(if i == last { app.colors.ui.input_colors.foreground }
-                else { app.colors.ui.description_foreground }, bg, hovered, false, false)
+            app.colors
+                .ui
+                .toolbar_layer_style(
+                    if i == last {
+                        app.colors.ui.input_colors.foreground
+                    } else {
+                        app.colors.ui.description_foreground
+                    },
+                    bg,
+                    hovered,
+                    false,
+                    false,
+                )
                 .add_modifier(if i == last {
                     Modifier::BOLD
                 } else {
@@ -290,11 +326,19 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     {
         let row = Rect::new(rows.x, rows.y + (i - start) as u16, rows.width, 1);
         let active = app.folder_browser.focus == Focus::Locations;
-        let selected = if active { i == app.folder_browser.location_selected }
-            else { path == &app.folder_browser_path };
+        let selected = if active {
+            i == app.folder_browser.location_selected
+        } else {
+            path == &app.folder_browser_path
+        };
         let hovered = row.contains((app.mouse_col, app.mouse_row).into());
-        let style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
-            app.colors.bg_sidebar, selected, active, hovered);
+        let style = app.colors.ui.list_row_style(
+            app.colors.ui.sidebar_foreground,
+            app.colors.bg_sidebar,
+            selected,
+            active,
+            hovered,
+        );
         let bg = style.bg.unwrap();
         let icon = match name.as_str() {
             "Computer" => "▣",
@@ -312,7 +356,12 @@ fn draw_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
             Paragraph::new(Line::from(vec![
                 Span::styled(
                     format!(" {icon} "),
-                    Style::default().fg(app.colors.ui.list_icon_color(app.colors.ui.icon_color(bg), bg, selected, active)),
+                    Style::default().fg(app.colors.ui.list_icon_color(
+                        app.colors.ui.icon_color(bg),
+                        bg,
+                        selected,
+                        active,
+                    )),
                 ),
                 Span::styled(
                     truncate_to_width(name, rows.width.saturating_sub(4) as usize),
@@ -385,11 +434,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             Action::Forward,
             !app.folder_browser.forward.is_empty(),
         ),
-        (
-            " ↑ ",
-            Action::Up,
-            app.folder_browser_parent().is_some(),
-        ),
+        (" ↑ ", Action::Up, app.folder_browser_parent().is_some()),
         (" ↻ ", Action::Refresh, !app.folder_browser.creating),
     ]
     .into_iter()
@@ -423,7 +468,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             app,
             address,
             TextInputId::FolderAddress,
-            if files { "Enter a file or folder path" } else { "Enter folder path" },
+            if files {
+                "Enter a file or folder path"
+            } else {
+                "Enter folder path"
+            },
         );
     } else {
         breadcrumbs(f, app, address);
@@ -470,13 +519,32 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         };
         Some((text, Action::SwitchDevice, true))
     } else if !files {
-        Some((" + New folder ", Action::NewFolder,
-            !app.folder_browser_loading && !app.folder_browser.creating && !app.folder_browser_is_computer()))
-    } else { None };
+        Some((
+            " + New folder ",
+            Action::NewFolder,
+            !app.folder_browser_loading
+                && !app.folder_browser.creating
+                && !app.folder_browser_is_computer(),
+        ))
+    } else {
+        None
+    };
     let mut tool_width = 0;
     if let Some((text, action, enabled)) = tool {
         tool_width = layout.tools.width.min(text.width() as u16 + 2);
-        control(f, app, Rect::new(layout.tools.x, layout.tools.y, tool_width, layout.tools.height), text, action, enabled);
+        control(
+            f,
+            app,
+            Rect::new(
+                layout.tools.x,
+                layout.tools.y,
+                tool_width,
+                layout.tools.height,
+            ),
+            text,
+            action,
+            enabled,
+        );
     }
     let hidden_width = layout.tools.width.saturating_sub(tool_width).min(21);
     if search_width > 0 {
@@ -506,7 +574,17 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             layout.tools.width.saturating_sub(tool_width),
             layout.tools.height,
         );
-        input(f, app, search, TextInputId::FolderSearch, if files { "Search this folder" } else { "Search folders" });
+        input(
+            f,
+            app,
+            search,
+            TextInputId::FolderSearch,
+            if files {
+                "Search this folder"
+            } else {
+                "Search folders"
+            },
+        );
         app.folder_browser
             .controls
             .retain(|(_, a)| !matches!(a, Action::Hidden));
@@ -514,7 +592,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         label(
             f,
             Rect::new(layout.tools.right() - 33, layout.tools.y, 32, 1),
-            if files { "Ctrl+L  Path" } else { "Ctrl+L  Path   Ctrl+Shift+N  New" },
+            if files {
+                "Ctrl+L  Path"
+            } else {
+                "Ctrl+L  Path   Ctrl+Shift+N  New"
+            },
             Style::default().fg(app.colors.ui.description_color(app.colors.bg_sidebar)),
         );
     }
@@ -620,26 +702,59 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         let active = app.folder_browser.focus == Focus::List;
         let selected = index == app.folder_browser_selected;
         let hovered = row.contains((app.mouse_col, app.mouse_row).into());
-        let style = app.colors.ui.list_row_style(app.colors.ui.widget_foreground,
-            bg, selected, active, hovered);
+        let style = app.colors.ui.list_row_style(
+            app.colors.ui.widget_foreground,
+            bg,
+            selected,
+            active,
+            hovered,
+        );
         let bg = style.bg.unwrap();
         let fg = style.fg.unwrap();
-        let description = if selected || hovered { fg } else { app.colors.ui.description_color(bg) };
+        let description = if selected || hovered {
+            fg
+        } else {
+            app.colors.ui.description_color(bg)
+        };
         label(f, row, "", style);
         let is_parent = parent == 1 && index == 0;
-        let entry = index.checked_sub(parent).and_then(|index| indices.get(index)).copied();
+        let entry = index
+            .checked_sub(parent)
+            .and_then(|index| indices.get(index))
+            .copied();
         let path = entry.map(|i| &app.folder_browser_entries[i]);
         let is_file = entry.is_some_and(|i| app.folder_browser_entry_is_file(i));
-        let name = path.map(|path| app.folder_browser_entry_name(path).into_owned())
-            .unwrap_or_else(|| if app.folder_browser_parent().is_some_and(|parent| parent.as_os_str().is_empty()) {
-                "..  Computer".into()
-            } else { "..  Parent folder".into() });
+        let name = path
+            .map(|path| app.folder_browser_entry_name(path).into_owned())
+            .unwrap_or_else(|| {
+                if app
+                    .folder_browser_parent()
+                    .is_some_and(|parent| parent.as_os_str().is_empty())
+                {
+                    "..  Computer".into()
+                } else {
+                    "..  Parent folder".into()
+                }
+            });
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::styled(
-                    if is_parent { " ↑ " } else if is_file { " ▤ " } else { " ▰ " },
+                    if is_parent {
+                        " ↑ "
+                    } else if is_file {
+                        " ▤ "
+                    } else {
+                        " ▰ "
+                    },
                     Style::default().fg(app.colors.ui.list_icon_color(
-                        if is_file { fg } else { app.colors.ui.folder_icon_color(bg) }, bg, selected, active,
+                        if is_file {
+                            fg
+                        } else {
+                            app.colors.ui.folder_icon_color(bg)
+                        },
+                        bg,
+                        selected,
+                        active,
                     )),
                 ),
                 Span::styled(
@@ -665,20 +780,23 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
                 f,
                 Rect::new(row.x + name_width, row.y, 20, 1),
                 format!(" {modified}"),
-                Style::default()
-                    .fg(description)
-                    .bg(bg),
+                Style::default().fg(description).bg(bg),
             );
         }
         if type_column {
             label(
                 f,
                 Rect::new(row.right().saturating_sub(14), row.y, 13, 1),
-                if is_parent { "" } else if app.folder_browser_is_computer() { " File system" }
-                else if is_file { " File" } else { " File folder" },
-                Style::default()
-                    .fg(description)
-                    .bg(bg),
+                if is_parent {
+                    ""
+                } else if app.folder_browser_is_computer() {
+                    " File system"
+                } else if is_file {
+                    " File"
+                } else {
+                    " File folder"
+                },
+                Style::default().fg(description).bg(bg),
             );
         }
     }
@@ -687,14 +805,27 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             crate::ui_loading::draw_header(f, app, layout.header);
         }
         let message = if app.folder_browser_loading {
-            if app.folder_browser_is_computer() { "Loading file systems…" }
-            else if files { "Loading files and folders…" } else { "Loading folders…" }
+            if app.folder_browser_is_computer() {
+                "Loading file systems…"
+            } else if files {
+                "Loading files and folders…"
+            } else {
+                "Loading folders…"
+            }
         } else if app.folder_browser.error.is_some() {
-            if files { "" } else { "This folder could not be fully listed." }
+            if files {
+                ""
+            } else {
+                "This folder could not be fully listed."
+            }
         } else if !app.folder_browser.search.is_empty() {
-            if app.folder_browser_is_computer() { "No file systems match your search." }
-            else if files { "No items match your search." }
-            else { "No folders match your search." }
+            if app.folder_browser_is_computer() {
+                "No file systems match your search."
+            } else if files {
+                "No items match your search."
+            } else {
+                "No folders match your search."
+            }
         } else if app.folder_browser_is_computer() {
             "No file systems are available."
         } else if files {
@@ -703,7 +834,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             "This folder has no subfolders."
         };
         let hint = if !app.folder_browser.search.is_empty() {
-            if files { "Clear the search to see all items." } else { "Clear the search to see all folders." }
+            if files {
+                "Clear the search to see all items."
+            } else {
+                "Clear the search to see all folders."
+            }
         } else if files {
             "Type a filename or path to open it."
         } else if mode == Mode::AddFolder {
@@ -733,7 +868,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         }
     }
     if count > layout.list.height as usize && !layout.list.is_empty() {
-        let hovered = app.mouse_col == layout.list.right().saturating_sub(1) && (layout.list.y..layout.list.bottom()).contains(&app.mouse_row);
+        let hovered = app.mouse_col == layout.list.right().saturating_sub(1)
+            && (layout.list.y..layout.list.bottom()).contains(&app.mouse_row);
         let (track, thumb) = app.colors.ui.scrollbar_colors(bg, hovered, false);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -748,7 +884,13 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         );
     }
 
-    let noun = if app.folder_browser_is_computer() { "locations" } else if files { "items" } else { "folders" };
+    let noun = if app.folder_browser_is_computer() {
+        "locations"
+    } else if files {
+        "items"
+    } else {
+        "folders"
+    };
     let opening_file = app.file_browser_open_pending();
     let status = if let Some(error) = &app.folder_browser.error {
         format!("  {error}")
@@ -761,7 +903,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     } else if app.folder_browser.new_folder {
         "  Choose a name for the new folder.".into()
     } else if app.folder_browser.search.is_empty() {
-        let action = if files { "Double-click to open" } else { "Double-click to browse" };
+        let action = if files {
+            "Double-click to open"
+        } else {
+            "Double-click to browse"
+        };
         format!("  {} {noun}  ·  {action}", indices.len())
     } else {
         format!(
@@ -817,7 +963,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             layout.folder.height,
         ),
         TextInputId::FolderName,
-        if files { "File name or path" } else { "Folder path" },
+        if files {
+            "File name or path"
+        } else {
+            "Folder path"
+        },
     );
 
     label(
@@ -837,7 +987,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     } else if mode == Mode::SaveLocation {
         " Use folder "
     } else if mode == Mode::AddFolder {
-        if area.width >= 45 { " Add folder " } else { " Add " }
+        if area.width >= 45 {
+            " Add folder "
+        } else {
+            " Add "
+        }
     } else if area.width >= 45 {
         " Select folder "
     } else {
@@ -858,12 +1012,18 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         let rect = Rect::new(x, layout.actions.y, width, layout.actions.height);
         let focused = app.folder_browser.focus == if i == 0 { Focus::Open } else { Focus::Cancel };
         let enabled = i != 0 || app.folder_browser_can_confirm();
-        let mut style = app.colors.ui.button_style(app.colors.bg_sidebar, i == 0,
-            rect.contains((app.mouse_col, app.mouse_row).into()), enabled);
+        let mut style = app.colors.ui.button_style(
+            app.colors.bg_sidebar,
+            i == 0,
+            rect.contains((app.mouse_col, app.mouse_row).into()),
+            enabled,
+        );
         if focused && enabled {
             style = style.add_modifier(Modifier::BOLD);
             if let Some(border) = app.colors.ui.focus_border.border(style.bg.unwrap()) {
-                style = style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+                style = style
+                    .add_modifier(Modifier::UNDERLINED)
+                    .underline_color(border);
             }
         }
         crate::ui_widgets::draw_button_content(f, rect, text, style, focused && enabled, false);
@@ -959,7 +1119,9 @@ mod tests {
         app.folder_browser_path = PathBuf::new();
         let roots: Vec<_> = if cfg!(windows) {
             [r"C:\", r"Z:\"].map(PathBuf::from).into()
-        } else { ["/", "/media/second"].map(PathBuf::from).into() };
+        } else {
+            ["/", "/media/second"].map(PathBuf::from).into()
+        };
         app.folder_browser.locations = vec![
             ("Computer".into(), PathBuf::new()),
             ("Disk (C:)".into(), roots[0].clone()),
@@ -975,7 +1137,12 @@ mod tests {
         assert!(text.contains("Disk (Z:)"));
         assert!(text.contains("2 locations"));
         assert!(!text.contains("Parent folder"));
-        assert!(!app.folder_browser.controls.iter().any(|(_, action)| matches!(action, Action::NewFolder | Action::Up)));
+        assert!(
+            !app.folder_browser
+                .controls
+                .iter()
+                .any(|(_, action)| matches!(action, Action::NewFolder | Action::Up))
+        );
         app.folder_browser.search = "Z:".into();
         app.filter_folder_browser();
         assert_eq!(&*app.folder_browser_indices(), &[1]);
@@ -983,7 +1150,8 @@ mod tests {
         assert_eq!(app.folder_browser.folder, app.display_path(&roots[1]));
         app.folder_browser_key(crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::Char('n'),
-            crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT));
+            crossterm::event::KeyModifiers::CONTROL | crossterm::event::KeyModifiers::SHIFT,
+        ));
         assert!(!app.folder_browser.new_folder);
     }
 
@@ -999,32 +1167,53 @@ mod tests {
             root_uri: "file:///home/henri/project%20space/".into(),
             session: 42,
         };
-        let client = remote::client::Client::attach(
-            std::io::Cursor::new(Vec::new()), Vec::new(), hello,
-        ).unwrap();
+        let client =
+            remote::client::Client::attach(std::io::Cursor::new(Vec::new()), Vec::new(), hello)
+                .unwrap();
         let remote = remote::workspace::Workspace::new(client);
         let mut app = App::test_new();
         app.remote_workspace = Some(remote.clone());
         let mut terminal = Terminal::new(TestBackend::new(180, 30)).unwrap();
         for (path, expected) in [
-            (RemotePath::default(), vec!["/", "home", "henri", "project space"]),
-            (RemotePath::new(b"src/child".to_vec()).unwrap(),
-                vec!["/", "home", "henri", "project space", "src", "child"]),
-            (RemotePath::absolute(b"/home/henri/other").unwrap(),
-                vec!["/", "home", "henri", "other"]),
+            (
+                RemotePath::default(),
+                vec!["/", "home", "henri", "project space"],
+            ),
+            (
+                RemotePath::new(b"src/child".to_vec()).unwrap(),
+                vec!["/", "home", "henri", "project space", "src", "child"],
+            ),
+            (
+                RemotePath::absolute(b"/home/henri/other").unwrap(),
+                vec!["/", "home", "henri", "other"],
+            ),
             (RemotePath::absolute(b"/").unwrap(), vec!["/"]),
         ] {
             app.folder_browser_path = remote.view_key(&path);
             app.folder_browser.folder = app.display_path(&app.folder_browser_path);
             terminal.draw(|frame| draw(frame, &mut app)).unwrap();
             let parts = remote.breadcrumbs(&app.folder_browser_path).unwrap();
-            assert_eq!(parts.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), expected);
-            let targets: Vec<_> = app.folder_browser.controls.iter().filter_map(|(area, action)| {
-                let Action::Navigate(target) = action else { return None; };
-                let label: String = (area.x..area.right())
-                    .map(|x| terminal.backend().buffer()[(x, area.y)].symbol()).collect();
-                Some((label, target.clone()))
-            }).collect();
+            assert_eq!(
+                parts
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            let targets: Vec<_> = app
+                .folder_browser
+                .controls
+                .iter()
+                .filter_map(|(area, action)| {
+                    let Action::Navigate(target) = action else {
+                        return None;
+                    };
+                    let label: String = (area.x..area.right())
+                        .map(|x| terminal.backend().buffer()[(x, area.y)].symbol())
+                        .collect();
+                    Some((label, target.clone()))
+                })
+                .collect();
             let mut expected_targets = vec![("Computer".to_string(), PathBuf::new())];
             expected_targets.extend(parts);
             assert_eq!(targets, expected_targets);
@@ -1035,12 +1224,18 @@ mod tests {
             for (i, (_, target)) in targets.iter().skip(1).enumerate() {
                 let uri = url::Url::from_file_path(target).unwrap();
                 let uri = remote.lsp_uri(uri.as_str(), true).unwrap();
-                let expected = if i == 0 { "file:///".into() }
-                    else { format!("file:///{}", expected[1..=i].join("/").replace(' ', "%20")) };
+                let expected = if i == 0 {
+                    "file:///".into()
+                } else {
+                    format!("file:///{}", expected[1..=i].join("/").replace(' ', "%20"))
+                };
                 assert_eq!(uri.trim_end_matches('/'), expected.trim_end_matches('/'));
             }
             app.folder_browser_action(Action::Address);
-            assert_eq!(remote.target_key(&app.change_dir_query).unwrap(), app.folder_browser_path);
+            assert_eq!(
+                remote.target_key(&app.change_dir_query).unwrap(),
+                app.folder_browser_path
+            );
             app.folder_browser.focus = Focus::List;
         }
     }
@@ -1050,7 +1245,8 @@ mod tests {
         use crate::theme_workbench::ColorLayer;
         use ratatui::style::Color;
         let mut app = fixture();
-        app.colors = crate::ui_control_visibility_tests::theme_with_popup_and_control_roles().to_theme_colors();
+        app.colors = crate::ui_control_visibility_tests::theme_with_popup_and_control_roles()
+            .to_theme_colors();
         app.mouse_col = u16::MAX;
         app.mouse_row = u16::MAX;
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
@@ -1062,30 +1258,51 @@ mod tests {
             terminal.draw(|frame| draw(frame, &mut app)).unwrap();
             let buffer = terminal.backend().buffer();
             assert_eq!(buffer[(6, 0)].bg, widget);
-            assert_eq!(buffer[(6, 0)].fg, ColorLayer::rgba(255, 238, 221, 224).over(widget).unwrap());
+            assert_eq!(
+                buffer[(6, 0)].fg,
+                ColorLayer::rgba(255, 238, 221, 224).over(widget).unwrap()
+            );
             let home = &buffer[(3, geometry.sidebar.y + 1)];
             assert_eq!(home.symbol(), "H");
             assert_eq!(home.bg, sidebar);
-            assert_eq!(home.fg, ColorLayer::rgba(221, 238, 255, 192).over(sidebar).unwrap());
+            assert_eq!(
+                home.fg,
+                ColorLayer::rgba(221, 238, 255, 192).over(sidebar).unwrap()
+            );
             let input = &buffer[(74, geometry.navigation.y + 1)];
             let input_bg = ColorLayer::rgba(48, 56, 80, 192).over(sidebar).unwrap();
             assert_eq!(input.bg, input_bg);
-            assert_eq!(input.fg, ColorLayer::rgba(221, 238, 255, 224).over(input_bg).unwrap());
+            assert_eq!(
+                input.fg,
+                ColorLayer::rgba(221, 238, 255, 224).over(input_bg).unwrap()
+            );
             let row = geometry.list.y + app.folder_browser_selected as u16;
             let (fill, text) = if focus == Focus::List {
-                (ColorLayer::rgba(48, 72, 56, 192), ColorLayer::rgba(255, 255, 187, 224))
+                (
+                    ColorLayer::rgba(48, 72, 56, 192),
+                    ColorLayer::rgba(255, 255, 187, 224),
+                )
             } else {
-                (ColorLayer::rgba(48, 72, 104, 192), ColorLayer::rgba(187, 221, 255, 224))
+                (
+                    ColorLayer::rgba(48, 72, 104, 192),
+                    ColorLayer::rgba(187, 221, 255, 224),
+                )
             };
             let row_bg = fill.over(widget).unwrap();
             assert_eq!(buffer[(geometry.list.x + 4, row)].bg, row_bg);
-            assert_eq!(buffer[(geometry.list.x + 4, row)].fg, text.over(row_bg).unwrap());
+            assert_eq!(
+                buffer[(geometry.list.x + 4, row)].fg,
+                text.over(row_bg).unwrap()
+            );
             assert_eq!(buffer[(geometry.list.right() - 2, row)].bg, row_bg);
             let (x, y, _) = app.folder_browser_buttons[0];
             assert_eq!(buffer[(x + 2, y)].bg, Color::Rgb(32, 59, 112));
             assert_eq!(buffer[(x + 2, y)].fg, Color::Rgb(255, 244, 187));
             if focus == Focus::List {
-                crate::ui_control_visibility_tests::snapshot(buffer, "independent folder dialog roles");
+                crate::ui_control_visibility_tests::snapshot(
+                    buffer,
+                    "independent folder dialog roles",
+                );
             }
         }
     }
@@ -1094,8 +1311,12 @@ mod tests {
     fn folder_dialog_text_and_controls_remain_readable_across_loaded_themes() {
         use crate::ui_control_visibility_tests::{assert_readable, audit_themes, check_region};
         let mut app = fixture();
-        app.folder_browser.back.push(app.folder_browser_path.clone());
-        app.folder_browser.forward.push(app.folder_browser_path.clone());
+        app.folder_browser
+            .back
+            .push(app.folder_browser_path.clone());
+        app.folder_browser
+            .forward
+            .push(app.folder_browser_path.clone());
         let mut failures = Vec::new();
         for theme in audit_themes() {
             app.colors = theme.to_theme_colors();
@@ -1108,30 +1329,62 @@ mod tests {
                     app.mouse_row = geometry.list.y + 1;
                     terminal.draw(|frame| draw(frame, &mut app)).unwrap();
                     let buffer = terminal.backend().buffer();
-                    let label = format!("{} folder dialog, width={width}, focus={focus:?}", theme.name);
+                    let label = format!(
+                        "{} folder dialog, width={width}, focus={focus:?}",
+                        theme.name
+                    );
                     for region in [
                         Rect::new(5, 0, width.saturating_sub(9), 1),
                         Rect::new(0, geometry.tools.y, width, 1),
-                        Rect::new(geometry.list.x + 3, geometry.list.y,
-                            geometry.list.width.saturating_sub(4), geometry.list.height),
-                        geometry.status, geometry.actions,
+                        Rect::new(
+                            geometry.list.x + 3,
+                            geometry.list.y,
+                            geometry.list.width.saturating_sub(4),
+                            geometry.list.height,
+                        ),
+                        geometry.status,
+                        geometry.actions,
                         Rect::new(0, geometry.folder.y + 1, 9, 1),
                         Rect::new(10, geometry.folder.y + 1, width.saturating_sub(12), 1),
                     ] {
                         check_region(buffer, region, &label, &mut failures, &app.colors.ui);
                     }
                     if geometry.sidebar.width > 0 {
-                        check_region(buffer, Rect::new(3, geometry.sidebar.y,
-                            geometry.sidebar.width.saturating_sub(4), geometry.sidebar.height),
-                            &label, &mut failures, &app.colors.ui);
+                        check_region(
+                            buffer,
+                            Rect::new(
+                                3,
+                                geometry.sidebar.y,
+                                geometry.sidebar.width.saturating_sub(4),
+                                geometry.sidebar.height,
+                            ),
+                            &label,
+                            &mut failures,
+                            &app.colors.ui,
+                        );
                     }
                     let navigation = geometry.navigation;
-                    let search_width = if width >= 85 { 28 } else if width >= 55 { 22 } else { 0 };
+                    let search_width = if width >= 85 {
+                        28
+                    } else if width >= 55 {
+                        22
+                    } else {
+                        0
+                    };
                     for region in [
                         Rect::new(1, navigation.y + 1, 10, 1),
-                        Rect::new(13, navigation.y + 1, width.saturating_sub(search_width + 14), 1),
-                        Rect::new(width.saturating_sub(search_width).saturating_add(1), navigation.y + 1,
-                            search_width.saturating_sub(2), 1),
+                        Rect::new(
+                            13,
+                            navigation.y + 1,
+                            width.saturating_sub(search_width + 14),
+                            1,
+                        ),
+                        Rect::new(
+                            width.saturating_sub(search_width).saturating_add(1),
+                            navigation.y + 1,
+                            search_width.saturating_sub(2),
+                            1,
+                        ),
                     ] {
                         check_region(buffer, region, &label, &mut failures, &app.colors.ui);
                     }
@@ -1148,7 +1401,12 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let (x, y, _) = app.folder_browser_buttons[1];
-        let hover = MouseEvent { kind: MouseEventKind::Moved, column: x + 1, row: y, modifiers: KeyModifiers::NONE };
+        let hover = MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: x + 1,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        };
         crate::mouse::handle_mouse(&mut app, hover);
         assert_eq!(app.folder_browser.focus, Focus::Cancel);
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
@@ -1166,7 +1424,13 @@ mod tests {
         let text = render_text(&terminal);
         assert!(text.contains("[ Select folder ]"));
         assert!(!text.contains("[ Cancel ]"));
-        crate::mouse::handle_mouse(&mut app, MouseEvent { column: x + 2, ..hover });
+        crate::mouse::handle_mouse(
+            &mut app,
+            MouseEvent {
+                column: x + 2,
+                ..hover
+            },
+        );
         app.folder_browser_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(!app.change_dir_active);
 
@@ -1175,13 +1439,28 @@ mod tests {
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         assert_eq!(app.folder_browser.focus, Focus::Cancel);
         let (x, y, _) = app.folder_browser_buttons[0];
-        crate::mouse::handle_mouse(&mut app, MouseEvent { column: x, row: y, ..hover });
-        for key in [KeyCode::Tab, KeyCode::BackTab, KeyCode::Left, KeyCode::Right] {
+        crate::mouse::handle_mouse(
+            &mut app,
+            MouseEvent {
+                column: x,
+                row: y,
+                ..hover
+            },
+        );
+        for key in [
+            KeyCode::Tab,
+            KeyCode::BackTab,
+            KeyCode::Left,
+            KeyCode::Right,
+        ] {
             app.folder_browser_key(KeyEvent::new(key, KeyModifiers::NONE));
             assert_eq!(app.folder_browser.focus, Focus::Cancel);
         }
         app.folder_browser_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert!(!app.change_dir_active, "the enabled Cancel action must still work while creating");
+        assert!(
+            !app.change_dir_active,
+            "the enabled Cancel action must still work while creating"
+        );
     }
 
     #[test]

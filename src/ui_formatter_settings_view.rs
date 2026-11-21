@@ -48,14 +48,28 @@ fn rows(app: &App, width: u16) -> Vec<Row> {
         );
         rows.extend([Row::Gap, Row::Mode]);
         let hint = match state.mode {
-            CommandMode::File => "The tool rewrites {file}, a temporary copy beside the document. VTCode applies the result in the editor; save when ready.",
-            CommandMode::Stdin => "VTCode sends the document to stdin and reads formatted code from stdout. Supply any flags your tool needs for this mode.",
-            CommandMode::FileStdout => "The tool reads {file}, a temporary copy, and writes the formatted code to stdout.",
+            CommandMode::File => {
+                "The tool rewrites {file}, a temporary copy beside the document. VTCode applies the result in the editor; save when ready."
+            }
+            CommandMode::Stdin => {
+                "VTCode sends the document to stdin and reads formatted code from stdout. Supply any flags your tool needs for this mode."
+            }
+            CommandMode::FileStdout => {
+                "The tool reads {file}, a temporary copy, and writes the formatted code to stdout."
+            }
         };
-        rows.extend(App::wrap_setting_text_for_width(hint, width.max(1) as usize).into_iter().map(Row::Hint));
+        rows.extend(
+            App::wrap_setting_text_for_width(hint, width.max(1) as usize)
+                .into_iter()
+                .map(Row::Hint),
+        );
         rows.extend([Row::Gap, Row::Arguments]);
         let hint = "Only the arguments below are passed. Nothing is appended automatically.";
-        rows.extend(App::wrap_setting_text_for_width(hint, width.max(1) as usize).into_iter().map(Row::Hint));
+        rows.extend(
+            App::wrap_setting_text_for_width(hint, width.max(1) as usize)
+                .into_iter()
+                .map(Row::Hint),
+        );
         if state.arguments_open {
             let hint = "{file}: working copy of this document. {workspace}: workspace folder. One argument per row; no surrounding quotes.";
             rows.extend(
@@ -203,9 +217,17 @@ fn draw_row(f: &mut Frame, app: &mut App, row: &Row, area: Rect, bg: Color) {
         }
         Row::Provider | Row::Mode => {
             let (name, value, action) = if matches!(row, Row::Mode) {
-                ("Input/output", app.formatter_settings.mode.label(), Action::ChooseMode)
+                (
+                    "Input/output",
+                    app.formatter_settings.mode.label(),
+                    Action::ChooseMode,
+                )
             } else {
-                ("Formatter", app.formatter_settings.provider.label(), Action::ChooseProvider)
+                (
+                    "Formatter",
+                    app.formatter_settings.provider.label(),
+                    Action::ChooseProvider,
+                )
             };
             label(f, name, caption, normal);
             let style = crate::ui_settings::settings_control_style(
@@ -228,9 +250,7 @@ fn draw_row(f: &mut Frame, app: &mut App, row: &Row, area: Rect, bg: Color) {
                 label(f, "⌄ ", Rect::new(control.right() - 2, area.y, 2, 1), style);
             }
             crate::ui_settings::underline_field(f, control, style);
-            app.formatter_settings
-                .hits
-                .push((control, action));
+            app.formatter_settings.hits.push((control, action));
         }
         Row::Executable => {
             label(
@@ -243,14 +263,7 @@ fn draw_row(f: &mut Frame, app: &mut App, row: &Row, area: Rect, bg: Color) {
                 caption,
                 normal,
             );
-            field(
-                f,
-                app,
-                control,
-                1,
-                "Executable name or full path",
-                bg,
-            );
+            field(f, app, control, 1, "Executable name or full path", bg);
         }
         Row::Arguments => {
             let state = &app.formatter_settings;
@@ -344,7 +357,11 @@ fn draw_menu(f: &mut Frame, app: &mut App) {
                 },
                 provider.label()
             ),
-            Action::Mode(mode) => format!("{} {}", if *mode == state.mode { "✓" } else { " " }, mode.label()),
+            Action::Mode(mode) => format!(
+                "{} {}",
+                if *mode == state.mode { "✓" } else { " " },
+                mode.label()
+            ),
             _ => unreachable!(),
         })
         .collect();
@@ -511,7 +528,9 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         (SettingsScope::Global, "User"),
         (SettingsScope::Workspace, SettingsScope::Workspace.label()),
     ] {
-        if scope == SettingsScope::Workspace && !app.has_open_folder() { continue; }
+        if scope == SettingsScope::Workspace && !app.has_open_folder() {
+            continue;
+        }
         let action = Action::Scope(scope);
         let width = (text.len() as u16 + 2).min(inner.right().saturating_sub(x));
         let rect = Rect::new(x, inner.y + if compact { 1 } else { 2 }, width, 1);

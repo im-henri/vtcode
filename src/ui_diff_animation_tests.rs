@@ -58,7 +58,10 @@ fn comparison(mode: DiffMode, compact: bool, commit: bool) -> (App, String, Stri
     if commit {
         app.preferred_diff_mode = mode;
         app.commit_details.diff_full_cache = Some(app.diff_render_cache.clone());
-        app.commit_details.diff_context = crate::commit_details::DiffContext { changes_only: compact, lines: 2 };
+        app.commit_details.diff_context = crate::commit_details::DiffContext {
+            changes_only: compact,
+            lines: 2,
+        };
     }
     if compact {
         app.diff_render_cache = Arc::new(app.diff_render_cache.with_context(2));
@@ -177,8 +180,10 @@ fn multicursor_suspends_diff_animations_on_both_sides_and_resumes_cleanly() {
     for mode in [DiffMode::Inline, DiffMode::SideBySide] {
         for original in [false, true] {
             let (mut app, base, target) = comparison(mode, false, false);
-            app.animation_settings.set(AnimationEffect::CursorSmear, true);
-            app.animation_settings.set(AnimationEffect::CursorFire, true);
+            app.animation_settings
+                .set(AnimationEffect::CursorSmear, true);
+            app.animation_settings
+                .set(AnimationEffect::CursorFire, true);
             let version = app.editor().unwrap().content_version;
             render(&mut app);
             if original {

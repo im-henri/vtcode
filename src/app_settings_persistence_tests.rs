@@ -33,16 +33,37 @@ fn diff_algorithm_defaults_to_smart_and_rebuilds_an_open_diff_when_switched() {
     std::fs::write(&target, "begin\nkeep one\nkeep two\nmove me\nend\n").unwrap();
     app.begin_path_compare(base, target);
     app.wait_for_background(std::time::Duration::from_secs(5), |app| {
-        app.diff_render_cache.rows.iter().any(|row| row.right_move.is_some())
+        app.diff_render_cache
+            .rows
+            .iter()
+            .any(|row| row.right_move.is_some())
     });
     assert_eq!(app.diff_algorithm, Smart);
-    assert!(app.diff_render_cache.rows.iter().any(|row| row.left_move.is_some()));
-    assert_eq!(app.setting_dropdown_options("diff_algorithm").unwrap(), ["Smart", "Classic"]);
+    assert!(
+        app.diff_render_cache
+            .rows
+            .iter()
+            .any(|row| row.left_move.is_some())
+    );
+    assert_eq!(
+        app.setting_dropdown_options("diff_algorithm").unwrap(),
+        ["Smart", "Classic"]
+    );
 
     app.execute_palette_command("toggle_diff_algorithm");
-    app.wait_for_background(std::time::Duration::from_secs(5), |app| app.diff_render_cache.algorithm == Classic);
-    assert!(app.diff_render_cache.rows.iter().all(|row| row.left_move.is_none() && row.right_move.is_none()));
-    assert_eq!(saved(&app, SettingsScope::Global).diff_algorithm, Some(Classic));
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+        app.diff_render_cache.algorithm == Classic
+    });
+    assert!(
+        app.diff_render_cache
+            .rows
+            .iter()
+            .all(|row| row.left_move.is_none() && row.right_move.is_none())
+    );
+    assert_eq!(
+        saved(&app, SettingsScope::Global).diff_algorithm,
+        Some(Classic)
+    );
     let mut restarted = App::test_new();
     restarted.settings_global = saved(&app, SettingsScope::Global);
     restarted.apply_effective_settings();
@@ -50,9 +71,18 @@ fn diff_algorithm_defaults_to_smart_and_rebuilds_an_open_diff_when_switched() {
 
     app.settings_scope = SettingsScope::Workspace;
     app.apply_settings_dropdown_value("diff_algorithm", "Smart");
-    app.wait_for_background(std::time::Duration::from_secs(5), |app| app.diff_render_cache.algorithm == Smart);
-    assert_eq!(saved(&app, SettingsScope::Workspace).diff_algorithm, Some(Smart));
-    assert!(app.settings_items().iter().any(|(_, value, id)| id == "diff_algorithm" && value == "Smart"));
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+        app.diff_render_cache.algorithm == Smart
+    });
+    assert_eq!(
+        saved(&app, SettingsScope::Workspace).diff_algorithm,
+        Some(Smart)
+    );
+    assert!(
+        app.settings_items()
+            .iter()
+            .any(|(_, value, id)| id == "diff_algorithm" && value == "Smart")
+    );
     assert!(app.reset_setting_in_selected_scope("diff_algorithm"));
     assert_eq!(app.diff_algorithm, Classic);
 }
@@ -66,16 +96,27 @@ fn highlighting_words_across_tabs_is_opt_in_scoped_and_persisted() {
     assert_eq!(App::settings_category_for_id(id), 3);
     assert_eq!(App::settings_section_for_id(id), Some("Code Decorations"));
     assert_eq!(App::setting_json_key(id), Some("highlightWordsAcrossTabs"));
-    assert!(app.settings_items().iter().any(|(label, value, key)|
-        label == "Highlight Words Across Tabs" && value == "Off" && key == id));
+    assert!(
+        app.settings_items()
+            .iter()
+            .any(|(label, value, key)| label == "Highlight Words Across Tabs"
+                && value == "Off"
+                && key == id)
+    );
     app.settings_scope = SettingsScope::Global;
     app.toggle_setting(id);
     assert!(app.highlight_words_across_tabs);
-    assert_eq!(saved(&app, SettingsScope::Global).highlight_words_across_tabs, Some(true));
+    assert_eq!(
+        saved(&app, SettingsScope::Global).highlight_words_across_tabs,
+        Some(true)
+    );
     app.settings_scope = SettingsScope::Workspace;
     app.toggle_setting(id);
     assert!(!app.highlight_words_across_tabs);
-    assert_eq!(saved(&app, SettingsScope::Workspace).highlight_words_across_tabs, Some(false));
+    assert_eq!(
+        saved(&app, SettingsScope::Workspace).highlight_words_across_tabs,
+        Some(false)
+    );
     let mut restarted = App::test_new();
     restarted.settings_global = saved(&app, SettingsScope::Global);
     restarted.settings_workspace = saved(&app, SettingsScope::Workspace);
@@ -92,17 +133,33 @@ fn highlighting_words_across_tabs_is_opt_in_scoped_and_persisted() {
 fn minimap_width_updates_the_effective_settings_layer_and_survives_reload() {
     for workspace_override in [false, true] {
         let (_dir, mut app) = fixture();
-        app.patch_settings_scope(SettingsScope::Global, "minimapWidth", |s| s.minimap_width = Some(12)).unwrap();
+        app.patch_settings_scope(SettingsScope::Global, "minimapWidth", |s| {
+            s.minimap_width = Some(12)
+        })
+        .unwrap();
         if workspace_override {
-            app.patch_settings_scope(SettingsScope::Workspace, "minimapWidth", |s| s.minimap_width = Some(15)).unwrap();
+            app.patch_settings_scope(SettingsScope::Workspace, "minimapWidth", |s| {
+                s.minimap_width = Some(15)
+            })
+            .unwrap();
         }
         let (scope, path) = if workspace_override {
-            (SettingsScope::Workspace, app.settings_workspace_path.clone())
+            (
+                SettingsScope::Workspace,
+                app.settings_workspace_path.clone(),
+            )
         } else {
             (SettingsScope::Global, app.settings_global_path.clone())
         };
-        app.settings_scope = if workspace_override { SettingsScope::Global } else { SettingsScope::Workspace };
-        let existing = format!(r#"{{"minimapWidth":{},"external.setting":123}}"#, app.minimap_width);
+        app.settings_scope = if workspace_override {
+            SettingsScope::Global
+        } else {
+            SettingsScope::Workspace
+        };
+        let existing = format!(
+            r#"{{"minimapWidth":{},"external.setting":123}}"#,
+            app.minimap_width
+        );
         std::fs::write(&path, existing).unwrap();
         let mut editor = crate::editor::Editor::test_with_text("pane");
         editor.word_wrap = !app.default_word_wrap;
@@ -110,7 +167,8 @@ fn minimap_width_updates_the_effective_settings_layer_and_survives_reload() {
         app.save_minimap_width(23);
         assert_eq!(app.minimap_width, 23);
         assert_ne!(app.editor().unwrap().word_wrap, app.default_word_wrap);
-        let persisted: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(persisted["minimapWidth"], 23);
         assert_eq!(persisted["external.setting"], 123);
         assert_eq!(persisted.as_object().unwrap().len(), 2);
@@ -140,41 +198,73 @@ fn toggle_untracked_menu(app: &mut App, actions: bool) {
     } else {
         app.open_source_control_filter_menu(0, 1);
     }
-    app.context_menu_selected = app.context_menu_items.iter()
-        .position(|item| item.id == "git_show_untracked").unwrap();
+    app.context_menu_selected = app
+        .context_menu_items
+        .iter()
+        .position(|item| item.id == "git_show_untracked")
+        .unwrap();
     crate::input_pickers::handle_context_menu_key(app, crossterm::event::KeyCode::Enter);
     assert!(app.context_menu_active, "the checkbox menu stays open");
-    let item = app.context_menu_items.iter().find(|item| item.id == "git_show_untracked").unwrap();
+    let item = app
+        .context_menu_items
+        .iter()
+        .find(|item| item.id == "git_show_untracked")
+        .unwrap();
     assert_eq!(item.label.starts_with('✓'), app.sc_visibility.untracked);
 }
 
 fn assert_untracked_preference(app: &mut App, show: bool) {
     assert_eq!(app.sc_visibility.untracked, show);
-    assert_eq!(app.current_settings().source_control_show_untracked, Some(show));
-    app.source_control_files = [("staged.rs", true, 'M'), ("tracked.rs", false, 'M'), ("new.rs", false, '?')]
-        .into_iter().map(|(path, staged, status)| crate::app::GitFileChange { directory: false,
-            path: path.into(), staged, status, original_path: None,
-        }).collect();
+    assert_eq!(
+        app.current_settings().source_control_show_untracked,
+        Some(show)
+    );
+    app.source_control_files = [
+        ("staged.rs", true, 'M'),
+        ("tracked.rs", false, 'M'),
+        ("new.rs", false, '?'),
+    ]
+    .into_iter()
+    .map(|(path, staged, status)| crate::app::GitFileChange {
+        directory: false,
+        path: path.into(),
+        staged,
+        status,
+        original_path: None,
+    })
+    .collect();
     assert_eq!(app.source_control_change_count(), if show { 3 } else { 2 });
     let visibility = app.explorer_git_badge_visibility();
-    assert_eq!(visibility.color_status(crate::explorer::GitStatus::Untracked),
-        if show { crate::explorer::GitStatus::Untracked } else { crate::explorer::GitStatus::Unmodified });
-    assert_eq!(visibility.color_status(crate::explorer::GitStatus::Modified), crate::explorer::GitStatus::Modified);
+    assert_eq!(
+        visibility.color_status(crate::explorer::GitStatus::Untracked),
+        if show {
+            crate::explorer::GitStatus::Untracked
+        } else {
+            crate::explorer::GitStatus::Unmodified
+        }
+    );
+    assert_eq!(
+        visibility.color_status(crate::explorer::GitStatus::Modified),
+        crate::explorer::GitStatus::Modified
+    );
 }
 
 #[test]
 fn editing_scoped_preferences_merges_disk_keys_and_external_map_entries() {
     let (_directory, mut app) = fixture();
     std::fs::create_dir_all(app.settings_global_path.parent().unwrap()).unwrap();
-    std::fs::write(&app.settings_global_path, r#"{
+    std::fs::write(
+        &app.settings_global_path,
+        r#"{
         "external.setting": 123,
         "tabSize": 6,
         "statusBarItems": { "external-item": false }
-    }"#).unwrap();
+    }"#,
+    )
+    .unwrap();
     app.set_status_bar_item_pinned("language", true);
-    let document: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&app.settings_global_path).unwrap(),
-    ).unwrap();
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&app.settings_global_path).unwrap()).unwrap();
     assert_eq!(document["external.setting"], 123);
     assert_eq!(document["tabSize"], 6);
     assert_eq!(document["statusBarItems"]["external-item"], false);
@@ -192,7 +282,10 @@ fn scoped_settings_controls_preserve_an_open_settings_draft() {
     app.tabs.push(Tab::new_file(editor));
 
     app.set_status_bar_item_pinned("language", true);
-    assert_eq!(std::fs::read_to_string(&app.settings_global_path).unwrap(), "{}\n");
+    assert_eq!(
+        std::fs::read_to_string(&app.settings_global_path).unwrap(),
+        "{}\n"
+    );
     assert_eq!(app.tabs.last().unwrap().editor.rope, "{\"tabSize\": 7}\n");
 }
 
@@ -224,13 +317,18 @@ fn untracked_menu_preference_is_saved_immediately_in_both_directions_and_menus()
         // preference into a workspace override.
         app.settings_scope = SettingsScope::Workspace;
         std::fs::create_dir_all(app.settings_global_path.parent().unwrap()).unwrap();
-        std::fs::write(&app.settings_global_path, r#"{"external.setting":123,"tabSize":6}"#).unwrap();
+        std::fs::write(
+            &app.settings_global_path,
+            r#"{"external.setting":123,"tabSize":6}"#,
+        )
+        .unwrap();
         for show in [false, true] {
             toggle_untracked_menu(&mut app, actions);
             assert_untracked_preference(&mut app, show);
             // No quit, session write, or other Settings interaction is needed.
-            let persisted: serde_json::Value = serde_json::from_str(
-                &std::fs::read_to_string(&app.settings_global_path).unwrap()).unwrap();
+            let persisted: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&app.settings_global_path).unwrap())
+                    .unwrap();
             assert_eq!(persisted["sourceControlShowUntracked"], show);
             assert_eq!(persisted["external.setting"], 123);
             assert_eq!(persisted["tabSize"], 6);
@@ -258,13 +356,19 @@ fn untracked_preference_survives_file_folder_and_stale_session_startup() {
             let mut session = app.build_session();
             session.sc_visibility.untracked = !show;
             let mut restarted = crate::startup::Prepared {
-                target: crate::startup::Target { root: root.into(), file, line: None, column: None },
+                target: crate::startup::Target {
+                    root: root.into(),
+                    file,
+                    line: None,
+                    column: None,
+                },
                 global: saved(&app, SettingsScope::Global),
                 workspace: saved(&app, SettingsScope::Workspace),
                 session: restore.then_some(session),
                 completion_preferences: Default::default(),
                 incomplete_session_recovery: None,
-            }.into_app(Default::default());
+            }
+            .into_app(Default::default());
             assert_untracked_preference(&mut restarted, show);
             restarted.apply_effective_settings();
             assert_untracked_preference(&mut restarted, show);
@@ -276,15 +380,27 @@ fn untracked_preference_survives_file_folder_and_stale_session_startup() {
 fn untracked_preference_respects_scope_overrides_and_reset() {
     let (_directory, mut app) = fixture();
     app.toggle_setting("source_control_show_untracked");
-    assert_eq!(saved(&app, SettingsScope::Global).source_control_show_untracked, Some(false));
+    assert_eq!(
+        saved(&app, SettingsScope::Global).source_control_show_untracked,
+        Some(false)
+    );
     assert_untracked_preference(&mut app, false);
     app.settings_scope = SettingsScope::Workspace;
     app.toggle_setting("source_control_show_untracked");
-    assert_eq!(saved(&app, SettingsScope::Workspace).source_control_show_untracked, Some(true));
+    assert_eq!(
+        saved(&app, SettingsScope::Workspace).source_control_show_untracked,
+        Some(true)
+    );
     assert_untracked_preference(&mut app, true);
     toggle_untracked_menu(&mut app, true);
-    assert_eq!(saved(&app, SettingsScope::Workspace).source_control_show_untracked, Some(false));
-    assert_eq!(saved(&app, SettingsScope::Global).source_control_show_untracked, Some(false));
+    assert_eq!(
+        saved(&app, SettingsScope::Workspace).source_control_show_untracked,
+        Some(false)
+    );
+    assert_eq!(
+        saved(&app, SettingsScope::Global).source_control_show_untracked,
+        Some(false)
+    );
     assert_untracked_preference(&mut app, false);
     // Editing User settings must show that scope's value while a Workspace
     // override continues to determine the live filter.
@@ -292,16 +408,35 @@ fn untracked_preference_respects_scope_overrides_and_reset() {
     app.toggle_setting("source_control_show_untracked");
     assert_untracked_preference(&mut app, false);
     let items = app.settings_items();
-    assert_eq!(items.iter().find(|item| item.2 == "source_control_show_untracked").unwrap().1, "On");
-    assert_eq!(App::settings_category_for_id("source_control_show_untracked"), 9);
-    assert_eq!(App::setting_field_kind("source_control_show_untracked"), "checkbox");
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.2 == "source_control_show_untracked")
+            .unwrap()
+            .1,
+        "On"
+    );
+    assert_eq!(
+        App::settings_category_for_id("source_control_show_untracked"),
+        9
+    );
+    assert_eq!(
+        App::setting_field_kind("source_control_show_untracked"),
+        "checkbox"
+    );
     app.settings_scope = SettingsScope::Workspace;
     assert!(app.reset_setting_in_selected_scope("source_control_show_untracked"));
-    assert_eq!(saved(&app, SettingsScope::Workspace).source_control_show_untracked, None);
+    assert_eq!(
+        saved(&app, SettingsScope::Workspace).source_control_show_untracked,
+        None
+    );
     assert_untracked_preference(&mut app, true);
     app.settings_scope = SettingsScope::Global;
     assert!(app.reset_setting_in_selected_scope("source_control_show_untracked"));
-    assert_eq!(saved(&app, SettingsScope::Global).source_control_show_untracked, None);
+    assert_eq!(
+        saved(&app, SettingsScope::Global).source_control_show_untracked,
+        None
+    );
     assert_untracked_preference(&mut app, true);
 }
 
@@ -313,35 +448,59 @@ fn failed_untracked_preference_write_preserves_live_filter_and_settings() {
     toggle_untracked_menu(&mut app, true);
     assert_untracked_preference(&mut app, true);
     assert_eq!(app.settings_global.source_control_show_untracked, None);
-    assert_eq!(std::fs::read_to_string(directory.path().join("blocker")).unwrap(), "unchanged");
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("blocker")).unwrap(),
+        "unchanged"
+    );
     assert!(!app.settings_workspace_path.exists());
 }
 
 #[test]
 fn untracked_preference_in_remote_mode_is_saved_on_client_without_network_requests() {
-    use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
     let (directory, mut app) = fixture();
     let traffic = Arc::new(AtomicUsize::new(0));
-    let client = crate::remote::tests::connection(directory.path(), Arc::default(), traffic.clone());
+    let client =
+        crate::remote::tests::connection(directory.path(), Arc::default(), traffic.clone());
     // Client::connect starts its writer asynchronously. Finish a round trip
     // before measuring so its initial handshake newline is excluded.
-    assert!(matches!(client.call(crate::remote::Command::Ping).unwrap(), crate::remote::Reply::Done));
+    assert!(matches!(
+        client.call(crate::remote::Command::Ping).unwrap(),
+        crate::remote::Reply::Done
+    ));
     let remote = crate::remote::workspace::Workspace::new(client);
     app.explorer.root = remote.view_root.clone();
     app.remote_workspace = Some(remote.clone());
     let before = traffic.load(Ordering::Relaxed);
     toggle_untracked_menu(&mut app, true);
     assert_untracked_preference(&mut app, false);
-    assert_eq!(saved(&app, SettingsScope::Global).source_control_show_untracked, Some(false));
+    assert_eq!(
+        saved(&app, SettingsScope::Global).source_control_show_untracked,
+        Some(false)
+    );
     let mut restarted = crate::startup::Prepared {
-        target: crate::startup::Target { root: remote.view_root.clone(), file: None, line: None, column: None },
+        target: crate::startup::Target {
+            root: remote.view_root.clone(),
+            file: None,
+            line: None,
+            column: None,
+        },
         global: saved(&app, SettingsScope::Global),
-        workspace: Settings::default(), session: None,
+        workspace: Settings::default(),
+        session: None,
         completion_preferences: Default::default(),
         incomplete_session_recovery: None,
-    }.into_app_with_remote(Default::default(), Some(remote));
+    }
+    .into_app_with_remote(Default::default(), Some(remote));
     assert_untracked_preference(&mut restarted, false);
-    assert_eq!(traffic.load(Ordering::Relaxed), before, "the preference is entirely local");
+    assert_eq!(
+        traffic.load(Ordering::Relaxed),
+        before,
+        "the preference is entirely local"
+    );
     assert!(!app.settings_workspace_path.exists());
 }
 
@@ -439,17 +598,31 @@ fn activity_bar_position_is_saved_reloaded_and_inherited_by_scope() {
     assert_eq!(App::setting_field_kind(id), "dropdown");
     assert_eq!(App::settings_section_for_id(id), Some("Layout"));
     assert_eq!(app.setting_dropdown_options(id).unwrap(), ["Top", "Left"]);
-    assert!(app.menu_entries(3).iter().any(|entry|
-        entry.label == "Move Activity Bar to Left" && entry.command == "toggle_activity_bar_position"));
+    assert!(
+        app.menu_entries(3)
+            .iter()
+            .any(|entry| entry.label == "Move Activity Bar to Left"
+                && entry.command == "toggle_activity_bar_position")
+    );
 
     app.apply_settings_dropdown_value(id, "Left");
     assert_eq!(app.activity_bar_position, Left);
-    assert_eq!(saved(&app, SettingsScope::Global).activity_bar_position.as_deref(), Some("left"));
+    assert_eq!(
+        saved(&app, SettingsScope::Global)
+            .activity_bar_position
+            .as_deref(),
+        Some("left")
+    );
 
     app.settings_scope = SettingsScope::Workspace;
     app.apply_settings_dropdown_value(id, "Top");
     assert_eq!(app.activity_bar_position, Top);
-    assert_eq!(saved(&app, SettingsScope::Workspace).activity_bar_position.as_deref(), Some("top"));
+    assert_eq!(
+        saved(&app, SettingsScope::Workspace)
+            .activity_bar_position
+            .as_deref(),
+        Some("top")
+    );
 
     let mut reopened = App::new(directory.path().to_path_buf());
     reopened.settings_global_path = app.settings_global_path.clone();
@@ -474,24 +647,35 @@ fn sidebar_auto_hide_persists_scopes_without_saving_hover_visibility() {
     app.active_pane = crate::app::ActivePane::Editor;
     app.toggle_setting("sidebar_auto_hide");
     assert!(app.sidebar_auto_hide.enabled);
-    assert_eq!(saved(&app, SettingsScope::Global).sidebar_auto_hide, Some(true));
+    assert_eq!(
+        saved(&app, SettingsScope::Global).sidebar_auto_hide,
+        Some(true)
+    );
     assert_eq!(saved(&app, SettingsScope::Global).show_explorer, None);
     let persisted = std::fs::read(&app.settings_global_path).unwrap();
 
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 35)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     assert!(app.explorer_area.is_none());
     let edge = app.sidebar_auto_hide.edge.unwrap();
     let moved = |column, row| crossterm::event::MouseEvent {
-        kind: crossterm::event::MouseEventKind::Moved, column, row,
+        kind: crossterm::event::MouseEventKind::Moved,
+        column,
+        row,
         modifiers: crossterm::event::KeyModifiers::NONE,
     };
     crate::mouse::handle_mouse(&mut app, moved(edge.x, edge.y + 2));
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     assert!(app.explorer_area.is_some());
     let code = app.code_area.unwrap();
     crate::mouse::handle_mouse(&mut app, moved(code.right() - 2, code.y + 2));
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     assert!(app.explorer_area.is_none());
     assert_eq!(app.current_settings().show_explorer, Some(true));
     assert!(app.build_session().show_explorer);
@@ -504,14 +688,23 @@ fn sidebar_auto_hide_persists_scopes_without_saving_hover_visibility() {
     restarted.apply_effective_settings();
     assert!(restarted.sidebar_auto_hide.enabled);
     assert!(restarted.show_explorer);
-    assert!(!restarted.sidebar_is_visible(), "hover state is not restored after restarting");
+    assert!(
+        !restarted.sidebar_is_visible(),
+        "hover state is not restored after restarting"
+    );
 
     app.settings_scope = SettingsScope::Workspace;
     app.toggle_setting("sidebar_auto_hide");
-    assert_eq!(saved(&app, SettingsScope::Workspace).sidebar_auto_hide, Some(false));
+    assert_eq!(
+        saved(&app, SettingsScope::Workspace).sidebar_auto_hide,
+        Some(false)
+    );
     assert!(!app.sidebar_auto_hide.enabled);
     assert!(app.reset_setting_in_selected_scope("sidebar_auto_hide"));
-    assert!(app.sidebar_auto_hide.enabled, "reset inherits the user preference");
+    assert!(
+        app.sidebar_auto_hide.enabled,
+        "reset inherits the user preference"
+    );
     app.settings_scope = SettingsScope::Global;
     assert!(app.reset_setting_in_selected_scope("sidebar_auto_hide"));
     assert!(!app.sidebar_auto_hide.enabled, "default remains off");
@@ -819,9 +1012,13 @@ fn keybinding_capture_preserves_ui_changes_and_workspace_defaults() {
         &mut app,
         KeyEvent::new(KeyCode::F(12), KeyModifiers::CONTROL | KeyModifiers::ALT),
     );
-    assert!(app.settings_kb_editing, "recording previews the binding until Save");
+    assert!(
+        app.settings_kb_editing,
+        "recording previews the binding until Save"
+    );
     crate::input_keyboard::handle_keyboard_event(
-        &mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &mut app,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
     );
     assert!(!app.settings_kb_editing);
     assert_eq!(app.theme_key, "light");
@@ -860,7 +1057,10 @@ fn cursor_smear_when_typing_saves_in_its_own_scope_and_resets_to_inherited() {
     assert!(app.reset_setting_in_selected_scope(id));
     assert!(app.animation_settings.cursor_smear_when_typing);
     assert_eq!(app.setting_source_label(id), "Inherited · Global");
-    assert_eq!(saved(&app, SettingsScope::Workspace).animation_cursor_smear_when_typing, None);
+    assert_eq!(
+        saved(&app, SettingsScope::Workspace).animation_cursor_smear_when_typing,
+        None
+    );
 }
 
 #[test]

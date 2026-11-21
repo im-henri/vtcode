@@ -146,7 +146,8 @@ impl App {
                 if document.identity == Some(request.document) && document.path == request.path {
                     document.path.clone_from(&source.path);
                     document.identity = Some(source.document);
-                    document.version = document.version
+                    document.version = document
+                        .version
                         .or_else(|| edit.unresolved_versions.get(&source.path).copied())
                         .or(source.version);
                 }
@@ -171,7 +172,11 @@ impl App {
                 }
             }
             #[cfg(windows)]
-            if pending.documents.iter().any(|document| document.version.is_none()) {
+            if pending
+                .documents
+                .iter()
+                .any(|document| document.version.is_none())
+            {
                 pending.unresolved_versions = versions;
             }
         }
@@ -200,7 +205,8 @@ impl App {
             )
         };
         for document in &mut documents {
-            let deferred_path = self.find_editor_mut_by_path(&document.path)
+            let deferred_path = self
+                .find_editor_mut_by_path(&document.path)
                 .filter(|editor| editor.has_deferred_file())
                 .and_then(|editor| editor.file_path.clone());
             if let Some(path) = deferred_path {

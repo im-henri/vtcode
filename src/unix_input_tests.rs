@@ -32,9 +32,10 @@ fn unix_pty_shortcuts_and_editor_actions() {
         println!("{READY}");
         io::stdout().flush().unwrap();
         let action_cases = crate::keyboard_protocol_tests::vt_cases().len();
-        for (index, (sequence, mut expected)) in crate::keyboard_protocol_tests::extended_key_cases()
-            .into_iter()
-            .enumerate()
+        for (index, (sequence, mut expected)) in
+            crate::keyboard_protocol_tests::extended_key_cases()
+                .into_iter()
+                .enumerate()
         {
             if erase == 8 && index < 2 {
                 expected.modifiers = if index == 0 {
@@ -56,7 +57,9 @@ fn unix_pty_shortcuts_and_editor_actions() {
             // The larger corpus checks decoder fidelity, including arbitrary
             // Alt combinations and key-up reports. The action helper describes
             // only the explicit shortcut scenarios in the original corpus.
-            if index < action_cases { crate::keyboard_protocol_tests::check_key(expected); }
+            if index < action_cases {
+                crate::keyboard_protocol_tests::check_key(expected);
+            }
         }
         assert!(event::poll(Duration::from_secs(5)).unwrap());
         assert_eq!(event::read().unwrap(), Event::Paste(PASTE.into()));

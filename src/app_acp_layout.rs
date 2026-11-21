@@ -333,14 +333,31 @@ impl App {
         ) {
             crate::tab_collection::retain(tabs, active, mru, |_, tab| {
                 if let TabKind::Chat(key) = tab.kind {
-                    valid.contains_key(&key) && { open.insert(key); true }
-                } else { true }
+                    valid.contains_key(&key) && {
+                        open.insert(key);
+                        true
+                    }
+                } else {
+                    true
+                }
             });
         }
         let mut open = HashSet::new();
-        prune(&mut self.tabs, &mut self.active_tab, &mut self.tab_mru_order, valid, &mut open);
+        prune(
+            &mut self.tabs,
+            &mut self.active_tab,
+            &mut self.tab_mru_order,
+            valid,
+            &mut open,
+        );
         for group in &mut self.groups {
-            prune(&mut group.tabs, &mut group.active_tab, &mut group.tab_mru_order, valid, &mut open);
+            prune(
+                &mut group.tabs,
+                &mut group.active_tab,
+                &mut group.tab_mru_order,
+                valid,
+                &mut open,
+            );
         }
         self.chat.layout.editors.retain(|key, _| open.contains(key));
         if self

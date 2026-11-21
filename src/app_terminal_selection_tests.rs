@@ -35,32 +35,64 @@ fn terminal_double_click_selects_words_and_triple_click_selects_lines() {
     for detached in [false, true] {
         let mut app = fixture();
         let code = "let foo_bar = run(foo_bar);";
-        app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(40, 3, &format!("{code}\r\nnext_line")));
+        app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(
+            40,
+            3,
+            &format!("{code}\r\nnext_line"),
+        ));
         app.terminal_surfaces[0].area.width = 40;
         if detached {
             assert!(app.detach_terminal_to_group(0, app.active_group));
             app.terminal_surfaces[0].group = Some(app.active_group);
         }
-        let selected = |app: &App| app.terminals[0].terminal_pty.as_ref().unwrap().grid.selected_text();
-        for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Drag(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
+        let selected = |app: &App| {
+            app.terminals[0]
+                .terminal_pty
+                .as_ref()
+                .unwrap()
+                .grid
+                .selected_text()
+        };
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Drag(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
             crate::mouse::handle_mouse(&mut app, mouse(kind, 8, 4));
         }
         assert_eq!(selected(&app), None, "one click only focuses the terminal");
         click(&mut app, 8, 4);
         assert_eq!(selected(&app).as_deref(), Some("foo_bar"));
-        assert_eq!(app.terminals[0].terminal_pty.as_ref().unwrap().grid.selection_columns(0), 4..11);
+        assert_eq!(
+            app.terminals[0]
+                .terminal_pty
+                .as_ref()
+                .unwrap()
+                .grid
+                .selection_columns(0),
+            4..11
+        );
         let mut copied = String::new();
-        app.copy_terminal_selection_with(0, |text| { copied = text.into(); true });
+        app.copy_terminal_selection_with(0, |text| {
+            copied = text.into();
+            true
+        });
         assert_eq!(copied, "foo_bar");
         click(&mut app, 8, 4);
         assert_eq!(selected(&app).as_deref(), Some(code));
-        assert!(!app.editor().is_some_and(|editor| editor.has_selection() || editor.modified));
+        assert!(
+            !app.editor()
+                .is_some_and(|editor| editor.has_selection() || editor.modified)
+        );
         assert!(app.terminal_selection_drag.is_none());
     }
 }
 
 fn click(app: &mut App, column: u16, row: u16) {
-    for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
         crate::mouse::handle_mouse(app, mouse(kind, column, row));
     }
 }
@@ -68,17 +100,51 @@ fn click(app: &mut App, column: u16, row: u16) {
 #[test]
 fn terminal_double_click_drag_keeps_whole_words_in_both_directions() {
     let mut app = fixture();
-    app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(20, 3, "one two three four"));
+    app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(
+        20,
+        3,
+        "one two three four",
+    ));
     click(&mut app, 7, 4);
-    crate::mouse::handle_mouse(&mut app, mouse(MouseEventKind::Down(MouseButton::Left), 7, 4));
+    crate::mouse::handle_mouse(
+        &mut app,
+        mouse(MouseEventKind::Down(MouseButton::Left), 7, 4),
+    );
     for (column, expected) in [(12, "two three"), (2, "one two"), (7, "two")] {
-        crate::mouse::handle_mouse(&mut app, mouse(MouseEventKind::Drag(MouseButton::Left), column, 4));
-        assert_eq!(app.terminals[0].terminal_pty.as_ref().unwrap().grid.selected_text().as_deref(), Some(expected));
+        crate::mouse::handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::Drag(MouseButton::Left), column, 4),
+        );
+        assert_eq!(
+            app.terminals[0]
+                .terminal_pty
+                .as_ref()
+                .unwrap()
+                .grid
+                .selected_text()
+                .as_deref(),
+            Some(expected)
+        );
     }
-    crate::mouse::handle_mouse(&mut app, mouse(MouseEventKind::Up(MouseButton::Left), 12, 4));
-    assert_eq!(app.terminals[0].terminal_pty.as_ref().unwrap().grid.selected_text().as_deref(), Some("two three"));
+    crate::mouse::handle_mouse(
+        &mut app,
+        mouse(MouseEventKind::Up(MouseButton::Left), 12, 4),
+    );
+    assert_eq!(
+        app.terminals[0]
+            .terminal_pty
+            .as_ref()
+            .unwrap()
+            .grid
+            .selected_text()
+            .as_deref(),
+        Some("two three")
+    );
     click(&mut app, 7, 4);
-    assert!(!app.focused_terminal_has_selection(), "a drag ends the multi-click sequence");
+    assert!(
+        !app.focused_terminal_has_selection(),
+        "a drag ends the multi-click sequence"
+    );
 }
 
 #[test]
@@ -90,17 +156,30 @@ fn terminal_multi_click_resets_after_timeout_other_clicks_and_terminal_changes()
     assert!(!app.focused_terminal_has_selection());
     // An overlay consumes this press before terminal selection sees it.
     app.change_dir_active = true;
-    crate::mouse::handle_mouse(&mut app, mouse(MouseEventKind::Down(MouseButton::Left), 4, 4));
+    crate::mouse::handle_mouse(
+        &mut app,
+        mouse(MouseEventKind::Down(MouseButton::Left), 4, 4),
+    );
     app.change_dir_active = false;
     click(&mut app, 4, 4);
     assert!(!app.focused_terminal_has_selection());
-    app.terminals.push(TerminalTab::new("Other".into(), app.explorer.root.clone()));
+    app.terminals
+        .push(TerminalTab::new("Other".into(), app.explorer.root.clone()));
     app.terminals[1].terminal_pty = Some(TerminalEmulator::test_with_output(20, 3, "other_word"));
     app.terminal_surfaces[0].index = 1;
     click(&mut app, 4, 4);
     assert!(!app.focused_terminal_has_selection());
     click(&mut app, 4, 4);
-    assert_eq!(app.terminals[1].terminal_pty.as_ref().unwrap().grid.selected_text().as_deref(), Some("other_word"));
+    assert_eq!(
+        app.terminals[1]
+            .terminal_pty
+            .as_ref()
+            .unwrap()
+            .grid
+            .selected_text()
+            .as_deref(),
+        Some("other_word")
+    );
 }
 
 #[test]
@@ -112,15 +191,40 @@ fn terminal_double_click_respects_child_mouse_tracking_and_shift_override() {
     click(&mut app, 4, 4);
     click(&mut app, 4, 4);
     assert!(!app.focused_terminal_has_selection());
-    assert_eq!(&*captured.lock().unwrap(), b"\x1b[<0;3;1M\x1b[<0;3;1m\x1b[<0;3;1M\x1b[<0;3;1m");
+    assert_eq!(
+        &*captured.lock().unwrap(),
+        b"\x1b[<0;3;1M\x1b[<0;3;1m\x1b[<0;3;1M\x1b[<0;3;1m"
+    );
     let forwarded = captured.lock().unwrap().clone();
     for _ in 0..2 {
-        for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
-            crate::mouse::handle_mouse(&mut app, MouseEvent { modifiers: KeyModifiers::SHIFT, ..mouse(kind, 4, 4) });
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            crate::mouse::handle_mouse(
+                &mut app,
+                MouseEvent {
+                    modifiers: KeyModifiers::SHIFT,
+                    ..mouse(kind, 4, 4)
+                },
+            );
         }
     }
-    assert_eq!(app.terminals[0].terminal_pty.as_ref().unwrap().grid.selected_text().as_deref(), Some("hello"));
-    assert_eq!(*captured.lock().unwrap(), forwarded, "local selection must not send mouse events to the child");
+    assert_eq!(
+        app.terminals[0]
+            .terminal_pty
+            .as_ref()
+            .unwrap()
+            .grid
+            .selected_text()
+            .as_deref(),
+        Some("hello")
+    );
+    assert_eq!(
+        *captured.lock().unwrap(),
+        forwarded,
+        "local selection must not send mouse events to the child"
+    );
 }
 
 #[test]
@@ -188,14 +292,20 @@ fn terminal_mouse_ignores_workbench_gestures_but_finishes_its_own_capture_with_a
     let mut pty = TerminalEmulator::test_with_output(20, 3, "\x1b[?1003;1006h");
     let captured = pty.test_capture_input();
     app.terminals[0].terminal_pty = Some(pty);
-    for kind in [MouseEventKind::Drag(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
+    for kind in [
+        MouseEventKind::Drag(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
         assert!(!app.handle_terminal_selection_mouse(mouse(kind, 3, 4)));
     }
     app.menu_active = true;
     app.menu_open = true;
-    for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Moved,
-        MouseEventKind::ScrollUp, MouseEventKind::Up(MouseButton::Left)]
-    {
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Moved,
+        MouseEventKind::ScrollUp,
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
         assert!(!app.handle_terminal_selection_mouse(mouse(kind, 3, 4)));
     }
     assert!(captured.lock().unwrap().is_empty());
@@ -204,12 +314,27 @@ fn terminal_mouse_ignores_workbench_gestures_but_finishes_its_own_capture_with_a
 
     app.menu_active = false;
     app.menu_open = false;
-    assert!(app.handle_terminal_selection_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 3, 4)));
+    assert!(app.handle_terminal_selection_mouse(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        3,
+        4
+    )));
     app.menu_active = true;
     app.menu_open = true;
-    assert!(app.handle_terminal_selection_mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 80, 30)));
-    assert!(app.handle_terminal_selection_mouse(mouse(MouseEventKind::Up(MouseButton::Left), 80, 30)));
-    assert_eq!(&*captured.lock().unwrap(), b"\x1b[<0;2;1M\x1b[<32;20;3M\x1b[<0;20;3m");
+    assert!(app.handle_terminal_selection_mouse(mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        80,
+        30
+    )));
+    assert!(app.handle_terminal_selection_mouse(mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        80,
+        30
+    )));
+    assert_eq!(
+        &*captured.lock().unwrap(),
+        b"\x1b[<0;2;1M\x1b[<32;20;3M\x1b[<0;20;3m"
+    );
     assert!(app.terminal_mouse_capture.is_none());
     assert!(app.menu_active && app.menu_open);
 }
@@ -323,19 +448,35 @@ fn right_click_copies_clears_selection_then_pastes_once_in_dock_and_editor() {
             pty.grid.extend_selection(0, 4);
             pty.grid.finish_selection();
 
-            for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+            for kind in [
+                MouseEventKind::Down(MouseButton::Right),
+                MouseEventKind::Up(MouseButton::Right),
+            ] {
                 crate::mouse::handle_mouse(&mut app, mouse(kind, 3, 4));
             }
             assert_eq!(crate::clipboard::get_text().unwrap(), "hello");
             assert!(!app.focused_terminal_has_selection());
             assert!(!app.context_menu_active);
-            assert!(input.lock().unwrap().is_empty(), "copy must not paste on button release");
-            assert_eq!(app.clipboard_history.back().map(String::as_str), Some("hello"));
+            assert!(
+                input.lock().unwrap().is_empty(),
+                "copy must not paste on button release"
+            );
+            assert_eq!(
+                app.clipboard_history.back().map(String::as_str),
+                Some("hello")
+            );
 
-            for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+            for kind in [
+                MouseEventKind::Down(MouseButton::Right),
+                MouseEventKind::Up(MouseButton::Right),
+            ] {
                 crate::mouse::handle_mouse(&mut app, mouse(kind, 3, 4));
             }
-            let expected: &[u8] = if bracketed { b"\x1b[200~hello\x1b[201~" } else { b"hello" };
+            let expected: &[u8] = if bracketed {
+                b"\x1b[200~hello\x1b[201~"
+            } else {
+                b"hello"
+            };
             assert_eq!(input.lock().unwrap().as_slice(), expected);
             assert_eq!(app.focused_terminal_index(), Some(0));
             assert_eq!(app.terminal_panel_focused, !detached);
@@ -356,9 +497,16 @@ fn terminal_mouse_drags_trim_padding_and_whitespace_only_drags_leave_right_click
                 assert!(app.detach_terminal_to_group(0, app.active_group));
                 app.terminal_surfaces[0].group = Some(app.active_group);
             }
-            let input = app.terminals[0].terminal_pty.as_mut().unwrap().test_capture_input();
+            let input = app.terminals[0]
+                .terminal_pty
+                .as_mut()
+                .unwrap()
+                .test_capture_input();
             for (kind, column) in [
-                (MouseEventKind::Down(MouseButton::Left), if whitespace_only { 12 } else { 2 }),
+                (
+                    MouseEventKind::Down(MouseButton::Left),
+                    if whitespace_only { 12 } else { 2 },
+                ),
                 (MouseEventKind::Drag(MouseButton::Left), 21),
                 (MouseEventKind::Up(MouseButton::Left), 21),
             ] {
@@ -366,11 +514,19 @@ fn terminal_mouse_drags_trim_padding_and_whitespace_only_drags_leave_right_click
             }
             assert_eq!(app.focused_terminal_has_selection(), !whitespace_only);
             let grid = &app.terminals[0].terminal_pty.as_ref().unwrap().grid;
-            assert_eq!(grid.selection_columns(0), if whitespace_only { 0..0 } else { 0..5 });
+            assert_eq!(
+                grid.selection_columns(0),
+                if whitespace_only { 0..0 } else { 0..5 }
+            );
             if whitespace_only {
-                assert!(!app.copy_terminal_selection_with(0, |_| panic!("blank text must not reach the clipboard")));
+                assert!(!app.copy_terminal_selection_with(0, |_| panic!(
+                    "blank text must not reach the clipboard"
+                )));
             }
-            for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+            for kind in [
+                MouseEventKind::Down(MouseButton::Right),
+                MouseEventKind::Up(MouseButton::Right),
+            ] {
                 crate::mouse::handle_mouse(&mut app, mouse(kind, 3, 4));
             }
             if whitespace_only {
@@ -395,24 +551,41 @@ fn right_click_without_selection_pastes_into_clicked_terminal_not_the_selected_o
         let pty = app.terminals[0].terminal_pty.as_mut().unwrap();
         let other_input = pty.test_capture_input();
         pty.grid.begin_word_selection(0, 0);
-        app.terminals.push(TerminalTab::new("Other terminal".into(), app.explorer.root.clone()));
+        app.terminals.push(TerminalTab::new(
+            "Other terminal".into(),
+            app.explorer.root.clone(),
+        ));
         let mut pty = TerminalEmulator::test_with_output(20, 3, "other");
         let input = pty.test_capture_input();
         app.terminals[1].terminal_pty = Some(pty);
-        if detached { assert!(app.detach_terminal_to_group(1, app.active_group)); }
+        if detached {
+            assert!(app.detach_terminal_to_group(1, app.active_group));
+        }
         app.terminal_surfaces.push(TerminalSurface {
-            index: 1, area: Rect::new(25, 4, 20, 3), group: detached.then_some(app.active_group),
+            index: 1,
+            area: Rect::new(25, 4, 20, 3),
+            group: detached.then_some(app.active_group),
         });
         app.active_terminal = 0;
         app.show_terminal_sidebar = true;
         app.terminal_panel_focused = true;
 
-        for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+        for kind in [
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Up(MouseButton::Right),
+        ] {
             crate::mouse::handle_mouse(&mut app, mouse(kind, 26, 4));
         }
         assert_eq!(input.lock().unwrap().as_slice(), "héllo\nworld".as_bytes());
         assert!(other_input.lock().unwrap().is_empty());
-        assert!(app.terminals[0].terminal_pty.as_ref().unwrap().grid.has_selection());
+        assert!(
+            app.terminals[0]
+                .terminal_pty
+                .as_ref()
+                .unwrap()
+                .grid
+                .has_selection()
+        );
         assert_eq!(app.focused_terminal_index(), Some(1));
         assert_eq!(crate::clipboard::get_text().unwrap(), "héllo\nworld");
         assert!(app.clipboard_history.is_empty());
@@ -428,15 +601,27 @@ fn a_local_selection_copies_before_child_mouse_reporting_and_shift_right_click_p
     let input = pty.test_capture_input();
     pty.grid.begin_word_selection(0, 0);
     app.terminals[0].terminal_pty = Some(pty);
-    for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
+    for kind in [
+        MouseEventKind::Down(MouseButton::Right),
+        MouseEventKind::Up(MouseButton::Right),
+    ] {
         crate::mouse::handle_mouse(&mut app, mouse(kind, 3, 4));
     }
     assert_eq!(crate::clipboard::get_text().unwrap(), "hello");
     assert!(!app.focused_terminal_has_selection());
     assert!(input.lock().unwrap().is_empty());
     assert!(app.terminal_mouse_capture.is_none());
-    for kind in [MouseEventKind::Down(MouseButton::Right), MouseEventKind::Up(MouseButton::Right)] {
-        crate::mouse::handle_mouse(&mut app, MouseEvent { modifiers: KeyModifiers::SHIFT, ..mouse(kind, 3, 4) });
+    for kind in [
+        MouseEventKind::Down(MouseButton::Right),
+        MouseEventKind::Up(MouseButton::Right),
+    ] {
+        crate::mouse::handle_mouse(
+            &mut app,
+            MouseEvent {
+                modifiers: KeyModifiers::SHIFT,
+                ..mouse(kind, 3, 4)
+            },
+        );
     }
     assert_eq!(input.lock().unwrap().as_slice(), b"hello");
     assert!(!app.context_menu_active);
@@ -559,8 +744,15 @@ fn rendered_editor_splits_register_the_owner_for_mouse_focus() {
     let surface = *app.terminal_surfaces.last().unwrap();
     assert_eq!(surface.group, Some(1));
     assert_eq!(surface.area, Rect::new(0, 2, 19, 2));
-    assert!(!surface.area.contains((0, 1).into()), "the Find toolbar is not PTY input");
-    app.handle_terminal_selection_mouse(mouse(MouseEventKind::Down(MouseButton::Left), surface.area.x, surface.area.y));
+    assert!(
+        !surface.area.contains((0, 1).into()),
+        "the Find toolbar is not PTY input"
+    );
+    app.handle_terminal_selection_mouse(mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        surface.area.x,
+        surface.area.y,
+    ));
     assert_eq!(app.active_group, 1);
     assert_eq!(app.focused_terminal_index(), Some(0));
     assert!(!app.terminal_panel_focused);

@@ -194,15 +194,35 @@ fn search_location(line: &str) -> Option<(PathBuf, u32)> {
 pub(super) fn location(tool: &p::ToolCall) -> Option<(PathBuf, Option<u32>)> {
     // Schema locations carry the validated cross-platform path. Raw input is
     // intentionally opaque and may still contain the node's original spelling.
-    if let Some(location) = tool.locations.first() { return Some((location.path.clone(), location.line)); }
+    if let Some(location) = tool.locations.first() {
+        return Some((location.path.clone(), location.line));
+    }
     let input = tool.raw_input.as_ref().map(decoded);
-    let path = input.as_deref().and_then(|v| string(v, &["path", "file_path", "filePath"]))
+    let path = input
+        .as_deref()
+        .and_then(|v| string(v, &["path", "file_path", "filePath"]))
         .map(PathBuf::from);
     if let Some(path) = path {
-        let line = tool.locations.iter().find(|l| l.path == path).and_then(|l| l.line)
-            .or_else(|| input.as_deref()?.get("view_range")?.as_array()?.first()?.as_u64()?.checked_sub(1)?.try_into().ok());
+        let line = tool
+            .locations
+            .iter()
+            .find(|l| l.path == path)
+            .and_then(|l| l.line)
+            .or_else(|| {
+                input
+                    .as_deref()?
+                    .get("view_range")?
+                    .as_array()?
+                    .first()?
+                    .as_u64()?
+                    .checked_sub(1)?
+                    .try_into()
+                    .ok()
+            });
         Some((path, line))
-    } else { tool.locations.first().map(|l| (l.path.clone(), l.line)) }
+    } else {
+        tool.locations.first().map(|l| (l.path.clone(), l.line))
+    }
 }
 
 pub(super) fn body(
@@ -216,9 +236,15 @@ pub(super) fn body(
 ) {
     let input = tool.raw_input.as_ref().map(decoded);
     let input = input.as_deref();
-    let path = tool.locations.first().map(|location| location.path.clone()).or_else(|| input
-        .and_then(|v| string(v, &["path", "file_path", "filePath"]))
-        .map(PathBuf::from));
+    let path = tool
+        .locations
+        .first()
+        .map(|location| location.path.clone())
+        .or_else(|| {
+            input
+                .and_then(|v| string(v, &["path", "file_path", "filePath"]))
+                .map(PathBuf::from)
+        });
     let mut locations: Vec<_> = tool
         .locations
         .iter()
@@ -232,7 +258,8 @@ pub(super) fn body(
     for (path, line) in locations.into_iter().filter(|_| open) {
         let label = format!(
             "  ↗ {}{}",
-            crate::remote::workspace::display_key(&path).unwrap_or_else(|| path.display().to_string()),
+            crate::remote::workspace::display_key(&path)
+                .unwrap_or_else(|| path.display().to_string()),
             line.map_or(String::new(), |n| format!(":{}", u64::from(n) + 1))
         );
         let start = rows.len();
@@ -242,8 +269,13 @@ pub(super) fn body(
         }
     }
     if open && let Some(input) = input {
-        if !matches!(tool.kind, p::ToolKind::Read | p::ToolKind::Search | p::ToolKind::Edit)
-            || matches!(tool.status, p::ToolCallStatus::Pending | p::ToolCallStatus::InProgress) {
+        if !matches!(
+            tool.kind,
+            p::ToolKind::Read | p::ToolKind::Search | p::ToolKind::Edit
+        ) || matches!(
+            tool.status,
+            p::ToolCallStatus::Pending | p::ToolCallStatus::InProgress
+        ) {
             literal(rows, &readable(input), width, c, usize::MAX, false);
         }
         if let Some(range) = input.get("view_range").and_then(Value::as_array)
@@ -288,9 +320,14 @@ pub(super) fn body(
                     blocks.push(text);
                 }
             }
-            p::ToolCallContent::Diff(diff) => {
-                diff_rows(rows, diff, width, c, if open { 200 } else { 6 }, diff_algorithm)
-            }
+            p::ToolCallContent::Diff(diff) => diff_rows(
+                rows,
+                diff,
+                width,
+                c,
+                if open { 200 } else { 6 },
+                diff_algorithm,
+            ),
             p::ToolCallContent::Terminal(terminal) => plain(
                 rows,
                 format!("  › Open agent terminal {}", terminal.terminal_id),
@@ -338,11 +375,28 @@ pub(super) fn body(
 /// Command cards show their command and directory themselves. Keep any other
 /// inputs (for example a delegated task prompt or environment) available when
 /// expanded, including while a permission request is waiting.
-pub(super) fn terminal_input_details(rows: &mut Vec<ChatRow>, tool: &p::ToolCall, width: usize, c: &ThemeColors) {
-    let Some(input) = &tool.raw_input else { return; };
+pub(super) fn terminal_input_details(
+    rows: &mut Vec<ChatRow>,
+    tool: &p::ToolCall,
+    width: usize,
+    c: &ThemeColors,
+) {
+    let Some(input) = &tool.raw_input else {
+        return;
+    };
     let mut input = decoded(input).into_owned();
     if let Value::Object(fields) = &mut input {
-        for key in ["command", "cmd", "commands", "args", "cwd", "workingDirectory", "working_directory"] { fields.remove(key); }
+        for key in [
+            "command",
+            "cmd",
+            "commands",
+            "args",
+            "cwd",
+            "workingDirectory",
+            "working_directory",
+        ] {
+            fields.remove(key);
+        }
     }
     literal(rows, &readable(&input), width, c, usize::MAX, false);
 }

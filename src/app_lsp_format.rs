@@ -32,8 +32,18 @@ pub(crate) struct FormattingState {
 }
 
 impl FormattingState {
-    pub(crate) fn has_document_request(&self, path: &std::path::Path, version: u64, document: u64) -> bool {
-        self.pending.as_ref().is_some_and(|pending| pending.path == path && pending.version == version && pending.document == document && pending.range.is_none())
+    pub(crate) fn has_document_request(
+        &self,
+        path: &std::path::Path,
+        version: u64,
+        document: u64,
+    ) -> bool {
+        self.pending.as_ref().is_some_and(|pending| {
+            pending.path == path
+                && pending.version == version
+                && pending.document == document
+                && pending.range.is_none()
+        })
     }
     pub(crate) fn next_wait(&self) -> Option<Duration> {
         let now = Instant::now();
@@ -57,8 +67,11 @@ impl App {
             .take(1000)
             .collect();
         let notice = format!("Formatting failed: {message}");
-        if self.workspace_visible { self.notify_error(notice); }
-        else { self.record_workspace_event(notice, crate::app_workspaces::Level::Attention); }
+        if self.workspace_visible {
+            self.notify_error(notice);
+        } else {
+            self.record_workspace_event(notice, crate::app_workspaces::Level::Attention);
+        }
         self.status_message = "Formatting failed".into();
         self.formatting.feedback = None;
         self.formatting.error = Some(message);
@@ -161,10 +174,9 @@ impl App {
         let path = pending.path.clone();
         let version = pending.version;
         let document = pending.document;
-        if self
-            .find_editor_mut_by_path(&path)
-            .is_none_or(|editor| editor.content_version != version || editor.save_identity != document)
-        {
+        if self.find_editor_mut_by_path(&path).is_none_or(|editor| {
+            editor.content_version != version || editor.save_identity != document
+        }) {
             self.finish_lsp_formatting(Err(
                 "The document changed or was closed while formatting. Run Format Document again."
                     .into(),
@@ -225,7 +237,9 @@ impl App {
                     " Pyright provides Python analysis and completion, but no formatter.",
                 );
             }
-            reason.push_str(" Choose a formatter that supports this operation in Formatter settings.");
+            reason.push_str(
+                " Choose a formatter that supports this operation in Formatter settings.",
+            );
             self.finish_lsp_formatting(Err(reason));
             return true;
         }
@@ -273,7 +287,11 @@ impl App {
         self.report_formatting_result(result, save);
     }
 
-    pub(crate) fn report_formatting_result(&mut self, result: Result<usize, String>, save: Option<PathBuf>) {
+    pub(crate) fn report_formatting_result(
+        &mut self,
+        result: Result<usize, String>,
+        save: Option<PathBuf>,
+    ) {
         if let Some(path) = save.as_deref() {
             if let Err(error) = self.save_open_file_by_path(path) {
                 self.show_formatting_error(format!("Could not save {}: {error}", path.display()));
@@ -312,7 +330,11 @@ impl App {
                 .format_request_target
                 .as_ref()
                 .map(|target| target.content_version);
-            let document = self.formatting.pending.as_ref().map(|pending| pending.document);
+            let document = self
+                .formatting
+                .pending
+                .as_ref()
+                .map(|pending| pending.document);
             match self.find_editor_mut_by_path(&path) {
                 None => Err("The document was closed before formatting finished.".into()),
                 Some(editor)

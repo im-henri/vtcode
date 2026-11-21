@@ -18,8 +18,13 @@ pub(crate) enum Service {
 }
 impl Service {
     pub(crate) fn index(self) -> usize {
-        match self { Self::LanguageServers => 0, Self::Workers => 1, Self::Terminals => 2,
-            Self::Agents => 3, Self::Extensions => 4 }
+        match self {
+            Self::LanguageServers => 0,
+            Self::Workers => 1,
+            Self::Terminals => 2,
+            Self::Agents => 3,
+            Self::Extensions => 4,
+        }
     }
 }
 
@@ -41,7 +46,13 @@ pub(crate) struct Scheduler {
 
 impl Default for Scheduler {
     fn default() -> Self {
-        Self { next: 0, remaining: SERVICES.len(), unfinished: [true; 5], last_service: None, observed_wake: None }
+        Self {
+            next: 0,
+            remaining: SERVICES.len(),
+            unfinished: [true; 5],
+            last_service: None,
+            observed_wake: None,
+        }
     }
 }
 
@@ -53,7 +64,11 @@ pub(crate) struct Turn {
 
 impl Turn {
     pub(crate) fn new(now: Instant) -> Self {
-        Self { deadline: now + TURN_BUDGET, visited: 0, complete: false }
+        Self {
+            deadline: now + TURN_BUDGET,
+            visited: 0,
+            complete: false,
+        }
     }
 
     pub(crate) fn deferred(&self) -> bool {
@@ -80,14 +95,22 @@ impl Scheduler {
         *self.observed_wake.get_or_insert(generation)
     }
 
-    pub(crate) fn next(&mut self, turn: &mut Turn, now: Instant, input_pending: bool) -> Option<Service> {
+    pub(crate) fn next(
+        &mut self,
+        turn: &mut Turn,
+        now: Instant,
+        input_pending: bool,
+    ) -> Option<Service> {
         if !turn.deferred() || (turn.visited > 0 && now >= turn.deadline) {
             return None;
         }
         // During a sustained input backlog, allow one service periodically.
         // A completion, file-open result or PTY must still make progress.
-        if input_pending && (turn.visited > 0 || self.last_service
-            .is_none_or(|last| now.saturating_duration_since(last) < INPUT_SERVICE_INTERVAL))
+        if input_pending
+            && (turn.visited > 0
+                || self.last_service.is_none_or(|last| {
+                    now.saturating_duration_since(last) < INPUT_SERVICE_INTERVAL
+                }))
         {
             self.last_service.get_or_insert(now);
             return None;
@@ -96,7 +119,9 @@ impl Scheduler {
             self.remaining = SERVICES.len();
             self.unfinished = [true; 5];
         }
-        while !self.unfinished[self.next] { self.next = (self.next + 1) % SERVICES.len(); }
+        while !self.unfinished[self.next] {
+            self.next = (self.next + 1) % SERVICES.len();
+        }
         let service = SERVICES[self.next];
         self.unfinished[self.next] = false;
         self.next = (self.next + 1) % SERVICES.len();
@@ -122,10 +147,16 @@ mod tests {
         assert_eq!(scheduler.observe_wake(7), 7);
         for slice in 0..3 {
             for (index, expected) in SERVICES.into_iter().enumerate() {
-                assert_eq!(scheduler.observe_wake(8), 7, "do not forget a producer wake during the cycle");
+                assert_eq!(
+                    scheduler.observe_wake(8),
+                    7,
+                    "do not forget a producer wake during the cycle"
+                );
                 let mut turn = Turn::new(now);
                 assert_eq!(scheduler.next(&mut turn, now, false), Some(expected));
-                if slice < 2 { scheduler.defer_last_service(&mut turn, 7); }
+                if slice < 2 {
+                    scheduler.defer_last_service(&mut turn, 7);
+                }
                 now += TURN_BUDGET;
                 assert_eq!(scheduler.next(&mut turn, now, false), None);
                 assert_eq!(turn.deferred(), slice < 2 || index + 1 < SERVICES.len());
@@ -139,12 +170,21 @@ mod tests {
         let now = Instant::now();
         let mut scheduler = Scheduler::default();
         let mut turn = Turn::new(now);
-        assert_eq!(scheduler.next(&mut turn, now, false), Some(Service::LanguageServers));
-        assert_eq!(scheduler.next(&mut turn, now + Duration::from_millis(3), false), Some(Service::Workers));
+        assert_eq!(
+            scheduler.next(&mut turn, now, false),
+            Some(Service::LanguageServers)
+        );
+        assert_eq!(
+            scheduler.next(&mut turn, now + Duration::from_millis(3), false),
+            Some(Service::Workers)
+        );
         assert_eq!(scheduler.next(&mut turn, now + TURN_BUDGET, false), None);
         assert!(turn.deferred());
         let mut turn = Turn::new(now + TURN_BUDGET);
-        assert_eq!(scheduler.next(&mut turn, now + TURN_BUDGET, false), Some(Service::Terminals));
+        assert_eq!(
+            scheduler.next(&mut turn, now + TURN_BUDGET, false),
+            Some(Service::Terminals)
+        );
     }
 
     #[test]
@@ -156,7 +196,10 @@ mod tests {
         assert_eq!(scheduler.next(&mut turn, now, true), None);
         let mut turn = Turn::new(now);
         assert_eq!(scheduler.next(&mut turn, now, true), None);
-        assert_eq!(scheduler.next(&mut turn, now, false), Some(Service::Workers));
+        assert_eq!(
+            scheduler.next(&mut turn, now, false),
+            Some(Service::Workers)
+        );
     }
 
     #[test]
@@ -216,12 +259,25 @@ mod tests {
         let mut scheduler = Scheduler::default();
         assert_eq!(scheduler.observe_wake(7), 7);
         let mut turn = Turn::new(now);
-        assert_eq!(scheduler.next(&mut turn, now, false), Some(Service::LanguageServers));
-        assert!(scheduler.next(&mut turn, now + TURN_BUDGET, false).is_none());
+        assert_eq!(
+            scheduler.next(&mut turn, now, false),
+            Some(Service::LanguageServers)
+        );
+        assert!(
+            scheduler
+                .next(&mut turn, now + TURN_BUDGET, false)
+                .is_none()
+        );
         // An LSP response arrives while input is being handled.
         assert_eq!(scheduler.observe_wake(8), 7);
         let mut turn = Turn::new(now + TURN_BUDGET);
-        for _ in 0..4 { assert!(scheduler.next(&mut turn, now + TURN_BUDGET, false).is_some()); }
+        for _ in 0..4 {
+            assert!(
+                scheduler
+                    .next(&mut turn, now + TURN_BUDGET, false)
+                    .is_some()
+            );
+        }
         assert!(!turn.deferred());
         // Waiting against the old ticket sees generation 8 immediately. Only
         // the next full cycle may acknowledge that generation.

@@ -68,7 +68,10 @@ fn indexed_diff_syntax_seeks_match_full_prefix_styles_and_character_flags() {
             index.char_len() - 1,
             index.char_len() + 20,
         ] {
-            let args = (Color::Rgb(20, 30, 40), Some(Color::Rgb(180, 190, 200).into()));
+            let args = (
+                Color::Rgb(20, 30, 40),
+                Some(Color::Rgb(180, 190, 200).into()),
+            );
             let expected = render_diff_highlighted_spans_reference(
                 &spans,
                 width,
@@ -98,7 +101,12 @@ fn borrowed_plain_diff_fallback_matches_cached_miss_and_truncated_styles() {
     for source in ["α界e\u{301} text", "plain text", "text\r\n", "", "\n"] {
         let short = Rc::new(vec![(style(0), String::new())]);
         for cached in [None, Some(&short)] {
-            for fg in [Color::White, Color::Indexed(23), Color::Reset, Color::Rgb(25, 45, 65)] {
+            for fg in [
+                Color::White,
+                Color::Indexed(23),
+                Color::Reset,
+                Color::Rgb(25, 45, 65),
+            ] {
                 for scroll in [0, 1, 3, 99] {
                     let width = 16;
                     let window: String = source.chars().skip(scroll).take(width).collect();
@@ -116,17 +124,27 @@ fn borrowed_plain_diff_fallback_matches_cached_miss_and_truncated_styles() {
                             fg,
                         )
                     };
-                    let rendered: Vec<_> = draw().iter().flat_map(|span| {
-                        span.content.chars().map(|ch| (ch, span.style))
-                    }).collect();
+                    let rendered: Vec<_> = draw()
+                        .iter()
+                        .flat_map(|span| span.content.chars().map(|ch| (ch, span.style)))
+                        .collect();
                     let window = window.trim_end_matches('\n');
-                    let expected: Vec<_> = window.chars().enumerate().map(|(column, ch)| {
-                        let bg = if flags[scroll + column] { Color::Rgb(80, 90, 100) } else { Color::Rgb(20, 20, 20) };
-                        (ch, Style::default().fg(fg).bg(bg))
-                    }).chain(std::iter::repeat_n(
-                        (' ', Style::default().fg(fg).bg(Color::Rgb(20, 20, 20))),
-                        width - window.chars().count(),
-                    )).collect();
+                    let expected: Vec<_> = window
+                        .chars()
+                        .enumerate()
+                        .map(|(column, ch)| {
+                            let bg = if flags[scroll + column] {
+                                Color::Rgb(80, 90, 100)
+                            } else {
+                                Color::Rgb(20, 20, 20)
+                            };
+                            (ch, Style::default().fg(fg).bg(bg))
+                        })
+                        .chain(std::iter::repeat_n(
+                            (' ', Style::default().fg(fg).bg(Color::Rgb(20, 20, 20))),
+                            width - window.chars().count(),
+                        ))
+                        .collect();
                     assert_eq!(rendered, expected, "source={source:?}, scroll={scroll}");
                 }
             }

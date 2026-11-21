@@ -179,30 +179,52 @@ fn antlr4_file_highlights_grammar_rules_literals_and_comments() {
 
 #[test]
 fn c_family_filenames_select_the_expected_full_language_grammar() {
-    for registry in [SyntaxRegistry::embedded(), crate::syntax_assets::build_syntax_set(&[
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars")
-    ]).unwrap()] {
+    for registry in [
+        SyntaxRegistry::embedded(),
+        crate::syntax_assets::build_syntax_set(&[
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars")
+        ])
+        .unwrap(),
+    ] {
         for (file, id) in [
-            ("c", "c"), ("sample.c", "c"), ("sample.i", "c"),
-            ("sample.C", "cpp"), ("sample.cp", "cpp"), ("sample.cpp", "cpp"),
-            ("sample.cxx", "cpp"), ("sample.h", "cpp"), ("sample.hpp", "cpp"),
-            ("sample.cs", "csharp"), ("sample.CS", "csharp"), ("script.csx", "csharp"),
-            ("sample.m", "objective-c"), ("sample.M", "objective-cpp"),
+            ("c", "c"),
+            ("sample.c", "c"),
+            ("sample.i", "c"),
+            ("sample.C", "cpp"),
+            ("sample.cp", "cpp"),
+            ("sample.cpp", "cpp"),
+            ("sample.cxx", "cpp"),
+            ("sample.h", "cpp"),
+            ("sample.hpp", "cpp"),
+            ("sample.cs", "csharp"),
+            ("sample.CS", "csharp"),
+            ("script.csx", "csharp"),
+            ("sample.m", "objective-c"),
+            ("sample.M", "objective-cpp"),
         ] {
-            assert_eq!(registry.find_syntax_by_extension(file).map(|syntax| syntax.id.as_str()),
-                Some(id), "wrong grammar for {file}");
+            assert_eq!(
+                registry
+                    .find_syntax_by_extension(file)
+                    .map(|syntax| syntax.id.as_str()),
+                Some(id),
+                "wrong grammar for {file}"
+            );
         }
     }
 }
 
 #[test]
 fn detected_c_colors_match_manually_selected_c_for_complete_documents() {
-    let registry = crate::syntax_assets::build_syntax_set(&[
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars")
-    ]).unwrap();
+    let registry =
+        crate::syntax_assets::build_syntax_set(&[
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("grammars")
+        ])
+        .unwrap();
     let path = std::path::Path::new("source.c");
-    let detected = crate::highlight::select_syntax(&registry, Some(path), None, "#include <stdio.h>");
-    let manual = crate::highlight::select_syntax(&registry, Some(path), Some("C"), "#include <stdio.h>");
+    let detected =
+        crate::highlight::select_syntax(&registry, Some(path), None, "#include <stdio.h>");
+    let manual =
+        crate::highlight::select_syntax(&registry, Some(path), Some("C"), "#include <stdio.h>");
     assert_eq!(detected.id, manual.id);
     assert_eq!(detected.scope, "source.c");
     let source = "#include <stdio.h>\n#define LIMIT 3\ntypedef struct Node { const char *label; int count; } Node;\nstatic int add(const Node *node, int value) {\n    /* a multiline\n       comment */\n    if (node == NULL) return -1;\n    printf(\"%s %d\\n\", node->label, value + LIMIT);\n    return node->count + value;\n}\n";
@@ -214,8 +236,11 @@ fn detected_c_colors_match_manually_selected_c_for_complete_documents() {
         for line in source.lines() {
             let mut automatic_comments = Vec::new();
             let mut selected_comments = Vec::new();
-            assert_eq!(automatic.line(line, true, &mut automatic_comments),
-                selected.line(line, true, &mut selected_comments), "{key}: {line}");
+            assert_eq!(
+                automatic.line(line, true, &mut automatic_comments),
+                selected.line(line, true, &mut selected_comments),
+                "{key}: {line}"
+            );
             assert_eq!(automatic_comments, selected_comments);
         }
     }
@@ -310,7 +335,9 @@ fn assert_scope_colors(syntax: &Syntax, rules: &[(&str, &str)], lines: &[(&str, 
             .flat_map(|(style, text)| std::iter::repeat_n(style.foreground, text.len()))
             .collect();
         assert!(
-            colors[start..start + sample.len()].iter().all(|c| *c == expected),
+            colors[start..start + sample.len()]
+                .iter()
+                .all(|c| *c == expected),
             "{line:?}: {sample:?} should be {color}, got {:?}",
             &colors[start..start + sample.len()]
         );
@@ -320,13 +347,14 @@ fn assert_scope_colors(syntax: &Syntax, rules: &[(&str, &str)], lines: &[(&str, 
 #[test]
 fn git_commit_messages_highlight_subject_trailers_and_references() {
     let registry = SyntaxRegistry::embedded();
-    for name in ["COMMIT_EDITMSG", "MERGE_MSG", "SQUASH_MSG", ".git/COMMIT_EDITMSG"] {
-        let syntax = crate::highlight::select_syntax(
-            &registry,
-            Some(std::path::Path::new(name)),
-            None,
-            "",
-        );
+    for name in [
+        "COMMIT_EDITMSG",
+        "MERGE_MSG",
+        "SQUASH_MSG",
+        ".git/COMMIT_EDITMSG",
+    ] {
+        let syntax =
+            crate::highlight::select_syntax(&registry, Some(std::path::Path::new(name)), None, "");
         assert_eq!(syntax.id, "git-commit", "{name}");
     }
     let syntax = registry
@@ -345,26 +373,52 @@ fn git_commit_messages_highlight_subject_trailers_and_references() {
             ("invalid.illegal", "#ff00ff"),
         ],
         &[
-            ("feat(editor): Highlight commit messages", "Highlight commit messages", "#ff0000"),
+            (
+                "feat(editor): Highlight commit messages",
+                "Highlight commit messages",
+                "#ff0000",
+            ),
             ("", "", ""),
             ("Fixes #42 by adding a grammar.", "#42", "#00ffff"),
-            ("See https://example.com/docs for details.", "https://example.com/docs", "#ffff00"),
-            ("Signed-off-by: A Person <a@example.com>", "Signed-off-by", "#0000ff"),
-            ("Signed-off-by: A Person <a@example.com>", "a@example.com", "#ffff00"),
-            ("# Please enter the commit message", "# Please enter the commit message", "#888888"),
+            (
+                "See https://example.com/docs for details.",
+                "https://example.com/docs",
+                "#ffff00",
+            ),
+            (
+                "Signed-off-by: A Person <a@example.com>",
+                "Signed-off-by",
+                "#0000ff",
+            ),
+            (
+                "Signed-off-by: A Person <a@example.com>",
+                "a@example.com",
+                "#ffff00",
+            ),
+            (
+                "# Please enter the commit message",
+                "# Please enter the commit message",
+                "#888888",
+            ),
         ],
     );
     // The type prefix of a Conventional Commits subject stands out.
     assert_scope_colors(
         syntax,
-        &[("markup.heading", "#ff0000"), ("keyword.other.type", "#00ff00")],
+        &[
+            ("markup.heading", "#ff0000"),
+            ("keyword.other.type", "#00ff00"),
+        ],
         &[("fix: Repair the parser", "fix", "#00ff00")],
     );
     // Subjects longer than 72 characters are flagged.
     let long = format!("{}{}", "a".repeat(72), "overflow");
     assert_scope_colors(
         syntax,
-        &[("markup.heading", "#ff0000"), ("invalid.illegal", "#ff00ff")],
+        &[
+            ("markup.heading", "#ff0000"),
+            ("invalid.illegal", "#ff00ff"),
+        ],
         &[(&long, "overflow", "#ff00ff")],
     );
 }
@@ -374,16 +428,27 @@ fn git_log_output_highlights_hashes_refs_headers_and_patches() {
     let registry = SyntaxRegistry::embedded();
     let syntax = registry.find_syntax_by_name("Git Log").unwrap();
     assert_eq!(syntax.scope, "text.git-log");
-    assert_eq!(registry.find_syntax_by_extension("history.gitlog").unwrap().id, "git-log");
     assert_eq!(
         registry
-            .find_syntax_by_first_line("commit 0123456789abcdef0123456789abcdef01234567 (HEAD -> main)")
+            .find_syntax_by_extension("history.gitlog")
             .unwrap()
             .id,
         "git-log"
     );
     assert_eq!(
-        registry.find_syntax_by_first_line("* commit a033e42d").unwrap().id,
+        registry
+            .find_syntax_by_first_line(
+                "commit 0123456789abcdef0123456789abcdef01234567 (HEAD -> main)"
+            )
+            .unwrap()
+            .id,
+        "git-log"
+    );
+    assert_eq!(
+        registry
+            .find_syntax_by_first_line("* commit a033e42d")
+            .unwrap()
+            .id,
         "git-log"
     );
     let rules = [
@@ -399,25 +464,50 @@ fn git_log_output_highlights_hashes_refs_headers_and_patches() {
         ("markup.deleted", "#aa0000"),
         ("punctuation.definition.graph", "#444444"),
     ];
-    let header = "commit a033e42d1f2b3c4d5e6f708192a3b4c5d6e7f809 (HEAD -> main, origin/main, tag: v0.7.4)";
+    let header =
+        "commit a033e42d1f2b3c4d5e6f708192a3b4c5d6e7f809 (HEAD -> main, origin/main, tag: v0.7.4)";
     assert_scope_colors(
         syntax,
         &rules,
         &[
-            (header, "a033e42d1f2b3c4d5e6f708192a3b4c5d6e7f809", "#ffff00"),
+            (
+                header,
+                "a033e42d1f2b3c4d5e6f708192a3b4c5d6e7f809",
+                "#ffff00",
+            ),
             (header, "HEAD", "#00ffff"),
             (header, "main", "#00ff00"),
             (header, "origin/main", "#ff0000"),
             (header, "v0.7.4", "#ff8800"),
             ("Author: A Person <a@example.com>", "Author", "#0000ff"),
-            ("Author: A Person <a@example.com>", "a@example.com", "#8888ff"),
-            ("Date:   Mon Nov 16 12:00:00 2026 +0200", "Mon Nov 16 12:00:00 2026 +0200", "#888800"),
+            (
+                "Author: A Person <a@example.com>",
+                "a@example.com",
+                "#8888ff",
+            ),
+            (
+                "Date:   Mon Nov 16 12:00:00 2026 +0200",
+                "Mon Nov 16 12:00:00 2026 +0200",
+                "#888800",
+            ),
             (" src/textmate.rs | 4 ++--", "++", "#00aa00"),
             (" src/textmate.rs | 4 ++--", "--", "#aa0000"),
-            (" 1 file changed, 2 insertions(+), 2 deletions(-)", "2 insertions(+)", "#00aa00"),
-            ("* a033e42 (HEAD -> main) Release VTCode", "a033e42", "#ffff00"),
+            (
+                " 1 file changed, 2 insertions(+), 2 deletions(-)",
+                "2 insertions(+)",
+                "#00aa00",
+            ),
+            (
+                "* a033e42 (HEAD -> main) Release VTCode",
+                "a033e42",
+                "#ffff00",
+            ),
             ("* a033e42 (HEAD -> main) Release VTCode", "*", "#444444"),
-            ("| * 1fd6f9d Open an editable commit message tab", "1fd6f9d", "#ffff00"),
+            (
+                "| * 1fd6f9d Open an editable commit message tab",
+                "1fd6f9d",
+                "#ffff00",
+            ),
         ],
     );
     // Patches from `git log -p` use the diff grammar until the next commit.

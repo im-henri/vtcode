@@ -176,7 +176,6 @@ mod tests {
             ..c
         };
         assert!(history.scores("sp", header, true).is_empty());
-
     }
 
     #[test]
@@ -194,7 +193,6 @@ mod tests {
             history.record("readPacket", "rp", receiver("reader"), true);
         }
         assert!(history.scores("rp", receiver("reader"), true)["readPacket"] <= 94);
-
     }
 
     #[test]

@@ -377,21 +377,24 @@ impl workspace::Workspace {
         let Reply::BlameHistory(history) = self.client.call(command)? else {
             return Err(io::Error::other("Invalid blame history reply"));
         };
-        Ok(native::prepare_history_contents(native::HistoryContents {
-            file_path: self.view_key(&history.file),
-            hash: history.hash,
-            summary: history.summary,
-            before_label: history.before_label,
-            after_label: history.after_label,
-            before: history.before,
-            after: history.after,
-            line: history.line,
-            revision: history.revision.for_client(self)?,
-            previous_revision: history
-                .previous_revision
-                .map(|revision| revision.for_client(self))
-                .transpose()?,
-        }, algorithm))
+        Ok(native::prepare_history_contents(
+            native::HistoryContents {
+                file_path: self.view_key(&history.file),
+                hash: history.hash,
+                summary: history.summary,
+                before_label: history.before_label,
+                after_label: history.after_label,
+                before: history.before,
+                after: history.after,
+                line: history.line,
+                revision: history.revision.for_client(self)?,
+                previous_revision: history
+                    .previous_revision
+                    .map(|revision| revision.for_client(self))
+                    .transpose()?,
+            },
+            algorithm,
+        ))
     }
     fn decode_snapshot(&self, snapshot: Snapshot) -> io::Result<native::Snapshot> {
         let revision = snapshot.revision.for_client(self)?;

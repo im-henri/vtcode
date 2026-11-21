@@ -31,7 +31,8 @@ fn commit_tracked_file(root: &Path, repo: &git2::Repository, text: &str) {
     index.write().unwrap();
     let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
     let signature = git2::Signature::now("Test", "test@example.com").unwrap();
-    repo.commit(Some("HEAD"), &signature, &signature, "Initial", &tree, &[]).unwrap();
+    repo.commit(Some("HEAD"), &signature, &signature, "Initial", &tree, &[])
+        .unwrap();
 }
 
 fn app(root: &Path, remote: bool) -> App {
@@ -94,10 +95,7 @@ fn assert_overview(app: &mut App, changed: bool) {
     );
     for (area, color) in [
         (app.gutter_area.unwrap(), app.colors.ui.fg_gutter_added),
-        (
-            app.scrollbar_area.unwrap(),
-            app.colors.ui.fg_overview_added,
-        ),
+        (app.scrollbar_area.unwrap(), app.colors.ui.fg_overview_added),
     ] {
         assert_eq!(
             (area.y..area.bottom())
@@ -184,7 +182,11 @@ fn undo_after_save_clears_worktree_markers_when_the_buffer_matches_the_index() {
     for (remote, staged) in [(false, false), (true, false), (false, true), (true, true)] {
         let (directory, repo) = repository(true);
         let disk_path = directory.path().join("tracked.txt");
-        let original = if staged { "original\nstaged line\n" } else { "original\n" };
+        let original = if staged {
+            "original\nstaged line\n"
+        } else {
+            "original\n"
+        };
         if staged {
             std::fs::write(&disk_path, original).unwrap();
             let mut index = repo.index().unwrap();
@@ -194,7 +196,10 @@ fn undo_after_save_clears_worktree_markers_when_the_buffer_matches_the_index() {
         let original = if remote {
             original.to_owned()
         } else {
-            repo.config().unwrap().set_bool("core.autocrlf", true).unwrap();
+            repo.config()
+                .unwrap()
+                .set_bool("core.autocrlf", true)
+                .unwrap();
             let checkout = original.replace('\n', "\r\n");
             std::fs::write(&disk_path, &checkout).unwrap();
             checkout
@@ -212,30 +217,53 @@ fn undo_after_save_clears_worktree_markers_when_the_buffer_matches_the_index() {
         assert!(editor.undo_stack.len() > 1);
 
         app.save_current_file();
-        app.wait_for_background(Duration::from_secs(10), |app| app.pending_file_saves.is_empty());
+        app.wait_for_background(Duration::from_secs(10), |app| {
+            app.pending_file_saves.is_empty()
+        });
         wait(&mut app);
         let written = std::fs::read_to_string(&disk_path).unwrap();
         assert_ne!(written, original);
         assert!(!app.editor().unwrap().modified);
-        assert!(app.editor().unwrap().git_change_lines().iter().any(|(_, changes)| changes.unstaged().is_some()));
+        assert!(
+            app.editor()
+                .unwrap()
+                .git_change_lines()
+                .iter()
+                .any(|(_, changes)| changes.unstaged().is_some())
+        );
         assert!(!crate::ui_editor::cached_overview_change_rows(&mut app, 30, None).is_empty());
 
         // Save can add its own undo entry when it normalizes line endings.
         let undo_steps = app.editor().unwrap().undo_stack.len();
         for _ in 0..undo_steps {
             crate::input_keyboard::handle_keyboard_event(
-                &mut app, KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
+                &mut app,
+                KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL),
             );
         }
         let editor = app.editor().unwrap();
-        assert_eq!(editor.rope, original.as_str(), "remote={remote}, staged={staged}, undo steps={undo_steps}");
+        assert_eq!(
+            editor.rope,
+            original.as_str(),
+            "remote={remote}, staged={staged}, undo steps={undo_steps}"
+        );
         assert!(editor.modified);
         assert_eq!(std::fs::read_to_string(&disk_path).unwrap(), written);
         assert!(!editor.has_unsaved_change_in_range(0, editor.line_count()));
-        assert!(editor.git_change_lines().iter().all(|(_, changes)| changes.unstaged().is_none()));
+        assert!(
+            editor
+                .git_change_lines()
+                .iter()
+                .all(|(_, changes)| changes.unstaged().is_none())
+        );
         assert_eq!(editor.line_diff_status(1), if staged { 'S' } else { ' ' });
-        assert_eq!(crate::ui_editor::cached_overview_change_rows(&mut app, 30, None).is_empty(), !staged);
-        if !staged { assert_overview(&mut app, false); }
+        assert_eq!(
+            crate::ui_editor::cached_overview_change_rows(&mut app, 30, None).is_empty(),
+            !staged
+        );
+        if !staged {
+            assert_overview(&mut app, false);
+        }
     }
 }
 
@@ -261,15 +289,21 @@ fn blank_line_marker_survives_save_and_undo_restores_a_clean_git_gutter() {
         for saved in [false, true] {
             if saved {
                 app.save_current_file();
-                app.wait_for_background(Duration::from_secs(10), |app| app.pending_file_saves.is_empty());
+                app.wait_for_background(Duration::from_secs(10), |app| {
+                    app.pending_file_saves.is_empty()
+                });
                 wait(&mut app);
             }
             let editor = app.editor().unwrap();
             assert_eq!(editor.modified, !saved);
-            let changed: Vec<_> = (0..editor.line_count()).filter_map(|line| {
-                editor.line_changes(line).working().map(|kind| (line, kind))
-            }).collect();
-            assert_eq!(changed, [(1, ChangeKind::Added)], "remote={remote}, saved={saved}");
+            let changed: Vec<_> = (0..editor.line_count())
+                .filter_map(|line| editor.line_changes(line).working().map(|kind| (line, kind)))
+                .collect();
+            assert_eq!(
+                changed,
+                [(1, ChangeKind::Added)],
+                "remote={remote}, saved={saved}"
+            );
             let status = editor.line_hunk_status(1);
             app.open_hunk_popup(0, 0, file.clone(), 1, status);
             app.wait_for_hunk_preview();
@@ -283,7 +317,10 @@ fn blank_line_marker_survives_save_and_undo_restores_a_clean_git_gutter() {
         assert!(editor.modified);
         assert!(editor.uses_git_index_markers());
         assert!((0..editor.line_count()).all(|line| editor.line_changes(line).is_empty()));
-        assert_eq!(std::fs::read_to_string(disk_path).unwrap(), "\u{feff}one\n\n\n\nlast\n");
+        assert_eq!(
+            std::fs::read_to_string(disk_path).unwrap(),
+            "\u{feff}one\n\n\n\nlast\n"
+        );
         assert_overview(&mut app, false);
     }
 }

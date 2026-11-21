@@ -242,17 +242,35 @@ fn editor_app() -> App {
 #[test]
 fn extended_release_reports_never_trigger_editor_or_search_commands() {
     let mut app = editor_app();
-    for search in [false,true] {
-        if search { app.execute_palette_command("find"); }
+    for search in [false, true] {
+        if search {
+            app.execute_palette_command("find");
+        }
         let rope = app.editor().unwrap().rope.clone();
-        let cursor = (app.editor().unwrap().cursor_line,app.editor().unwrap().cursor_col);
-        for (_,key) in extended_key_cases().into_iter().filter(|(_,key)| key.kind == KeyEventKind::Release) {
-            handle_keyboard_event(&mut app,key);
-            assert_eq!(app.editor().unwrap().rope,rope,"{key:?}");
-            assert_eq!((app.editor().unwrap().cursor_line,app.editor().unwrap().cursor_col),cursor,"{key:?}");
-            assert_eq!(app.search_active,search,"{key:?}");
-            assert!(!app.palette.active && !app.quick_open_active && !app.replace_mode,"{key:?}");
-            assert!(!app.editor().unwrap().can_undo(),"{key:?}");
+        let cursor = (
+            app.editor().unwrap().cursor_line,
+            app.editor().unwrap().cursor_col,
+        );
+        for (_, key) in extended_key_cases()
+            .into_iter()
+            .filter(|(_, key)| key.kind == KeyEventKind::Release)
+        {
+            handle_keyboard_event(&mut app, key);
+            assert_eq!(app.editor().unwrap().rope, rope, "{key:?}");
+            assert_eq!(
+                (
+                    app.editor().unwrap().cursor_line,
+                    app.editor().unwrap().cursor_col
+                ),
+                cursor,
+                "{key:?}"
+            );
+            assert_eq!(app.search_active, search, "{key:?}");
+            assert!(
+                !app.palette.active && !app.quick_open_active && !app.replace_mode,
+                "{key:?}"
+            );
+            assert!(!app.editor().unwrap().can_undo(), "{key:?}");
         }
     }
 }

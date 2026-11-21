@@ -108,7 +108,8 @@ fn busy(app: &App) -> bool {
 }
 
 fn hovered(app: &App, area: Rect) -> bool {
-    !busy(app) && app.git_branch_dialog.grab.is_none()
+    !busy(app)
+        && app.git_branch_dialog.grab.is_none()
         && area.contains((app.mouse_col, app.mouse_row).into())
 }
 
@@ -642,13 +643,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         f,
         close,
         " × ",
-        colors.ui.toolbar_style(
-            fg,
-            title_bg,
-            hovered(app, close),
-            false,
-            busy(app),
-        ),
+        colors
+            .ui
+            .toolbar_style(fg, title_bg, hovered(app, close), false, busy(app)),
     );
     let pad = u16::from(inner.width >= 4);
     let body = Rect::new(
@@ -826,11 +823,16 @@ fn draw_browse(f: &mut Frame, app: &mut App, body: Rect, bg: ratatui::style::Col
         let chosen = scroll + row == app.git_branch_picker_selected;
         let style = if chosen {
             let row_bg = colors.ui.quick_focus_background.over(bg).unwrap_or(bg);
-            Style::default().fg(colors.ui.quick_text_color(row_bg, true)).bg(row_bg)
+            Style::default()
+                .fg(colors.ui.quick_text_color(row_bg, true))
+                .bg(row_bg)
         } else {
             colors.ui.list_row_style(
                 crate::theme_workbench::ColorLayer::opaque(colors.ui.quick_text_color(bg, false)),
-                bg, false, false, hovered(app, rect),
+                bg,
+                false,
+                false,
+                hovered(app, rect),
             )
         };
         f.render_widget(Block::default().style(style), rect);

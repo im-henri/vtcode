@@ -128,10 +128,17 @@ fn workspace_catalog_rejects_a_fifo_without_waiting_for_a_writer() {
                 Err(error) => panic!("cannot unblock catalog reader: {error}"),
             }
         }
-        result.recv_timeout(Duration::from_secs(5)).unwrap().unwrap_err();
+        result
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap_err();
     }
     reader.join().unwrap();
-    assert!(early.expect("catalog load waited for a FIFO writer").is_err());
+    assert!(
+        early
+            .expect("catalog load waited for a FIFO writer")
+            .is_err()
+    );
 }
 
 #[test]

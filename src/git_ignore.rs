@@ -117,8 +117,10 @@ impl Rules {
                 );
             }
         }
-        self.directories
-            .insert(path.to_owned(), Arc::new(DirectoryRules { matchers, ignored }));
+        self.directories.insert(
+            path.to_owned(),
+            Arc::new(DirectoryRules { matchers, ignored }),
+        );
     }
 
     pub(crate) fn is_ignored(
@@ -130,12 +132,16 @@ impl Rules {
         if path.file_name().is_some_and(|name| name == ".git") {
             return true;
         }
-        let Some(parent) = path.parent() else { return false; };
+        let Some(parent) = path.parent() else {
+            return false;
+        };
         let rules = match &self.last {
             // Byte-identical parents compare without component parsing.
             Some((last, rules)) if last.as_path() == parent => Arc::clone(rules),
             _ => {
-                if !parent.starts_with(&self.workdir) { return false; }
+                if !parent.starts_with(&self.workdir) {
+                    return false;
+                }
                 self.directory(parent, on_read);
                 let rules = Arc::clone(&self.directories[parent]);
                 self.last = Some((parent.to_owned(), Arc::clone(&rules)));

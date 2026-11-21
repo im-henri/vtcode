@@ -1,6 +1,6 @@
+use crate::app::App;
 use crate::text_input::TextInputId;
 use crossterm::event::{KeyCode, KeyModifiers};
-use crate::app::App;
 
 pub(crate) fn handle_quick_open_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     match code {
@@ -31,12 +31,10 @@ pub(crate) fn handle_quick_open_key(app: &mut App, code: KeyCode, modifiers: Key
             app.quick_open_selected = (app.quick_open_selected + 10).min(max);
         }
         _ => {
-            if app.edit_text_input(
-                TextInputId::QuickOpen,
-                code,
-                modifiers,
-                None,
-            ).changed {
+            if app
+                .edit_text_input(TextInputId::QuickOpen, code, modifiers, None)
+                .changed
+            {
                 app.update_quick_open();
             }
         }
@@ -56,12 +54,7 @@ pub(crate) fn handle_goto_line_key(app: &mut App, code: KeyCode, modifiers: KeyM
             app.goto_line();
         }
         _ => {
-            let result = app.edit_text_input(
-                TextInputId::GotoLine,
-                code,
-                modifiers,
-                None,
-            );
+            let result = app.edit_text_input(TextInputId::GotoLine, code, modifiers, None);
             if result.changed {
                 if app.goto_line_query.is_empty() {
                     // Restore original position when query is cleared.
@@ -86,14 +79,14 @@ pub(crate) fn handle_symbol_list_key(app: &mut App, code: KeyCode, modifiers: Ke
                     app.push_nav_history();
                     app.symbol_list_active = false;
                     app.source_symbol_work.cancel_picker();
-                        if let Some(tab_idx) = item.tab_index {
-                            if tab_idx < app.tabs.len() {
-                                app.sync_duplicate_file_tabs();
-                                app.active_tab = tab_idx;
-                                app.validate_diff_state_for_active_tab();
-                            }
-                        } else if let Some(ref fp) = item.file_path {
-                            app.open_file(fp);
+                    if let Some(tab_idx) = item.tab_index {
+                        if tab_idx < app.tabs.len() {
+                            app.sync_duplicate_file_tabs();
+                            app.active_tab = tab_idx;
+                            app.validate_diff_state_for_active_tab();
+                        }
+                    } else if let Some(ref fp) = item.file_path {
+                        app.open_file(fp);
                     }
                     if let Some(ed) = app.editor_mut() {
                         ed.clear_selection();
@@ -120,12 +113,10 @@ pub(crate) fn handle_symbol_list_key(app: &mut App, code: KeyCode, modifiers: Ke
             app.symbol_list_selected = (app.symbol_list_selected + 10).min(max);
         }
         _ => {
-            if app.edit_text_input(
-                TextInputId::SymbolList,
-                code,
-                modifiers,
-                None,
-            ).changed {
+            if app
+                .edit_text_input(TextInputId::SymbolList, code, modifiers, None)
+                .changed
+            {
                 app.update_symbol_filter();
             }
         }
@@ -138,7 +129,10 @@ pub(crate) fn handle_palette_key(app: &mut App, code: KeyCode, modifiers: KeyMod
             KeyCode::Esc => app.close_palette(),
             KeyCode::Enter => app.start_theme_install(),
             _ if !app.install_prompt_running() => {
-                if app.edit_text_input(TextInputId::CommandPalette, code, modifiers, None).changed {
+                if app
+                    .edit_text_input(TextInputId::CommandPalette, code, modifiers, None)
+                    .changed
+                {
                     app.palette.theme_install_error = None;
                 }
             }
@@ -167,7 +161,9 @@ pub(crate) fn handle_palette_key(app: &mut App, code: KeyCode, modifiers: KeyMod
                 if app.execute_extension_palette_index(idx) {
                     return false;
                 }
-                let Some(cmd) = app.palette.commands.get(idx) else { return false; };
+                let Some(cmd) = app.palette.commands.get(idx) else {
+                    return false;
+                };
                 let id = cmd.id.to_string();
                 // `execute_palette_command` reports whether a sub-dispatcher
                 // handled the command; it is not an application-quit signal.
@@ -193,12 +189,10 @@ pub(crate) fn handle_palette_key(app: &mut App, code: KeyCode, modifiers: KeyMod
             app.palette.selected = (app.palette.selected + 10).min(max);
         }
         _ => {
-            if app.edit_text_input(
-                TextInputId::CommandPalette,
-                code,
-                modifiers,
-                None,
-            ).changed {
+            if app
+                .edit_text_input(TextInputId::CommandPalette, code, modifiers, None)
+                .changed
+            {
                 app.update_palette_filter();
             }
         }
@@ -229,10 +223,18 @@ pub(crate) fn handle_context_menu_key(app: &mut App, code: KeyCode) -> bool {
                 app.context_menu_selected += 1;
             }
         }
-        KeyCode::Enter | KeyCode::Char(' ') if code == KeyCode::Enter || app.source_control_filter_menu_open() || app.source_control_action_menu_open() => {
-            let Some(item) = app.context_menu_items.get(app.context_menu_selected) else { return false; };
+        KeyCode::Enter | KeyCode::Char(' ')
+            if code == KeyCode::Enter
+                || app.source_control_filter_menu_open()
+                || app.source_control_action_menu_open() =>
+        {
+            let Some(item) = app.context_menu_items.get(app.context_menu_selected) else {
+                return false;
+            };
             let id = item.id;
-            if app.source_control_menu_command_disabled(id) { return false; }
+            if app.source_control_menu_command_disabled(id) {
+                return false;
+            }
             app.context_menu_active = false;
             if let Some(index) = crate::app_sidebar::activity_menu_index(id) {
                 app.activate_activity_item(index);
@@ -260,7 +262,10 @@ pub(crate) fn handle_confirm_close_key(app: &mut App, code: KeyCode) {
         return;
     }
     if matches!(code, KeyCode::Char('y' | 'Y' | 'n' | 'N'))
-        && app.tabs.get(idx).is_some_and(|tab| app.tab_operation_pending(tab))
+        && app
+            .tabs
+            .get(idx)
+            .is_some_and(|tab| app.tab_operation_pending(tab))
     {
         app.notify("Wait for the current save or extension operation before closing this tab");
         return;
@@ -268,14 +273,23 @@ pub(crate) fn handle_confirm_close_key(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Char('y' | 'Y') => {
             // Save and close
-            if app.queue_extension_document_close(idx, true) { return; }
+            if app.queue_extension_document_close(idx, true) {
+                return;
+            }
             let trim = app.trim_trailing_on_save;
             let newline = app.insert_final_newline;
             if idx < app.tabs.len() {
                 if let Err(error) = app.tabs[idx].editor.save_file_with_options(trim, newline) {
                     if let Some(path) = app.tabs[idx].editor.file_path.clone() {
-                        app.show_file_save_error(&path, app.tabs[idx].editor.save_identity, app.workspace_generation, error);
-                    } else { app.show_save_error(format!("Could not save file: {error}")); }
+                        app.show_file_save_error(
+                            &path,
+                            app.tabs[idx].editor.save_identity,
+                            app.workspace_generation,
+                            error,
+                        );
+                    } else {
+                        app.show_save_error(format!("Could not save file: {error}"));
+                    }
                     return;
                 }
                 app.force_close_tab(idx);
@@ -283,7 +297,9 @@ pub(crate) fn handle_confirm_close_key(app: &mut App, code: KeyCode) {
         }
         KeyCode::Char('n' | 'N') => {
             // Close without saving
-            if app.queue_extension_document_close(idx, false) { return; }
+            if app.queue_extension_document_close(idx, false) {
+                return;
+            }
             app.force_close_tab(idx);
         }
         KeyCode::Esc => {
@@ -296,10 +312,10 @@ pub(crate) fn handle_confirm_close_key(app: &mut App, code: KeyCode) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{App, ContextMenuItem, Tab};
+    use crate::editor::Editor;
     use crossterm::event::{KeyCode, KeyModifiers};
     use std::path::PathBuf;
-    use crate::app::{App, Tab, ContextMenuItem};
-    use crate::editor::Editor;
 
     fn make_app() -> App {
         let mut app = App::new(PathBuf::from("."));
@@ -548,7 +564,10 @@ mod tests {
 
         let quit = handle_palette_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
 
-        assert!(!quit, "palette commands must not be interpreted as quit requests");
+        assert!(
+            !quit,
+            "palette commands must not be interpreted as quit requests"
+        );
         assert!(!app.palette.active);
         assert_eq!(
             crate::app_theme::config_key_from_command_id(&command_id).as_deref(),
@@ -562,8 +581,18 @@ mod tests {
     fn context_menu_up_decrements() {
         let mut app = make_app();
         app.context_menu_items = vec![
-            ContextMenuItem { id: "a", label: "A".into(), shortcut: String::new(), separator_after: false },
-            ContextMenuItem { id: "b", label: "B".into(), shortcut: String::new(), separator_after: false },
+            ContextMenuItem {
+                id: "a",
+                label: "A".into(),
+                shortcut: String::new(),
+                separator_after: false,
+            },
+            ContextMenuItem {
+                id: "b",
+                label: "B".into(),
+                shortcut: String::new(),
+                separator_after: false,
+            },
         ];
         app.context_menu_selected = 1;
         handle_context_menu_key(&mut app, KeyCode::Up);
@@ -574,8 +603,18 @@ mod tests {
     fn context_menu_down_increments() {
         let mut app = make_app();
         app.context_menu_items = vec![
-            ContextMenuItem { id: "a", label: "A".into(), shortcut: String::new(), separator_after: false },
-            ContextMenuItem { id: "b", label: "B".into(), shortcut: String::new(), separator_after: false },
+            ContextMenuItem {
+                id: "a",
+                label: "A".into(),
+                shortcut: String::new(),
+                separator_after: false,
+            },
+            ContextMenuItem {
+                id: "b",
+                label: "B".into(),
+                shortcut: String::new(),
+                separator_after: false,
+            },
         ];
         app.context_menu_selected = 0;
         handle_context_menu_key(&mut app, KeyCode::Down);

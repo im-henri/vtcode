@@ -15,26 +15,36 @@ fn start_shortcut_chord(app: &mut App, stroke: crate::app_shortcuts::Stroke) {
     app.chord_pending = true;
     app.shortcut_chord_prefix = Some(stroke);
     app.chord_start = std::time::Instant::now();
-    app.notify(format!("{} …", crate::app_shortcuts::display_stroke(stroke.0, stroke.1)));
+    app.notify(format!(
+        "{} …",
+        crate::app_shortcuts::display_stroke(stroke.0, stroke.1)
+    ));
 }
 
 /// Handle a keyboard event. Returns `true` when the application should exit.
 pub(crate) fn handle_keyboard_event(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
     app.update_link_hover_key(key);
-    if matches!(key.code, KeyCode::Modifier(_)) || key.kind == crossterm::event::KeyEventKind::Release {
+    if matches!(key.code, KeyCode::Modifier(_))
+        || key.kind == crossterm::event::KeyEventKind::Release
+    {
         return false;
     }
     app.cancel_remote_terminal_location();
-    if app.custom_exit_remaining > 0 { return false; }
+    if app.custom_exit_remaining > 0 {
+        return false;
+    }
     if key.code == KeyCode::Esc && app.paste_in_progress() {
-        app.cancel_pending_paste(); return false;
+        app.cancel_pending_paste();
+        return false;
     }
     if app.minimap_resize.cancel() && key.code == KeyCode::Esc {
         return false;
     }
     app.copy_animation.clear();
     app.dismiss_lsp_hover();
-    if crate::ui_inline_blame::copy_key(app, key) { return false; }
+    if crate::ui_inline_blame::copy_key(app, key) {
+        return false;
+    }
     app.inline_blame_hover = None;
     app.search_bar_layout.resizing = false;
     app.cancel_extension_pointer_capture();
@@ -49,9 +59,15 @@ pub(crate) fn handle_keyboard_event(app: &mut App, key: crossterm::event::KeyEve
 pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::KeyEvent) -> bool {
     // Vim mode: hjkl and q in menus that read keys before the Vim layer.
     let key = crate::vim::app_host::menu_key(app, key);
-    if app.handle_text_input_context_menu_key(key) { return false; }
-    if crate::ui_workspaces::handle_key(app, key) { return false; }
-    if app.handle_shortcut_editor_key(key) { return false; }
+    if app.handle_text_input_context_menu_key(key) {
+        return false;
+    }
+    if crate::ui_workspaces::handle_key(app, key) {
+        return false;
+    }
+    if app.handle_shortcut_editor_key(key) {
+        return false;
+    }
     // The visible read-only preview owns clipboard and editing shortcuts
     // before workbench bindings can reach the obscured editor or Explorer.
     if app.hunk_popup_active
@@ -61,7 +77,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
         crate::ui_hunk_peek::handle_key(app, key);
         return false;
     }
-    if crate::ui_desks::handle_key(app, key) { return false; }
+    if crate::ui_desks::handle_key(app, key) {
+        return false;
+    }
     app.sync_text_input_sessions();
     if let Some(quit) = crate::ui_modal::handle_key(app, key) {
         return quit;
@@ -69,20 +87,31 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
     if let Some(quit) = input_dialogs::handle_change_dir_key(app, key) {
         return quit;
     }
-    if crate::app_terminal_find::key(app, key) { return false; }
+    if crate::app_terminal_find::key(app, key) {
+        return false;
+    }
     if app.sc_context_active {
         let count = app.source_control_context_menu_items().len();
         match key.code {
-            KeyCode::Esc => { app.sc_context_active = false; app.sc_context_targets.clear(); }
+            KeyCode::Esc => {
+                app.sc_context_active = false;
+                app.sc_context_targets.clear();
+            }
             KeyCode::Up => app.sc_context_selected = app.sc_context_selected.saturating_sub(1),
-            KeyCode::Down => app.sc_context_selected = (app.sc_context_selected + 1).min(count.saturating_sub(1)),
+            KeyCode::Down => {
+                app.sc_context_selected = (app.sc_context_selected + 1).min(count.saturating_sub(1))
+            }
             KeyCode::Enter => app.execute_source_control_context(app.sc_context_selected),
             _ => {}
         }
         return false;
     }
-    if crate::ui_status::handle_key(app, key) { return false; }
-    if crate::ui_performance_details::handle_key(app, key) { return false; }
+    if crate::ui_status::handle_key(app, key) {
+        return false;
+    }
+    if crate::ui_performance_details::handle_key(app, key) {
+        return false;
+    }
     if let Some(quit) = input_keyboard_dialogs::handle_commit_details_key(app, key) {
         return quit;
     }
@@ -125,7 +154,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
     // standalone editing or workbench shortcut (for example Ctrl+C or Ctrl+W).
     if app.chord_pending {
         app.chord_pending = false;
-        let command = app.shortcut_chord_prefix.take()
+        let command = app
+            .shortcut_chord_prefix
+            .take()
             .and_then(|prefix| app.resolve_shortcut(prefix, Some((key.modifiers, key.code))))
             .map(|binding| binding.id);
         if let Some(command) = command {
@@ -147,10 +178,17 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
     let shell_focus = context.shell_focus();
     let shell_input_focus = context.shell_input_has_focus();
     let resolved = app.resolve_shortcut(stroke, None).map(|binding| {
-        (binding.id, binding.chord.is_some(), binding.when.is_some(), binding.uses_native_handler())
+        (
+            binding.id,
+            binding.chord.is_some(),
+            binding.when.is_some(),
+            binding.uses_native_handler(),
+        )
     });
     if let Some((command, chord, explicit_context, _)) = resolved
-        && (shell_input_focus || explicit_context || matches!(command, "navigate_back" | "navigate_forward"))
+        && (shell_input_focus
+            || explicit_context
+            || matches!(command, "navigate_back" | "navigate_forward"))
     {
         if !shell_focus && app.route_custom_editor_shortcut(key.code, key.modifiers) {
             return false;
@@ -162,22 +200,29 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
         }
         return false;
     }
-    if app.focused_terminal_index().is_none()
-        && crate::ui_remote_targets::connection_key(app, key)
+    if app.focused_terminal_index().is_none() && crate::ui_remote_targets::connection_key(app, key)
     {
         return false;
     }
-    if crate::ui_logs::key(app, key) { return false; }
+    if crate::ui_logs::key(app, key) {
+        return false;
+    }
 
     // Focused text fields own editing shortcuts. This must precede the
     // configurable workbench dispatcher, which otherwise sends Ctrl+X/C/V/A
     // to the code editor even when a search or settings field has focus.
-    if app.handle_chat_key(key) { return false; }
-    if crate::ui_explorer_find::handle_key(app, key) { return false; }
+    if app.handle_chat_key(key) {
+        return false;
+    }
+    if crate::ui_explorer_find::handle_key(app, key) {
+        return false;
+    }
     if app.handle_focused_text_input_shortcut(key.code, key.modifiers) {
         return false;
     }
-    if crate::ui_remote_targets::handle_shortcut(app, key) { return false; }
+    if crate::ui_remote_targets::handle_shortcut(app, key) {
+        return false;
+    }
 
     if !shell_focus {
         // AltGr handling (Ctrl+Alt on Windows = AltGr)
@@ -199,7 +244,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
         }
 
         // Configurable keybinding dispatch
-        if app.route_custom_editor_shortcut(key.code, key.modifiers) { return false; }
+        if app.route_custom_editor_shortcut(key.code, key.modifiers) {
+            return false;
+        }
         let legacy_reassigned = (!key.modifiers.is_empty() || matches!(key.code, KeyCode::F(_)))
             && app.shortcut_default_overridden(stroke);
         if let Some((command, chord, _, native)) = resolved {
@@ -212,7 +259,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
                 return false;
             }
         }
-        if legacy_reassigned { return false; }
+        if legacy_reassigned {
+            return false;
+        }
 
         // Global keybindings (Ctrl+*)
         if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -243,7 +292,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
             && (key.code == KeyCode::Char('F') || key.code == KeyCode::Char('f'))
         {
             // Ctrl+Shift+F: focus global search
-            if !app.detached_chrome_command("global_search") { app.focus_global_search(); }
+            if !app.detached_chrome_command("global_search") {
+                app.focus_global_search();
+            }
             return false;
         }
         if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -251,7 +302,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
             && (key.code == KeyCode::Char('M') || key.code == KeyCode::Char('m'))
         {
             // Ctrl+Shift+M: toggle Problems panel
-            if !app.detached_chrome_command("toggle_problems") { crate::ui_panels::toggle_problems(app); }
+            if !app.detached_chrome_command("toggle_problems") {
+                crate::ui_panels::toggle_problems(app);
+            }
             return false;
         }
         if key.modifiers.contains(KeyModifiers::CONTROL)
@@ -286,7 +339,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
         }
         // F2: Rename symbol
         if app.active_pane == ActivePane::Editor
-            && key.code == KeyCode::F(2) && key.modifiers.is_empty() {
+            && key.code == KeyCode::F(2)
+            && key.modifiers.is_empty()
+        {
             app.execute_palette_command("rename_symbol");
             return false;
         }
@@ -301,7 +356,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
                     return false;
                 }
                 KeyCode::Char('b') => {
-                    if !app.detached_chrome_command("toggle_explorer") { app.toggle_explorer(); }
+                    if !app.detached_chrome_command("toggle_explorer") {
+                        app.toggle_explorer();
+                    }
                     return false;
                 }
                 KeyCode::Char('w') => {
@@ -309,7 +366,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
                     return false;
                 }
                 KeyCode::Char('f') => {
-                    if app.editor().is_none() { return false; }
+                    if app.editor().is_none() {
+                        return false;
+                    }
                     if !app.search_active {
                         app.search_pre_cursor = app
                             .editor()
@@ -342,7 +401,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
                     return false;
                 }
                 KeyCode::Char('h') => {
-                    if app.editor().is_none() { return false; }
+                    if app.editor().is_none() {
+                        return false;
+                    }
                     if !app.search_active {
                         app.search_pre_cursor = app
                             .editor()
@@ -491,7 +552,11 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
                                 if let Some(fp) = ed.file_path.as_ref() {
                                     let fp = fp.clone();
                                     let line = ed.cursor_line as u32;
-                                    let col = crate::lsp_positions::to_utf16(&ed.rope, ed.cursor_line, ed.cursor_col);
+                                    let col = crate::lsp_positions::to_utf16(
+                                        &ed.rope,
+                                        ed.cursor_line,
+                                        ed.cursor_col,
+                                    );
                                     // Collect diagnostics at cursor position for context
                                     let diags = app.lsp_manager.code_action_diagnostics(&fp, line);
                                     app.lsp_code_action_active = app
@@ -537,15 +602,18 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
             }
             KeyCode::Up => {
                 let items = app.explorer_context_menu_items();
-                if let Some(index) = (0..app.explorer_context_selected.min(items.len())).rev()
-                    .find(|&index| items[index] != "─") {
+                if let Some(index) = (0..app.explorer_context_selected.min(items.len()))
+                    .rev()
+                    .find(|&index| items[index] != "─")
+                {
                     app.explorer_context_selected = index;
                 }
             }
             KeyCode::Down => {
                 let items = app.explorer_context_menu_items();
                 if let Some(index) = (app.explorer_context_selected.saturating_add(1)..items.len())
-                    .find(|&index| items[index] != "─") {
+                    .find(|&index| items[index] != "─")
+                {
                     app.explorer_context_selected = index;
                 }
             }
@@ -648,10 +716,12 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
             _ => app.dismiss_vtcomplete(),
         }
     }
-    if key.code == KeyCode::Esc && (app.vtcomplete_active
-        || app.vtcomplete_explicit
+    if key.code == KeyCode::Esc
+        && (app.vtcomplete_active
+            || app.vtcomplete_explicit
             || app.vtcomplete_cancel_token.is_some()
-        || app.lsp_completion_active || app.lsp_signature_active)
+            || app.lsp_completion_active
+            || app.lsp_signature_active)
     {
         app.dismiss_vtcomplete();
         app.lsp_completion_active = false;
@@ -660,21 +730,31 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
         return false;
     }
 
-    if app.lsp_signature_active && key.modifiers == KeyModifiers::ALT
+    if app.lsp_signature_active
+        && key.modifiers == KeyModifiers::ALT
         && matches!(key.code, KeyCode::Char('[') | KeyCode::Char(']'))
     {
-        if let Some(help) = app.lsp_manager.signature_help.as_mut().filter(|help| !help.signatures.is_empty()) {
+        if let Some(help) = app
+            .lsp_manager
+            .signature_help
+            .as_mut()
+            .filter(|help| !help.signatures.is_empty())
+        {
             let count = help.signatures.len();
             help.active_signature = if key.code == KeyCode::Char('[') {
                 (help.active_signature.min(count - 1) + count - 1) % count
-            } else { (help.active_signature.min(count - 1) + 1) % count };
+            } else {
+                (help.active_signature.min(count - 1) + 1) % count
+            };
         }
         return false;
     }
 
     // LSP suggestions are displayed above local results, which can arrive later.
     // Route keys to the visible list first, retaining local results as a fallback.
-    if crate::ui_lsp_completion::handle_key(app, key) { return false; }
+    if crate::ui_lsp_completion::handle_key(app, key) {
+        return false;
+    }
     if crate::ui_lsp_completion::visible(app) {
         // A hidden local list must never accept a key intended for this popup.
         app.dismiss_vtcomplete();
@@ -694,7 +774,10 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
     // that would act on it act as if it were not there.
     if app.vtcomplete_active
         && app.inline_holds_popup()
-        && matches!(key.code, KeyCode::Tab | KeyCode::Up | KeyCode::Down | KeyCode::Enter)
+        && matches!(
+            key.code,
+            KeyCode::Tab | KeyCode::Up | KeyCode::Down | KeyCode::Enter
+        )
     {
         app.dismiss_vtcomplete();
     }
@@ -879,10 +962,7 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
                     app.open_file(&path);
                     if let Some(ed) = app.editor_mut() {
                         ed.clear_selection();
-                        ed.set_lsp_cursor(
-                            loc.range.start.line as usize,
-                            loc.range.start.character,
-                        );
+                        ed.set_lsp_cursor(loc.range.start.line as usize, loc.range.start.character);
                         ed.center_cursor();
                     }
                 }
@@ -919,7 +999,10 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
     }
 
     // Search mode input
-    if matches!(app.focused_text_input_id(), Some(TextInputId::SearchFind | TextInputId::SearchReplace)) {
+    if matches!(
+        app.focused_text_input_id(),
+        Some(TextInputId::SearchFind | TextInputId::SearchReplace)
+    ) {
         input::handle_search_key(app, key.code, key.modifiers);
         return false;
     }
@@ -930,7 +1013,6 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
         return false;
     }
 
-
     // Go to line mode
     if app.goto_line_active {
         input_pickers::handle_goto_line_key(app, key.code, key.modifiers);
@@ -938,7 +1020,10 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
     }
 
     // Global search mode
-    if matches!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(_))) {
+    if matches!(
+        app.focused_text_input_id(),
+        Some(TextInputId::GlobalSearch(_))
+    ) {
         input::handle_global_search_key(app, key.code, key.modifiers);
         return false;
     }
@@ -967,18 +1052,25 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
         return false;
     }
 
-    if crate::ui_extension_info::handle_key(app, key) { return false; }
-
-    if app.active_pane == ActivePane::Editor
-        && app.shortcut_default_overridden((key.modifiers, key.code)) {
+    if crate::ui_extension_info::handle_key(app, key) {
         return false;
     }
-    if crate::ui_git_amend::handle_key(app, key) { return false; }
+
+    if app.active_pane == ActivePane::Editor
+        && app.shortcut_default_overridden((key.modifiers, key.code))
+    {
+        return false;
+    }
+    if crate::ui_git_amend::handle_key(app, key) {
+        return false;
+    }
     match app.active_pane {
         ActivePane::Explorer => input::handle_explorer_key(app, key.code, key.modifiers),
         ActivePane::Editor => input::handle_editor_key(app, key.code, key.modifiers),
-        ActivePane::Chat => {},
-        ActivePane::Panel => { crate::ui_panels::handle_key(app, key.code); },
+        ActivePane::Chat => {}
+        ActivePane::Panel => {
+            crate::ui_panels::handle_key(app, key.code);
+        }
     }
     false
 }
@@ -990,8 +1082,12 @@ fn dispatch_shortcut(app: &mut App, cmd_id: &str) {
 }
 
 fn dispatch_shortcut_command(app: &mut App, cmd_id: &str) {
-    if app.detached_chrome_command(cmd_id) { return; }
-    if app.route_explorer_edit_command(cmd_id) { return; }
+    if app.detached_chrome_command(cmd_id) {
+        return;
+    }
+    if app.route_explorer_edit_command(cmd_id) {
+        return;
+    }
     // End clipboard cycle on any keybinding that isn't clipboard_history
     if app.clipboard_cycle_active && cmd_id != "clipboard_history" {
         app.clipboard_cycle_active = false;
@@ -1065,7 +1161,9 @@ fn dispatch_shortcut_command(app: &mut App, cmd_id: &str) {
             if !app.tabs.is_empty() {
                 app.sync_duplicate_file_tabs();
                 app.clear_transient_editor_state();
-                if app.tabs.len() > 1 { app.auto_save_on_focus_change(); }
+                if app.tabs.len() > 1 {
+                    app.auto_save_on_focus_change();
+                }
                 app.active_tab = if matches!(cmd_id, "next_tab" | "next_tab_page") {
                     (app.active_tab + 1) % app.tabs.len()
                 } else {
@@ -1086,14 +1184,16 @@ fn dispatch_shortcut_command(app: &mut App, cmd_id: &str) {
             if app.clipboard_history.is_empty() {
                 app.notify("Clipboard history is empty");
             } else {
-                if app.paste_in_progress() { app.notify_warn("Wait for the current paste or cancel it first"); return; }
+                if app.paste_in_progress() {
+                    app.notify_warn("Wait for the current paste or cancel it first");
+                    return;
+                }
                 let history_len = app.clipboard_history.len();
                 if app.clipboard_cycle_active {
                     if let Some(ed) = app.editor_mut() {
                         ed.undo();
                     }
-                    app.clipboard_cycle_index =
-                        (app.clipboard_cycle_index + 1) % history_len;
+                    app.clipboard_cycle_index = (app.clipboard_cycle_index + 1) % history_len;
                 } else {
                     app.clipboard_cycle_active = true;
                     app.clipboard_cycle_index = 0;
@@ -1104,7 +1204,9 @@ fn dispatch_shortcut_command(app: &mut App, cmd_id: &str) {
                 }
             }
         }
-        _ => { app.execute_palette_command(cmd_id); }
+        _ => {
+            app.execute_palette_command(cmd_id);
+        }
     }
 }
 
@@ -1123,12 +1225,20 @@ mod tests {
         app.vtcomplete_active = true;
         app.vtcomplete_suggestions = vec!["meadow".into(), "meanwhile".into()];
         app.lsp_completion_active = true;
-        app.lsp_manager.completion_items = ["measurements", "meaning"].into_iter().map(|label|
-            crate::lsp::LspCompletionItem {
-                label: label.into(), insert_text: label.into(), detail: None,
-                kind: Some(lsp_types::CompletionItemKind::VARIABLE), text_edit_range: None,
-                additional_text_edits: vec![], is_snippet: false, original_item: None, documentation: None,
-            }).collect();
+        app.lsp_manager.completion_items = ["measurements", "meaning"]
+            .into_iter()
+            .map(|label| crate::lsp::LspCompletionItem {
+                label: label.into(),
+                insert_text: label.into(),
+                detail: None,
+                kind: Some(lsp_types::CompletionItemKind::VARIABLE),
+                text_edit_range: None,
+                additional_text_edits: vec![],
+                is_snippet: false,
+                original_item: None,
+                documentation: None,
+            })
+            .collect();
         app
     }
 
@@ -1139,11 +1249,20 @@ mod tests {
             handle_keyboard_event(&mut app, key(KeyCode::Down));
             assert_eq!(app.lsp_completion_selected, 1);
             assert_eq!(app.vtcomplete_selected, 0);
-            assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (0, 3));
+            assert_eq!(
+                (
+                    app.editor().unwrap().cursor_line,
+                    app.editor().unwrap().cursor_col
+                ),
+                (0, 3)
+            );
             let mut repeated = key(KeyCode::Down);
             repeated.kind = KeyEventKind::Repeat;
             handle_keyboard_event(&mut app, repeated);
-            assert_eq!(app.lsp_completion_selected, 1, "selection stops at the last suggestion");
+            assert_eq!(
+                app.lsp_completion_selected, 1,
+                "selection stops at the last suggestion"
+            );
             handle_keyboard_event(&mut app, key(KeyCode::Up));
             handle_keyboard_event(&mut app, key(KeyCode::Up));
             assert_eq!(app.lsp_completion_selected, 0);
@@ -1161,10 +1280,15 @@ mod tests {
         app.code_area = Some(ratatui::layout::Rect::new(0, 0, 100, 30));
         let item = app.lsp_manager.completion_items[0].clone();
         app.lsp_manager.completion_items = vec![item; 15];
-        for _ in 0..12 { handle_keyboard_event(&mut app, key(KeyCode::Down)); }
+        for _ in 0..12 {
+            handle_keyboard_event(&mut app, key(KeyCode::Down));
+        }
         assert_eq!(app.lsp_completion_selected, 12);
         let geometry = crate::ui_search_dialog::lsp_completion_popup_geometry(
-            &mut app, ratatui::layout::Rect::new(0, 0, 100, 30)).unwrap();
+            &mut app,
+            ratatui::layout::Rect::new(0, 0, 100, 30),
+        )
+        .unwrap();
         assert_eq!(geometry.scroll, 3);
         assert_eq!(app.editor().unwrap().cursor_col, 3);
     }
@@ -1175,20 +1299,32 @@ mod tests {
         let editor = app.editor().unwrap();
         let late_result = crate::background::BackgroundResult::VtComplete {
             generation: app.vtcomplete_generation,
-            active_group: app.active_group, active_tab: app.active_tab,
-            document_id: editor.navigation_id, cursor_line: editor.cursor_line, cursor_col: editor.cursor_col,
-            content_version: editor.content_version, source_rope: editor.rope.clone(),
-                source_identity: crate::completion_source::Source::new(editor.file_path.as_deref(), editor.language_name()),
-            language: editor.language_name().into(), suggestions: vec!["meadow".into()],
+            active_group: app.active_group,
+            active_tab: app.active_tab,
+            document_id: editor.navigation_id,
+            cursor_line: editor.cursor_line,
+            cursor_col: editor.cursor_col,
+            content_version: editor.content_version,
+            source_rope: editor.rope.clone(),
+            source_identity: crate::completion_source::Source::new(
+                editor.file_path.as_deref(),
+                editor.language_name(),
+            ),
+            language: editor.language_name().into(),
+            suggestions: vec!["meadow".into()],
             details: Vec::new(),
-            work_outcome: crate::app_vtcomplete::VtCompleteWorkOutcome::Exact, deferred_candidates: 0,
+            work_outcome: crate::app_vtcomplete::VtCompleteWorkOutcome::Exact,
+            deferred_candidates: 0,
         };
         handle_keyboard_event(&mut app, key(KeyCode::Esc));
         assert!(!app.lsp_completion_active);
         assert!(!app.vtcomplete_active);
         app.background.sender.send(late_result).unwrap();
         app.poll_background_results();
-        assert!(!app.vtcomplete_active, "dismissed suggestions must not reopen on a late reply");
+        assert!(
+            !app.vtcomplete_active,
+            "dismissed suggestions must not reopen on a late reply"
+        );
     }
 
     #[test]
@@ -1313,7 +1449,10 @@ mod tests {
                 assert!(app.settings_editor_has_focus());
                 if field != "keybinding" {
                     assert!(app.focused_text_input_id().is_some());
-                    handle_keyboard_event(&mut app, key_mod(KeyCode::Char('a'), KeyModifiers::CONTROL));
+                    handle_keyboard_event(
+                        &mut app,
+                        key_mod(KeyCode::Char('a'), KeyModifiers::CONTROL),
+                    );
                     handle_keyboard_event(&mut app, key(KeyCode::Char('8')));
                     let value = if field == "number" {
                         &app.settings_value_buffer
@@ -1339,9 +1478,16 @@ mod tests {
             app.tabs = vec![tab];
             app.active_tab = 0;
             app.active_pane = ActivePane::Editor;
-            let shortcut = if customized { KeyCode::F(7) } else { KeyCode::F(11) };
+            let shortcut = if customized {
+                KeyCode::F(7)
+            } else {
+                KeyCode::F(11)
+            };
             if customized {
-                app.keybindings.iter_mut().find(|binding| binding.id == "toggle_zen").unwrap()
+                app.keybindings
+                    .iter_mut()
+                    .find(|binding| binding.id == "toggle_zen")
+                    .unwrap()
                     .assign(KeyModifiers::NONE, shortcut, None);
             }
             app.execute_palette_command("toggle_zen");
@@ -1369,8 +1515,16 @@ mod tests {
     fn reassigned_terminal_chord_works_with_terminal_focus_and_keeps_shell_keys() {
         let mut app = App::test_new();
         app.settings_persistence_enabled = false;
-        let binding = app.keybindings.iter_mut().find(|binding| binding.id == "toggle_terminal").unwrap();
-        binding.assign(KeyModifiers::CONTROL, KeyCode::F(6), Some((KeyModifiers::NONE, KeyCode::F(7))));
+        let binding = app
+            .keybindings
+            .iter_mut()
+            .find(|binding| binding.id == "toggle_terminal")
+            .unwrap();
+        binding.assign(
+            KeyModifiers::CONTROL,
+            KeyCode::F(6),
+            Some((KeyModifiers::NONE, KeyCode::F(7))),
+        );
         let mut pty = crate::terminal::TerminalEmulator::test_with_output(40, 20, "");
         let input = pty.test_capture_input();
         app.terminals[0].terminal_pty = Some(pty);
@@ -1378,8 +1532,14 @@ mod tests {
         app.show_terminal_sidebar = true;
         app.terminal_panel_focused = true;
 
-        assert!(app.resolve_shortcut((KeyModifiers::CONTROL, KeyCode::Char('`')), None).is_none());
-        assert!(app.resolve_shortcut((KeyModifiers::CONTROL, KeyCode::Char('k')), None).is_none());
+        assert!(
+            app.resolve_shortcut((KeyModifiers::CONTROL, KeyCode::Char('`')), None)
+                .is_none()
+        );
+        assert!(
+            app.resolve_shortcut((KeyModifiers::CONTROL, KeyCode::Char('k')), None)
+                .is_none()
+        );
         handle_keyboard_event(&mut app, key_mod(KeyCode::F(6), KeyModifiers::CONTROL));
         assert!(app.chord_pending);
         handle_keyboard_event(&mut app, key(KeyCode::F(7)));
@@ -1400,7 +1560,9 @@ mod tests {
             ] {
                 let mut app = App::test_new();
                 let mut terminal = crate::terminal::TerminalEmulator::test_with_output(
-                    40, 20, if fullscreen { "\x1b[?1049h" } else { "" },
+                    40,
+                    20,
+                    if fullscreen { "\x1b[?1049h" } else { "" },
                 );
                 let input = terminal.test_capture_input();
                 app.terminals[0].terminal_pty = Some(terminal);
@@ -1418,24 +1580,42 @@ mod tests {
                 app.active_pane = ActivePane::Editor;
                 assert_eq!(app.focused_terminal_is_fullscreen(), fullscreen);
                 if let Some(when) = when {
-                    App::apply_shortcut_overrides(&mut app.keybindings, &[crate::settings::KeybindingSetting {
-                        command: Some("reopen_closed".into()),
-                        when: Some(when.into()),
-                        ..Default::default()
-                    }]);
+                    App::apply_shortcut_overrides(
+                        &mut app.keybindings,
+                        &[crate::settings::KeybindingSetting {
+                            command: Some("reopen_closed".into()),
+                            when: Some(when.into()),
+                            ..Default::default()
+                        }],
+                    );
                 }
 
                 let dir = tempfile::tempdir().unwrap();
                 let path = dir.path().join("closed.txt");
                 std::fs::write(&path, "Reopened content").unwrap();
                 app.closed_tab_paths.push_back((path.clone(), 0, 0));
-                handle_keyboard_event(&mut app, key_mod(KeyCode::Char('T'), KeyModifiers::CONTROL | KeyModifiers::SHIFT));
-                assert_eq!(app.closed_tab_paths.is_empty(), should_reopen, "docked={docked} fullscreen={fullscreen} {when:?}");
+                handle_keyboard_event(
+                    &mut app,
+                    key_mod(
+                        KeyCode::Char('T'),
+                        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                    ),
+                );
+                assert_eq!(
+                    app.closed_tab_paths.is_empty(),
+                    should_reopen,
+                    "docked={docked} fullscreen={fullscreen} {when:?}"
+                );
                 assert_eq!(input.lock().unwrap().is_empty(), should_reopen);
                 if should_reopen {
                     assert!(app.focused_terminal_index().is_none());
-                    assert!(app.tabs[app.active_tab].editor.file_path.as_ref().is_some_and(|file|
-                        file.ends_with("closed.txt")));
+                    assert!(
+                        app.tabs[app.active_tab]
+                            .editor
+                            .file_path
+                            .as_ref()
+                            .is_some_and(|file| file.ends_with("closed.txt"))
+                    );
                 }
             }
         }
@@ -1517,7 +1697,10 @@ mod tests {
         let mut app = App::test_new();
         app.exit_confirm_active = true;
         assert!(handle_keyboard_event(&mut app, key(KeyCode::Char('d'))));
-        assert!(app.exit_discard_quit, "discard must also suppress unsaved session recovery");
+        assert!(
+            app.exit_discard_quit,
+            "discard must also suppress unsaved session recovery"
+        );
     }
 
     #[test]
@@ -1778,7 +1961,8 @@ mod tests {
     #[test]
     fn ctrl_f_activates_search() {
         let mut app = App::test_new();
-        app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
+        app.tabs
+            .push(crate::app::Tab::new_file(crate::editor::Editor::new()));
         app.active_pane = ActivePane::Editor;
         app.search_active = false;
         let exited =
@@ -1794,7 +1978,8 @@ mod tests {
     #[test]
     fn ctrl_h_activates_replace() {
         let mut app = App::test_new();
-        app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
+        app.tabs
+            .push(crate::app::Tab::new_file(crate::editor::Editor::new()));
         app.active_pane = ActivePane::Editor;
         app.search_active = false;
         let exited =

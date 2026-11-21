@@ -33,7 +33,11 @@ pub(crate) struct SearchBarLayout {
 
 impl Default for SearchBarLayout {
     fn default() -> Self {
-        Self { width: 50, resizing: false, viewport: Rect::default() }
+        Self {
+            width: 50,
+            resizing: false,
+            viewport: Rect::default(),
+        }
     }
 }
 
@@ -41,14 +45,24 @@ impl SearchBarLayout {
     fn area(&mut self, viewport: Rect, height: u16) -> Rect {
         self.viewport = viewport;
         let max_width = viewport.width.saturating_sub(2);
-        let width = self.width.clamp(MIN_SEARCH_BAR_WIDTH.min(max_width), max_width);
-        Rect::new(viewport.x + viewport.width.saturating_sub(width + 1),
-            viewport.y, width, height)
+        let width = self
+            .width
+            .clamp(MIN_SEARCH_BAR_WIDTH.min(max_width), max_width);
+        Rect::new(
+            viewport.x + viewport.width.saturating_sub(width + 1),
+            viewport.y,
+            width,
+            height,
+        )
     }
 
     fn resize(&mut self, col: u16) {
         let max_width = self.viewport.width.saturating_sub(2);
-        self.width = self.viewport.right().saturating_sub(1).saturating_sub(col)
+        self.width = self
+            .viewport
+            .right()
+            .saturating_sub(1)
+            .saturating_sub(col)
             .clamp(MIN_SEARCH_BAR_WIDTH.min(max_width), max_width);
     }
 }
@@ -68,10 +82,17 @@ pub(crate) fn draw_file_search_bars(f: &mut Frame, app: &mut App) {
     }
     let active_group = app.active_group;
     for group in 0..app.groups.len() {
-        if group == active_group || !app.group_in_current_desk(group) { continue; }
+        if group == active_group || !app.group_in_current_desk(group) {
+            continue;
+        }
         let index = app.groups[group].active_tab;
-        if !app.groups[group].tabs.get(index).is_some_and(|tab|
-            tab.file_search.search_active && tab.file_search.viewport.is_some()) { continue; }
+        if !app.groups[group]
+            .tabs
+            .get(index)
+            .is_some_and(|tab| tab.file_search.search_active && tab.file_search.viewport.is_some())
+        {
+            continue;
+        }
         let saved_tabs = std::mem::take(&mut app.tabs);
         let saved_index = app.active_tab;
         let saved_inactive = app.rendering_inactive_editor;
@@ -79,7 +100,9 @@ pub(crate) fn draw_file_search_bars(f: &mut Frame, app: &mut App) {
         app.active_tab = index;
         app.rendering_inactive_editor = true;
         app.search_bar_layout.resizing = false;
-        if app.file_search_visible() { draw_search_bar(f, app); }
+        if app.file_search_visible() {
+            draw_search_bar(f, app);
+        }
         app.groups[group].tabs = std::mem::take(&mut app.tabs);
         app.tabs = saved_tabs;
         app.active_tab = saved_index;
@@ -96,14 +119,18 @@ pub(crate) fn handle_search_bar_resize(app: &mut App, mouse: crossterm::event::M
         app.search_bar_layout.resizing = false;
         return false;
     }
-    if !app.search_bar_layout.resizing { return false; }
+    if !app.search_bar_layout.resizing {
+        return false;
+    }
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
         app.search_bar_layout.resizing = false;
         return false;
     }
     match mouse.kind {
         MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {
-            if app.search_active { app.search_bar_layout.resize(mouse.column); }
+            if app.search_active {
+                app.search_bar_layout.resize(mouse.column);
+            }
             if mouse.kind == MouseEventKind::Up(MouseButton::Left) || !app.search_active {
                 app.search_bar_layout.resizing = false;
             }
@@ -249,10 +276,7 @@ pub(crate) fn vtcomplete_popup_geometry(
 
 /// The visible suggestion list owns the wheel over its surface. A scroll
 /// elsewhere dismisses it before the editor moves, including pending results.
-pub(crate) fn handle_vtcomplete_mouse(
-    app: &mut App,
-    mouse: crossterm::event::MouseEvent,
-) -> bool {
+pub(crate) fn handle_vtcomplete_mouse(app: &mut App, mouse: crossterm::event::MouseEvent) -> bool {
     use crossterm::event::MouseEventKind;
     if !matches!(
         mouse.kind,
@@ -313,60 +337,126 @@ pub(crate) fn completion_index_at(
     (index < item_count).then_some(index)
 }
 
-fn completion_row_style(app: &App, surface: ratatui::style::Color, is_selected: bool, is_hovered: bool) -> Style {
-    app.colors.ui.suggest_row_style(surface, is_selected, is_hovered)
+fn completion_row_style(
+    app: &App,
+    surface: ratatui::style::Color,
+    is_selected: bool,
+    is_hovered: bool,
+) -> Style {
+    app.colors
+        .ui
+        .suggest_row_style(surface, is_selected, is_hovered)
 }
 
 pub(crate) fn draw_search_bar(f: &mut Frame, app: &mut App) {
     use crate::ui_search_controls::{SearchControl, SearchScope, draw_button, draw_tooltip};
 
     let owner = app.file_search_owner();
-    app.search_control_regions.retain(|button| button.scope != SearchScope::File || button.owner != owner);
+    app.search_control_regions
+        .retain(|button| button.scope != SearchScope::File || button.owner != owner);
     app.file_search_bars.retain(|bar| bar.owner != owner);
-    let area = app.viewport.unwrap_or_else(|| {
-        let frame = f.area();
-        Rect::new(frame.x, frame.y + SEARCH_BAR_TOP_OFFSET.min(frame.height),
-            frame.width, frame.height.saturating_sub(SEARCH_BAR_TOP_OFFSET))
-    }).intersection(f.area());
-    let bar_height = ((if app.replace_mode { 4 } else { 3 }) + u16::from(app.search_error.is_some()))
-        .min(area.height);
+    let area = app
+        .viewport
+        .unwrap_or_else(|| {
+            let frame = f.area();
+            Rect::new(
+                frame.x,
+                frame.y + SEARCH_BAR_TOP_OFFSET.min(frame.height),
+                frame.width,
+                frame.height.saturating_sub(SEARCH_BAR_TOP_OFFSET),
+            )
+        })
+        .intersection(f.area());
+    let bar_height = ((if app.replace_mode { 4 } else { 3 })
+        + u16::from(app.search_error.is_some()))
+    .min(area.height);
     let bar_area = app.search_bar_layout.area(area, bar_height);
     app.search_bar_area = Some(bar_area);
-    if bar_area.width < 12 || bar_height < 3 { app.search_bar_area = None; return; }
-    app.file_search_bars.push(crate::file_search::Bar { owner, area: bar_area });
+    if bar_area.width < 12 || bar_height < 3 {
+        app.search_bar_area = None;
+        return;
+    }
+    app.file_search_bars.push(crate::file_search::Bar {
+        owner,
+        area: bar_area,
+    });
     // The find widget overlays the editor, including custom gradients. Keep
     // its alpha until that surface is available, before clearing editor text.
     let search_bg = crate::ui_widgets::widget_background(f, &app.colors, bar_area);
     let block = Block::default()
-        .title(if app.replace_mode { " Find & Replace " } else { " Find " })
-        .title_style(Style::default().fg(app.colors.ui.widget_text_color(search_bg)).bg(search_bg))
+        .title(if app.replace_mode {
+            " Find & Replace "
+        } else {
+            " Find "
+        })
+        .title_style(
+            Style::default()
+                .fg(app.colors.ui.widget_text_color(search_bg))
+                .bg(search_bg),
+        )
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(app.colors.ui.widget_border.border(search_bg).unwrap_or(search_bg)))
-        .style(Style::default().fg(app.colors.ui.widget_text_color(search_bg)).bg(search_bg));
+        .border_style(
+            Style::default().fg(app
+                .colors
+                .ui
+                .widget_border
+                .border(search_bg)
+                .unwrap_or(search_bg)),
+        )
+        .style(
+            Style::default()
+                .fg(app.colors.ui.widget_text_color(search_bg))
+                .bg(search_bg),
+        );
     let inner = block.inner(bar_area);
     // A styled block does not erase editor text or its syntax modifiers.
     f.render_widget(Clear, bar_area);
     f.render_widget(block, bar_area);
 
-    draw_button(f, app, SearchScope::File, SearchControl::Close,
-        Rect::new(bar_area.right() - 4, bar_area.y, 3, 1), "×", false, false);
+    draw_button(
+        f,
+        app,
+        SearchScope::File,
+        SearchControl::Close,
+        Rect::new(bar_area.right() - 4, bar_area.y, 3, 1),
+        "×",
+        false,
+        false,
+    );
     let toggle_label = if app.replace_mode { "▾" } else { "▸" };
-    draw_button(f, app, SearchScope::File, SearchControl::ToggleReplace,
-        Rect::new(inner.x, inner.y, 2, 1), toggle_label, false, false);
+    draw_button(
+        f,
+        app,
+        SearchScope::File,
+        SearchControl::ToggleReplace,
+        Rect::new(inner.x, inner.y, 2, 1),
+        toggle_label,
+        false,
+        false,
+    );
 
     let match_info = if app.search_error.is_some() {
         String::new()
     } else if app.bg_file_search_running || app.file_search_refresh_pending {
         " Searching…".into()
     } else if app.search_matches.is_empty() {
-        if app.search_query.is_empty() { String::new() } else { " No results".into() }
+        if app.search_query.is_empty() {
+            String::new()
+        } else {
+            " No results".into()
+        }
     } else {
-        format!(" {}/{}{}", app.search_current + 1, app.search_matches.len(),
-            if app.search_truncated { "+" } else { "" })
+        format!(
+            " {}/{}{}",
+            app.search_current + 1,
+            app.search_matches.len(),
+            if app.search_truncated { "+" } else { "" }
+        )
     };
     let query_width = inner.width.saturating_sub(18);
     let query_area = Rect::new(inner.x + 2, inner.y, query_width, 1);
-    let focused = !app.rendering_inactive_editor && app.search_input_focused && !app.search_focus_replace;
+    let focused =
+        !app.rendering_inactive_editor && app.search_input_focused && !app.search_focus_replace;
     let input_bg = app.colors.ui.input_style(search_bg).bg.unwrap_or(search_bg);
     let field = InputField::new(&app.search_query)
         .viewport(app.text_input_viewport(TextInputId::SearchFind))
@@ -375,7 +465,11 @@ pub(crate) fn draw_search_bar(f: &mut Frame, app: &mut App) {
         .suffix(&match_info, app.colors.ui.description_color(input_bg))
         .cursor_marker(if focused { "│" } else { "" })
         .cursor_pos(app.search_cursor)
-        .selection_range(if focused { App::inline_selection_range(app.search_cursor, app.search_selection_anchor) } else { None });
+        .selection_range(if focused {
+            App::inline_selection_range(app.search_cursor, app.search_selection_anchor)
+        } else {
+            None
+        });
     let hit_map = field.render(f, query_area);
     app.register_text_input(TextInputId::SearchFind, hit_map);
 
@@ -388,62 +482,120 @@ pub(crate) fn draw_search_bar(f: &mut Frame, app: &mut App) {
     let mut x = query_area.right();
     for (control, label, active) in options {
         let width = inner.right().saturating_sub(x).min(3);
-        draw_button(f, app, SearchScope::File, control, Rect::new(x, inner.y, width, 1), label, active, false);
+        draw_button(
+            f,
+            app,
+            SearchScope::File,
+            control,
+            Rect::new(x, inner.y, width, 1),
+            label,
+            active,
+            false,
+        );
         x += width;
     }
     let no_matches = app.search_matches.is_empty();
     for (control, label) in [(SearchControl::Previous, "↑"), (SearchControl::Next, "↓")] {
         let width = inner.right().saturating_sub(x).min(2);
-        draw_button(f, app, SearchScope::File, control, Rect::new(x, inner.y, width, 1), label, false, no_matches);
+        draw_button(
+            f,
+            app,
+            SearchScope::File,
+            control,
+            Rect::new(x, inner.y, width, 1),
+            label,
+            false,
+            no_matches,
+        );
         x += width;
     }
 
     if app.replace_mode && inner.height >= 2 {
         let replace_area = Rect::new(inner.x + 2, inner.y + 1, inner.width.saturating_sub(12), 1);
-        let focused = !app.rendering_inactive_editor && app.search_input_focused && app.search_focus_replace;
+        let focused =
+            !app.rendering_inactive_editor && app.search_input_focused && app.search_focus_replace;
         let field = InputField::new(&app.replace_query)
             .viewport(app.text_input_viewport(TextInputId::SearchReplace))
             .theme_control(&app.colors, app.colors.ui.input_colors, search_bg)
             .placeholder_text("Replace")
             .cursor_marker(if focused { "│" } else { "" })
             .cursor_pos(app.replace_cursor)
-            .selection_range(if focused { App::inline_selection_range(app.replace_cursor, app.replace_selection_anchor) } else { None });
+            .selection_range(if focused {
+                App::inline_selection_range(app.replace_cursor, app.replace_selection_anchor)
+            } else {
+                None
+            });
         let hit_map = field.render(f, replace_area);
         app.register_text_input(TextInputId::SearchReplace, hit_map);
-        let disabled = no_matches || app.bg_file_search_running || app.file_search_refresh_pending || app.bg_file_replace_running
-            || app.editor().is_none_or(|editor| editor.read_only || editor.bg_loading);
+        let disabled = no_matches
+            || app.bg_file_search_running
+            || app.file_search_refresh_pending
+            || app.bg_file_replace_running
+            || app
+                .editor()
+                .is_none_or(|editor| editor.read_only || editor.bg_loading);
         let buttons = [
-            (SearchControl::PreserveCase, "AB", 3, app.search_preserve_case, false),
+            (
+                SearchControl::PreserveCase,
+                "AB",
+                3,
+                app.search_preserve_case,
+                false,
+            ),
             (SearchControl::Replace, "↵", 3, false, disabled),
             (SearchControl::ReplaceAll, "⇆", 4, false, disabled),
         ];
         let mut x = replace_area.right();
         for (control, label, width, active, disabled) in buttons {
             let width = inner.right().saturating_sub(x).min(width);
-            draw_button(f, app, SearchScope::File, control, Rect::new(x, inner.y + 1, width, 1), label, active, disabled);
+            draw_button(
+                f,
+                app,
+                SearchScope::File,
+                control,
+                Rect::new(x, inner.y + 1, width, 1),
+                label,
+                active,
+                disabled,
+            );
             x += width;
         }
     }
     if let Some(error) = &app.search_error {
         let row = inner.y + if app.replace_mode { 2 } else { 1 };
         if row < inner.bottom() {
-            f.render_widget(Paragraph::new(error.as_str())
-                .style(Style::default().fg(app.colors.ui.error_text_color(search_bg)).bg(search_bg)),
-                Rect::new(inner.x, row, inner.width, 1));
+            f.render_widget(
+                Paragraph::new(error.as_str()).style(
+                    Style::default()
+                        .fg(app.colors.ui.error_text_color(search_bg))
+                        .bg(search_bg),
+                ),
+                Rect::new(inner.x, row, inner.width, 1),
+            );
         }
     }
-    let resize_hovered = app.mouse_col == bar_area.x
-        && bar_area.contains((app.mouse_col, app.mouse_row).into());
+    let resize_hovered =
+        app.mouse_col == bar_area.x && bar_area.contains((app.mouse_col, app.mouse_row).into());
     if resize_hovered || app.search_bar_layout.resizing {
-        let style = Style::default().bg(search_bg)
-            .fg(app.colors.ui.focus_border.over(search_bg)
-                .unwrap_or_else(|| app.colors.ui.widget_text_color(search_bg)));
+        let style = Style::default().bg(search_bg).fg(app
+            .colors
+            .ui
+            .focus_border
+            .over(search_bg)
+            .unwrap_or_else(|| app.colors.ui.widget_text_color(search_bg)));
         for row in inner.y..inner.bottom() {
-            f.render_widget(Paragraph::new("┃").style(style), Rect::new(bar_area.x, row, 1, 1));
+            f.render_widget(
+                Paragraph::new("┃").style(style),
+                Rect::new(bar_area.x, row, 1, 1),
+            );
         }
         if resize_hovered && !app.search_bar_layout.resizing {
-            crate::ui_widgets::Tooltip::hover(vec![Line::raw("Drag left or right to resize")], &app.colors)
-                .prefer_below().render(f, bar_area.x, bar_area.bottom().saturating_sub(1));
+            crate::ui_widgets::Tooltip::hover(
+                vec![Line::raw("Drag left or right to resize")],
+                &app.colors,
+            )
+            .prefer_below()
+            .render(f, bar_area.x, bar_area.bottom().saturating_sub(1));
         }
     } else {
         draw_tooltip(f, app, SearchScope::File);
@@ -468,7 +620,13 @@ pub(crate) fn draw_vtcomplete(f: &mut Frame, app: &mut App) {
     let query = completion_query(app);
 
     let surface = crate::ui_widgets::surface_background(f, popup_area, app.colors.bg_editor);
-    let popup_bg = app.colors.ui.suggest_colors.background.over(surface).unwrap_or(surface);
+    let popup_bg = app
+        .colors
+        .ui
+        .suggest_colors
+        .background
+        .over(surface)
+        .unwrap_or(surface);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" VTComplete ")
@@ -482,7 +640,15 @@ pub(crate) fn draw_vtcomplete(f: &mut Frame, app: &mut App) {
                 .fg(app.colors.ui.description_color(popup_bg))
                 .bg(popup_bg),
         )
-        .border_style(Style::default().fg(app.colors.ui.suggest_colors.border.border(popup_bg).unwrap_or(popup_bg)))
+        .border_style(
+            Style::default().fg(app
+                .colors
+                .ui
+                .suggest_colors
+                .border
+                .border(popup_bg)
+                .unwrap_or(popup_bg)),
+        )
         .style(Style::default().bg(popup_bg));
 
     f.render_widget(Clear, popup_area);
@@ -555,13 +721,13 @@ pub(crate) fn draw_vtcomplete(f: &mut Frame, app: &mut App) {
                 .ui
                 .description_color(row_style.bg.unwrap_or(popup_bg));
             spans.push(Span::styled(
-            format!("  {annotation}"),
+                format!("  {annotation}"),
                 if is_selected {
                     row_style
                 } else {
                     row_style.fg(dim)
                 },
-        ));
+            ));
         }
         // Clear the whole row first so wide Unicode labels retain a continuous
         // selection and hover surface without byte-based padding errors.
@@ -609,12 +775,20 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
         .min(max_results + 3)
         .max(DIALOG_MIN_HEIGHT);
 
-    let popup = PopupDialog::new("Search in Files").size(70, height).position(PopupPosition::TopCenter(2));
+    let popup = PopupDialog::new("Search in Files")
+        .size(70, height)
+        .position(PopupPosition::TopCenter(2));
     let popup_bg = popup.widget_background(f, &app.colors);
     let popup_fg = app.colors.ui.widget_text_color(popup_bg);
     let inner = popup
         .title_color(popup_fg)
-        .border_color(app.colors.ui.widget_border.border(popup_bg).unwrap_or(popup_bg))
+        .border_color(
+            app.colors
+                .ui
+                .widget_border
+                .border(popup_bg)
+                .unwrap_or(popup_bg),
+        )
         .bg(popup_bg)
         .render(f);
 
@@ -628,7 +802,13 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
     let popup_y = inner.y.saturating_sub(1);
     let close_x = popup_x + popup_w - 4;
     let close_hovered = app.hovered_global_search_close;
-    let close_style = app.colors.ui.toolbar_layer_style(app.colors.ui.widget_foreground, popup_bg, close_hovered, false, false);
+    let close_style = app.colors.ui.toolbar_layer_style(
+        app.colors.ui.widget_foreground,
+        popup_bg,
+        close_hovered,
+        false,
+        false,
+    );
     if close_x + 3 <= f.area().width {
         let area_w = f.area().width;
         let buf = f.buffer_mut();
@@ -644,7 +824,12 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
     let input_area = Rect::new(inner.x, inner.y, inner.width, 1);
     let result_count =
         if app.global_search_results.is_empty() && !app.global_search_query.is_empty() {
-            if app.global_search_stopped { " Search stopped" } else { " No results" }.to_string()
+            if app.global_search_stopped {
+                " Search stopped"
+            } else {
+                " No results"
+            }
+            .to_string()
         } else if !app.global_search_results.is_empty() {
             let suffix = if app.global_search_stopped {
                 " (stopped)"
@@ -653,7 +838,11 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
             } else {
                 ""
             };
-            format!(" {}{}", crate::helpers::counted(app.global_search_results.len(), "result", "results"), suffix)
+            format!(
+                " {}{}",
+                crate::helpers::counted(app.global_search_results.len(), "result", "results"),
+                suffix
+            )
         } else {
             String::new()
         };
@@ -661,16 +850,32 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
     let hit_map = InputField::new(&app.global_search_query)
         .viewport(app.text_input_viewport(TextInputId::GlobalSearch(0)))
         .theme_control(&app.colors, app.colors.ui.input_colors, popup_bg)
-        .prefix("🔍 ", app.colors.ui.icon_color(app.colors.ui.input_style(popup_bg).bg.unwrap_or(popup_bg)))
-        .cursor_marker(if focused && app.cursor_visible { "│" } else { "" })
+        .prefix(
+            "🔍 ",
+            app.colors
+                .ui
+                .icon_color(app.colors.ui.input_style(popup_bg).bg.unwrap_or(popup_bg)),
+        )
+        .cursor_marker(if focused && app.cursor_visible {
+            "│"
+        } else {
+            ""
+        })
         .cursor_pos(app.global_search_field_cursors[0])
-        .selection_range(
-            if focused { App::inline_selection_range(
+        .selection_range(if focused {
+            App::inline_selection_range(
                 app.global_search_field_cursors[0],
                 app.global_search_field_selection_anchors[0],
-            ) } else { None },
+            )
+        } else {
+            None
+        })
+        .suffix(
+            &result_count,
+            app.colors
+                .ui
+                .description_color(app.colors.ui.input_style(popup_bg).bg.unwrap_or(popup_bg)),
         )
-        .suffix(&result_count, app.colors.ui.description_color(app.colors.ui.input_style(popup_bg).bg.unwrap_or(popup_bg)))
         .render(f, input_area);
     app.register_text_input(TextInputId::GlobalSearch(0), hit_map);
 
@@ -695,7 +900,13 @@ pub(crate) fn draw_global_search(f: &mut Frame, app: &mut App) {
 
         let is_selected = idx == app.global_search_selected;
         let hovered = (inner.x..inner.right()).contains(&app.mouse_col) && app.mouse_row == y;
-        let row_style = app.colors.ui.list_row_style(app.colors.ui.widget_foreground, popup_bg, is_selected, app.global_search_results_focused, hovered);
+        let row_style = app.colors.ui.list_row_style(
+            app.colors.ui.widget_foreground,
+            popup_bg,
+            is_selected,
+            app.global_search_results_focused,
+            hovered,
+        );
         let bg = row_style.bg.unwrap_or(popup_bg);
         let fg = row_style.fg.unwrap_or(popup_fg);
 
@@ -852,23 +1063,35 @@ mod tests {
         terminal
             .draw(|frame| draw_search_bar(frame, &mut app))
             .unwrap();
-        let button = app.search_control_regions.iter()
+        let button = app
+            .search_control_regions
+            .iter()
             .find(|button| button.control == crate::ui_search_controls::SearchControl::MatchCase)
-            .unwrap().area;
-        crate::mouse::handle_mouse(&mut app, crossterm::event::MouseEvent {
-            kind: crossterm::event::MouseEventKind::Moved,
-            column: button.x, row: button.y, modifiers: crossterm::event::KeyModifiers::NONE,
-        });
-        terminal.draw(|frame| draw_search_bar(frame, &mut app)).unwrap();
+            .unwrap()
+            .area;
+        crate::mouse::handle_mouse(
+            &mut app,
+            crossterm::event::MouseEvent {
+                kind: crossterm::event::MouseEventKind::Moved,
+                column: button.x,
+                row: button.y,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            },
+        );
+        terminal
+            .draw(|frame| draw_search_bar(frame, &mut app))
+            .unwrap();
         let buffer = terminal.backend().buffer();
 
         // The Aa control must remain visible while hovered.
-        let label: String = (button.x..button.right()).map(|x| buffer[(x, button.y)].symbol()).collect();
+        let label: String = (button.x..button.right())
+            .map(|x| buffer[(x, button.y)].symbol())
+            .collect();
         assert!(label.contains("Aa"));
 
         let bar_bottom = app.search_bar_area.unwrap().bottom();
-        let tooltip_row = (bar_bottom..20)
-            .find(|&row| buffer_row_text(buffer, row).contains("Match Case"));
+        let tooltip_row =
+            (bar_bottom..20).find(|&row| buffer_row_text(buffer, row).contains("Match Case"));
         assert_eq!(tooltip_row, Some(bar_bottom + 1));
     }
 
@@ -891,9 +1114,26 @@ mod tests {
         let geometry = vtcomplete_popup_geometry(&mut app, viewport).unwrap();
         app.mouse_col = geometry.inner_area.x;
         app.mouse_row = geometry.inner_area.y + 1;
-        let popup_bg = app.colors.ui.suggest_colors.background.over(app.colors.bg_editor).unwrap_or(app.colors.bg_editor);
-        let hover_bg = app.colors.ui.list_hover_background.over(popup_bg).unwrap_or(popup_bg);
-        let selected_bg = app.colors.ui.suggest_selection.background.over(popup_bg).unwrap_or(popup_bg);
+        let popup_bg = app
+            .colors
+            .ui
+            .suggest_colors
+            .background
+            .over(app.colors.bg_editor)
+            .unwrap_or(app.colors.bg_editor);
+        let hover_bg = app
+            .colors
+            .ui
+            .list_hover_background
+            .over(popup_bg)
+            .unwrap_or(popup_bg);
+        let selected_bg = app
+            .colors
+            .ui
+            .suggest_selection
+            .background
+            .over(popup_bg)
+            .unwrap_or(popup_bg);
 
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal
@@ -1119,10 +1359,36 @@ mod tests {
     #[test]
     fn lsp_and_builtin_completions_share_hover_style() {
         let app = App::test_new();
-        let popup_bg = app.colors.ui.suggest_colors.background.over(app.colors.bg_editor).unwrap_or(app.colors.bg_editor);
+        let popup_bg = app
+            .colors
+            .ui
+            .suggest_colors
+            .background
+            .over(app.colors.bg_editor)
+            .unwrap_or(app.colors.bg_editor);
         let style = completion_row_style(&app, popup_bg, false, true);
-        assert_eq!(style.bg, app.colors.ui.list_hover_background.over(popup_bg).or(Some(popup_bg)));
-        let foreground = app.colors.ui.suggest_colors.foreground.over(style.bg.unwrap()).unwrap_or(app.colors.fg_text);
-        assert_eq!(style.fg, Some(app.colors.ui.readable_foreground(foreground, style.bg.unwrap(), 4.5)));
+        assert_eq!(
+            style.bg,
+            app.colors
+                .ui
+                .list_hover_background
+                .over(popup_bg)
+                .or(Some(popup_bg))
+        );
+        let foreground = app
+            .colors
+            .ui
+            .suggest_colors
+            .foreground
+            .over(style.bg.unwrap())
+            .unwrap_or(app.colors.fg_text);
+        assert_eq!(
+            style.fg,
+            Some(
+                app.colors
+                    .ui
+                    .readable_foreground(foreground, style.bg.unwrap(), 4.5)
+            )
+        );
     }
 }

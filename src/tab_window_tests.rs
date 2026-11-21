@@ -74,8 +74,19 @@ fn source_control_tab_keeps_its_draft_when_detached_and_returned() {
         terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
     };
     let click = |app: &mut App, area: Rect| {
-        for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
-            crate::mouse::handle_mouse(app, MouseEvent { kind, column: area.x, row: area.y, modifiers: KeyModifiers::NONE });
+        for kind in [
+            MouseEventKind::Down(MouseButton::Left),
+            MouseEventKind::Up(MouseButton::Left),
+        ] {
+            crate::mouse::handle_mouse(
+                app,
+                MouseEvent {
+                    kind,
+                    column: area.x,
+                    row: area.y,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
         }
     };
 
@@ -88,12 +99,16 @@ fn source_control_tab_keeps_its_draft_when_detached_and_returned() {
     draw(&mut terminal, &mut app);
     let detach = app.source_control_placement_area.unwrap();
     click(&mut app, detach);
-    assert!(matches!(app.tab_window_request.take(), Some(Request::Open { view: id, .. }) if id == view));
+    assert!(
+        matches!(app.tab_window_request.take(), Some(Request::Open { view: id, .. }) if id == view)
+    );
     assert!(app.open_detached_window(1, view));
 
     // The same activity shortcut finds the existing view, even in a different window.
     app.activate_activity_item(2);
-    assert!(matches!(app.tab_window_request.take(), Some(Request::FocusSourceControl { view: id, window: 1 }) if id == view));
+    assert!(
+        matches!(app.tab_window_request.take(), Some(Request::FocusSourceControl { view: id, window: 1 }) if id == view)
+    );
     assert!(app.activate_window(1));
     app.source_control_repository_state = SourceControlRepositoryState::Available;
     draw(&mut terminal, &mut app);
@@ -104,12 +119,17 @@ fn source_control_tab_keeps_its_draft_when_detached_and_returned() {
     assert!(app.explorer_area.is_none());
     assert!(app.code_area.is_none());
     for code in [KeyCode::Char('m'), KeyCode::End, KeyCode::Char('!')] {
-        crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, KeyModifiers::NONE));
+        crate::input_keyboard::handle_keyboard_event(
+            &mut app,
+            KeyEvent::new(code, KeyModifiers::NONE),
+        );
     }
     assert_eq!(app.source_control_commit_msg, "draft!");
     let reattach = app.source_control_placement_area.unwrap();
     click(&mut app, reattach);
-    assert!(matches!(app.tab_window_request.take(), Some(Request::Move { view: id, window: MAIN_WINDOW }) if id == view));
+    assert!(
+        matches!(app.tab_window_request.take(), Some(Request::Move { view: id, window: MAIN_WINDOW }) if id == view)
+    );
 
     assert!(app.return_detached_tabs(1));
     assert_eq!(app.tab_window(view), Some(MAIN_WINDOW));
@@ -118,7 +138,11 @@ fn source_control_tab_keeps_its_draft_when_detached_and_returned() {
     draw(&mut terminal, &mut app);
     let actions = app.source_control_actions_area.unwrap();
     click(&mut app, actions);
-    assert!(app.context_menu_items.iter().any(|item| item.id == "source_control_move_sidebar"));
+    assert!(
+        app.context_menu_items
+            .iter()
+            .any(|item| item.id == "source_control_move_sidebar")
+    );
     app.execute_palette_command("source_control_move_sidebar");
     assert!(app.source_control_sidebar_visible());
     assert!(app.tab_location(view).is_none());
@@ -153,20 +177,36 @@ fn source_control_tab_in_an_inactive_split_accepts_commit_input() {
     app.switch_group(file_group);
     app.source_control_repository_state = SourceControlRepositoryState::Available;
     let mut terminal = Terminal::new(TestBackend::new(120, 28)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let (source_group, _) = app.source_control_tab_surface().unwrap();
     assert_ne!(source_group, app.active_group);
     let panels = crate::ui_source_control::Panels::visible(&app).unwrap();
     assert!(!panels.side_by_side);
     assert_eq!(panels.changes.bottom(), panels.graph.y);
-    let area = app.text_input_area(TextInputId::SourceControlCommit).unwrap();
-    crate::mouse::handle_mouse(&mut app, MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left), column: area.x, row: area.y, modifiers: KeyModifiers::NONE,
-    });
+    let area = app
+        .text_input_area(TextInputId::SourceControlCommit)
+        .unwrap();
+    crate::mouse::handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.x,
+            row: area.y,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
     assert_eq!(app.active_group, source_group);
     assert!(app.source_control_has_focus());
-    assert_eq!(app.focused_text_input_id(), Some(TextInputId::SourceControlCommit));
-    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+    assert_eq!(
+        app.focused_text_input_id(),
+        Some(TextInputId::SourceControlCommit)
+    );
+    crate::input_keyboard::handle_keyboard_event(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+    );
     assert_eq!(app.source_control_commit_msg, "a");
 }
 
@@ -178,12 +218,18 @@ fn opening_a_file_in_a_new_window_loads_it_only_in_that_window() {
     let mut app = app_with_tabs(&["original.txt"]);
     let original = app.editor().unwrap().navigation_id;
     let mut windows = Windows::new(&app);
-    windows.windows.insert(1, Window {
-        workspace: app.workspaces.active,
-        source: WindowSource::File { path, generation: app.workspace_generation },
-        surface: None,
-        launch: None,
-    });
+    windows.windows.insert(
+        1,
+        Window {
+            workspace: app.workspaces.active,
+            source: WindowSource::File {
+                path,
+                generation: app.workspace_generation,
+            },
+            surface: None,
+            launch: None,
+        },
+    );
     windows.poll(&mut app);
     assert!(windows.windows.contains_key(&1));
     assert_eq!(app.tabs.len(), 1);
@@ -195,23 +241,38 @@ fn opening_a_file_in_a_new_window_loads_it_only_in_that_window() {
     let wake = windows.wake.clone();
     let server_wake = wake.clone();
     let server = std::thread::spawn(move || {
-        frontend::accept(listener, move |notice| {
-            notices.send((1, notice)).map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
-            server_wake.notify();
-            Ok(())
-        }, UiWake::default(), Arc::new(transport::Opening::new().unwrap()))
+        frontend::accept(
+            listener,
+            move |notice| {
+                notices
+                    .send((1, notice))
+                    .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))?;
+                server_wake.notify();
+                Ok(())
+            },
+            UiWake::default(),
+            Arc::new(transport::Opening::new().unwrap()),
+        )
     });
     let mut peer = transport::connect(&endpoint).unwrap();
-    let hello = frontend::Input::Hello { size: (80, 24), host: None };
+    let hello = frontend::Input::Hello {
+        size: (80, 24),
+        host: None,
+    };
     transport::write_packet(&mut peer, &serde_json::to_vec(&hello).unwrap()).unwrap();
     until(&wake, "file window handshake", || {
         windows.poll(&mut app);
-        windows.windows.get(&1).is_some_and(|window| window.surface.is_some())
+        windows
+            .windows
+            .get(&1)
+            .is_some_and(|window| window.surface.is_some())
     });
 
     assert_eq!(windows.active(), 1);
     assert_eq!(app.detached_window_id(), Some(1));
-    app.wait_for_background(Duration::from_secs(5), |app| !app.editor().unwrap().bg_loading);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.editor().unwrap().bg_loading
+    });
     assert_eq!(app.editor().unwrap().rope, "new window\n");
     assert_eq!(app.tabs.len(), 1);
     assert_eq!(app.tab_window(original), Some(MAIN_WINDOW));
@@ -237,10 +298,15 @@ fn opening_a_file_in_an_existing_window_shares_the_live_document() {
 
     app.request_file_window(path.clone(), true);
     for code in [KeyCode::Down, KeyCode::Enter] {
-        crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, KeyModifiers::NONE));
+        crate::input_keyboard::handle_keyboard_event(
+            &mut app,
+            KeyEvent::new(code, KeyModifiers::NONE),
+        );
     }
     let request = app.tab_window_request.take().unwrap();
-    assert!(matches!(&request, Request::OpenFile { path: target, window: Some(1) } if target == &path));
+    assert!(
+        matches!(&request, Request::OpenFile { path: target, window: Some(1) } if target == &path)
+    );
     assert!(windows.request(&mut app, request));
     assert_eq!(app.detached_window_id(), Some(1));
     let opened = app.editor().unwrap();
@@ -285,13 +351,20 @@ fn detached_frame_keeps_tabs_and_the_interactive_status_bar() {
         assert!(text.contains(label), "status label {label:?} is missing");
     }
     let click_status = |app: &mut App, action| {
-        let &(column, _, _) = app.status_bar_items.iter().find(|item| item.2 == action).unwrap();
-        crate::mouse::handle_mouse(app, MouseEvent {
-            kind: MouseEventKind::Down(MouseButton::Left),
-            column,
-            row: status_area.y,
-            modifiers: KeyModifiers::NONE,
-        });
+        let &(column, _, _) = app
+            .status_bar_items
+            .iter()
+            .find(|item| item.2 == action)
+            .unwrap();
+        crate::mouse::handle_mouse(
+            app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row: status_area.y,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
     };
     click_status(&mut app, "neural_completion");
     assert!(crate::ui_status::gptcomplete_menu_open(&app));
@@ -303,7 +376,9 @@ fn detached_frame_keeps_tabs_and_the_interactive_status_bar() {
         KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
     );
     assert!(app.performance_view.pinned);
-    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let dock = app.performance_area.unwrap();
     assert!(dock.bottom() <= status_area.y);
     assert_eq!(app.status_bar_area, Some(status_area));
@@ -312,20 +387,26 @@ fn detached_frame_keeps_tabs_and_the_interactive_status_bar() {
         .find(|&point| terminal.backend().buffer()[point].symbol() == "×")
         .unwrap();
     let mut main = Terminal::new(TestBackend::new(80, 22)).unwrap();
-    main.draw(|frame| crate::ui::draw_background_window(frame, &mut app, MAIN_WINDOW)).unwrap();
+    main.draw(|frame| crate::ui::draw_background_window(frame, &mut app, MAIN_WINDOW))
+        .unwrap();
     assert_eq!(app.performance_area, Some(dock));
-    crate::mouse::handle_mouse(&mut app, MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left),
-        column: close.0,
-        row: close.1,
-        modifiers: KeyModifiers::NONE,
-    });
+    crate::mouse::handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: close.0,
+            row: close.1,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
     assert!(!app.background.activity.details_open);
 
     for (show_status_bar, zen_mode) in [(false, false), (true, true)] {
         app.show_status_bar = show_status_bar;
         app.zen_mode = zen_mode;
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
         assert!(app.status_bar_area.is_none());
         assert!(app.status_bar_items.is_empty());
     }
@@ -357,13 +438,17 @@ fn background_detached_status_uses_its_editor_and_preserves_foreground_hit_targe
     assert!(app.open_detached_window(1, view));
     app.cached_error_count = 9;
     let mut foreground = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    foreground.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    foreground
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     let hits = app.status_bar_items.clone();
     let status_area = app.status_bar_area.unwrap();
     assert_eq!(app.cached_sel_stats.as_deref(), Some("(3 selected)"));
 
     let mut background = Terminal::new(TestBackend::new(90, 22)).unwrap();
-    background.draw(|frame| crate::ui::draw_background_window(frame, &mut app, 1)).unwrap();
+    background
+        .draw(|frame| crate::ui::draw_background_window(frame, &mut app, 1))
+        .unwrap();
     let text = screen_text(&background);
     assert!(text.contains("Ln 1, Col 9"));
     assert!(text.contains("⚠ 2"));
@@ -413,7 +498,9 @@ fn background_frames_wait_only_for_damaged_windows_in_the_changed_workspace() {
 
     app.highlight_words_across_tabs = true;
     let mut detached = Terminal::new(TestBackend::new(90, 24)).unwrap();
-    detached.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    detached
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
     windows.invalidate_pending_workspace_redraw(&mut app);
     assert!(windows.background_draw_ready(true));
     windows.paint_main_background(&mut main, &mut app).unwrap();
@@ -436,14 +523,20 @@ fn theme_previews_from_a_detached_window_repaint_the_main_window_every_time() {
 
     // Revisiting themes leaves their highlights cached, so no document
     // change can hide a missing repaint.
-    for key in ["monokai", "nord", "dracula", "monokai", "nord", "dracula", "dark"] {
+    for key in [
+        "monokai", "nord", "dracula", "monokai", "nord", "dracula", "dark",
+    ] {
         assert!(app.set_theme_by_key(key));
         windows.invalidate_pending_workspace_redraw(&mut app);
         assert!(windows.background_draw_ready(true), "{key}");
         windows.paint_main_background(&mut main, &mut app).unwrap();
         let background = app.colors.bg_editor;
         assert!(
-            main.backend().buffer().content.iter().any(|cell| cell.bg == background),
+            main.backend()
+                .buffer()
+                .content
+                .iter()
+                .any(|cell| cell.bg == background),
             "main window kept the previous palette after previewing {key}"
         );
         assert!(!windows.background_draw_ready(true));
@@ -470,9 +563,10 @@ fn theme_previews_from_a_detached_window_rehighlight_the_main_window_syntax() {
 
     fn keyword_fg(terminal: &Terminal<TestBackend>) -> Option<ratatui::style::Color> {
         let cells = &terminal.backend().buffer().content;
-        cells.windows(4).find(|w| {
-            w.iter().map(|cell| cell.symbol()).collect::<String>() == "fn m"
-        }).map(|w| w[0].fg)
+        cells
+            .windows(4)
+            .find(|w| w.iter().map(|cell| cell.symbol()).collect::<String>() == "fn m")
+            .map(|w| w[0].fg)
     }
 
     for key in ["monokai", "dracula", "nord", "monokai", "dracula"] {
@@ -484,13 +578,34 @@ fn theme_previews_from_a_detached_window_rehighlight_the_main_window_syntax() {
             if windows.background_draw_ready(true) {
                 windows.paint_main_background(&mut main, &mut app).unwrap();
             }
-            let expected = app.highlighter
-                .highlighted_line_if_cached("fn main() {}\n", 0, Some(std::path::Path::new("main.rs")), None, &app.syntax_theme)
-                .and_then(|spans| spans.iter().find(|(_, text)| text.starts_with("fn")).map(|(style, _)| ratatui::style::Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b)));
+            let expected = app
+                .highlighter
+                .highlighted_line_if_cached(
+                    "fn main() {}\n",
+                    0,
+                    Some(std::path::Path::new("main.rs")),
+                    None,
+                    &app.syntax_theme,
+                )
+                .and_then(|spans| {
+                    spans
+                        .iter()
+                        .find(|(_, text)| text.starts_with("fn"))
+                        .map(|(style, _)| {
+                            ratatui::style::Color::Rgb(
+                                style.foreground.r,
+                                style.foreground.g,
+                                style.foreground.b,
+                            )
+                        })
+                });
             if expected.is_some() && keyword_fg(&main) == expected {
                 break;
             }
-            assert!(Instant::now() < deadline, "main window kept stale syntax colors after previewing {key}");
+            assert!(
+                Instant::now() < deadline,
+                "main window kept stale syntax colors after previewing {key}"
+            );
             std::thread::sleep(Duration::from_millis(2));
         }
     }
@@ -611,7 +726,9 @@ fn resizing_a_detached_split_keeps_the_window_active() {
         app.terminal_has_focus = true;
 
         let mut detached = Terminal::new(TestBackend::new(100, 32)).unwrap();
-        detached.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        detached
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
         let divider = app.split_dividers[0].0;
         let column = divider.x + divider.width / 2;
         let row = divider.y + divider.height / 2;
@@ -619,7 +736,11 @@ fn resizing_a_detached_split_keeps_the_window_active() {
         // Repaint the main window behind the detached split. Its geometry
         // overlaps the divider in terminal coordinates. For a horizontal
         // split the main window's right scrollbar is directly under it.
-        let width = if direction == SplitDirection::Horizontal { column + 1 } else { 100 };
+        let width = if direction == SplitDirection::Horizontal {
+            column + 1
+        } else {
+            100
+        };
         let mut main = Terminal::new(TestBackend::new(width, 38)).unwrap();
         let mut windows = Windows::new(&app);
         windows.id = 1;
@@ -628,9 +749,22 @@ fn resizing_a_detached_split_keeps_the_window_active() {
         assert!(screen_text(&main).contains("main.txt"));
 
         let mouse = |app: &mut App, kind, column, row| {
-            crate::mouse::handle_mouse(app, MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE });
+            crate::mouse::handle_mouse(
+                app,
+                MouseEvent {
+                    kind,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
         };
-        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), column, row);
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+        );
         assert_eq!(app.detached_window_id(), Some(1), "{direction:?}");
         assert!(app.resizing_split, "{direction:?}");
 
@@ -638,9 +772,21 @@ fn resizing_a_detached_split_keeps_the_window_active() {
             SplitDirection::Horizontal => (column + 6, row),
             SplitDirection::Vertical => (column, row + 6),
         };
-        mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), end.0, end.1);
-        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), end.0, end.1);
-        detached.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        mouse(
+            &mut app,
+            MouseEventKind::Drag(MouseButton::Left),
+            end.0,
+            end.1,
+        );
+        mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            end.0,
+            end.1,
+        );
+        detached
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
         let resized = app.split_dividers[0].0;
         assert!(match direction {
             SplitDirection::Horizontal => resized.x > divider.x,
@@ -937,7 +1083,10 @@ fn check_frontend_lifetime(test: &str, endpoint_var: &str, mut app: App, move_ba
         1,
         Window {
             workspace: app.workspaces.active,
-            source: WindowSource::Tab { view, window: MAIN_WINDOW },
+            source: WindowSource::Tab {
+                view,
+                window: MAIN_WINDOW,
+            },
             surface: None,
             launch: None,
         },
@@ -1196,7 +1345,10 @@ fn closing_a_source_tab_cancels_a_launch_even_during_a_partial_handshake() {
         1,
         Window {
             workspace: app.workspaces.active,
-            source: WindowSource::Tab { view, window: MAIN_WINDOW },
+            source: WindowSource::Tab {
+                view,
+                window: MAIN_WINDOW,
+            },
             surface: None,
             launch: Some(frontend::Launch(opening.clone())),
         },
@@ -1245,7 +1397,10 @@ fn failed_start_keeps_the_dirty_tab_in_its_original_window() {
         1,
         Window {
             workspace: app.workspaces.active,
-            source: WindowSource::Tab { view, window: MAIN_WINDOW },
+            source: WindowSource::Tab {
+                view,
+                window: MAIN_WINDOW,
+            },
             surface: None,
             launch: None,
         },

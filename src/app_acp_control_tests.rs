@@ -26,7 +26,8 @@ fn acp_chat_sdk_round_trip_background_error_during_history_load_preserves_gate_a
     git2::Repository::init(root.path()).unwrap();
     let mut config = AgentConfig::new(
         "Control edge case",
-        std::env::var("VTCODE_ACP_TEST_PYTHON").expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
+        std::env::var("VTCODE_ACP_TEST_PYTHON")
+            .expect("set VTCODE_ACP_TEST_PYTHON; see tests/fixtures/acp-python-sdk/README.md"),
     );
     config.args = vec![
         "-u".into(),
@@ -337,7 +338,8 @@ fn new_buffers_and_pending_saves_through_directory_aliases_block_agent_writes() 
     std::fs::write(&existing, "disk baseline").unwrap();
     for name in ["existing.rs", "another-new.rs"] {
         let target = workspace.resolve(&root.path().join(name)).unwrap();
-        app.pending_file_saves.insert(link.join(name), (app.workspace_generation, 42.into()));
+        app.pending_file_saves
+            .insert(link.join(name), (app.workspace_generation, 42.into()));
         let blocked = app.acp_write_blocked(&target, &app.acp_file_editors(&target));
         app.pending_file_saves.clear();
         assert!(blocked, "pending alias save for {name} was missed");

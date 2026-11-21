@@ -1,13 +1,15 @@
 use super::*;
 use crate::syntax_install::{install, source_path};
+use crate::textmate::SyntaxRegistry;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{Terminal, backend::TestBackend};
 use std::{fs, path::Path, time::Duration};
-use crate::textmate::{SyntaxRegistry};
 
 const GRAMMAR: &str = r##"{"name":"Installed Example","fileTypes":["syntaxtest"],"scopeName":"source.syntaxtest","patterns":[{"match":"magic","name":"keyword.control.syntaxtest"}]}"##;
 
-fn plain() -> SyntaxRegistry { SyntaxRegistry::embedded() }
+fn plain() -> SyntaxRegistry {
+    SyntaxRegistry::embedded()
+}
 
 #[test]
 fn paths_are_local_and_relative_to_the_workspace() {
@@ -88,9 +90,9 @@ fn validated_install_is_persistent_and_invalid_replacements_preserve_the_old_syn
     assert_eq!(fs::read_to_string(&installed_path).unwrap(), updated);
 
     // External includes and nested local repositories survive installation intact.
-    let dependent=dir.path().join("Dependent.tmLanguage.json");
+    let dependent = dir.path().join("Dependent.tmLanguage.json");
     fs::write(&dependent,r##"{"name":"Dependent","scopeName":"source.dependent","patterns":[{"include":"#local"}],"repository":{"local":{"patterns":[{"include":"source.syntaxtest"}]}}}"##).unwrap();
-    install(&dependent,&root,&loaded).unwrap();
+    install(&dependent, &root, &loaded).unwrap();
 }
 
 #[test]
@@ -111,8 +113,7 @@ fn textmate_json_keeps_its_name_extensions_and_rules_without_a_manifest() {
     let themes = crate::highlight::Highlighter::startup_theme_set();
     let mut highlighter =
         crate::textmate_backend::HighlightLines::new(syntax, &themes.themes["dark-plus"]);
-    let spans = highlighter
-        .highlight_line("magic other\n");
+    let spans = highlighter.highlight_line("magic other\n");
     assert_ne!(
         spans.first().unwrap().0.foreground,
         spans.last().unwrap().0.foreground
@@ -162,7 +163,11 @@ fn syntax_command_is_discoverable_and_rejects_links_from_keyboard_and_mouse() {
         app.execute_palette_command("install_syntax");
         assert!(app.palette.install_syntax_mode);
         assert!(!app.palette.install_theme_mode && !app.palette.install_extension_mode);
-        assert!(app.menu_items(3).iter().all(|(_, command)| *command != "install_syntax"));
+        assert!(
+            app.menu_items(3)
+                .iter()
+                .all(|(_, command)| *command != "install_syntax")
+        );
         app.paste_into_focused_text_input("https://example.org/Example.tmLanguage.json");
         let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
         terminal

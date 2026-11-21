@@ -3,7 +3,9 @@ use super::*;
 #[test]
 fn source_occupancy_matches_all_glyph_cells_and_invalidates_with_geometry() {
     fn check(geometry: &Geometry) {
-        let expected: HashSet<_> = geometry.anchors.iter()
+        let expected: HashSet<_> = geometry
+            .anchors
+            .iter()
             .filter(|a| !matches!(a.ch, ' ' | '\t' | '\0'))
             .flat_map(|a| (0..a.width).map(move |dx| (a.x + dx, a.y)))
             .collect();
@@ -11,7 +13,11 @@ fn source_occupancy_matches_all_glyph_cells_and_invalidates_with_geometry() {
         assert!(std::ptr::eq(cells, geometry.source_cells()));
         for y in 0..50 {
             for x in 0..100 {
-                assert_eq!(cells.contains((x, y)), expected.contains(&(x, y)), "{x},{y}");
+                assert_eq!(
+                    cells.contains((x, y)),
+                    expected.contains(&(x, y)),
+                    "{x},{y}"
+                );
             }
         }
     }
@@ -59,7 +65,11 @@ fn geometry() -> Geometry {
 
 #[test]
 fn viewport_protection_has_no_duplicate_sparse_cells_and_preserves_outside_fallback() {
-    for area in [Rect::new(3, 2, 80, 40), Rect::new(0, 0, 600, 400), Rect::default()] {
+    for area in [
+        Rect::new(3, 2, 80, 40),
+        Rect::new(0, 0, 600, 400),
+        Rect::default(),
+    ] {
         let mut geometry = geometry();
         geometry.area = area;
         geometry.protected.insert((0, 0));
@@ -69,8 +79,18 @@ fn viewport_protection_has_no_duplicate_sparse_cells_and_preserves_outside_fallb
         assert_eq!(protection.protected_cells(), expected.0);
         assert_eq!(protection.caret_cells(), expected.1);
         if protection.mask.is_some() {
-            assert!(protection.protected.iter().all(|&cell| !area.contains(cell.into())));
-            assert!(protection.carets.iter().all(|&cell| !area.contains(cell.into())));
+            assert!(
+                protection
+                    .protected
+                    .iter()
+                    .all(|&cell| !area.contains(cell.into()))
+            );
+            assert!(
+                protection
+                    .carets
+                    .iter()
+                    .all(|&cell| !area.contains(cell.into()))
+            );
         }
     }
 }
@@ -186,7 +206,12 @@ fn geometry_mutations_invalidate_masks_and_wide_glyph_coverage() {
     );
     geometry.occlude_top(3);
     assert!(!wide_cells(&geometry).contains(&(80, 3)));
-    assert!(geometry.protection(None, None, &[], &[]).caret_cells().is_empty());
+    assert!(
+        geometry
+            .protection(None, None, &[], &[])
+            .caret_cells()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -318,13 +343,28 @@ fn bounded_protection_matches_full_scan_for_wrapping_clipping_and_diff_projectio
         } else if projection == 3 {
             geometry.diff_projection = Some((1, true));
         }
-        for selection in [None, Some((3, 5, 3, 20)), Some((1, 0, 38, 0)), Some((120, 0, 121, 0)), Some((100, 5, 103, 110)), Some((8, 0, 3, 0))] {
-            for cursor in [None, geometry.anchors.first().copied(), geometry.anchors.get(600).copied()] {
+        for selection in [
+            None,
+            Some((3, 5, 3, 20)),
+            Some((1, 0, 38, 0)),
+            Some((120, 0, 121, 0)),
+            Some((100, 5, 103, 110)),
+            Some((8, 0, 3, 0)),
+        ] {
+            for cursor in [
+                None,
+                geometry.anchors.first().copied(),
+                geometry.anchors.get(600).copied(),
+            ] {
                 for extras in [&[][..], &[(2, 6), (103, 107), (200, 0)][..]] {
                     let anchors = [Some((5, 5)), Some((100, 5)), None];
                     let expected = reference(&geometry, cursor, selection, extras, &anchors);
                     let actual = geometry.protection(cursor, selection, extras, &anchors);
-                    assert_eq!((actual.protected_cells(), actual.caret_cells()), expected, "projection={projection}, selection={selection:?}, cursor={cursor:?}");
+                    assert_eq!(
+                        (actual.protected_cells(), actual.caret_cells()),
+                        expected,
+                        "projection={projection}, selection={selection:?}, cursor={cursor:?}"
+                    );
                 }
             }
         }
@@ -337,26 +377,44 @@ fn benchmark_editor_animation_protection_bounds() {
     use std::hint::black_box;
     let mut geometry = Geometry::new(Rect::new(0, 0, 180, 60), true);
     for line in 0..60 {
-        for col in 0..180 { geometry.push(line, col, 'x', line, col, 1); }
+        for col in 0..180 {
+            geometry.push(line, col, 'x', line, col, 1);
+        }
     }
     geometry.record_primary_cursor(30, 10, 1, Style::default());
     let cursor = geometry.at((30, 10));
     for selection in [None, Some((30, 3, 30, 75)), Some((28, 3, 33, 15))] {
-        let mut old = Vec::new(); let mut new = Vec::new();
+        let mut old = Vec::new();
+        let mut new = Vec::new();
         for round in 0..9 {
             for optimized in [round % 2 == 0, round % 2 != 0] {
                 geometry.ordered = optimized;
                 let start = Instant::now();
                 for _ in 0..1_000 {
                     geometry.clear_protection_cache();
-                    black_box(geometry.protection(black_box(cursor), black_box(selection), &[], &[]));
+                    black_box(geometry.protection(
+                        black_box(cursor),
+                        black_box(selection),
+                        &[],
+                        &[],
+                    ));
                 }
                 let elapsed = start.elapsed() / 1_000;
-                if optimized { new.push(elapsed); } else { old.push(elapsed); }
+                if optimized {
+                    new.push(elapsed);
+                } else {
+                    old.push(elapsed);
+                }
             }
         }
-        old.sort_unstable(); new.sort_unstable();
-        eprintln!("animation protection {selection:?}: full scan {:?}, bounded {:?}, {:.2}x", old[4], new[4], old[4].as_secs_f64() / new[4].as_secs_f64());
+        old.sort_unstable();
+        new.sort_unstable();
+        eprintln!(
+            "animation protection {selection:?}: full scan {:?}, bounded {:?}, {:.2}x",
+            old[4],
+            new[4],
+            old[4].as_secs_f64() / new[4].as_secs_f64()
+        );
     }
 }
 

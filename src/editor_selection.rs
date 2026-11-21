@@ -22,66 +22,69 @@ impl Editor {
     /// Delete selected text and return it.
     pub(crate) fn delete_selection(&mut self) -> Option<String> {
         crate::editor_document::edit!(self, {
-        self.desired_col = None;
-        let Some(range) = self.clamped_selection_indices() else {
-            self.clear_selection();
-            return None;
-        };
-        self.save_undo();
-        let text = self.rope.slice(range.0..range.1).to_string();
-        self.remove_selection_range(range);
-        self.ensure_visible();
-        Some(text)
-            })
+            self.desired_col = None;
+            let Some(range) = self.clamped_selection_indices() else {
+                self.clear_selection();
+                return None;
+            };
+            self.save_undo();
+            let text = self.rope.slice(range.0..range.1).to_string();
+            self.remove_selection_range(range);
+            self.ensure_visible();
+            Some(text)
+        })
     }
 
     /// Backspace, Delete and Tab discard the removed text. Keep the same undo
     /// and viewport behavior without materializing a potentially huge selection.
     pub(crate) fn discard_selection(&mut self) {
         crate::editor_document::edit!(self, {
-        self.desired_col = None;
-        let Some(range) = self.clamped_selection_indices() else {
-            self.clear_selection();
-            return;
-        };
-        self.save_undo();
-        self.remove_selection_range(range);
-        self.ensure_visible();
-            })
+            self.desired_col = None;
+            let Some(range) = self.clamped_selection_indices() else {
+                self.clear_selection();
+                return;
+            };
+            self.save_undo();
+            self.remove_selection_range(range);
+            self.ensure_visible();
+        })
     }
 
     /// Internal replacement operations already saved undo and do not need a
     /// copy of the deleted text. Count removed lines from rope metadata.
     pub(crate) fn delete_selection_for_replacement(&mut self) {
         crate::editor_document::edit!(self, {
-        self.desired_col = None;
-        if let Some(range) = self.clamped_selection_indices() {
-            self.remove_selection_range(range);
-        } else {
-            self.clear_selection();
-        }
-            })
+            self.desired_col = None;
+            if let Some(range) = self.clamped_selection_indices() {
+                self.remove_selection_range(range);
+            } else {
+                self.clear_selection();
+            }
+        })
     }
 
     fn remove_selection_range(&mut self, (start, end, line, col): (usize, usize, usize, usize)) {
         crate::editor_document::edit!(self, {
-        let deleted_lines = self.rope.char_to_line(end) - self.rope.char_to_line(start);
-        self.rope.remove(start..end);
-        if deleted_lines > 0 {
-            self.shift_bookmarks(line + 1, -(deleted_lines as isize));
-            self.clear_stale_folds();
-        }
-        self.cursor_line = line.min(self.line_count().saturating_sub(1));
-        self.cursor_col = col.min(self.line_len(self.cursor_line));
-        self.modified = true;
-        self.clear_selection();
-            })
+            let deleted_lines = self.rope.char_to_line(end) - self.rope.char_to_line(start);
+            self.rope.remove(start..end);
+            if deleted_lines > 0 {
+                self.shift_bookmarks(line + 1, -(deleted_lines as isize));
+                self.clear_stale_folds();
+            }
+            self.cursor_line = line.min(self.line_count().saturating_sub(1));
+            self.cursor_col = col.min(self.line_len(self.cursor_line));
+            self.modified = true;
+            self.clear_selection();
+        })
     }
 
     /// Adjust a char index from the original rope for deletions that occurred before it.
     /// `sel_ranges` must contain original-rope (si, ei) positions (sorted descending by si).
     #[cfg(test)]
-    pub(crate) fn adjust_char_idx_for_deletions(orig_idx: usize, sel_ranges: &[(usize, usize, usize, usize, usize)]) -> usize {
+    pub(crate) fn adjust_char_idx_for_deletions(
+        orig_idx: usize,
+        sel_ranges: &[(usize, usize, usize, usize, usize)],
+    ) -> usize {
         let mut adjusted = orig_idx as isize;
         for &(si, ei, _, _, _) in sel_ranges {
             let deleted = (ei - si) as isize;
@@ -95,25 +98,25 @@ impl Editor {
     /// Wrap the current selection with open/close characters
     pub(crate) fn wrap_selection(&mut self, open: char, close: char) {
         crate::editor_document::edit!(self, {
-        self.desired_col = None;
-        if let Some((start_idx, end_idx, sl, start_col)) = self.clamped_selection_indices() {
-            self.save_undo();
-            // Insert close char first (so start_idx stays valid)
-            self.rope.insert_char(end_idx, close);
-            self.rope.insert_char(start_idx, open);
-            // Adjust selection to cover the wrapped text (excluding brackets)
-            self.selection_anchor = Some((sl, start_col + 1));
-            // Recalculate end position (open char added before end)
-            let new_end_idx = end_idx + 1; // +1 for the open char we inserted
-            let new_end_line = self.rope.char_to_line(new_end_idx);
-            let new_end_col = new_end_idx - self.rope.line_to_char(new_end_line);
-            self.cursor_line = new_end_line;
-            self.cursor_col = new_end_col;
-            self.clamp_cursor_col();
-            self.modified = true;
-            self.ensure_visible();
-        }
-            })
+            self.desired_col = None;
+            if let Some((start_idx, end_idx, sl, start_col)) = self.clamped_selection_indices() {
+                self.save_undo();
+                // Insert close char first (so start_idx stays valid)
+                self.rope.insert_char(end_idx, close);
+                self.rope.insert_char(start_idx, open);
+                // Adjust selection to cover the wrapped text (excluding brackets)
+                self.selection_anchor = Some((sl, start_col + 1));
+                // Recalculate end position (open char added before end)
+                let new_end_idx = end_idx + 1; // +1 for the open char we inserted
+                let new_end_line = self.rope.char_to_line(new_end_idx);
+                let new_end_col = new_end_idx - self.rope.line_to_char(new_end_line);
+                self.cursor_line = new_end_line;
+                self.cursor_col = new_end_col;
+                self.clamp_cursor_col();
+                self.modified = true;
+                self.ensure_visible();
+            }
+        })
     }
 
     pub(crate) fn copy(&mut self) {
@@ -152,13 +155,19 @@ impl Editor {
             // Sort by position (top to bottom)
             all_selections.sort_unstable_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
             all_selections.dedup();
-            let bytes = all_selections.iter()
+            let bytes = all_selections
+                .iter()
                 .map(|(_, _, range)| self.rope.slice(range.clone()).len_bytes())
-                .sum::<usize>() + all_selections.len().saturating_sub(1);
+                .sum::<usize>()
+                + all_selections.len().saturating_sub(1);
             let mut combined = String::with_capacity(bytes);
             for (index, (_, _, range)) in all_selections.iter().enumerate() {
-                if index > 0 { combined.push('\n'); }
-                for chunk in self.rope.slice(range.clone()).chunks() { combined.push_str(chunk); }
+                if index > 0 {
+                    combined.push('\n');
+                }
+                for chunk in self.rope.slice(range.clone()).chunks() {
+                    combined.push_str(chunk);
+                }
             }
             self.clipboard = combined;
             self.clipboard_is_line = false;
@@ -172,7 +181,11 @@ impl Editor {
             // No selection: copy entire current line (VS Code behavior)
             let mut line_text = self.rope.line(self.cursor_line).to_string();
             if !line_text.ends_with(['\r', '\n']) {
-                line_text.push_str(if self.cached_line_ending == "CRLF" { "\r\n" } else { "\n" });
+                line_text.push_str(if self.cached_line_ending == "CRLF" {
+                    "\r\n"
+                } else {
+                    "\n"
+                });
             }
             (line_text, true)
         };
@@ -184,117 +197,130 @@ impl Editor {
 
     pub(crate) fn cut(&mut self) {
         crate::editor_document::edit!(self, {
-        self.cut_with(|text| crate::clipboard::set_text(text).is_ok());
-            })
+            self.cut_with(|text| crate::clipboard::set_text(text).is_ok());
+        })
     }
 
     fn cut_with(&mut self, write: impl FnOnce(&str) -> bool) {
         crate::editor_document::edit!(self, {
-        // Multi-cursor cut: copy then delete from each cursor
-        if !self.extra_cursors.is_empty() {
-            self.copy_with(write);
-            self.save_undo();
-            // Collect all selection ranges (primary + extra) bottom-to-top for safe deletion
-            let mut ranges: Vec<(usize, usize)> = Vec::new();
-            for cursor in self.collect_multi_cursors() {
-                if let Some(span) = self.selection_span_for_cursor(cursor) {
-                    ranges.push((span.start_idx, span.end_idx));
-                } else {
-                    let line = cursor.line.min(self.line_count() - 1);
-                    let mut start = self.rope.line_to_char(line);
-                    let end = if line + 1 < self.rope.len_lines() {
-                        self.rope.line_to_char(line + 1)
+            // Multi-cursor cut: copy then delete from each cursor
+            if !self.extra_cursors.is_empty() {
+                self.copy_with(write);
+                self.save_undo();
+                // Collect all selection ranges (primary + extra) bottom-to-top for safe deletion
+                let mut ranges: Vec<(usize, usize)> = Vec::new();
+                for cursor in self.collect_multi_cursors() {
+                    if let Some(span) = self.selection_span_for_cursor(cursor) {
+                        ranges.push((span.start_idx, span.end_idx));
                     } else {
-                        if line > 0 {
-                            start = self.rope.line_to_char(line - 1) + self.line_len(line - 1);
-                        }
-                        self.rope.len_chars()
-                    };
-                    ranges.push((start, end));
-                }
-            }
-            // Sort by start position descending to delete bottom-to-top
-            ranges.sort_unstable_by(|a, b| b.0.cmp(&a.0));
-            // Merge overlapping or adjacent ranges (sorted descending, a.start >= b.start)
-            ranges.dedup_by(|b, a| {
-                if b.1 >= a.0 {
-                    // Ranges overlap or are adjacent: merge into a
-                    a.0 = b.0;
-                    a.1 = a.1.max(b.1);
-                    true
-                } else {
-                    false
-                }
-            });
-            let mut had_newlines = false;
-            for (start, end) in &ranges {
-                if *start < *end && *end <= self.rope.len_chars() {
-                    let line = self.rope.char_to_line(*start);
-                    let removed_lines = self.rope.char_to_line(*end) - line;
-                    if removed_lines > 0 {
-                        let from = if *start == self.rope.line_to_char(line) { line } else { line + 1 };
-                        self.shift_bookmarks(from, -(removed_lines as isize));
-                        had_newlines = true;
+                        let line = cursor.line.min(self.line_count() - 1);
+                        let mut start = self.rope.line_to_char(line);
+                        let end = if line + 1 < self.rope.len_lines() {
+                            self.rope.line_to_char(line + 1)
+                        } else {
+                            if line > 0 {
+                                start = self.rope.line_to_char(line - 1) + self.line_len(line - 1);
+                            }
+                            self.rope.len_chars()
+                        };
+                        ranges.push((start, end));
                     }
-                    self.rope.remove(*start..*end);
                 }
+                // Sort by start position descending to delete bottom-to-top
+                ranges.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+                // Merge overlapping or adjacent ranges (sorted descending, a.start >= b.start)
+                ranges.dedup_by(|b, a| {
+                    if b.1 >= a.0 {
+                        // Ranges overlap or are adjacent: merge into a
+                        a.0 = b.0;
+                        a.1 = a.1.max(b.1);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                let mut had_newlines = false;
+                for (start, end) in &ranges {
+                    if *start < *end && *end <= self.rope.len_chars() {
+                        let line = self.rope.char_to_line(*start);
+                        let removed_lines = self.rope.char_to_line(*end) - line;
+                        if removed_lines > 0 {
+                            let from = if *start == self.rope.line_to_char(line) {
+                                line
+                            } else {
+                                line + 1
+                            };
+                            self.shift_bookmarks(from, -(removed_lines as isize));
+                            had_newlines = true;
+                        }
+                        self.rope.remove(*start..*end);
+                    }
+                }
+                if had_newlines {
+                    self.clear_stale_folds();
+                }
+                // Place cursor at the topmost deletion point
+                if let Some(&(start, _)) = ranges.last() {
+                    let clamped = start.min(self.rope.len_chars());
+                    self.cursor_line = self.rope.char_to_line(clamped);
+                    self.cursor_col = clamped - self.rope.line_to_char(self.cursor_line);
+                    self.clamp_cursor_col();
+                }
+                self.extra_cursors.clear();
+                self.extra_cursor_anchors.clear();
+                self.clear_selection();
+                self.modified = true;
+                self.ensure_visible();
+                return;
             }
-            if had_newlines { self.clear_stale_folds(); }
-            // Place cursor at the topmost deletion point
-            if let Some(&(start, _)) = ranges.last() {
-                let clamped = start.min(self.rope.len_chars());
-                self.cursor_line = self.rope.char_to_line(clamped);
-                self.cursor_col = clamped - self.rope.line_to_char(self.cursor_line);
-                self.clamp_cursor_col();
+            if self.has_selection() {
+                if let Some(text) = self.delete_selection() {
+                    self.clipboard = text;
+                    self.clipboard_is_line = false;
+                    self.clipboard_failed = !write(&self.clipboard);
+                    crate::clipboard::remember_line_copy(&self.clipboard, self.clipboard_is_line);
+                }
+            } else {
+                // No selection: cut entire line (VS Code behavior)
+                self.copy_with(write);
+                self.delete_line();
             }
-            self.extra_cursors.clear();
-            self.extra_cursor_anchors.clear();
-            self.clear_selection();
-            self.modified = true;
-            self.ensure_visible();
-            return;
-        }
-        if self.has_selection() {
-            if let Some(text) = self.delete_selection() {
-                self.clipboard = text;
-                self.clipboard_is_line = false;
-                self.clipboard_failed = !write(&self.clipboard);
-                crate::clipboard::remember_line_copy(&self.clipboard, self.clipboard_is_line);
-            }
-        } else {
-            // No selection: cut entire line (VS Code behavior)
-            self.copy_with(write);
-            self.delete_line();
-        }
-            })
+        })
     }
 
     #[cfg(test)]
     pub(crate) fn paste(&mut self) {
         crate::editor_document::edit!(self, {
-        self.paste_from_clipboard(crate::clipboard::get_text(), true);
-            })
+            self.paste_from_clipboard(crate::clipboard::get_text(), true);
+        })
     }
 
     #[cfg(test)]
-    fn paste_from_clipboard(&mut self, text: Result<String, arboard::Error>, allow_line_copy: bool) {
+    fn paste_from_clipboard(
+        &mut self,
+        text: Result<String, arboard::Error>,
+        allow_line_copy: bool,
+    ) {
         crate::editor_document::edit!(self, {
-        // Empty or non-text clipboard contents are authoritative unless the
-        // last copy/cut failed and its only surviving copy is internal.
-        let text = match text {
-            Ok(text) => { self.clipboard_failed = false; text }
-            Err(arboard::Error::ContentNotAvailable) if !self.clipboard_failed => return,
-            Err(_) => self.clipboard.clone(),
-        };
-        self.paste_text(&text, allow_line_copy);
-            })
+            // Empty or non-text clipboard contents are authoritative unless the
+            // last copy/cut failed and its only surviving copy is internal.
+            let text = match text {
+                Ok(text) => {
+                    self.clipboard_failed = false;
+                    text
+                }
+                Err(arboard::Error::ContentNotAvailable) if !self.clipboard_failed => return,
+                Err(_) => self.clipboard.clone(),
+            };
+            self.paste_text(&text, allow_line_copy);
+        })
     }
 
     /// Paste text with its original whitespace, skipping the system clipboard read.
     pub(crate) fn paste_with_text(&mut self, text: &str) {
         crate::editor_document::edit!(self, {
-        self.paste_text(text, true);
-            })
+            self.paste_text(text, true);
+        })
     }
 
     fn paste_text(&mut self, text: &str, allow_line_copy: bool) {
@@ -303,92 +329,110 @@ impl Editor {
 
     /// A worker uses the copy-kind decision captured on the UI thread, where
     /// clipboard ownership lives. It must not consult a worker's clipboard.
-    pub(crate) fn paste_snapshot_text(&mut self, text: &str, allow_line_copy: bool, line_copy: Option<bool>) {
+    pub(crate) fn paste_snapshot_text(
+        &mut self,
+        text: &str,
+        allow_line_copy: bool,
+        line_copy: Option<bool>,
+    ) {
         crate::editor_document::edit!(self, {
-        if self.read_only || text.is_empty() {
-            return;
-        }
-        self.desired_col = None;
-        self.clamp_cursor();
-        // LF clipboard content is already suitable for insertion. Avoid two
-        // complete copies of the common case before constructing the rope.
-        let line_paste = allow_line_copy && !self.has_selection()
-            && line_copy.or_else(|| crate::clipboard::line_copy_status(text)).unwrap_or_else(||
-                self.clipboard_is_line && normalize_paste_line_endings(text) == normalize_paste_line_endings(&self.clipboard));
-        if !self.extra_cursors.is_empty() {
-            let text = normalize_paste_line_endings(text);
-            self.multi_cursor_paste(&text);
-            return;
-        }
-        self.save_undo();
-
-        if let Some(range) = self.clamped_selection_indices() {
-            self.remove_selection_range(range);
-        } else {
-            self.clear_selection();
-        }
-
-        if text.len() >= 4096 {
-            let index = self.rope.line_to_char(self.cursor_line)
-                + if line_paste { 0 } else { self.cursor_col };
-            let (chars, lines) = if let Some(paste) = prepared_paste::prepare(text, line_paste) {
-                let counts = (paste.len_chars(), paste.len_lines() - 1);
-                let tail = self.rope.split_off(index);
-                self.rope.append(paste);
-                self.rope.append(tail);
-                counts
-            } else {
-                // LF text with no missing line-copy newline needs no rewrite.
-                // Insert the borrowed payload directly.
-                let lines = if line_paste {
-                    memchr::memchr_iter(b'\n', text.as_bytes()).count()
-                } else {
-                    usize::from(text.contains('\n'))
-                };
-                let before = self.rope.len_chars();
-                self.rope.insert(index, text);
-                (self.rope.len_chars() - before, lines)
-            };
-            if line_paste {
-                self.shift_bookmarks(self.cursor_line, lines as isize);
-                self.cursor_line += lines;
-            } else {
-                self.cursor_line = self.rope.char_to_line(index + chars);
-                self.cursor_col = index + chars - self.rope.line_to_char(self.cursor_line);
+            if self.read_only || text.is_empty() {
+                return;
             }
-            self.modified = true;
-            if lines > 0 { self.clear_stale_folds(); }
-            self.ensure_visible();
-            return;
-        }
-        let text = normalize_paste_line_endings(text);
+            self.desired_col = None;
+            self.clamp_cursor();
+            // LF clipboard content is already suitable for insertion. Avoid two
+            // complete copies of the common case before constructing the rope.
+            let line_paste = allow_line_copy
+                && !self.has_selection()
+                && line_copy
+                    .or_else(|| crate::clipboard::line_copy_status(text))
+                    .unwrap_or_else(|| {
+                        self.clipboard_is_line
+                            && normalize_paste_line_endings(text)
+                                == normalize_paste_line_endings(&self.clipboard)
+                    });
+            if !self.extra_cursors.is_empty() {
+                let text = normalize_paste_line_endings(text);
+                self.multi_cursor_paste(&text);
+                return;
+            }
+            self.save_undo();
 
-        // Line-copy paste: insert above current line (VS Code behavior).
-        if line_paste {
-            let text = if text.ends_with('\n') { text } else {
-                std::borrow::Cow::Owned(format!("{text}\n"))
-            };
-            let line_start = self.rope.line_to_char(self.cursor_line);
-            let pasted_lines = text.bytes().filter(|&c| c == b'\n').count();
-            self.rope.insert(line_start, &text);
-            self.shift_bookmarks(self.cursor_line, pasted_lines as isize);
-            self.cursor_line += pasted_lines;
-            self.modified = true;
-            self.clear_stale_folds();
-            self.ensure_visible();
-            return;
-        }
+            if let Some(range) = self.clamped_selection_indices() {
+                self.remove_selection_range(range);
+            } else {
+                self.clear_selection();
+            }
 
-        let idx = self.rope.line_to_char(self.cursor_line) + self.cursor_col;
-        let before = self.rope.len_chars();
-        self.rope.insert(idx, &text);
-        let new_idx = idx + (self.rope.len_chars() - before);
-        self.cursor_line = self.rope.char_to_line(new_idx);
-        self.cursor_col = new_idx - self.rope.line_to_char(self.cursor_line);
-        self.modified = true;
-        if text.contains('\n') { self.clear_stale_folds(); }
-        self.ensure_visible();
-            })
+            if text.len() >= 4096 {
+                let index = self.rope.line_to_char(self.cursor_line)
+                    + if line_paste { 0 } else { self.cursor_col };
+                let (chars, lines) = if let Some(paste) = prepared_paste::prepare(text, line_paste)
+                {
+                    let counts = (paste.len_chars(), paste.len_lines() - 1);
+                    let tail = self.rope.split_off(index);
+                    self.rope.append(paste);
+                    self.rope.append(tail);
+                    counts
+                } else {
+                    // LF text with no missing line-copy newline needs no rewrite.
+                    // Insert the borrowed payload directly.
+                    let lines = if line_paste {
+                        memchr::memchr_iter(b'\n', text.as_bytes()).count()
+                    } else {
+                        usize::from(text.contains('\n'))
+                    };
+                    let before = self.rope.len_chars();
+                    self.rope.insert(index, text);
+                    (self.rope.len_chars() - before, lines)
+                };
+                if line_paste {
+                    self.shift_bookmarks(self.cursor_line, lines as isize);
+                    self.cursor_line += lines;
+                } else {
+                    self.cursor_line = self.rope.char_to_line(index + chars);
+                    self.cursor_col = index + chars - self.rope.line_to_char(self.cursor_line);
+                }
+                self.modified = true;
+                if lines > 0 {
+                    self.clear_stale_folds();
+                }
+                self.ensure_visible();
+                return;
+            }
+            let text = normalize_paste_line_endings(text);
+
+            // Line-copy paste: insert above current line (VS Code behavior).
+            if line_paste {
+                let text = if text.ends_with('\n') {
+                    text
+                } else {
+                    std::borrow::Cow::Owned(format!("{text}\n"))
+                };
+                let line_start = self.rope.line_to_char(self.cursor_line);
+                let pasted_lines = text.bytes().filter(|&c| c == b'\n').count();
+                self.rope.insert(line_start, &text);
+                self.shift_bookmarks(self.cursor_line, pasted_lines as isize);
+                self.cursor_line += pasted_lines;
+                self.modified = true;
+                self.clear_stale_folds();
+                self.ensure_visible();
+                return;
+            }
+
+            let idx = self.rope.line_to_char(self.cursor_line) + self.cursor_col;
+            let before = self.rope.len_chars();
+            self.rope.insert(idx, &text);
+            let new_idx = idx + (self.rope.len_chars() - before);
+            self.cursor_line = self.rope.char_to_line(new_idx);
+            self.cursor_col = new_idx - self.rope.line_to_char(self.cursor_line);
+            self.modified = true;
+            if text.contains('\n') {
+                self.clear_stale_folds();
+            }
+            self.ensure_visible();
+        })
     }
 
     /// Verify atomic plain replacement without changing the system clipboard
@@ -396,82 +440,82 @@ impl Editor {
     #[cfg(test)]
     pub(crate) fn paste_plain_with_text(&mut self, text: &str) {
         crate::editor_document::edit!(self, {
-        self.paste_text(text, false);
-            })
+            self.paste_text(text, false);
+        })
     }
 
     /// Insert char replacing selection if any
     pub(crate) fn insert_char_replacing_selection(&mut self, c: char) {
         crate::editor_document::edit!(self, {
-        // If there's a selection and the typed char is an opening bracket/quote,
-        // wrap the selection instead of replacing it
-        if self.has_selection() {
-            let wrap_close = match c {
-                '(' => Some(')'),
-                '[' => Some(']'),
-                '{' => Some('}'),
-                '"' => Some('"'),
-                '\'' => Some('\''),
-                '`' => Some('`'),
-                _ => None,
-            };
-            if let Some(close) = wrap_close {
-                self.wrap_selection(c, close);
-                return;
+            // If there's a selection and the typed char is an opening bracket/quote,
+            // wrap the selection instead of replacing it
+            if self.has_selection() {
+                let wrap_close = match c {
+                    '(' => Some(')'),
+                    '[' => Some(']'),
+                    '{' => Some('}'),
+                    '"' => Some('"'),
+                    '\'' => Some('\''),
+                    '`' => Some('`'),
+                    _ => None,
+                };
+                if let Some(close) = wrap_close {
+                    self.wrap_selection(c, close);
+                    return;
+                }
             }
-        }
-        self.insert_char(c);
-            })
+            self.insert_char(c);
+        })
     }
 
     /// Insert newline replacing selection if any
     pub(crate) fn insert_newline_replacing_selection(&mut self) {
         crate::editor_document::edit!(self, {
-        self.insert_newline();
-            })
+            self.insert_newline();
+        })
     }
 
     /// Backspace replacing selection if any
     pub(crate) fn backspace_replacing_selection(&mut self) {
         crate::editor_document::edit!(self, {
-        if self.has_selection() {
-            self.discard_selection();
-        } else {
-            self.clear_selection();
-            self.backspace();
-        }
-            })
+            if self.has_selection() {
+                self.discard_selection();
+            } else {
+                self.clear_selection();
+                self.backspace();
+            }
+        })
     }
 
     /// Delete replacing selection if any
     pub(crate) fn delete_replacing_selection(&mut self) {
         crate::editor_document::edit!(self, {
-        if self.has_selection() {
-            self.discard_selection();
-        } else {
-            self.clear_selection();
-            self.delete_char();
-        }
-            })
+            if self.has_selection() {
+                self.discard_selection();
+            } else {
+                self.clear_selection();
+                self.delete_char();
+            }
+        })
     }
 
     /// Tab replacing selection if any
     pub(crate) fn insert_tab_replacing_selection(&mut self) {
         crate::editor_document::edit!(self, {
-        // If snippet mode is active, Tab advances to next tab stop
-        if self.snippet_active && self.snippet_next_tab_stop() {
-            return;
-        }
-        if self.has_selection() {
+            // If snippet mode is active, Tab advances to next tab stop
+            if self.snippet_active && self.snippet_next_tab_stop() {
+                return;
+            }
+            if self.has_selection() {
+                self.insert_tab();
+                return;
+            }
+            // Try snippet expansion first
+            if self.try_expand_snippet() {
+                return;
+            }
             self.insert_tab();
-            return;
-        }
-        // Try snippet expansion first
-        if self.try_expand_snippet() {
-            return;
-        }
-        self.insert_tab();
-            })
+        })
     }
 }
 
@@ -504,7 +548,13 @@ mod tests {
         editor.cursor_col = 6;
         editor.bookmarks.insert(1);
         editor.paste_snapshot_text(payload, true, Some(true));
-        assert_eq!(editor.rope.to_string(), format!("head\n{}\n    oldtail\nend\n", payload.replace("\r\n", "\n")));
+        assert_eq!(
+            editor.rope.to_string(),
+            format!(
+                "head\n{}\n    oldtail\nend\n",
+                payload.replace("\r\n", "\n")
+            )
+        );
         assert_eq!((editor.cursor_line, editor.cursor_col), (401, 6));
         assert!(editor.bookmarks.contains(&401));
         editor.undo();
@@ -526,13 +576,21 @@ mod tests {
         for sample in 0..11 {
             editor.clipboard.clear();
             let started = Instant::now();
-            editor.copy_with(|text| { black_box(text); true });
+            editor.copy_with(|text| {
+                black_box(text);
+                true
+            });
             let elapsed = started.elapsed();
             assert_eq!(editor.clipboard.len(), 32 * line.len() + 31);
-            if sample > 1 { samples.push(elapsed); }
+            if sample > 1 {
+                samples.push(elapsed);
+            }
         }
         samples.sort();
-        println!("4 MiB copy from 32 cursors: {:?}", samples[samples.len()/2]);
+        println!(
+            "4 MiB copy from 32 cursors: {:?}",
+            samples[samples.len() / 2]
+        );
     }
 
     #[test]
@@ -542,7 +600,10 @@ mod tests {
         editor.selection_anchor = Some((0, 4)); // reversed: 🦀ab
         editor.extra_cursors = vec![(1, 3), (0, 4), (0, 5), (2, 0)];
         editor.extra_cursor_anchors = vec![Some((1, 0)), Some((0, 1)), Some((0, 2)), None];
-        editor.copy_with(|text| { assert_eq!(text, "🦀ab\nabc\n界xy\nlast"); true });
+        editor.copy_with(|text| {
+            assert_eq!(text, "🦀ab\nabc\n界xy\nlast");
+            true
+        });
         assert_eq!(editor.clipboard, "🦀ab\nabc\n界xy\nlast");
         assert!(!editor.clipboard_is_line);
         assert_eq!(editor.rope, "é🦀abc\r\n界xyz\nlast");
@@ -617,10 +678,17 @@ mod tests {
             for backwards in [false, true] {
                 let original = "head αβ\r\nγδ tail";
                 let mut editor = Editor::test_with_text(original);
-                let (anchor, cursor) = if backwards { ((1, 2), (0, 5)) } else { ((0, 5), (1, 2)) };
+                let (anchor, cursor) = if backwards {
+                    ((1, 2), (0, 5))
+                } else {
+                    ((0, 5), (1, 2))
+                };
                 editor.selection_anchor = Some(anchor);
                 (editor.cursor_line, editor.cursor_col) = cursor;
-                editor.cut_with(|text| { assert_eq!(text, "αβ\r\nγδ"); available });
+                editor.cut_with(|text| {
+                    assert_eq!(text, "αβ\r\nγδ");
+                    available
+                });
                 assert_eq!(editor.rope.to_string(), "head  tail");
                 assert_eq!(editor.clipboard_failed, !available);
                 editor.paste_from_clipboard(Err(arboard::Error::ClipboardOccupied), false);
@@ -729,7 +797,6 @@ mod tests {
         editor.undo();
         assert_eq!(editor.rope.to_string(), before);
     }
-    
 
     #[test]
     fn repeated_large_pastes_preserve_unicode_carets_and_undo() {
@@ -983,8 +1050,11 @@ mod tests {
             ed.extra_cursor_anchors = vec![Some((2, 0))];
             ed.read_only = true;
             let original = ed.rope.clone();
-            if plain { ed.paste_plain_with_text("replacement\n"); }
-            else { ed.paste_with_text("replacement\n"); }
+            if plain {
+                ed.paste_plain_with_text("replacement\n");
+            } else {
+                ed.paste_with_text("replacement\n");
+            }
             assert_eq!(ed.rope, original);
             assert_eq!((ed.cursor_line, ed.cursor_col), (1, 3));
             assert_eq!(ed.selection_anchor, Some((0, 1)));

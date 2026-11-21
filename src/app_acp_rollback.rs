@@ -20,15 +20,20 @@ use vtcode::acp::{
 mod journal;
 use journal::{Journal, Plan};
 #[cfg(test)]
-#[path = "app_acp_rollback_tests.rs"]
-mod tests;
-#[cfg(test)]
 #[path = "app_acp_remote_rollback_tests.rs"]
 mod remote_tests;
+#[cfg(test)]
+#[path = "app_acp_rollback_tests.rs"]
+mod tests;
 
 enum Reply {
     Loaded(Option<Box<Journal>>),
-    Begun(u64, p::SessionId, Vec<p::ContentBlock>, Option<Arc<crate::remote::context::Source>>),
+    Begun(
+        u64,
+        p::SessionId,
+        Vec<p::ContentBlock>,
+        Option<Arc<crate::remote::context::Source>>,
+    ),
     Finished(p::SessionId),
     Captured(p::SessionId),
     Accepted,
@@ -135,7 +140,9 @@ fn may_be_beneath(path: &Path, root: &Path) -> bool {
 /// Resolve directory aliases even for a new/deleted file. This is used only
 /// when collecting user edits or preflighting a restore, never while rendering.
 pub(super) fn resolve_review_path(path: &Path) -> PathBuf {
-    if crate::remote::workspace::is_view_key(path) { return path.to_path_buf(); }
+    if crate::remote::workspace::is_view_key(path) {
+        return path.to_path_buf();
+    }
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let mut ancestor = absolute.as_path();
     let mut missing = Vec::new();
@@ -233,7 +240,9 @@ impl ReviewState {
             || self.jobs.iter().any(|job| job.context.agent == agent)
     }
     pub(super) fn agent_capture_failed(&self, agent: super::AgentId) -> bool {
-        self.turns.iter().any(|((owner, _), turn)| *owner == agent && turn.failed)
+        self.turns
+            .iter()
+            .any(|((owner, _), turn)| *owner == agent && turn.failed)
     }
     pub(crate) fn reviewing(&self) -> bool {
         self.job
@@ -299,10 +308,12 @@ impl ReviewState {
             })
     }
     pub(crate) fn note_disk_write_finished(&mut self, path: &Path) {
-        self.disk_barriers.insert(self.path_key(path), Instant::now());
+        self.disk_barriers
+            .insert(self.path_key(path), Instant::now());
     }
     fn relative(&self, path: &Path) -> Option<PathBuf> {
-        self.relative_absolute(&absolute(path)).map(Path::to_path_buf)
+        self.relative_absolute(&absolute(path))
+            .map(Path::to_path_buf)
     }
 
     fn relative_absolute<'a>(&self, path: &'a Path) -> Option<&'a Path> {
@@ -519,7 +530,8 @@ impl App {
         let directory = crate::portable::workspace_dir(&root).join("agent-rollback");
         self.checkpoint_job(JobKind::Initialize, None, false, move || {
             if let Some(remote) = remote {
-                return Journal::open_remote(remote).map(|journal| Reply::Loaded(journal.map(Box::new)));
+                return Journal::open_remote(remote)
+                    .map(|journal| Reply::Loaded(journal.map(Box::new)));
             }
             match git2::Repository::discover(&root) {
                 Err(error) if error.code() == git2::ErrorCode::NotFound => {
@@ -950,18 +962,37 @@ impl App {
                     if let Some(workspace) = self.remote_workspace.clone() {
                         let paths = self.agent_open_paths();
                         self.review_job(JobKind::Review, context.editor, false, move || {
-                            workspace.resolve_aliases(&paths).map(|aliases| Reply::Validated(plan, aliases)).map_err(|error| error.to_string())
+                            workspace
+                                .resolve_aliases(&paths)
+                                .map(|aliases| Reply::Validated(plan, aliases))
+                                .map_err(|error| error.to_string())
                         });
-                    } else { self.apply_review_plan(plan, context.editor); }
+                    } else {
+                        self.apply_review_plan(plan, context.editor);
+                    }
                 }
                 Ok(Reply::Validated(plan, aliases)) => {
-                    let checked: HashMap<_, _> = aliases.iter().map(|(path, identity)| (path, identity)).collect();
-                    if self.agent_open_paths().iter().any(|path| !checked.contains_key(path)) {
+                    let checked: HashMap<_, _> = aliases
+                        .iter()
+                        .map(|(path, identity)| (path, identity))
+                        .collect();
+                    if self
+                        .agent_open_paths()
+                        .iter()
+                        .any(|path| !checked.contains_key(path))
+                    {
                         self.chat.error = Some("Open files changed while checking this restore. Retry after file operations finish. No files were changed.".into());
-                    } else if self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs)).any(|tab| {
-                        (tab.editor.modified || tab.editor.read_only || tab.editor.bg_loading)
-                            && tab.editor.file_path.as_ref().is_some_and(|path| checked.get(path).is_some_and(|identity| identity.is_none()))
-                    }) {
+                    } else if self
+                        .tabs
+                        .iter()
+                        .chain(self.groups.iter().flat_map(|group| &group.tabs))
+                        .any(|tab| {
+                            (tab.editor.modified || tab.editor.read_only || tab.editor.bg_loading)
+                                && tab.editor.file_path.as_ref().is_some_and(|path| {
+                                    checked.get(path).is_some_and(|identity| identity.is_none())
+                                })
+                        })
+                    {
                         self.chat.error = Some("An open file could not be checked for aliases. Retry after file operations finish. No files were changed.".into());
                     } else {
                         self.record_agent_aliases(&aliases);
@@ -975,7 +1006,10 @@ impl App {
                             .tabs
                             .iter()
                             .chain(self.groups.iter().flat_map(|g| &g.tabs))
-                            .filter(|tab| self.acp_editor_identity(&tab.editor).is_some_and(|path| self.chat.rollback.path_key(&path) == key))
+                            .filter(|tab| {
+                                self.acp_editor_identity(&tab.editor)
+                                    .is_some_and(|path| self.chat.rollback.path_key(&path) == key)
+                            })
                             .filter_map(|tab| tab.editor.file_path.clone())
                             .collect();
                         if !exists {
@@ -1080,14 +1114,26 @@ impl App {
     }
 
     fn apply_review_plan(&mut self, plan: Plan, editor: bool) {
-        let paths: Vec<_> = plan.paths().map(|path| self.chat.rollback.root.join(path)).collect();
+        let paths: Vec<_> = plan
+            .paths()
+            .map(|path| self.chat.rollback.root.join(path))
+            .collect();
         if let Some(reason) = self.rollback_buffer_conflict(&paths) {
-            if editor { self.notify(&reason); }
+            if editor {
+                self.notify(&reason);
+            }
             self.chat.error = Some(reason);
         } else if let Some(journal) = self.chat.rollback.journal.clone() {
-            self.chat.rollback.write_paths = paths.iter().map(|path| self.chat.rollback.path_key(path)).collect();
+            self.chat.rollback.write_paths = paths
+                .iter()
+                .map(|path| self.chat.rollback.path_key(path))
+                .collect();
             self.review_job(JobKind::Review, editor, true, move || {
-                journal.lock().map_err(|_| "Checkpoint worker failed")?.apply(plan).map(Reply::Applied)
+                journal
+                    .lock()
+                    .map_err(|_| "Checkpoint worker failed")?
+                    .apply(plan)
+                    .map(Reply::Applied)
             });
         }
     }
@@ -1096,8 +1142,16 @@ impl App {
         if self.settings_effective.read_only.unwrap_or(false) {
             return Some("The editor is read-only".into());
         }
-        if self.unresolved_agent_files() || (self.remote_workspace.is_some() && self.pending_file_saves.keys().any(|path| crate::remote::workspace::is_view_key(path))) {
-            return Some("Wait for remote files to finish opening or saving. No files were changed.".into());
+        if self.unresolved_agent_files()
+            || (self.remote_workspace.is_some()
+                && self
+                    .pending_file_saves
+                    .keys()
+                    .any(|path| crate::remote::workspace::is_view_key(path)))
+        {
+            return Some(
+                "Wait for remote files to finish opening or saving. No files were changed.".into(),
+            );
         }
         for path in paths {
             let target = absolute(path);
@@ -1114,7 +1168,10 @@ impl App {
                     .any(|t| {
                         t.kind == TabKind::File
                             && (t.editor.file_path.as_ref().is_some_and(|p| same(p))
-                                || self.acp_editor_identity(&t.editor).as_deref().is_some_and(same))
+                                || self
+                                    .acp_editor_identity(&t.editor)
+                                    .as_deref()
+                                    .is_some_and(same))
                             && (t.editor.modified || t.editor.read_only || t.editor.bg_loading)
                     })
             {
@@ -1326,7 +1383,10 @@ impl App {
             self.open_file(&path);
             if let Some(tab) = self.tabs.get_mut(self.active_tab)
                 && tab.kind == TabKind::File
-                && tab.editor.file_path.as_deref()
+                && tab
+                    .editor
+                    .file_path
+                    .as_deref()
                     .is_some_and(|other| Self::same_open_path(other, &path))
                 && !tab.editor.load_failed
                 && tab.editor.encoding != "Binary"
@@ -1408,7 +1468,8 @@ impl App {
         let Some(journal) = self.chat.rollback.journal.clone() else {
             return;
         };
-        self.chat.rollback.write_paths = vec![self.chat.rollback.path_key(&self.chat.rollback.root)];
+        self.chat.rollback.write_paths =
+            vec![self.chat.rollback.path_key(&self.chat.rollback.root)];
         self.rollback_job(true, move || {
             journal
                 .lock()
@@ -1588,7 +1649,10 @@ impl App {
                         resolve(Selection::Edit(*id), false),
                     );
                     if let Some(edit) = summary.edits.iter().find(|e| e.id == *id) {
-                        for (i, chunk) in edit.chunks.iter().enumerate()
+                        for (i, chunk) in edit
+                            .chunks
+                            .iter()
+                            .enumerate()
                             .filter(|(_, chunk)| chunk.decision == Decision::Pending)
                         {
                             add(
@@ -1605,7 +1669,9 @@ impl App {
                     }
                 }
                 Picker::ChangeChunk(id, i) => {
-                    let pending = summary.edits.iter()
+                    let pending = summary
+                        .edits
+                        .iter()
                         .find(|edit| edit.id == *id)
                         .and_then(|edit| edit.chunks.get(*i).map(|chunk| (edit, chunk)))
                         .filter(|(_, chunk)| chunk.decision == Decision::Pending);

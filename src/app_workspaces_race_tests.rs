@@ -93,7 +93,11 @@ fn close_active_workspace(app: &mut App) {
     assert!(app.workspaces.parked.is_empty());
 }
 
-fn exercise_missing_reconnect_owner(recreate: bool, close_during_handoff: bool, between_polls: bool) {
+fn exercise_missing_reconnect_owner(
+    recreate: bool,
+    close_during_handoff: bool,
+    between_polls: bool,
+) {
     let a = Project::new();
     let b = Project::new();
     let wake = crate::background::UiWake::default();
@@ -126,7 +130,9 @@ fn exercise_missing_reconnect_owner(recreate: bool, close_during_handoff: bool, 
     next.source_control_enabled = false;
     app.insert_workspace(next);
     std::fs::remove_dir(b.path()).unwrap();
-    if between_polls { app.coordinate_workspace_connections(); }
+    if between_polls {
+        app.coordinate_workspace_connections();
+    }
     first.client.call(Command::Shutdown).unwrap();
     if between_polls {
         until(|| !first.client.connected());
@@ -134,7 +140,10 @@ fn exercise_missing_reconnect_owner(recreate: bool, close_during_handoff: bool, 
         // turn. Both workspaces see it, but only the reserved owner may launch.
         app.poll_background_results();
         app.workspaces.parked[0].app.poll_background_results();
-        assert_eq!(app.remote_connection.attempt + app.workspaces.parked[0].app.remote_connection.attempt, 1);
+        assert_eq!(
+            app.remote_connection.attempt + app.workspaces.parked[0].app.remote_connection.attempt,
+            1
+        );
     }
     until(|| {
         services(&mut app);

@@ -2,7 +2,9 @@
 //! scroll regions: the native diff renderer paints only each visible slice.
 use super::*;
 use crate::{
-    commit_review::{CONTEXT_STEP, Card, ContextButton, ContextExpansion, DiffSide, Geometry, HorizontalDrag},
+    commit_review::{
+        CONTEXT_STEP, Card, ContextButton, ContextExpansion, DiffSide, Geometry, HorizontalDrag,
+    },
     ui_editor_highlight::{HScrollbarParams, draw_horizontal_scrollbar},
 };
 use ratatui::{layout::Position, widgets::Clear};
@@ -363,7 +365,8 @@ fn draw_file_scrollbars(f: &mut Frame, app: &App, card: &Card) {
                 } else {
                     app.colors.bg_editor
                 },
-                hovered: app.terminal_has_focus && bar.area.contains((app.mouse_col, app.mouse_row).into()),
+                hovered: app.terminal_has_focus
+                    && bar.area.contains((app.mouse_col, app.mouse_row).into()),
                 active,
                 colors: &app.colors.ui,
             },
@@ -408,9 +411,11 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
     let mode = crate::commit_review::mode(app, area.width);
     let context = app.commit_details.diff_context;
     let width = area.width.saturating_sub(3);
-    let wrap = app.editor().map_or((app.default_word_wrap, app.word_wrap_column), |editor| {
-        (editor.word_wrap, editor.word_wrap_column)
-    });
+    let wrap = app
+        .editor()
+        .map_or((app.default_word_wrap, app.word_wrap_column), |editor| {
+            (editor.word_wrap, editor.word_wrap_column)
+        });
     if app.commit_details.review.mode != Some(mode) {
         app.commit_details.review.mode = Some(mode);
         app.commit_details.review.heights.clear();
@@ -422,8 +427,13 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
         let mut scroll = std::mem::take(&mut app.diff_inline_scroll);
         if let Some(editor) = app.editor() {
             let height = crate::commit_review::file_height(
-                &mut scroll, &app.diff_render_cache, editor, mode, width,
-                app.diff_split_ratio, &app.animation_settings,
+                &mut scroll,
+                &app.diff_render_cache,
+                editor,
+                mode,
+                width,
+                app.diff_split_ratio,
+                &app.animation_settings,
             );
             app.commit_details.review.heights.insert(file, height);
         }
@@ -431,19 +441,32 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
     }
     let review = &mut app.commit_details.review;
     for (&file, view) in &mut review.cached {
-        let expanded = review.expanded_context.get(&file).map_or(&[][..], Vec::as_slice);
-        let height = view.review_height(context, expanded, mode, width, wrap, &app.animation_settings);
+        let expanded = review
+            .expanded_context
+            .get(&file)
+            .map_or(&[][..], Vec::as_slice);
+        let height = view.review_height(
+            context,
+            expanded,
+            mode,
+            width,
+            wrap,
+            &app.animation_settings,
+        );
         review.heights.insert(file, height);
     }
     // Native keyboard/search navigation keeps the target row in the outer
     // viewport; ordinary wheel scrolling never follows an unchanged caret.
     if app.commit_details.focus == Focus::Diff
         && let (Some(file), Some(editor)) = (app.commit_details.diff_file, app.editor())
-        && app
-            .commit_details
-            .review
-            .caret
-            .is_some_and(|previous| previous != (file, editor.cursor_line, if wrap.0 { editor.cursor_col } else { 0 }))
+        && app.commit_details.review.caret.is_some_and(|previous| {
+            previous
+                != (
+                    file,
+                    editor.cursor_line,
+                    if wrap.0 { editor.cursor_col } else { 0 },
+                )
+        })
     {
         let logical = if mode == crate::app::DiffMode::SideBySide {
             app.diff_render_cache
@@ -451,9 +474,15 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
         } else {
             app.diff_render_cache
                 .inline_text_row_for_target_line(editor.cursor_line)
-                .unwrap_or_else(|| app.diff_render_cache.inline_row_for_target_line(editor.cursor_line))
+                .unwrap_or_else(|| {
+                    app.diff_render_cache
+                        .inline_row_for_target_line(editor.cursor_line)
+                })
         };
-        let row = app.diff_inline_scroll.wrap.row_for_column(logical, false, editor.cursor_col);
+        let row = app
+            .diff_inline_scroll
+            .wrap
+            .row_for_column(logical, false, editor.cursor_col);
         let start: usize = filtered
             .iter()
             .take_while(|index| **index != file)
@@ -506,7 +535,8 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
             }
             draw_context_buttons(f, app, card, &mut context_buttons);
             card.scrollbars = crate::commit_review::capture_scrollbars(
-                app, mode == crate::app::DiffMode::SideBySide,
+                app,
+                mode == crate::app::DiffMode::SideBySide,
             );
             draw_file_scrollbars(f, app, card);
             // Use one scrollbar for the review, not one thumb per file.
@@ -577,10 +607,15 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, view: &InspectorLayout) {
     selected_geometry.install(app);
     app.editor_area = editor_area;
     app.diff_mode = mode;
-    app.commit_details.review.caret = app
-        .commit_details
-        .diff_file
-        .and_then(|file| app.editor().map(|editor| (file, editor.cursor_line, if wrap.0 { editor.cursor_col } else { 0 })));
+    app.commit_details.review.caret = app.commit_details.diff_file.and_then(|file| {
+        app.editor().map(|editor| {
+            (
+                file,
+                editor.cursor_line,
+                if wrap.0 { editor.cursor_col } else { 0 },
+            )
+        })
+    });
     app.commit_details.layout.as_mut().unwrap().patch = selected_body;
     app.commit_details.review.visible = visible;
     app.commit_details.review.context_buttons = context_buttons;

@@ -107,31 +107,64 @@ fn reopen_button_allows_holding_dragging_and_releasing_on_one_closed_repository(
         refresh(app);
         for root in [&fixture.nested, &other] {
             app.close_source_control_repository(root);
-            wait(app, |app| !app.bg_git_status_running && !app.bg_git_status_pending);
+            wait(app, |app| {
+                !app.bg_git_status_running && !app.bg_git_status_pending
+            });
         }
         draw(app, 48, 28);
         let button = app.repositories.reopen_button.unwrap();
         click(app, button);
         let send = |app: &mut App, kind, column, row| {
-            crate::mouse_overlay::handle_context_menu_mouse(app, MouseEvent {
-                kind, column, row, modifiers: KeyModifiers::NONE,
-            });
+            crate::mouse_overlay::handle_context_menu_mouse(
+                app,
+                MouseEvent {
+                    kind,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
         };
-        send(app, MouseEventKind::Drag(MouseButton::Left), button.x, button.y);
-        assert!(app.context_menu_active, "held motion before drawing the menu must not dismiss it");
+        send(
+            app,
+            MouseEventKind::Drag(MouseButton::Left),
+            button.x,
+            button.y,
+        );
+        assert!(
+            app.context_menu_active,
+            "held motion before drawing the menu must not dismiss it"
+        );
         menu(app);
         let inner = app.context_menu_inner.unwrap();
-        let index = app.repositories.reopen_candidates.iter().position(|root| root == &fixture.nested).unwrap();
-        for (x, y) in [(button.x, button.y), (inner.x, inner.y - 1), (139, 29), (inner.x + 1, inner.y + index as u16)] {
+        let index = app
+            .repositories
+            .reopen_candidates
+            .iter()
+            .position(|root| root == &fixture.nested)
+            .unwrap();
+        for (x, y) in [
+            (button.x, button.y),
+            (inner.x, inner.y - 1),
+            (139, 29),
+            (inner.x + 1, inner.y + index as u16),
+        ] {
             send(app, MouseEventKind::Drag(MouseButton::Left), x, y);
             assert!(app.context_menu_active);
             assert!(app.repositories.closed.contains(&fixture.nested));
             assert!(!app.bg_git_status_running && !app.bg_git_status_pending);
         }
         assert_eq!(app.context_menu_selected, index);
-        send(app, MouseEventKind::Up(MouseButton::Left), inner.x + 1, inner.y + index as u16);
+        send(
+            app,
+            MouseEventKind::Up(MouseButton::Left),
+            inner.x + 1,
+            inner.y + index as u16,
+        );
         assert!(!app.context_menu_active && app.context_menu_button_drag.is_none());
-        wait(app, |app| !app.bg_git_status_running && !app.bg_git_status_pending);
+        wait(app, |app| {
+            !app.bg_git_status_running && !app.bg_git_status_pending
+        });
         assert_eq!(app.source_control_root(), fixture.nested);
         assert!(!app.repositories.closed.contains(&fixture.nested));
         assert!(app.repositories.closed.contains(&other));

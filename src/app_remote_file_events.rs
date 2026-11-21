@@ -6,9 +6,10 @@ fn open_remote_file_path(tab: &Tab) -> Option<&Path> {
     if tab.kind != TabKind::File || tab.editor.bg_loading {
         return None;
     }
-    tab.editor.file_path.as_deref().filter(|path| {
-        crate::remote::workspace::is_view_key(path)
-    })
+    tab.editor
+        .file_path
+        .as_deref()
+        .filter(|path| crate::remote::workspace::is_view_key(path))
 }
 
 impl App {
@@ -19,37 +20,67 @@ impl App {
             // An older in-flight byte check must not clear this newer hint.
             self.pending_file_reload_again.insert(path.to_owned());
         }
-        if !self.remote_change_warnings.insert(path.to_owned()) { return false; }
-        self.status_message = format!("{} changed on disk; your unsaved edits are preserved.", self.display_path(path));
+        if !self.remote_change_warnings.insert(path.to_owned()) {
+            return false;
+        }
+        self.status_message = format!(
+            "{} changed on disk; your unsaved edits are preserved.",
+            self.display_path(path)
+        );
         self.notify_warn(self.status_message.clone());
         true
     }
 
     pub(crate) fn queue_workspace_file_check(&mut self, path: PathBuf) {
-        if self.remote_workspace.is_some() { self.queue_remote_file_change(path); return; }
-        if self.defer_workspace_file_check(&path) { return; }
+        if self.remote_workspace.is_some() {
+            self.queue_remote_file_change(path);
+            return;
+        }
+        if self.defer_workspace_file_check(&path) {
+            return;
+        }
         if self.pending_file_saves.contains_key(&path) {
             self.remote_changes_deferred.insert(path);
             return;
         }
-        let snapshot = self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+        let snapshot = self
+            .tabs
+            .iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
             .find_map(|tab| {
-                if tab.kind != TabKind::File { return None; }
+                if tab.kind != TabKind::File {
+                    return None;
+                }
                 tab.editor.refresh_document();
                 let editor = &tab.editor;
-                if editor.file_path.as_ref() != Some(&path) || editor.bg_loading || editor.encoding == "Binary" { return None; }
-                Some((editor.save_identity, crate::editor::DiskSaveBaseline {
-                    rope: editor.saved_rope.as_ref()?.clone(), encoding: editor.saved_encoding,
-                }))
+                if editor.file_path.as_ref() != Some(&path)
+                    || editor.bg_loading
+                    || editor.encoding == "Binary"
+                {
+                    return None;
+                }
+                Some((
+                    editor.save_identity,
+                    crate::editor::DiskSaveBaseline {
+                        rope: editor.saved_rope.as_ref()?.clone(),
+                        encoding: editor.saved_encoding,
+                    },
+                ))
             });
         let Some((document, baseline)) = snapshot else {
             // A forced reload can already have recorded the newest metadata.
             // Without a saved-byte baseline, another stat would then silently
             // lose it. Clean/loading-error views need an actual read.
-            let reloadable = self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+            let reloadable = self
+                .tabs
+                .iter_mut()
+                .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
                 .any(|tab| tab.reloadable_file_path() == Some(path.as_path()));
-            if reloadable { self.queue_file_reload(path); }
-            else { self.queue_file_disk_checks(std::iter::once(path)); }
+            if reloadable {
+                self.queue_file_reload(path);
+            } else {
+                self.queue_file_disk_checks(std::iter::once(path));
+            }
             return;
         };
         if !self.pending_file_reloads.insert(path.clone()) {
@@ -59,23 +90,37 @@ impl App {
         let generation = self.workspace_generation;
         let sender = self.background.sender.clone();
         let cancel = self.workspace_file_check_token();
-        self.background.read_for_file("file-content-validation", &path.clone(), false, move || {
-            let result = (|| -> std::io::Result<Validation> {
-                let checked = baseline.validate_cancellable(&path, &cancel);
-                let (metadata, changed) = match checked {
-                    Ok(metadata) => (metadata, false),
-                    Err(error) if crate::editor::save::is_conflict(&error) => (std::fs::metadata(&path)?, true),
-                    Err(error) => return Err(error),
-                };
-                Ok(Validation { changed, size: metadata.len(), modified: metadata.modified().ok() })
-            })().map_err(|error| error.to_string());
-            let _ = sender.send(crate::background::BackgroundResult::NativeFileValidated {
-                generation, path, document, baseline, cancel, result,
+        self.background
+            .read_for_file("file-content-validation", &path.clone(), false, move || {
+                let result = (|| -> std::io::Result<Validation> {
+                    let checked = baseline.validate_cancellable(&path, &cancel);
+                    let (metadata, changed) = match checked {
+                        Ok(metadata) => (metadata, false),
+                        Err(error) if crate::editor::save::is_conflict(&error) => {
+                            (std::fs::metadata(&path)?, true)
+                        }
+                        Err(error) => return Err(error),
+                    };
+                    Ok(Validation {
+                        changed,
+                        size: metadata.len(),
+                        modified: metadata.modified().ok(),
+                    })
+                })()
+                .map_err(|error| error.to_string());
+                let _ = sender.send(crate::background::BackgroundResult::NativeFileValidated {
+                    generation,
+                    path,
+                    document,
+                    baseline,
+                    cancel,
+                    result,
+                });
             });
-        });
     }
     pub(crate) fn remote_save_needs_validation(&self, path: &Path) -> bool {
-        self.remote_change_warnings.contains(path) || self.remote_changes_deferred.contains(path)
+        self.remote_change_warnings.contains(path)
+            || self.remote_changes_deferred.contains(path)
             || self.pending_file_reloads.contains(path)
     }
     pub(crate) fn recheck_deferred_remote_file(&mut self, path: &Path) {
@@ -105,15 +150,23 @@ impl App {
     }
 
     pub(crate) fn active_remote_file_path(&self) -> Option<&Path> {
-        self.remote_workspace.as_ref().filter(|workspace| workspace.client.connected())?;
+        self.remote_workspace
+            .as_ref()
+            .filter(|workspace| workspace.client.connected())?;
         open_remote_file_path(self.tabs.get(self.active_tab)?)
     }
 
     pub(crate) fn queue_open_remote_file_checks(&mut self) {
-        if self.remote_workspace.as_ref().is_none_or(|workspace| !workspace.client.connected()) {
+        if self
+            .remote_workspace
+            .as_ref()
+            .is_none_or(|workspace| !workspace.client.connected())
+        {
             return;
         }
-        let paths: rustc_hash::FxHashSet<_> = self.tabs.iter()
+        let paths: rustc_hash::FxHashSet<_> = self
+            .tabs
+            .iter()
             .chain(self.groups.iter().flat_map(|group| &group.tabs))
             .filter_map(open_remote_file_path)
             .map(Path::to_owned)
@@ -206,14 +259,25 @@ impl App {
         baseline: Baseline,
         result: Result<Validation, String>,
     ) -> bool {
-        self.finish_file_validation(generation, path, document, crate::editor::DiskSaveBaseline {
-            rope: baseline.rope, encoding: baseline.encoding,
-        }, result)
+        self.finish_file_validation(
+            generation,
+            path,
+            document,
+            crate::editor::DiskSaveBaseline {
+                rope: baseline.rope,
+                encoding: baseline.encoding,
+            },
+            result,
+        )
     }
 
     pub(crate) fn finish_file_validation(
-        &mut self, generation: u64, path: PathBuf, document: u64,
-        baseline: crate::editor::DiskSaveBaseline, result: Result<Validation, String>,
+        &mut self,
+        generation: u64,
+        path: PathBuf,
+        document: u64,
+        baseline: crate::editor::DiskSaveBaseline,
+        result: Result<Validation, String>,
     ) -> bool {
         if generation != self.workspace_generation {
             return false;

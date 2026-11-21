@@ -15,12 +15,11 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::{App, TabTextColor};
 use crate::explorer::{GitStatus, GitStatusSummary};
 use crate::text_input::TextInputId;
-use crate::ui_widgets::{DropdownItem, DropdownMenu, InputField, themed_dropdown_colors};
 use crate::ui_editor::draw_editor;
 use crate::ui_helpers::{
-    draw_inline_diff, draw_side_by_side_diff,
-    draw_split_editor_for_group, draw_terminal_in_tab,
+    draw_inline_diff, draw_side_by_side_diff, draw_split_editor_for_group, draw_terminal_in_tab,
 };
+use crate::ui_widgets::{DropdownItem, DropdownMenu, InputField, themed_dropdown_colors};
 
 #[cfg(test)]
 thread_local! {
@@ -29,9 +28,13 @@ thread_local! {
 
 fn reuse_explorer_styles() -> bool {
     #[cfg(test)]
-    { return !REFERENCE_EXPLORER_STYLES.get(); }
+    {
+        return !REFERENCE_EXPLORER_STYLES.get();
+    }
     #[cfg(not(test))]
-    { true }
+    {
+        true
+    }
 }
 
 #[path = "ui_explorer_scroll.rs"]
@@ -49,14 +52,21 @@ pub(crate) fn explorer_sections(app: &App, area: Rect) -> (Rect, Rect) {
     let inner_y = area.y.saturating_add(area.height.min(1));
     let inner_height = area.height.saturating_sub(1);
     let entries = if app.show_open_editors {
-        app.tabs.len().min(inner_height.saturating_sub(2).div_ceil(2) as usize)
+        app.tabs
+            .len()
+            .min(inner_height.saturating_sub(2).div_ceil(2) as usize)
     } else {
         0
     };
     let open_height = (entries as u16 + 1).min(inner_height);
     (
         Rect::new(area.x, inner_y, area.width, open_height),
-        Rect::new(area.x, inner_y + open_height, area.width, inner_height - open_height),
+        Rect::new(
+            area.x,
+            inner_y + open_height,
+            area.width,
+            inner_height - open_height,
+        ),
     )
 }
 
@@ -64,7 +74,8 @@ fn explorer_section_area(app: &App, area: Rect) -> Rect {
     // The workbench paints the resize seam after the Explorer. Keep both
     // lists and their scrollbars inside that seam on either sidebar side.
     Rect::new(
-        area.x.saturating_add(u16::from(app.sidebar_right).min(area.width)),
+        area.x
+            .saturating_add(u16::from(app.sidebar_right).min(area.width)),
         area.y,
         area.width.saturating_sub(1),
         area.height,
@@ -74,18 +85,33 @@ fn explorer_section_area(app: &App, area: Rect) -> Rect {
 pub(crate) fn explorer_find_area(app: &App, area: Rect) -> Rect {
     let (_, tree) = explorer_sections(app, area);
     let tree = explorer_section_area(app, tree);
-    Rect::new(tree.x, tree.y.saturating_add(tree.height.min(1)), tree.width,
+    Rect::new(
+        tree.x,
+        tree.y.saturating_add(tree.height.min(1)),
+        tree.width,
         if app.explorer.find.open {
-            tree.height.saturating_sub(1).min(6
-                + u16::from(app.explorer.find.results.error.is_some() || app.explorer.find.path_error.is_some()))
-        } else { 0 })
+            tree.height.saturating_sub(1).min(
+                6 + u16::from(
+                    app.explorer.find.results.error.is_some()
+                        || app.explorer.find.path_error.is_some(),
+                ),
+            )
+        } else {
+            0
+        },
+    )
 }
 
 fn explorer_tree_raw_area(app: &App, area: Rect) -> Rect {
     let (_, tree) = explorer_sections(app, area);
     let tree = explorer_section_area(app, tree);
     let headers = (1 + explorer_find_area(app, area).height).min(tree.height);
-    Rect::new(tree.x, tree.y.saturating_add(headers), tree.width, tree.height - headers)
+    Rect::new(
+        tree.x,
+        tree.y.saturating_add(headers),
+        tree.width,
+        tree.height - headers,
+    )
 }
 
 pub(crate) fn explorer_tree_content_area(app: &App, area: Rect) -> Rect {
@@ -93,7 +119,9 @@ pub(crate) fn explorer_tree_content_area(app: &App, area: Rect) -> Rect {
 }
 
 pub(crate) fn empty_folder_state_area(app: &App, area: Rect) -> Option<Rect> {
-    if app.has_open_folder() { return None; }
+    if app.has_open_folder() {
+        return None;
+    }
     Some(match app.sidebar_view {
         crate::app::SidebarView::Explorer => {
             let (_, tree) = explorer_sections(app, area);
@@ -102,8 +130,12 @@ pub(crate) fn empty_folder_state_area(app: &App, area: Rect) -> Option<Rect> {
         crate::app::SidebarView::Search | crate::app::SidebarView::SourceControl => {
             let inset = u16::from(area.width > 1);
             let top = 2.min(area.height);
-            Rect::new(area.x + if app.sidebar_right { inset } else { 0 }, area.y + top,
-                area.width.saturating_sub(inset), area.height - top)
+            Rect::new(
+                area.x + if app.sidebar_right { inset } else { 0 },
+                area.y + top,
+                area.width.saturating_sub(inset),
+                area.height - top,
+            )
         }
         _ => return None,
     })
@@ -149,32 +181,52 @@ pub(crate) struct ExplorerScrollbar {
 
 impl ExplorerScrollbar {
     pub(crate) fn coordinate(&self, col: u16, row: u16) -> u16 {
-        if self.section == ExplorerSection::FilesHorizontal { col } else { row }
+        if self.section == ExplorerSection::FilesHorizontal {
+            col
+        } else {
+            row
+        }
     }
 
-    fn length(&self) -> u16 { self.coordinate(self.area.width, self.area.height) }
+    fn length(&self) -> u16 {
+        self.coordinate(self.area.width, self.area.height)
+    }
 
     fn draw(&self, f: &mut Frame, app: &App) {
-        if self.area.is_empty() { return; }
+        if self.area.is_empty() {
+            return;
+        }
         let sidebar_bg = app.colors.bg_sidebar;
         let hovered = self.area.contains((app.mouse_col, app.mouse_row).into());
-        let dragging = app.explorer_scrollbar_drag.is_some_and(|(section, _, _)| section == self.section);
-        let (track_color, thumb_color) = app.colors.ui.scrollbar_colors(sidebar_bg, hovered, dragging);
+        let dragging = app
+            .explorer_scrollbar_drag
+            .is_some_and(|(section, _, _)| section == self.section);
+        let (track_color, thumb_color) = app
+            .colors
+            .ui
+            .scrollbar_colors(sidebar_bg, hovered, dragging);
         let buffer = f.buffer_mut();
         let horizontal = self.section == ExplorerSection::FilesHorizontal;
         for i in 0..self.length() {
             let in_thumb = (self.thumb_top..self.thumb_top + self.thumb_height).contains(&i);
             let color = if in_thumb { thumb_color } else { track_color };
-            let pos = if horizontal { (self.area.x + i, self.area.y) } else { (self.area.x, self.area.y + i) };
+            let pos = if horizontal {
+                (self.area.x + i, self.area.y)
+            } else {
+                (self.area.x, self.area.y + i)
+            };
             if let Some(cell) = buffer.cell_mut(pos) {
-                cell.set_symbol(if horizontal { "▄" } else { "▐" }).set_style(Style::default().fg(color).bg(track_color));
+                cell.set_symbol(if horizontal { "▄" } else { "▐" })
+                    .set_style(Style::default().fg(color).bg(track_color));
             }
         }
     }
 
     pub(crate) fn offset_at(&self, row: u16, grab: u16) -> Option<usize> {
         let travel = self.length().saturating_sub(self.thumb_height);
-        if travel == 0 { return None; }
+        if travel == 0 {
+            return None;
+        }
         let origin = self.coordinate(self.area.x, self.area.y);
         let top = row.saturating_sub(origin.saturating_add(grab)).min(travel);
         Some((f64::from(top) / f64::from(travel) * self.max_scroll as f64).round() as usize)
@@ -182,16 +234,25 @@ impl ExplorerScrollbar {
 
     pub(crate) fn drag_offset(&self, row: u16, start_row: u16, start_offset: usize) -> usize {
         let travel = self.length().saturating_sub(self.thumb_height);
-        if travel == 0 { return start_offset.min(self.max_scroll); }
+        if travel == 0 {
+            return start_offset.min(self.max_scroll);
+        }
         // Preserve the exact starting offset: a cell can represent many files,
         // so remapping the rounded thumb position would jump on the first drag.
-        let delta = (f64::from(row) - f64::from(start_row)) / f64::from(travel) * self.max_scroll as f64;
-        (start_offset as f64 + delta).round().clamp(0.0, self.max_scroll as f64) as usize
+        let delta =
+            (f64::from(row) - f64::from(start_row)) / f64::from(travel) * self.max_scroll as f64;
+        (start_offset as f64 + delta)
+            .round()
+            .clamp(0.0, self.max_scroll as f64) as usize
     }
 }
 
 /// Use exactly the same track and thumb for painting, clicking, and dragging.
-pub(crate) fn explorer_scrollbar(app: &App, area: Rect, section: ExplorerSection) -> Option<ExplorerScrollbar> {
+pub(crate) fn explorer_scrollbar(
+    app: &App,
+    area: Rect,
+    section: ExplorerSection,
+) -> Option<ExplorerScrollbar> {
     if section == ExplorerSection::FilesHorizontal {
         return explorer_scroll::tree_layout(app, area).horizontal;
     }
@@ -199,10 +260,21 @@ pub(crate) fn explorer_scrollbar(app: &App, area: Rect, section: ExplorerSection
     let (content, count) = match section {
         ExplorerSection::OpenEditors if app.show_open_editors => {
             let open = explorer_section_area(app, open);
-            (Rect::new(open.x, open.y + open.height.min(1), open.width, open.height.saturating_sub(1)), app.tabs.len())
+            (
+                Rect::new(
+                    open.x,
+                    open.y + open.height.min(1),
+                    open.width,
+                    open.height.saturating_sub(1),
+                ),
+                app.tabs.len(),
+            )
         }
         ExplorerSection::OpenEditors => return None,
-        ExplorerSection::Files => (explorer_tree_content_area(app, area), app.explorer.entries.len()),
+        ExplorerSection::Files => (
+            explorer_tree_content_area(app, area),
+            app.explorer.entries.len(),
+        ),
         ExplorerSection::FilesHorizontal => unreachable!(),
     };
     let height = content.height;
@@ -239,11 +311,15 @@ pub(crate) fn open_editors_list_area(app: &App, area: Rect) -> Rect {
 }
 
 fn open_editors_anchor(app: &App) -> Option<(usize, u64)> {
-    app.tabs.get(app.active_tab).map(|tab| (app.active_group, tab.editor.navigation_id))
+    app.tabs
+        .get(app.active_tab)
+        .map(|tab| (app.active_group, tab.editor.navigation_id))
 }
 
 pub(crate) fn open_editors_offset(app: &App, visible: usize) -> usize {
-    if visible == 0 { return 0; }
+    if visible == 0 {
+        return 0;
+    }
     let mut offset = app.open_editors_scroll_offset;
     if app.open_editors_scroll_anchor.is_none()
         || app.open_editors_scroll_anchor != open_editors_anchor(app)
@@ -263,12 +339,18 @@ pub(crate) fn scroll_open_editors(app: &mut App, area: Rect, row: u16, down: boo
         return false;
     }
     let (open, _) = explorer_sections(app, area);
-    if row < open.y || row >= open.bottom() { return false; }
+    if row < open.y || row >= open.bottom() {
+        return false;
+    }
     let visible = open.height.saturating_sub(1) as usize;
-    if visible == 0 { return true; }
+    if visible == 0 {
+        return true;
+    }
     let offset = open_editors_offset(app, visible);
     let offset = if down {
-        offset.saturating_add(app.scroll_speed).min(app.tabs.len().saturating_sub(visible))
+        offset
+            .saturating_add(app.scroll_speed)
+            .min(app.tabs.len().saturating_sub(visible))
     } else {
         offset.saturating_sub(app.scroll_speed)
     };
@@ -277,11 +359,11 @@ pub(crate) fn scroll_open_editors(app: &mut App, area: Rect, row: u16, down: boo
 }
 
 #[cfg(test)]
-#[path = "ui_explorer_performance_tests.rs"]
-mod explorer_performance_tests;
-#[cfg(test)]
 #[path = "ui_explorer_open_editors_tests.rs"]
 mod explorer_open_editors_tests;
+#[cfg(test)]
+#[path = "ui_explorer_performance_tests.rs"]
+mod explorer_performance_tests;
 /// Compact angular mark used in place of VS Code's icon-font logo.
 const TITLE_BAR_LOGO: &str = "◈  ";
 /// Width of the window close-button region (" ✕ ") in the title bar.
@@ -310,13 +392,22 @@ fn agent_chat_reserved_width(area_width: u16) -> usize {
 
 fn navigation_reserved_width(area_width: u16) -> usize {
     let minimum = UnicodeWidthStr::width(TITLE_BAR_LOGO)
-        + TITLE_BAR_CLOSE_BTN_WIDTH + UnicodeWidthStr::width(TITLE_BAR_CHAT_LABEL) + 1
-        + UnicodeWidthStr::width(MENU_OVERFLOW_LABEL) + TITLE_BAR_NAVIGATION_WIDTH;
-    if area_width as usize >= minimum { TITLE_BAR_NAVIGATION_WIDTH } else { 0 }
+        + TITLE_BAR_CLOSE_BTN_WIDTH
+        + UnicodeWidthStr::width(TITLE_BAR_CHAT_LABEL)
+        + 1
+        + UnicodeWidthStr::width(MENU_OVERFLOW_LABEL)
+        + TITLE_BAR_NAVIGATION_WIDTH;
+    if area_width as usize >= minimum {
+        TITLE_BAR_NAVIGATION_WIDTH
+    } else {
+        0
+    }
 }
 
 pub(crate) fn agent_chat_button_area(area: Rect) -> Option<Rect> {
-    if area.height == 0 { return None; }
+    if area.height == 0 {
+        return None;
+    }
     let width = UnicodeWidthStr::width(agent_chat_button_label(area.width)?) as u16;
     Some(Rect::new(
         area.right() - TITLE_BAR_CLOSE_BTN_WIDTH as u16 - 1 - width,
@@ -328,8 +419,10 @@ pub(crate) fn agent_chat_button_area(area: Rect) -> Option<Rect> {
 
 pub(crate) fn visible_menu_label_count(area_width: u16) -> usize {
     let labels = App::menu_labels();
-    let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_CLOSE_BTN_WIDTH
-        + agent_chat_reserved_width(area_width) + navigation_reserved_width(area_width)
+    let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO)
+        + TITLE_BAR_CLOSE_BTN_WIDTH
+        + agent_chat_reserved_width(area_width)
+        + navigation_reserved_width(area_width)
         + if area_width >= 48 { 12 } else { 0 };
     let all_width = labels
         .iter()
@@ -339,8 +432,8 @@ pub(crate) fn visible_menu_label_count(area_width: u16) -> usize {
         return labels.len();
     }
 
-    let available = (area_width as usize)
-        .saturating_sub(fixed + UnicodeWidthStr::width(MENU_OVERFLOW_LABEL));
+    let available =
+        (area_width as usize).saturating_sub(fixed + UnicodeWidthStr::width(MENU_OVERFLOW_LABEL));
     let mut used = 0usize;
     labels
         .iter()
@@ -357,8 +450,10 @@ pub(crate) fn visible_menu_label_count(area_width: u16) -> usize {
 }
 
 pub(crate) fn menu_overflow_visible(area_width: u16) -> bool {
-    let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO) + TITLE_BAR_CLOSE_BTN_WIDTH
-        + agent_chat_reserved_width(area_width) + navigation_reserved_width(area_width)
+    let fixed = UnicodeWidthStr::width(TITLE_BAR_LOGO)
+        + TITLE_BAR_CLOSE_BTN_WIDTH
+        + agent_chat_reserved_width(area_width)
+        + navigation_reserved_width(area_width)
         + if area_width >= 48 { 12 } else { 0 };
     visible_menu_label_count(area_width) < App::menu_labels().len()
         && area_width as usize >= fixed + UnicodeWidthStr::width(MENU_OVERFLOW_LABEL)
@@ -371,46 +466,75 @@ struct TitleBarCenterLayout {
 }
 
 fn workspace_name(app: &App) -> String {
-    if !app.has_open_folder() { return "No folder".into(); }
-    crate::ui_workspaces::escaped(&crate::remote::workspace::display_name(&app.explorer.root)
-        .unwrap_or_else(|| app.explorer.root.file_name().and_then(|name| name.to_str()).unwrap_or("VTCode").to_owned())).into_owned()
+    if !app.has_open_folder() {
+        return "No folder".into();
+    }
+    crate::ui_workspaces::escaped(
+        &crate::remote::workspace::display_name(&app.explorer.root).unwrap_or_else(|| {
+            app.explorer
+                .root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("VTCode")
+                .to_owned()
+        }),
+    )
+    .into_owned()
 }
 
 fn workspace_label(app: &App, width: usize) -> String {
     let unread = app.workspace_unread();
     let attention = app.workspace_needs_attention();
     let marker = if attention { "!" } else { "●" };
-    let badge = if unread > 0 && width >= 12 { format!(" {marker}{}", unread.min(999)) }
-        else if (unread > 0 || attention) && width >= 7 { format!(" {marker}") } else { String::new() };
+    let badge = if unread > 0 && width >= 12 {
+        format!(" {marker}{}", unread.min(999))
+    } else if (unread > 0 || attention) && width >= 7 {
+        format!(" {marker}")
+    } else {
+        String::new()
+    };
     let suffix = format!("{badge} ▾ ");
     let name = workspace_name(app);
     let target = (name.width() + suffix.width() + 1).min(width);
     let name = crate::ui_workspaces::clipped(&name, width.saturating_sub(suffix.width() + 1));
     let mut label = format!(" {name}{suffix}");
-    label.push_str(&crate::helpers::spaces(target.saturating_sub(label.width())));
+    label.push_str(&crate::helpers::spaces(
+        target.saturating_sub(label.width()),
+    ));
     label
 }
 
 fn title_bar_center_layout(app: &App, area: Rect) -> TitleBarCenterLayout {
     let used = UnicodeWidthStr::width(TITLE_BAR_LOGO)
-        + App::menu_labels().iter().take(visible_menu_label_count(area.width))
-            .map(|label| UnicodeWidthStr::width(*label) + 2).sum::<usize>()
-        + usize::from(menu_overflow_visible(area.width)) * UnicodeWidthStr::width(MENU_OVERFLOW_LABEL);
-    let remaining = (area.width as usize).saturating_sub(
-        used + TITLE_BAR_CLOSE_BTN_WIDTH + agent_chat_reserved_width(area.width));
-    let center = Rect::new(area.x.saturating_add(used as u16), area.y, remaining as u16, area.height.min(1));
+        + App::menu_labels()
+            .iter()
+            .take(visible_menu_label_count(area.width))
+            .map(|label| UnicodeWidthStr::width(*label) + 2)
+            .sum::<usize>()
+        + usize::from(menu_overflow_visible(area.width))
+            * UnicodeWidthStr::width(MENU_OVERFLOW_LABEL);
+    let remaining = (area.width as usize)
+        .saturating_sub(used + TITLE_BAR_CLOSE_BTN_WIDTH + agent_chat_reserved_width(area.width));
+    let center = Rect::new(
+        area.x.saturating_add(used as u16),
+        area.y,
+        remaining as u16,
+        area.height.min(1),
+    );
     let nav_width = navigation_reserved_width(area.width);
-    let workspace_width = workspace_label(app, usize::MAX / 2).width()
-        .min(remaining.saturating_sub(nav_width)).min(40);
+    let workspace_width = workspace_label(app, usize::MAX / 2)
+        .width()
+        .min(remaining.saturating_sub(nav_width))
+        .min(40);
     let show_workspace = workspace_width >= 5 && area.height > 0;
     let content_width = nav_width + if show_workspace { workspace_width } else { 0 };
     let x = center.x + remaining.saturating_sub(content_width) as u16 / 2;
     TitleBarCenterLayout {
         area: center,
-        navigation: (nav_width > 0 && area.height > 0).then(|| [
-            Rect::new(x, area.y, 3, 1), Rect::new(x + 3, area.y, 3, 1),
-        ]),
-        workspace: show_workspace.then(|| Rect::new(x + nav_width as u16, area.y, workspace_width as u16, 1)),
+        navigation: (nav_width > 0 && area.height > 0)
+            .then(|| [Rect::new(x, area.y, 3, 1), Rect::new(x + 3, area.y, 3, 1)]),
+        workspace: show_workspace
+            .then(|| Rect::new(x + nav_width as u16, area.y, workspace_width as u16, 1)),
     }
 }
 
@@ -420,28 +544,53 @@ pub(crate) fn workspace_button_area(app: &App) -> Option<Rect> {
 
 pub(crate) fn navigation_button_at(app: &App, col: u16, row: u16) -> Option<(Rect, bool)> {
     let buttons = title_bar_center_layout(app, app.menu_bar_area?).navigation?;
-    buttons.into_iter().enumerate()
+    buttons
+        .into_iter()
+        .enumerate()
         .find(|(_, area)| area.contains((col, row).into()))
         .map(|(index, area)| (area, index == 1))
 }
 
 pub(crate) fn draw_navigation_tooltip(f: &mut Frame, app: &App) {
-    if app.palette.active || app.menu_active || app.change_dir_active
-        || app.context_menu_active || app.explorer_context_active || app.sc_context_active
-        || app.workspaces.popup.open || crate::ui_modal::active(app).is_some() { return; }
+    if app.palette.active
+        || app.menu_active
+        || app.change_dir_active
+        || app.context_menu_active
+        || app.explorer_context_active
+        || app.sc_context_active
+        || app.workspaces.popup.open
+        || crate::ui_modal::active(app).is_some()
+    {
+        return;
+    }
     if let Some(area) = workspace_button_area(app)
         && area.contains((app.mouse_col, app.mouse_row).into())
     {
-        crate::ui_widgets::Tooltip::hover(vec![Line::raw("Folders and saved workspaces")], &app.colors)
-            .prefer_below().render(f, area.x, area.y);
+        crate::ui_widgets::Tooltip::hover(
+            vec![Line::raw("Folders and saved workspaces")],
+            &app.colors,
+        )
+        .prefer_below()
+        .render(f, area.x, area.y);
         return;
     }
-    let Some((area, forward)) = navigation_button_at(app, app.mouse_col, app.mouse_row) else { return; };
-    let (label, command) = if forward { ("Go Forward", "navigate_forward") } else { ("Go Back", "navigate_back") };
+    let Some((area, forward)) = navigation_button_at(app, app.mouse_col, app.mouse_row) else {
+        return;
+    };
+    let (label, command) = if forward {
+        ("Go Forward", "navigate_forward")
+    } else {
+        ("Go Back", "navigate_back")
+    };
     let shortcut = app.shortcut_for_command(command);
-    let text = if shortcut.is_empty() { label.to_string() } else { format!("{label} ({shortcut})") };
+    let text = if shortcut.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label} ({shortcut})")
+    };
     crate::ui_widgets::Tooltip::hover(vec![Line::raw(text)], &app.colors)
-        .prefer_below().render(f, area.x, area.y);
+        .prefer_below()
+        .render(f, area.x, area.y);
 }
 
 #[cfg(test)]
@@ -474,16 +623,28 @@ const ACTIVITY_LABEL_REMOTE: ActivityLabel = ActivityLabel(["REMO", "TE", ""]);
 const ACTIVITY_LABEL_SETTINGS: ActivityLabel = ActivityLabel(["SETT", "INGS", ""]);
 pub(crate) const ACTIVITY_SETTINGS_INDEX: usize = 5;
 
-fn git_status_color(status: GitStatus, colors: &crate::app_theme::ThemeColors, surface: Color) -> Color {
+fn git_status_color(
+    status: GitStatus,
+    colors: &crate::app_theme::ThemeColors,
+    surface: Color,
+) -> Color {
     let badge = match status {
-        GitStatus::Modified => 'M', GitStatus::Renamed => 'R', GitStatus::Added => 'A',
-        GitStatus::Deleted => 'D', GitStatus::Untracked => 'U', GitStatus::Ignored => 'I',
+        GitStatus::Modified => 'M',
+        GitStatus::Renamed => 'R',
+        GitStatus::Added => 'A',
+        GitStatus::Deleted => 'D',
+        GitStatus::Untracked => 'U',
+        GitStatus::Ignored => 'I',
         GitStatus::Unmodified => return colors.ui.sidebar_text_color(surface),
     };
     colors.ui.git_status_color(badge, surface)
 }
 
-fn folder_icon_color(status: GitStatus, colors: &crate::app_theme::ThemeColors, surface: Color) -> Color {
+fn folder_icon_color(
+    status: GitStatus,
+    colors: &crate::app_theme::ThemeColors,
+    surface: Color,
+) -> Color {
     match status {
         GitStatus::Unmodified => colors.ui.folder_icon_color(surface),
         _ => git_status_color(status, colors, surface),
@@ -512,17 +673,17 @@ fn git_status_badge_spans(
     bg: Color,
 ) -> Vec<Span<'static>> {
     let mut badges = Vec::new();
-    for status in summary.statuses().filter(|status| visibility.shows(*status)) {
+    for status in summary
+        .statuses()
+        .filter(|status| visibility.shows(*status))
+    {
         if let Some((badge, badge_color)) = git_status_badge(status, colors, bg) {
             if badges.is_empty() {
                 badges.reserve(9);
             } else {
                 badges.push(Span::styled(" ", Style::default().bg(bg)));
             }
-            badges.push(Span::styled(
-                badge,
-                Style::default().fg(badge_color).bg(bg),
-            ));
+            badges.push(Span::styled(badge, Style::default().fg(badge_color).bg(bg)));
         }
     }
     badges
@@ -558,10 +719,14 @@ fn visible_explorer_selection<'a>(
     if app.explorer_multi_selected.len() <= 32 || rows.is_empty() {
         return None;
     }
-    Some(rows.iter().map(|&index| {
-        let path = &app.explorer.entries[index].path;
-        (path, app.explorer_multi_selected.contains(path))
-    }).collect())
+    Some(
+        rows.iter()
+            .map(|&index| {
+                let path = &app.explorer.entries[index].path;
+                (path, app.explorer_multi_selected.contains(path))
+            })
+            .collect(),
+    )
 }
 
 pub(crate) fn draw_explorer(f: &mut Frame, app: &mut App, area: Rect) {
@@ -570,27 +735,45 @@ pub(crate) fn draw_explorer(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selection: bool) {
     app.explorer.visible_height = 0;
-    if area.is_empty() { return; }
+    if area.is_empty() {
+        return;
+    }
     let sidebar_bg = app.colors.bg_sidebar;
     let explorer_focused = app.active_pane == crate::app::ActivePane::Explorer
         && app.sidebar_view == crate::app::SidebarView::Explorer;
 
     // VS Code uses borderless flat style for the sidebar
-    f.render_widget(Paragraph::new("").style(Style::default().bg(sidebar_bg)), area);
+    f.render_widget(
+        Paragraph::new("").style(Style::default().bg(sidebar_bg)),
+        area,
+    );
 
     // Header: "EXPLORER" with collapse-all and refresh buttons
     let header_area = Rect::new(area.x, area.y, area.width, 1);
-    let header_label = if app.remote_workspace.as_ref().is_some_and(|remote| !remote.client.connected()) {
+    let header_label = if app
+        .remote_workspace
+        .as_ref()
+        .is_some_and(|remote| !remote.client.connected())
+    {
         " Explorer · offline"
     } else if app.bg_filesystem_action_running {
         " Explorer · working…"
     } else if app.bg_explorer_refresh_running {
-        if app.explorer.find.loading { " Explorer · searching…" } else { " Explorer · loading…" }
+        if app.explorer.find.loading {
+            " Explorer · searching…"
+        } else {
+            " Explorer · loading…"
+        }
     } else if app.remote_workspace.is_some() && app.remote_explorer_error.is_some() {
         " Explorer · error"
-    } else { " Explorer" };
+    } else {
+        " Explorer"
+    };
     let controls_width = if app.has_open_folder() { 6 } else { 0 };
-    let header_label = crate::ui_pickers::truncate_to_width(header_label, area.width.saturating_sub(controls_width) as usize);
+    let header_label = crate::ui_pickers::truncate_to_width(
+        header_label,
+        area.width.saturating_sub(controls_width) as usize,
+    );
     let header_label = header_label.as_str();
     let collapse_btn = if app.has_open_folder() { " ⤒ " } else { "" };
     let refresh_btn = if app.has_open_folder() { " ↻ " } else { "" };
@@ -612,23 +795,37 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
         && app.mouse_row == header_area.y
         && app.mouse_col >= refresh_x
         && app.mouse_col < refresh_x.saturating_add(refresh_w);
-    let button_style = |hovered: bool| app.colors.ui.toolbar_layer_style(
-        app.colors.ui.sidebar_foreground, sidebar_bg, hovered, false, false,
-    );
+    let button_style = |hovered: bool| {
+        app.colors.ui.toolbar_layer_style(
+            app.colors.ui.sidebar_foreground,
+            sidebar_bg,
+            hovered,
+            false,
+            false,
+        )
+    };
     let header_label_hovered = app.sidebar_view == crate::app::SidebarView::Explorer
         && app.mouse_row == header_area.y
         && app.mouse_col >= header_area.x
         && app.mouse_col < collapse_x;
-    let header_label_style = app.colors.ui.toolbar_layer_style(
-        app.colors.ui.sidebar_title_foreground, sidebar_bg, header_label_hovered, false, false,
-    ).add_modifier(Modifier::BOLD);
+    let header_label_style = app
+        .colors
+        .ui
+        .toolbar_layer_style(
+            app.colors.ui.sidebar_title_foreground,
+            sidebar_bg,
+            header_label_hovered,
+            false,
+            false,
+        )
+        .add_modifier(Modifier::BOLD);
     let header_label_bg = header_label_style.bg.unwrap_or(sidebar_bg);
     let header_line = Line::from(vec![
+        Span::styled(header_label, header_label_style),
         Span::styled(
-            header_label,
-            header_label_style,
+            crate::helpers::spaces(fill_w),
+            Style::default().bg(header_label_bg),
         ),
-        Span::styled(crate::helpers::spaces(fill_w), Style::default().bg(header_label_bg)),
         Span::styled(collapse_btn, button_style(hover_collapse)),
         Span::styled(refresh_btn, button_style(hover_refresh)),
     ]);
@@ -641,7 +838,9 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
 
     // Split explorer into: Open Editors + File Tree
     let (oe_area, raw_tree_area) = explorer_sections(app, area);
-    if oe_area.is_empty() { return; }
+    if oe_area.is_empty() {
+        return;
+    }
     let open_editors_count = oe_area.height.saturating_sub(1) as usize;
     let open_editors_offset = open_editors_offset(app, open_editors_count);
     if app.show_open_editors && open_editors_count > 0 {
@@ -653,102 +852,170 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
 
     // OPEN EDITORS section header
     let header_hovered = app.mouse_row == oe_area.y
-        && app.mouse_col >= oe_area.x && app.mouse_col < oe_area.x + oe_area.width;
+        && app.mouse_col >= oe_area.x
+        && app.mouse_col < oe_area.x + oe_area.width;
     let header_bg = app.colors.ui.bg_section;
-    let mut header_style = app.colors.ui.toolbar_layer_style(
-        app.colors.ui.section_foreground, header_bg, header_hovered, false, false,
-    ).add_modifier(Modifier::BOLD);
+    let mut header_style = app
+        .colors
+        .ui
+        .toolbar_layer_style(
+            app.colors.ui.section_foreground,
+            header_bg,
+            header_hovered,
+            false,
+            false,
+        )
+        .add_modifier(Modifier::BOLD);
     if let Some(border) = app.colors.ui.border_section {
-        header_style = header_style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+        header_style = header_style
+            .add_modifier(Modifier::UNDERLINED)
+            .underline_color(border);
     }
-    let title = if app.show_open_editors { "⌄ Open Editors" } else { "› Open Editors" };
+    let title = if app.show_open_editors {
+        "⌄ Open Editors"
+    } else {
+        "› Open Editors"
+    };
     let mut oe_header = Line::from(Span::styled(title, header_style));
     let header_area = explorer_section_area(app, Rect::new(oe_area.x, oe_area.y, oe_area.width, 1));
     let mut remaining = usize::from(header_area.width).saturating_sub(title.width());
     if remaining >= 4 {
         let mut seen = FxHashSet::default();
-        let unsaved = app.tabs.iter()
+        let unsaved = app
+            .tabs
+            .iter()
             .chain(app.groups.iter().flat_map(|group| &group.tabs))
             .filter(|tab| tab.has_unsaved_changes() && seen.insert(tab.editor.save_identity))
             .count();
         if unsaved > 0 {
             let label = format!("{unsaved} unsaved");
-            let label = if label.len() + 3 <= remaining { label } else { unsaved.to_string() };
+            let label = if label.len() + 3 <= remaining {
+                label
+            } else {
+                unsaved.to_string()
+            };
             let width = label.len() + 3; // Gap before the badge and one cell of padding on each side.
             if width <= remaining {
                 let surface = header_style.bg.unwrap_or(header_bg);
                 oe_header.push_span(Span::styled(" ", header_style));
-                oe_header.push_span(Span::styled(format!(" {label} "), app.colors.ui.badge_style(surface)));
+                oe_header.push_span(Span::styled(
+                    format!(" {label} "),
+                    app.colors.ui.badge_style(surface),
+                ));
                 remaining -= width;
             }
         }
     }
     if open_editors_count > 0 && app.tabs.len() > open_editors_count {
-        let range = format!(" {}–{}/{}", open_editors_offset + 1,
-            open_editors_offset + open_editors_count, app.tabs.len());
+        let range = format!(
+            " {}–{}/{}",
+            open_editors_offset + 1,
+            open_editors_offset + open_editors_count,
+            app.tabs.len()
+        );
         if range.width() <= remaining {
             oe_header.push_span(Span::styled(range, header_style));
         }
     }
-    f.render_widget(Paragraph::new(oe_header).style(Style::default().bg(header_bg)), header_area);
+    f.render_widget(
+        Paragraph::new(oe_header).style(Style::default().bg(header_bg)),
+        header_area,
+    );
 
     // Open editor entries
     if app.show_open_editors && oe_area.height > 1 {
         let oe_list_area = open_editors_list_area(app, area);
         let mut oe_lines: Vec<Line> = Vec::with_capacity(open_editors_count);
         let mut oe_buf = String::with_capacity(64);
-        for (i, tab) in app.tabs.iter().enumerate().skip(open_editors_offset).take(open_editors_count) {
+        for (i, tab) in app
+            .tabs
+            .iter()
+            .enumerate()
+            .skip(open_editors_offset)
+            .take(open_editors_count)
+        {
             let name = match tab.kind {
                 crate::app::TabKind::CommitDetails => Cow::Borrowed("Commit details"),
                 crate::app::TabKind::File => tab.editor.display_name(),
                 _ => tab.editor.file_display_name(),
             };
-            let deleted_prefix = if tab.kind == crate::app::TabKind::File && tab.editor.disk_unavailable {
-                "~"
-            } else {
-                ""
-            };
-            let is_file = matches!(tab.kind, crate::app::TabKind::File | crate::app::TabKind::GitRevision);
+            let deleted_prefix =
+                if tab.kind == crate::app::TabKind::File && tab.editor.disk_unavailable {
+                    "~"
+                } else {
+                    ""
+                };
+            let is_file = matches!(
+                tab.kind,
+                crate::app::TabKind::File | crate::app::TabKind::GitRevision
+            );
             let (icon, icon_color) = if is_file {
                 crate::file_icons::for_editor(&tab.editor)
             } else {
                 (crate::ui_dialogs::tab_icon(tab), app.colors.ui.fg_sidebar)
             };
-            let modified = if tab.has_unsaved_changes() { "● " } else { "  " };
+            let modified = if tab.has_unsaved_changes() {
+                "● "
+            } else {
+                "  "
+            };
             let is_active = i == app.active_tab;
             let close_row = oe_area.y + 1 + (i - open_editors_offset) as u16;
             let row_hovered = app.mouse_row == close_row
                 && app.mouse_col >= oe_list_area.x
                 && app.mouse_col < oe_list_area.right();
-            let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
-                sidebar_bg, is_active, explorer_focused, row_hovered);
+            let row_style = app.colors.ui.list_row_style(
+                app.colors.ui.sidebar_foreground,
+                sidebar_bg,
+                is_active,
+                explorer_focused,
+                row_hovered,
+            );
             let bg = row_style.bg.unwrap_or(sidebar_bg);
             let icon_color = if is_file {
                 icon_color
             } else {
-                let color = app.colors.ui.list_icon_color(icon_color, bg, is_active, explorer_focused);
-                app.colors.ui.readable_foreground(color, bg, if icon.is_ascii() { 4.5 } else { 3.0 })
+                let color =
+                    app.colors
+                        .ui
+                        .list_icon_color(icon_color, bg, is_active, explorer_focused);
+                app.colors.ui.readable_foreground(
+                    color,
+                    bg,
+                    if icon.is_ascii() { 4.5 } else { 3.0 },
+                )
             };
-            let fg = row_style.fg.unwrap_or_else(|| app.colors.ui.sidebar_text_color(bg));
+            let fg = row_style
+                .fg
+                .unwrap_or_else(|| app.colors.ui.sidebar_text_color(bg));
             let close_hovered = app.mouse_row == close_row
                 && app.mouse_col >= oe_list_area.right().saturating_sub(3)
                 && app.mouse_col < oe_list_area.right();
             let show_close = is_active || row_hovered;
-            let close_bg = if close_hovered { app.colors.ui.toolbar_hover.over(bg).unwrap_or(bg) } else { bg };
+            let close_bg = if close_hovered {
+                app.colors.ui.toolbar_hover.over(bg).unwrap_or(bg)
+            } else {
+                bg
+            };
             let close_fg = app.colors.ui.readable_foreground(fg, close_bg, 4.5);
             oe_buf.clear();
             let _ = write!(oe_buf, "{deleted_prefix}{name}"); // Error OK: write to String buffer is infallible in practice
-            let controls_width = 2
-                + UnicodeWidthStr::width(modified)
-                + UnicodeWidthStr::width(icon)
-                + 3;
+            let controls_width =
+                2 + UnicodeWidthStr::width(modified) + UnicodeWidthStr::width(icon) + 3;
             let name_width = (oe_list_area.width as usize).saturating_sub(controls_width);
             oe_buf = crate::ui_pickers::truncate_to_width(&oe_buf, name_width);
             let content_width = controls_width + UnicodeWidthStr::width(oe_buf.as_str());
             let fill = (oe_list_area.width as usize).saturating_sub(content_width);
             oe_lines.push(Line::from(vec![
                 Span::styled("  ", Style::default().bg(bg)),
-                Span::styled(modified, row_style.fg(app.colors.ui.readable_foreground(app.colors.fg_modified_indicator, bg, 3.0))),
+                Span::styled(
+                    modified,
+                    row_style.fg(app.colors.ui.readable_foreground(
+                        app.colors.fg_modified_indicator,
+                        bg,
+                        3.0,
+                    )),
+                ),
                 Span::styled(icon, Style::default().fg(icon_color).bg(bg)),
                 Span::styled(std::mem::take(&mut oe_buf), row_style),
                 Span::styled(crate::helpers::spaces(fill), row_style),
@@ -759,7 +1026,10 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             ]));
         }
         if !oe_lines.is_empty() {
-            f.render_widget(Paragraph::new(oe_lines).style(Style::default().bg(sidebar_bg)), oe_list_area);
+            f.render_widget(
+                Paragraph::new(oe_lines).style(Style::default().bg(sidebar_bg)),
+                oe_list_area,
+            );
         }
         if let Some(bar) = explorer_scrollbar(app, area, ExplorerSection::OpenEditors) {
             bar.draw(f, app);
@@ -780,23 +1050,37 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
     }
 
     // Folder name header
-    let folder_name = app.explorer.root.file_name()
+    let folder_name = app
+        .explorer
+        .root
+        .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("Folder");
     let ws_hovered = app.mouse_row == tree_area.y
-        && app.mouse_col >= tree_area.x && app.mouse_col < tree_area.x + tree_area.width;
+        && app.mouse_col >= tree_area.x
+        && app.mouse_col < tree_area.x + tree_area.width;
     let badge_visibility = app.explorer_git_badge_visibility();
     let root_git_summary = app.explorer.root_git_status_summary();
     let root_git_status = root_git_summary.primary_visible(badge_visibility);
-    let mut ws_style = app.colors.ui.toolbar_layer_style(app.colors.ui.section_foreground,
-        app.colors.ui.bg_section, ws_hovered, false, false).add_modifier(Modifier::BOLD);
+    let mut ws_style = app
+        .colors
+        .ui
+        .toolbar_layer_style(
+            app.colors.ui.section_foreground,
+            app.colors.ui.bg_section,
+            ws_hovered,
+            false,
+            false,
+        )
+        .add_modifier(Modifier::BOLD);
     let ws_bg = ws_style.bg.unwrap_or(sidebar_bg);
     if root_git_status != GitStatus::Unmodified {
         ws_style = ws_style.fg(git_status_color(root_git_status, &app.colors, ws_bg));
     }
     let mut folder_title = String::with_capacity(folder_name.len() + 2);
     let _ = write!(folder_title, "⌄ {folder_name}");
-    let root_badges = git_status_badge_spans(root_git_summary, badge_visibility, &app.colors, ws_bg);
+    let root_badges =
+        git_status_badge_spans(root_git_summary, badge_visibility, &app.colors, ws_bg);
     let badge_width = root_badges
         .iter()
         .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
@@ -805,33 +1089,47 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
     let title_room = (tree_area.width as usize).saturating_sub(badge_width + badge_gap);
     let folder_title = crate::ui_pickers::truncate_to_width(&folder_title, title_room);
     let title_width = UnicodeWidthStr::width(folder_title.as_str());
-    let fill = (tree_area.width as usize)
-        .saturating_sub(title_width.saturating_add(badge_width).saturating_add(badge_gap));
-    let mut folder_header_spans = vec![Span::styled(
-        folder_title,
-        ws_style,
-    )];
-    folder_header_spans.push(Span::styled(crate::helpers::spaces(fill), Style::default().bg(ws_bg)));
+    let fill = (tree_area.width as usize).saturating_sub(
+        title_width
+            .saturating_add(badge_width)
+            .saturating_add(badge_gap),
+    );
+    let mut folder_header_spans = vec![Span::styled(folder_title, ws_style)];
+    folder_header_spans.push(Span::styled(
+        crate::helpers::spaces(fill),
+        Style::default().bg(ws_bg),
+    ));
     if !root_badges.is_empty() {
         folder_header_spans.push(Span::styled(" ", Style::default().bg(ws_bg)));
         folder_header_spans.extend(root_badges);
     }
     let folder_header = Line::from(folder_header_spans);
-    f.render_widget(Paragraph::new(folder_header).style(Style::default().bg(ws_bg)), Rect::new(tree_area.x, tree_area.y, tree_area.width, 1));
+    f.render_widget(
+        Paragraph::new(folder_header).style(Style::default().bg(ws_bg)),
+        Rect::new(tree_area.x, tree_area.y, tree_area.width, 1),
+    );
 
     crate::ui_explorer_find::draw(f, app, area);
     let tree_layout = explorer_scroll::tree_layout(app, area);
     let tree_content = tree_layout.content;
     let file_area = tree_layout.files;
     app.explorer.horizontal.offset = app.explorer.horizontal.offset.min(tree_layout.max_scroll);
-    app.explorer.set_viewport_height(tree_content.height as usize);
+    app.explorer
+        .set_viewport_height(tree_content.height as usize);
     if app.explorer.entries.is_empty() {
-        if (app.bg_explorer_refresh_running || app.explorer.find.filtering()) && tree_content.height > 0
-            && app.explorer.find.results.error.is_none() {
+        if (app.bg_explorer_refresh_running || app.explorer.find.filtering())
+            && tree_content.height > 0
+            && app.explorer.find.results.error.is_none()
+        {
             f.render_widget(
-                Paragraph::new(if app.explorer.find.loading { "  Searching…" }
-                    else if app.bg_explorer_refresh_running { "  Loading…" }
-                    else { "  No matches" }).style(
+                Paragraph::new(if app.explorer.find.loading {
+                    "  Searching…"
+                } else if app.bg_explorer_refresh_running {
+                    "  Loading…"
+                } else {
+                    "  No matches"
+                })
+                .style(
                     Style::default()
                         .fg(app.colors.ui.description_color(sidebar_bg))
                         .bg(sidebar_bg)
@@ -851,29 +1149,42 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
     let offset = app.explorer.viewport_offset(visible_height);
     app.explorer.scroll_offset = offset;
     let rows = app.explorer.viewport_indices(visible_height);
-    if app.rename.active && file_area.width > 0
-        && let Some(entry) = rows.iter().map(|&index| &app.explorer.entries[index])
+    if app.rename.active
+        && file_area.width > 0
+        && let Some(entry) = rows
+            .iter()
+            .map(|&index| &app.explorer.entries[index])
             .find(|entry| app.rename.target.as_deref() == Some(entry.path.as_path()))
     {
         // F2 must expose a usable field even when indentation alone exceeds
         // the viewport. The input widget handles scrolling inside its text.
         let prefix = entry.prefix_width();
-        app.explorer.horizontal.offset = app.explorer.horizontal.offset
+        app.explorer.horizontal.offset = app
+            .explorer
+            .horizontal
+            .offset
             .max(prefix.saturating_sub(usize::from(file_area.width / 2)))
-            .min(prefix).min(tree_layout.max_scroll);
+            .min(prefix)
+            .min(tree_layout.max_scroll);
     }
     let horizontal_offset = app.explorer.horizontal.offset;
-    let selected_paths = indexed_selection.then(|| visible_explorer_selection(app, &rows)).flatten();
+    let selected_paths = indexed_selection
+        .then(|| visible_explorer_selection(app, &rows))
+        .flatten();
 
     // Pre-compute set of modified file paths for O(1) lookup in explorer entries
-    let modified_paths: FxHashSet<&PathBuf> = app.tabs.iter()
+    let modified_paths: FxHashSet<&PathBuf> = app
+        .tabs
+        .iter()
         .chain(app.groups.iter().flat_map(|g| g.tabs.iter()))
         .filter(|t| t.has_unsaved_changes())
         .filter_map(|t| t.editor.file_path.as_ref())
         .collect();
 
     // Identify the currently active file for highlighting in the tree
-    let active_file_path: Option<&PathBuf> = app.tabs.get(app.active_tab)
+    let active_file_path: Option<&PathBuf> = app
+        .tabs
+        .get(app.active_tab)
         .and_then(|t| t.editor.file_path.as_ref());
 
     // Pre-build only enough indentation for the rendered slice. Scanning the
@@ -901,13 +1212,18 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
         .map(|(row, &i)| {
             let entry = &app.explorer.entries[i];
             let row_bg = if i < offset + row {
-                app.colors.ui.sidebar_sticky_background.over(sidebar_bg).unwrap_or(sidebar_bg)
+                app.colors
+                    .ui
+                    .sidebar_sticky_background
+                    .over(sidebar_bg)
+                    .unwrap_or(sidebar_bg)
             } else {
                 sidebar_bg
             };
             let indent_len = 1 + entry.depth * 2;
             let indent = &indent_pool[..indent_len.min(indent_pool.len())];
-            let file_icon = (!entry.is_dir).then(|| crate::file_icons::for_path(&entry.path, &app.language_associations));
+            let file_icon = (!entry.is_dir)
+                .then(|| crate::file_icons::for_path(&entry.path, &app.language_associations));
             let icon = if entry.is_dir {
                 if app.explorer_expanding.contains(&entry.path) {
                     "◌ "
@@ -926,12 +1242,12 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             let is_selected = selected_paths.as_ref().map_or_else(
                 || app.explorer_multi_selected.iter().any(|p| p == &entry.path),
                 |selected| selected.get(&entry.path).copied().unwrap_or(false),
-            )
-                || (app.explorer_selection_anchor.is_some() && i == app.explorer.selected);
+            ) || (app.explorer_selection_anchor.is_some()
+                && i == app.explorer.selected);
             let selection_focused = is_selected && explorer_focused;
 
-            let is_drop_target = app.dragging_explorer_path.is_some()
-                && app.explorer_drop_target_idx == Some(i);
+            let is_drop_target =
+                app.dragging_explorer_path.is_some() && app.explorer_drop_target_idx == Some(i);
 
             let hovered = app.hovered_explorer == Some(i) && !app.explorer_context_active;
             let visible_git_status = if entry.is_dir {
@@ -940,36 +1256,68 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
                 badge_visibility.color_status(entry.git_status)
             };
             let resolve_style = || {
-                let mut style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
-                    row_bg, is_selected || is_active_file, selection_focused, hovered);
+                let mut style = app.colors.ui.list_row_style(
+                    app.colors.ui.sidebar_foreground,
+                    row_bg,
+                    is_selected || is_active_file,
+                    selection_focused,
+                    hovered,
+                );
                 if is_drop_target {
-                    let background = app.colors.ui.list_drop_background.over(row_bg).unwrap_or(row_bg);
-                    style = Style::default().bg(background).fg(app.colors.ui.sidebar_text_color(background));
+                    let background = app
+                        .colors
+                        .ui
+                        .list_drop_background
+                        .over(row_bg)
+                        .unwrap_or(row_bg);
+                    style = Style::default()
+                        .bg(background)
+                        .fg(app.colors.ui.sidebar_text_color(background));
                 }
                 if !is_selected && !hovered {
-                    style = style.fg(git_status_color(visible_git_status, &app.colors, style.bg.unwrap_or(row_bg)));
+                    style = style.fg(git_status_color(
+                        visible_git_status,
+                        &app.colors,
+                        style.bg.unwrap_or(row_bg),
+                    ));
                 }
                 style
             };
             let style = if reuse_explorer_styles() {
-                *row_styles.entry((row_bg, visible_git_status as u8, is_selected, is_active_file, hovered, is_drop_target))
+                *row_styles
+                    .entry((
+                        row_bg,
+                        visible_git_status as u8,
+                        is_selected,
+                        is_active_file,
+                        hovered,
+                        is_drop_target,
+                    ))
                     .or_insert_with(resolve_style)
-            } else { resolve_style() };
+            } else {
+                resolve_style()
+            };
             let bg = style.bg.unwrap_or(row_bg);
             let icon_color = if visible_git_status == GitStatus::Ignored {
                 // Keep ignored file icons quiet too; selection/hover retain
                 // the row's readable foreground instead of a colored icon.
-                style.fg.unwrap_or_else(|| git_status_color(GitStatus::Ignored, &app.colors, bg))
+                style
+                    .fg
+                    .unwrap_or_else(|| git_status_color(GitStatus::Ignored, &app.colors, bg))
             } else if entry.is_dir {
-                app.colors.ui.list_icon_color(folder_icon_color(visible_git_status, &app.colors, bg), bg,
-                    is_selected || is_active_file, selection_focused)
+                app.colors.ui.list_icon_color(
+                    folder_icon_color(visible_git_status, &app.colors, bg),
+                    bg,
+                    is_selected || is_active_file,
+                    selection_focused,
+                )
             } else {
                 file_icon.unwrap().1
             };
             let icon_style = Style::default().fg(icon_color).bg(bg);
             // Show inline rename input for the selected entry
-            let is_rename_target = app.rename.active
-                && app.rename.target.as_deref() == Some(entry.path.as_path());
+            let is_rename_target =
+                app.rename.active && app.rename.target.as_deref() == Some(entry.path.as_path());
 
             let mut trailing = if entry.is_dir && !is_rename_target {
                 git_status_badge_spans(entry.git_status_summary, badge_visibility, &app.colors, bg)
@@ -977,12 +1325,21 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
                 Vec::new()
             };
             let find_match = app.explorer.find.results.rows.get(&entry.path);
-            if !is_rename_target && entry.is_dir && !app.explorer.find.filter
+            if !is_rename_target
+                && entry.is_dir
+                && !app.explorer.find.filter
                 && let Some(matched) = find_match.filter(|matched| matched.descendants > 0)
             {
-                if !trailing.is_empty() { trailing.push(Span::styled(" ", style)); }
-                trailing.push(Span::styled(matched.descendants.to_string(),
-                    style.fg(app.colors.ui.list_match_color(bg, is_selected && explorer_focused))));
+                if !trailing.is_empty() {
+                    trailing.push(Span::styled(" ", style));
+                }
+                trailing.push(Span::styled(
+                    matched.descendants.to_string(),
+                    style.fg(app
+                        .colors
+                        .ui
+                        .list_match_color(bg, is_selected && explorer_focused)),
+                ));
             }
             if !is_rename_target {
                 if !entry.is_dir && badge_visibility.shows(entry.git_status) {
@@ -991,10 +1348,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
                         if !trailing.is_empty() {
                             trailing.push(Span::styled(" ", Style::default().bg(bg)));
                         }
-                        trailing.push(Span::styled(
-                            badge,
-                            Style::default().fg(badge_color).bg(bg),
-                        ));
+                        trailing.push(Span::styled(badge, Style::default().fg(badge_color).bg(bg)));
                     }
                 }
                 if is_modified {
@@ -1003,7 +1357,13 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
                     }
                     trailing.push(Span::styled(
                         "●",
-                        Style::default().fg(app.colors.ui.readable_foreground(app.colors.fg_modified_indicator, bg, 3.0)).bg(bg),
+                        Style::default()
+                            .fg(app.colors.ui.readable_foreground(
+                                app.colors.fg_modified_indicator,
+                                bg,
+                                3.0,
+                            ))
+                            .bg(bg),
                     ));
                 }
             }
@@ -1014,27 +1374,42 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
                 .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
                 .sum::<usize>();
 
-            let mut spans = vec![
-                Span::styled(indent, style),
-                Span::styled(icon, icon_style),
-            ];
+            let mut spans = vec![Span::styled(indent, style), Span::styled(icon, icon_style)];
             if is_rename_target {
-                let input_start = prefix_width.saturating_sub(horizontal_offset).min(file_area.width.saturating_sub(1) as usize);
+                let input_start = prefix_width
+                    .saturating_sub(horizontal_offset)
+                    .min(file_area.width.saturating_sub(1) as usize);
                 let input_width = (file_area.width as usize).saturating_sub(input_start);
-                let base_style = Style::default().fg(app.colors.ui.fg_sidebar).bg(app.colors.bg_dark);
-                spans.push(Span::styled(crate::helpers::spaces(input_width), base_style));
-                rename_input_area = Some((Rect::new(
-                    file_area.x.saturating_add(input_start as u16),
-                    file_area.y.saturating_add(row as u16),
-                    input_width as u16,
-                    1,
-                ), bg));
+                let base_style = Style::default()
+                    .fg(app.colors.ui.fg_sidebar)
+                    .bg(app.colors.bg_dark);
+                spans.push(Span::styled(
+                    crate::helpers::spaces(input_width),
+                    base_style,
+                ));
+                rename_input_area = Some((
+                    Rect::new(
+                        file_area.x.saturating_add(input_start as u16),
+                        file_area.y.saturating_add(row as u16),
+                        input_width as u16,
+                        1,
+                    ),
+                    bg,
+                ));
             } else {
                 if let Some(matched) = find_match.filter(|matched| !matched.indices.is_empty()) {
-                    let highlight = style.fg(app.colors.ui.list_match_color(bg, is_selected && explorer_focused))
+                    let highlight = style
+                        .fg(app
+                            .colors
+                            .ui
+                            .list_match_color(bg, is_selected && explorer_focused))
                         .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
                     spans.extend(crate::ui_explorer_find::highlighted_name(
-                        &entry.name, &matched.indices, style, highlight));
+                        &entry.name,
+                        &matched.indices,
+                        style,
+                        highlight,
+                    ));
                 } else {
                     spans.push(Span::styled(entry.name.as_str(), style));
                 }
@@ -1048,13 +1423,21 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
         let row_area = Rect::new(file_area.x, file_area.y + row as u16, file_area.width, 1);
         f.buffer_mut().set_style(row_area, style);
         let badge_width = trailing_width.min(file_area.width as usize) as u16;
-        let reserved = badge_width.saturating_add(u16::from(badge_width > 0)).min(file_area.width);
-        f.render_widget(Paragraph::new(line).style(style).scroll((0, horizontal_offset as u16)),
-            Rect::new(row_area.x, row_area.y, row_area.width - reserved, 1));
+        let reserved = badge_width
+            .saturating_add(u16::from(badge_width > 0))
+            .min(file_area.width);
+        f.render_widget(
+            Paragraph::new(line)
+                .style(style)
+                .scroll((0, horizontal_offset as u16)),
+            Rect::new(row_area.x, row_area.y, row_area.width - reserved, 1),
+        );
         if badge_width > 0 {
             // Git/find/unsaved indicators stay readable while the name scrolls.
-            f.render_widget(Paragraph::new(Line::from(trailing)).style(style),
-                Rect::new(row_area.right() - badge_width, row_area.y, badge_width, 1));
+            f.render_widget(
+                Paragraph::new(Line::from(trailing)).style(style),
+                Rect::new(row_area.right() - badge_width, row_area.y, badge_width, 1),
+            );
         }
     }
 
@@ -1066,9 +1449,10 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             .prefix("", Color::Reset)
             .cursor_marker(cursor)
             .cursor_pos(app.rename.cursor)
-            .selection_range(
-                App::inline_selection_range(app.rename.cursor, app.rename.selection_anchor),
-            )
+            .selection_range(App::inline_selection_range(
+                app.rename.cursor,
+                app.rename.selection_anchor,
+            ))
             .render(f, input_area);
         app.register_text_input(TextInputId::ExplorerRename, hit_map);
     }
@@ -1084,7 +1468,11 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
 
 /// Draw divider cells directly; a vertical sash needs no per-row widgets.
 fn draw_divider(f: &mut Frame, area: Rect, direction: &Direction, style: Style) {
-    let symbol = if *direction == Direction::Horizontal { "│" } else { "─" };
+    let symbol = if *direction == Direction::Horizontal {
+        "│"
+    } else {
+        "─"
+    };
     let buffer = f.buffer_mut();
     for y in area.y..area.bottom() {
         for x in area.x..area.right() {
@@ -1096,7 +1484,14 @@ fn draw_divider(f: &mut Frame, area: Rect, direction: &Direction, style: Style) 
 }
 
 /// Render a group pane (tab bar + breadcrumb + editor) for the active group.
-fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, show_chrome: bool, pending_diff: bool) {
+fn render_group_pane(
+    f: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    group_id: usize,
+    show_chrome: bool,
+    pending_diff: bool,
+) {
     if group_id == app.active_group {
         let current_tab_kind = app.tabs.get(app.active_tab).map(|tab| tab.kind);
         let show_tabs = app.detached_window_id().is_some() || (show_chrome && app.show_tab_bar);
@@ -1104,7 +1499,11 @@ fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, 
             && app.show_breadcrumbs
             && matches!(
                 current_tab_kind,
-                Some(crate::app::TabKind::File | crate::app::TabKind::GitRevision | crate::app::TabKind::Diff(_))
+                Some(
+                    crate::app::TabKind::File
+                        | crate::app::TabKind::GitRevision
+                        | crate::app::TabKind::Diff(_)
+                )
             );
         let pane_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -1212,7 +1611,12 @@ pub(crate) struct SplitPaneLayout {
 }
 
 impl SplitPaneLayout {
-    fn update(&mut self, tree: &crate::app::SplitNode, area: Rect, dividers: &mut Vec<SplitDivider>) {
+    fn update(
+        &mut self,
+        tree: &crate::app::SplitNode,
+        area: Rect,
+        dividers: &mut Vec<SplitDivider>,
+    ) {
         if self.area == area && self.tree.as_ref().is_some_and(|previous| previous == tree) {
             return;
         }
@@ -1222,26 +1626,48 @@ impl SplitPaneLayout {
         dividers.clear();
         self.collect(tree, area, &mut Vec::new(), dividers);
         #[cfg(test)]
-        { self.builds += 1; }
+        {
+            self.builds += 1;
+        }
     }
 
-    fn collect(&mut self, node: &crate::app::SplitNode, area: Rect, path: &mut Vec<usize>, dividers: &mut Vec<SplitDivider>) {
+    fn collect(
+        &mut self,
+        node: &crate::app::SplitNode,
+        area: Rect,
+        path: &mut Vec<usize>,
+        dividers: &mut Vec<SplitDivider>,
+    ) {
         match node {
             crate::app::SplitNode::Leaf(group) => self.panes.push((*group, area)),
-            crate::app::SplitNode::Split { direction, children, ratios } => {
-                if children.is_empty() { return; }
+            crate::app::SplitNode::Split {
+                direction,
+                children,
+                ratios,
+            } => {
+                if children.is_empty() {
+                    return;
+                }
                 let dir = match direction {
                     crate::app::SplitDirection::Horizontal => Direction::Horizontal,
                     crate::app::SplitDirection::Vertical => Direction::Vertical,
                 };
-                let rects = Layout::default().direction(dir)
-                    .constraints(split_constraints(children.len(), ratios)).split(area);
+                let rects = Layout::default()
+                    .direction(dir)
+                    .constraints(split_constraints(children.len(), ratios))
+                    .split(area);
                 for (index, child) in children.iter().enumerate() {
                     path.push(index);
                     self.collect(child, rects[index * 2], path, dividers);
                     path.pop();
                     if index > 0 {
-                        dividers.push((rects[index * 2 - 1], path.clone(), index - 1, *direction, area));
+                        dividers.push((
+                            rects[index * 2 - 1],
+                            path.clone(),
+                            index - 1,
+                            *direction,
+                            area,
+                        ));
                     }
                 }
             }
@@ -1249,7 +1675,14 @@ impl SplitPaneLayout {
     }
 }
 
-fn render_split_tree(f: &mut Frame, app: &mut App, node: &crate::app::SplitNode, area: Rect, show_chrome: bool, pending_diff: bool) {
+fn render_split_tree(
+    f: &mut Frame,
+    app: &mut App,
+    node: &crate::app::SplitNode,
+    area: Rect,
+    show_chrome: bool,
+    pending_diff: bool,
+) {
     let mut layout = std::mem::take(&mut app.split_layout_cache);
     layout.update(node, area, &mut app.split_dividers);
     for &(group, pane) in &layout.panes {
@@ -1262,14 +1695,20 @@ fn render_split_tree(f: &mut Frame, app: &mut App, node: &crate::app::SplitNode,
             crate::app::SplitDirection::Vertical => Direction::Vertical,
         };
         let hovered = rect.contains((app.mouse_col, app.mouse_row).into());
-        let dragging = app.resizing_split && matches!(
-            app.dragging_divider.as_ref(),
-            Some((drag_path, drag_child, drag_direction, _))
-                if drag_path == path && drag_child == child && drag_direction == direction
-        );
-        let layer = if dragging || hovered { app.colors.ui.sash_hover_border }
-            else { app.colors.ui.editor_split_borders[usize::from(dir == Direction::Vertical)] };
-        let style = Style::default().bg(background).fg(layer.border(background).unwrap_or(background));
+        let dragging = app.resizing_split
+            && matches!(
+                app.dragging_divider.as_ref(),
+                Some((drag_path, drag_child, drag_direction, _))
+                    if drag_path == path && drag_child == child && drag_direction == direction
+            );
+        let layer = if dragging || hovered {
+            app.colors.ui.sash_hover_border
+        } else {
+            app.colors.ui.editor_split_borders[usize::from(dir == Direction::Vertical)]
+        };
+        let style = Style::default()
+            .bg(background)
+            .fg(layer.border(background).unwrap_or(background));
         draw_divider(f, *rect, &dir, style);
     }
     app.split_layout_cache = layout;
@@ -1281,14 +1720,19 @@ pub(crate) fn draw_editor_section(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 pub(crate) fn draw_editor_section_with_pending_diff(
-    f: &mut Frame, app: &mut App, area: Rect, pending_diff: bool,
+    f: &mut Frame,
+    app: &mut App,
+    area: Rect,
+    pending_diff: bool,
 ) {
     app.remote_targets.connection_area = Rect::default();
     app.remote_targets.connection_hits.clear();
     app.remote_connection.area = None;
     app.remote_connection.buttons.clear();
     crate::ui_extension_info::begin_frame(app);
-    if !app.rendering_background_window { app.sync_diff_tab(); }
+    if !app.rendering_background_window {
+        app.sync_diff_tab();
+    }
     app.commit_details.visible = false;
     // Safety: if split mode is active but current group has no tabs, recover to a non-empty group.
     if !app.rendering_background_window && app.split_active() && app.tabs.is_empty() {
@@ -1301,7 +1745,11 @@ pub(crate) fn draw_editor_section_with_pending_diff(
         crate::ui_editor::prepare_shared_word_highlight(app);
     }
 
-    app.desks.host = app.split_tree.as_ref().and_then(|tree| tree.leaves().first().copied()).unwrap_or(app.active_group);
+    app.desks.host = app
+        .split_tree
+        .as_ref()
+        .and_then(|tree| tree.leaves().first().copied())
+        .unwrap_or(app.active_group);
     let show_chrome = !app.zen_mode;
     let is_split = app.split_active();
     let current_tab_kind = app.tabs.get(app.active_tab).map(|tab| tab.kind);
@@ -1321,26 +1769,33 @@ pub(crate) fn draw_editor_section_with_pending_diff(
     app.diff_layout_toggle_area = None;
 
     // In split mode, each pane draws its own tab bar — skip top-level chrome
-    let show_tabs = !is_split && (app.detached_window_id().is_some() || (show_chrome && app.show_tab_bar));
+    let show_tabs =
+        !is_split && (app.detached_window_id().is_some() || (show_chrome && app.show_tab_bar));
     let tab_height = u16::from(show_tabs);
     let show_breadcrumbs = show_chrome
         && !is_split
         && app.show_breadcrumbs
         && matches!(
             current_tab_kind,
-            Some(crate::app::TabKind::File | crate::app::TabKind::GitRevision | crate::app::TabKind::Diff(_))
+            Some(
+                crate::app::TabKind::File
+                    | crate::app::TabKind::GitRevision
+                    | crate::app::TabKind::Diff(_)
+            )
         );
     let breadcrumb_height = u16::from(show_breadcrumbs);
 
-    let layout = if is_split { [area; 3] } else {
+    let layout = if is_split {
+        [area; 3]
+    } else {
         let layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(tab_height),
-            Constraint::Length(breadcrumb_height),
-            Constraint::Min(1),
-        ])
-        .split(area);
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(tab_height),
+                Constraint::Length(breadcrumb_height),
+                Constraint::Min(1),
+            ])
+            .split(area);
         [layout[0], layout[1], layout[2]]
     };
 
@@ -1430,23 +1885,35 @@ pub(crate) fn draw_editor_section_with_pending_diff(
             app.split_tree = Some(tree);
         } else {
             // Fallback: flat rendering for legacy splits without a tree
-            let non_active_count = app.groups.iter().enumerate()
+            let non_active_count = app
+                .groups
+                .iter()
+                .enumerate()
                 .filter(|(gi, g)| *gi != app.active_group && !g.tabs.is_empty())
                 .count();
             let total_panes = 1 + non_active_count;
-            let direction = if app.split_vertical { Direction::Horizontal } else { Direction::Vertical };
+            let direction = if app.split_vertical {
+                Direction::Horizontal
+            } else {
+                Direction::Vertical
+            };
 
             let mut constraints = Vec::with_capacity(total_panes * 2 - 1);
             let pane_pct = 100u16 / total_panes as u16;
             for i in 0..total_panes {
-                if i > 0 { constraints.push(Constraint::Length(1)); }
+                if i > 0 {
+                    constraints.push(Constraint::Length(1));
+                }
                 if i == total_panes - 1 {
                     constraints.push(Constraint::Min(1));
                 } else {
                     constraints.push(Constraint::Percentage(pane_pct));
                 }
             }
-            let split = Layout::default().direction(direction).constraints(constraints).split(area);
+            let split = Layout::default()
+                .direction(direction)
+                .constraints(constraints)
+                .split(area);
 
             let mut pane_index = 0;
             let mut pane_assignments: Vec<(usize, usize)> = Vec::with_capacity(app.groups.len());
@@ -1456,13 +1923,26 @@ pub(crate) fn draw_editor_section_with_pending_diff(
                     pane_index += 1;
                 }
             }
-            if let Some(&(_, active_rect_idx)) = pane_assignments.iter().find(|(gi, _)| *gi == app.active_group) {
-                render_group_pane(f, app, split[active_rect_idx], app.active_group, show_chrome, pending_diff);
+            if let Some(&(_, active_rect_idx)) = pane_assignments
+                .iter()
+                .find(|(gi, _)| *gi == app.active_group)
+            {
+                render_group_pane(
+                    f,
+                    app,
+                    split[active_rect_idx],
+                    app.active_group,
+                    show_chrome,
+                    pending_diff,
+                );
             }
             let divider_bg = app.colors.bg_editor;
-            let divider_style = Style::default().bg(divider_bg).fg(app.colors.ui.editor_split_borders[
-                usize::from(direction == Direction::Vertical)
-            ].border(divider_bg).unwrap_or(divider_bg));
+            let divider_style = Style::default().bg(divider_bg).fg(app
+                .colors
+                .ui
+                .editor_split_borders[usize::from(direction == Direction::Vertical)]
+            .border(divider_bg)
+            .unwrap_or(divider_bg));
             for i in 1..total_panes {
                 let div_idx = i * 2 - 1;
                 if div_idx < split.len() {
@@ -1487,7 +1967,10 @@ pub(crate) fn draw_editor_section_with_pending_diff(
         draw_inline_diff(f, app, layout[2]);
     } else {
         // If diff mode is on but no base content, clear it
-        if !app.rendering_background_window && app.diff_mode != crate::app::DiffMode::Off && app.compare_base_content.is_none() {
+        if !app.rendering_background_window
+            && app.diff_mode != crate::app::DiffMode::Off
+            && app.compare_base_content.is_none()
+        {
             app.clear_diff_state();
         }
         app.editor_area = Some(layout[2]);
@@ -1499,7 +1982,10 @@ pub(crate) fn draw_zen_exit_button(f: &mut Frame, app: &mut App, area: Rect) {
     if area.is_empty() {
         return;
     }
-    f.render_widget(Paragraph::new("").style(Style::default().bg(app.colors.bg_editor)), area);
+    f.render_widget(
+        Paragraph::new("").style(Style::default().bg(app.colors.bg_editor)),
+        area,
+    );
     // Keep an explicit exit action even in narrow terminals. Its own row
     // prevents it from covering code, terminal output, or split controls.
     let label = ["[ Exit Zen Mode ]", "[ Exit Zen ]", "[ Exit ]", "Exit"]
@@ -1510,7 +1996,13 @@ pub(crate) fn draw_zen_exit_button(f: &mut Frame, app: &mut App, area: Rect) {
     let button = Rect::new(area.right().saturating_sub(width), area.y, width, 1);
     app.zen_exit_area = Some(button);
     let hovered = button.contains((app.mouse_col, app.mouse_row).into());
-    let style = crate::ui_widgets::action_button_style(&app.colors, app.colors.bg_editor, false, hovered, true);
+    let style = crate::ui_widgets::action_button_style(
+        &app.colors,
+        app.colors.bg_editor,
+        false,
+        hovered,
+        true,
+    );
     f.render_widget(Paragraph::new(label).style(style), button);
 }
 
@@ -1518,12 +2010,26 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
     let (bg, fg) = if app.terminal_has_focus {
         (app.colors.ui.bg_title, app.colors.ui.fg_title)
     } else {
-        (app.colors.ui.bg_title_inactive, app.colors.ui.fg_title_inactive)
+        (
+            app.colors.ui.bg_title_inactive,
+            app.colors.ui.fg_title_inactive,
+        )
     };
     let fg = app.colors.ui.readable_foreground(fg, bg, 4.5);
     let bg_active = app.colors.ui.menubar_background.over(bg).unwrap_or(bg);
-    let fg_active = app.colors.ui.readable_foreground(app.colors.ui.menubar_foreground.over(bg_active).unwrap_or(fg), bg_active, 4.5);
-    let close_style = app.colors.ui.toolbar_style(fg, bg, app.hovered_close_button, false, false);
+    let fg_active = app.colors.ui.readable_foreground(
+        app.colors
+            .ui
+            .menubar_foreground
+            .over(bg_active)
+            .unwrap_or(fg),
+        bg_active,
+        4.5,
+    );
+    let close_style = app
+        .colors
+        .ui
+        .toolbar_style(fg, bg, app.hovered_close_button, false, false);
     let close_bg = close_style.bg.unwrap_or(bg);
     let close_fg = close_style.fg.unwrap_or(fg);
 
@@ -1562,7 +2068,10 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
     spans.push(Span::styled(
         TITLE_BAR_LOGO,
         Style::default()
-            .fg(app.colors.ui.readable_foreground(app.colors.fg_accent_blue, bg, 3.0))
+            .fg(app
+                .colors
+                .ui
+                .readable_foreground(app.colors.fg_accent_blue, bg, 3.0))
             .bg(bg)
             .add_modifier(Modifier::BOLD),
     ));
@@ -1579,8 +2088,11 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
         let _ = write!(menu_buf, " {label} ");
         let mut style = Style::default().fg(fg_c).bg(bg_c);
         if (app.menu_active && app.menu_selected == i || app.hovered_menu == Some(i))
-            && let Some(border) = app.colors.ui.menubar_border.border(bg_c) {
-            style = style.add_modifier(Modifier::UNDERLINED).underline_color(border);
+            && let Some(border) = app.colors.ui.menubar_border.border(bg_c)
+        {
+            style = style
+                .add_modifier(Modifier::UNDERLINED)
+                .underline_color(border);
         }
         spans.push(Span::styled(menu_buf, style));
     }
@@ -1601,9 +2113,15 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
 
     // Render from the same layout used by mouse hit testing and tooltips.
     let center = title_bar_center_layout(app, area);
-    let content_start = center.navigation.map(|buttons| buttons[0].x)
-        .or(center.workspace.map(|workspace| workspace.x)).unwrap_or(center.area.x);
-    spans.push(Span::styled(crate::helpers::spaces((content_start - center.area.x) as usize), Style::default().bg(bg)));
+    let content_start = center
+        .navigation
+        .map(|buttons| buttons[0].x)
+        .or(center.workspace.map(|workspace| workspace.x))
+        .unwrap_or(center.area.x);
+    spans.push(Span::styled(
+        crate::helpers::spaces((content_start - center.area.x) as usize),
+        Style::default().bg(bg),
+    ));
     let mut content_end = content_start;
     if let Some(buttons) = center.navigation {
         for (index, button) in buttons.into_iter().enumerate() {
@@ -1613,8 +2131,15 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
             if !enabled {
                 let background = style.bg.unwrap_or(bg);
                 style = style.fg(crate::ui_colors::disabled_text_color(
-                    app.colors.ui.disabled_foreground.over(background).unwrap_or(app.colors.fg_dim),
-                    style.fg.unwrap_or(fg), background, app.colors.ui.contrast_colors()));
+                    app.colors
+                        .ui
+                        .disabled_foreground
+                        .over(background)
+                        .unwrap_or(app.colors.fg_dim),
+                    style.fg.unwrap_or(fg),
+                    background,
+                    app.colors.ui.contrast_colors(),
+                ));
             }
             spans.push(Span::styled(if index == 0 { " ← " } else { " → " }, style));
             content_end = button.right();
@@ -1623,23 +2148,42 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
     if let Some(workspace) = center.workspace {
         spans.push(Span::styled(
             workspace_label(app, workspace.width as usize),
-            app.colors.ui.command_center_style(bg, app.terminal_has_focus,
+            app.colors.ui.command_center_style(
+                bg,
+                app.terminal_has_focus,
                 workspace.contains((app.mouse_col, app.mouse_row).into())
-                    || app.workspaces.popup.open),
+                    || app.workspaces.popup.open,
+            ),
         ));
         content_end = workspace.right();
     }
-    spans.push(Span::styled(crate::helpers::spaces(center.area.right().saturating_sub(content_end) as usize), Style::default().bg(bg)));
+    spans.push(Span::styled(
+        crate::helpers::spaces(center.area.right().saturating_sub(content_end) as usize),
+        Style::default().bg(bg),
+    ));
     if let Some(button) = agent_chat_button_area(area) {
         let hovered = button.contains((app.mouse_col, app.mouse_row).into());
         let mut style = crate::ui_widgets::action_button_style(
-            &app.colors, bg, app.chat.visible && app.chat.layout.dock_visible, hovered, true,
-        ).add_modifier(Modifier::BOLD);
-        if hovered { style = style.add_modifier(Modifier::UNDERLINED); }
-        spans.push(Span::styled(agent_chat_button_label(area.width).unwrap_or_default(), style));
+            &app.colors,
+            bg,
+            app.chat.visible && app.chat.layout.dock_visible,
+            hovered,
+            true,
+        )
+        .add_modifier(Modifier::BOLD);
+        if hovered {
+            style = style.add_modifier(Modifier::UNDERLINED);
+        }
+        spans.push(Span::styled(
+            agent_chat_button_label(area.width).unwrap_or_default(),
+            style,
+        ));
         spans.push(Span::styled(" ", Style::default().bg(bg)));
     }
-    spans.push(Span::styled(" × ", Style::default().fg(close_fg).bg(close_bg)));
+    spans.push(Span::styled(
+        " × ",
+        Style::default().fg(close_fg).bg(close_bg),
+    ));
 
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -1651,15 +2195,24 @@ pub(crate) fn draw_menu_dropdown(f: &mut Frame, app: &mut App) {
     app.menu_dropdown_inner = None;
     app.menu_rendered = Some(app.menu_selected);
     let raw_items = app.menu_entries(app.menu_selected);
-    if raw_items.is_empty() { return; }
+    if raw_items.is_empty() {
+        return;
+    }
 
     let menu_x = menu_dropdown_anchor_x(app);
-    let menu_y: u16 = if let Some(bar) = app.menu_bar_area { bar.y + 1 } else { 1 };
+    let menu_y: u16 = if let Some(bar) = app.menu_bar_area {
+        bar.y + 1
+    } else {
+        1
+    };
 
-    let items: Vec<DropdownItem> = raw_items.iter()
+    let items: Vec<DropdownItem> = raw_items
+        .iter()
         .map(|entry| {
             let disabled = !entry.command.is_empty() && app.is_menu_cmd_disabled(entry.command);
-            DropdownItem::new(&entry.label).shortcut(&entry.shortcut).disabled(disabled)
+            DropdownItem::new(&entry.label)
+                .shortcut(&entry.shortcut)
+                .disabled(disabled)
         })
         .collect();
     let colors = themed_dropdown_colors(&app.colors);
@@ -1679,7 +2232,13 @@ pub(crate) const ACTIVITY_OVERFLOW_INDEX: usize = TOP_ACTIVITY_ICONS.len();
 const ACTIVITY_OVERFLOW_ICON: &str = "⌄";
 
 pub(crate) fn sidebar_activity_header(app: &App, sidebar: Rect) -> Option<Rect> {
-    let header = explorer_section_area(app, Rect { height: sidebar.height.min(1), ..sidebar });
+    let header = explorer_section_area(
+        app,
+        Rect {
+            height: sidebar.height.min(1),
+            ..sidebar
+        },
+    );
     (!header.is_empty()).then_some(header)
 }
 
@@ -1700,17 +2259,32 @@ fn top_activity_layout(area: Rect) -> TopActivityLayout {
     };
     let slots = usize::from(area.width / button_width);
     let needs_overflow = slots < icon_count;
-    let visible = if needs_overflow { slots.saturating_sub(1) } else { icon_count };
+    let visible = if needs_overflow {
+        slots.saturating_sub(1)
+    } else {
+        icon_count
+    };
     let icons_width = visible as u16 * button_width;
-    let overflow_width = if needs_overflow { area.width.min(button_width) } else { 0 };
+    let overflow_width = if needs_overflow {
+        area.width.min(button_width)
+    } else {
+        0
+    };
     let start_x = area.x + (area.width - icons_width - overflow_width) / 2;
     let overflow = (needs_overflow && !area.is_empty())
         .then(|| Rect::new(start_x + icons_width, area.y, overflow_width, 1));
-    TopActivityLayout { visible, start_x, button_width, overflow }
+    TopActivityLayout {
+        visible,
+        start_x,
+        button_width,
+        overflow,
+    }
 }
 
 pub(crate) fn activity_overflow_button(app: &App) -> Option<(Rect, usize)> {
-    if app.activity_bar_position != crate::settings::ActivityBarPosition::Top { return None; }
+    if app.activity_bar_position != crate::settings::ActivityBarPosition::Top {
+        return None;
+    }
     let layout = top_activity_layout(app.activity_bar_area?);
     Some((layout.overflow?, layout.visible))
 }
@@ -1719,27 +2293,53 @@ pub(crate) fn activity_item_regions(
     area: Rect,
     position: crate::settings::ActivityBarPosition,
 ) -> Vec<(Rect, usize)> {
-    if area.is_empty() { return Vec::new(); }
+    if area.is_empty() {
+        return Vec::new();
+    }
     if position == crate::settings::ActivityBarPosition::Top {
-        let TopActivityLayout { visible, start_x, button_width, overflow } = top_activity_layout(area);
+        let TopActivityLayout {
+            visible,
+            start_x,
+            button_width,
+            overflow,
+        } = top_activity_layout(area);
         return (0..visible)
-            .map(|index| (Rect::new(start_x + index as u16 * button_width,
-                area.y, button_width, 1), index))
+            .map(|index| {
+                (
+                    Rect::new(
+                        start_x + index as u16 * button_width,
+                        area.y,
+                        button_width,
+                        1,
+                    ),
+                    index,
+                )
+            })
             .chain(overflow.map(|button| (button, ACTIVITY_OVERFLOW_INDEX)))
             .collect();
     }
     let height = (area.height / (ACTIVITY_SETTINGS_INDEX as u16 + 1)).clamp(1, 3);
     let visible = ACTIVITY_SETTINGS_INDEX.min(usize::from((area.height - height) / height));
-    let mut regions: Vec<_> = (0..visible).map(|index|
-        (Rect::new(area.x, area.y + index as u16 * height, area.width, height), index)).collect();
-    regions.push((Rect::new(area.x, area.bottom() - height, area.width, height), ACTIVITY_SETTINGS_INDEX));
+    let mut regions: Vec<_> = (0..visible)
+        .map(|index| {
+            (
+                Rect::new(area.x, area.y + index as u16 * height, area.width, height),
+                index,
+            )
+        })
+        .collect();
+    regions.push((
+        Rect::new(area.x, area.bottom() - height, area.width, height),
+        ACTIVITY_SETTINGS_INDEX,
+    ));
     regions
 }
 
 pub(crate) fn activity_item_at(app: &App, col: u16, row: u16) -> Option<usize> {
     let point = (col, row).into();
     let area = app.activity_bar_area.filter(|area| area.contains(point))?;
-    activity_item_regions(area, app.activity_bar_position).into_iter()
+    activity_item_regions(area, app.activity_bar_position)
+        .into_iter()
         .find_map(|(item, index)| item.contains(point).then_some(index))
 }
 
@@ -1769,14 +2369,19 @@ impl ActivityBadge {
             Self::Loading => "?".into(),
             Self::Failed => "!".into(),
             Self::Count(count) if width >= 3 && count > 99 => "99+".into(),
-            Self::Count(count) if (width == 1 && count > 9) || (width == 2 && count > 99) => "+".into(),
+            Self::Count(count) if (width == 1 && count > 9) || (width == 2 && count > 99) => {
+                "+".into()
+            }
             Self::Count(count) => count.to_string(),
         }
     }
 
     fn style(app: &App) -> Style {
         let bg = app.colors.ui.bg_activity_badge;
-        let fg = app.colors.ui.readable_foreground(app.colors.ui.fg_activity_badge, bg, 4.5);
+        let fg = app
+            .colors
+            .ui
+            .readable_foreground(app.colors.ui.fg_activity_badge, bg, 4.5);
         Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)
     }
 }
@@ -1793,18 +2398,28 @@ fn draw_top_activity_button(
         Span::raw(crate::helpers::spaces(usize::from(padding))),
         Span::styled(icon, style),
     ];
-    if area.width > 1 && let Some((badge, badge_style)) = badge {
+    if area.width > 1
+        && let Some((badge, badge_style)) = badge
+    {
         spans.push(Span::styled(badge.text(1), badge_style));
     }
-    f.render_widget(Paragraph::new(Line::from(spans)).style(Style::default().bg(style.bg.unwrap_or_default())), area);
+    f.render_widget(
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(style.bg.unwrap_or_default())),
+        area,
+    );
 }
 
 pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
     let bg = app.colors.bg_activitybar;
     let position = app.activity_bar_position;
     let top = position == crate::settings::ActivityBarPosition::Top;
-    let is_active = |index| if index == ACTIVITY_SETTINGS_INDEX { app.settings_editor_active || app.settings_active }
-        else { app.sidebar_is_visible() && app.activity_bar_selected == index };
+    let is_active = |index| {
+        if index == ACTIVITY_SETTINGS_INDEX {
+            app.settings_editor_active || app.settings_active
+        } else {
+            app.sidebar_is_visible() && app.activity_bar_selected == index
+        }
+    };
     f.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
     for (item_area, index) in activity_item_regions(area, position) {
         let active = if index == ACTIVITY_OVERFLOW_INDEX {
@@ -1816,7 +2431,10 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
         let hovered = app.hovered_activity == Some(index)
             && item_area.contains((app.mouse_col, app.mouse_row).into());
         let fill = if active && top {
-            app.colors.ui.bg_activity_active.or(app.colors.ui.toolbar_active)
+            app.colors
+                .ui
+                .bg_activity_active
+                .or(app.colors.ui.toolbar_active)
         } else if active {
             app.colors.ui.bg_activity_active
         } else if top && hovered {
@@ -1825,48 +2443,94 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
             Default::default()
         };
         let cell_bg = fill.over(bg).unwrap_or(bg);
-        let fg = app.colors.ui.readable_foreground(if active || hovered { app.colors.ui.fg_activity }
-            else { app.colors.ui.fg_activity_inactive }, cell_bg, 4.5);
+        let fg = app.colors.ui.readable_foreground(
+            if active || hovered {
+                app.colors.ui.fg_activity
+            } else {
+                app.colors.ui.fg_activity_inactive
+            },
+            cell_bg,
+            4.5,
+        );
         let style = Style::default().fg(fg).bg(cell_bg);
         let badge = ActivityBadge::for_item(app, index);
         if top {
-            let icon_style = if active && cell_bg == bg { style.add_modifier(Modifier::UNDERLINED) } else { style };
-            let icon = TOP_ACTIVITY_ICONS.get(index).copied().unwrap_or(ACTIVITY_OVERFLOW_ICON);
-            draw_top_activity_button(f, item_area, icon, icon_style,
-                badge.map(|badge| (badge, ActivityBadge::style(app))));
+            let icon_style = if active && cell_bg == bg {
+                style.add_modifier(Modifier::UNDERLINED)
+            } else {
+                style
+            };
+            let icon = TOP_ACTIVITY_ICONS
+                .get(index)
+                .copied()
+                .unwrap_or(ACTIVITY_OVERFLOW_ICON);
+            draw_top_activity_button(
+                f,
+                item_area,
+                icon,
+                icon_style,
+                badge.map(|badge| (badge, ActivityBadge::style(app))),
+            );
             continue;
         }
 
         let label = match index {
-            0 => ACTIVITY_LABEL_EXPLORER, 1 => ACTIVITY_LABEL_SEARCH,
-            2 => ACTIVITY_LABEL_SOURCE_CONTROL, 4 => ACTIVITY_LABEL_EXTENSIONS,
+            0 => ACTIVITY_LABEL_EXPLORER,
+            1 => ACTIVITY_LABEL_SEARCH,
+            2 => ACTIVITY_LABEL_SOURCE_CONTROL,
+            4 => ACTIVITY_LABEL_EXTENSIONS,
             3 => ACTIVITY_LABEL_REMOTE,
             ACTIVITY_SETTINGS_INDEX => ACTIVITY_LABEL_SETTINGS,
             _ => continue,
         };
-        f.render_widget(Paragraph::new("").style(Style::default().bg(cell_bg)), item_area);
+        f.render_widget(
+            Paragraph::new("").style(Style::default().bg(cell_bg)),
+            item_area,
+        );
         if active {
-            let border = app.colors.ui.border_activity_active.border(cell_bg).unwrap_or(fg);
+            let border = app
+                .colors
+                .ui
+                .border_activity_active
+                .border(cell_bg)
+                .unwrap_or(fg);
             let border = app.colors.ui.readable_foreground(border, cell_bg, 3.0);
             for y in item_area.y..item_area.bottom() {
-                f.render_widget(Paragraph::new("▎").style(Style::default().fg(border).bg(cell_bg)),
-                    Rect::new(item_area.x, y, 1, 1));
+                f.render_widget(
+                    Paragraph::new("▎").style(Style::default().fg(border).bg(cell_bg)),
+                    Rect::new(item_area.x, y, 1, 1),
+                );
             }
         }
         let content_width = item_area.width.saturating_sub(2);
         let show_badge = badge.is_some() && item_area.height >= 3 && content_width > 0;
         let text_height = item_area.height - u16::from(show_badge);
-        let line_count = label.0.iter().filter(|line| !line.is_empty()).count().min(text_height as usize);
+        let line_count = label
+            .0
+            .iter()
+            .filter(|line| !line.is_empty())
+            .count()
+            .min(text_height as usize);
         let text_y = item_area.y + text_height.saturating_sub(line_count as u16) / 2;
-        for (offset, text) in label.0.iter().filter(|line| !line.is_empty()).take(line_count).enumerate() {
+        for (offset, text) in label
+            .0
+            .iter()
+            .filter(|line| !line.is_empty())
+            .take(line_count)
+            .enumerate()
+        {
             let text_width = UnicodeWidthStr::width(*text) as u16;
             if text_width <= content_width {
                 let text_x = item_area.x + 1 + content_width.saturating_sub(text_width) / 2;
-                f.render_widget(Paragraph::new(*text).style(style),
-                    Rect::new(text_x, text_y + offset as u16, text_width, 1));
+                f.render_widget(
+                    Paragraph::new(*text).style(style),
+                    Rect::new(text_x, text_y + offset as u16, text_width, 1),
+                );
             }
         }
-        if let Some(badge) = badge && item_area.width >= 2 {
+        if let Some(badge) = badge
+            && item_area.width >= 2
+        {
             let (text, x) = if show_badge {
                 let text = badge.text(content_width.min(3));
                 let x = item_area.x + 1 + (content_width - text.len() as u16) / 2;
@@ -1875,7 +2539,10 @@ pub(crate) fn draw_activity_bar(f: &mut Frame, app: &App, area: Rect) {
                 (badge.text(1), item_area.right() - 1)
             };
             let badge_area = Rect::new(x, item_area.bottom() - 1, text.len() as u16, 1);
-            f.render_widget(Paragraph::new(text).style(ActivityBadge::style(app)), badge_area);
+            f.render_widget(
+                Paragraph::new(text).style(ActivityBadge::style(app)),
+                badge_area,
+            );
         }
     }
 }
@@ -1892,7 +2559,8 @@ pub(crate) fn draw_tab_context_menu(f: &mut Frame, app: &mut App) {
         } else {
             app.groups[group].tabs[index].text_color
         };
-        TabTextColor::CHOICES.iter()
+        TabTextColor::CHOICES
+            .iter()
             .map(|(color, label)| {
                 let marker = if *color == current {
                     " ✓ "
@@ -1906,7 +2574,8 @@ pub(crate) fn draw_tab_context_menu(f: &mut Frame, app: &mut App) {
             })
             .collect()
     } else {
-        App::tab_context_items().iter()
+        App::tab_context_items()
+            .iter()
             .map(|(label, command, shortcut)| {
                 DropdownItem::new(label)
                     .shortcut(shortcut)
@@ -1922,7 +2591,6 @@ pub(crate) fn draw_tab_context_menu(f: &mut Frame, app: &mut App) {
         .render_scrolled(f, &mut app.tab_context_scroll);
     app.tab_context_inner = Some(inner);
 }
-
 
 #[cfg(test)]
 #[path = "ui_pane_performance_tests.rs"]
@@ -1941,10 +2609,16 @@ mod tests {
 
         let changes = [30, 32, 90, 92];
         let lines = |modified| {
-            (0..130).map(|line| {
-                let label = if modified && changes.contains(&line) { "changed" } else { "line" };
-                format!("{label} {line} with some context before the end\n")
-            }).collect::<String>()
+            (0..130)
+                .map(|line| {
+                    let label = if modified && changes.contains(&line) {
+                        "changed"
+                    } else {
+                        "line"
+                    };
+                    format!("{label} {line} with some context before the end\n")
+                })
+                .collect::<String>()
         };
         let base = lines(false);
         let target = lines(true);
@@ -1958,7 +2632,9 @@ mod tests {
                 editor.word_wrap = wrapped;
                 editor.word_wrap_column = 32;
                 let mut statuses = vec![' '; editor.line_count()];
-                for line in changes { statuses[line] = 'M'; }
+                for line in changes {
+                    statuses[line] = 'M';
+                }
                 editor.set_git_line_status(statuses);
                 let mut tab = Tab::new_file(editor);
                 if mode != DiffMode::Off {
@@ -1974,38 +2650,61 @@ mod tests {
 
                 let mut terminal = Terminal::new(TestBackend::new(120, 22)).unwrap();
                 let draw = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
-                    terminal.draw(|frame| draw_editor_section(frame, app, frame.area())).unwrap();
+                    terminal
+                        .draw(|frame| draw_editor_section(frame, app, frame.area()))
+                        .unwrap();
                 };
                 let scroll = |app: &App| {
                     let editor = app.editor().unwrap();
-                    if mode != DiffMode::Off { app.diff_inline_scroll.row }
-                    else if wrapped { editor.wrap_scroll_offset }
-                    else { editor.scroll_offset }
+                    if mode != DiffMode::Off {
+                        app.diff_inline_scroll.row
+                    } else if wrapped {
+                        editor.wrap_scroll_offset
+                    } else {
+                        editor.scroll_offset
+                    }
                 };
                 draw(&mut terminal, &mut app);
                 let previous = app.diff_nav_prev_area.expect("previous change button");
                 let next = app.diff_nav_next_area.expect("next change button");
                 for (button, line, center) in [
-                    (next, 30, true), (next, 32, false), (next, 90, true), (next, 92, false),
-                    (previous, 90, false), (previous, 32, true), (previous, 30, false),
+                    (next, 30, true),
+                    (next, 32, false),
+                    (next, 90, true),
+                    (next, 92, false),
+                    (previous, 90, false),
+                    (previous, 32, true),
+                    (previous, 30, false),
                 ] {
                     let before = scroll(&app);
-                    crate::mouse::handle_mouse(&mut app, MouseEvent {
-                        kind: MouseEventKind::Down(MouseButton::Left),
-                        column: button.x + 1,
-                        row: button.y,
-                        modifiers: KeyModifiers::NONE,
-                    });
+                    crate::mouse::handle_mouse(
+                        &mut app,
+                        MouseEvent {
+                            kind: MouseEventKind::Down(MouseButton::Left),
+                            column: button.x + 1,
+                            row: button.y,
+                            modifiers: KeyModifiers::NONE,
+                        },
+                    );
                     draw(&mut terminal, &mut app);
                     assert_eq!(app.editor().unwrap().cursor_line, line);
                     if center {
                         let code = app.code_area.unwrap();
                         let y = code.y + code.height / 2;
                         let buffer = terminal.backend().buffer();
-                        let middle: String = (code.x..code.right()).map(|x| buffer[(x, y)].symbol()).collect();
-                        assert!(middle.contains(&format!("changed {line}")), "wrapped={wrapped}, middle row={middle:?}");
+                        let middle: String = (code.x..code.right())
+                            .map(|x| buffer[(x, y)].symbol())
+                            .collect();
+                        assert!(
+                            middle.contains(&format!("changed {line}")),
+                            "wrapped={wrapped}, middle row={middle:?}"
+                        );
                     } else {
-                        assert_eq!(scroll(&app), before, "visible change at line {line} shifted the viewport");
+                        assert_eq!(
+                            scroll(&app),
+                            before,
+                            "visible change at line {line} shifted the viewport"
+                        );
                     }
                 }
             }
@@ -2071,7 +2770,11 @@ mod tests {
                         .cell((next.x + 1, next.y))
                         .unwrap()
                         .bg,
-                    app.colors.ui.toolbar_hover.over(app.colors.ui.bg_breadcrumb).unwrap_or(app.colors.ui.bg_breadcrumb)
+                    app.colors
+                        .ui
+                        .toolbar_hover
+                        .over(app.colors.ui.bg_breadcrumb)
+                        .unwrap_or(app.colors.ui.bg_breadcrumb)
                 );
                 let click = |app: &mut App, area: Rect| {
                     crate::mouse::handle_mouse(
@@ -2108,7 +2811,12 @@ mod tests {
                         .unwrap();
                     let button_text: String = (toggle.x..toggle.right())
                         .map(|x| {
-                            terminal.backend().buffer().cell((x, toggle.y)).unwrap().symbol()
+                            terminal
+                                .backend()
+                                .buffer()
+                                .cell((x, toggle.y))
+                                .unwrap()
+                                .symbol()
                         })
                         .collect();
                     assert_eq!(
@@ -2120,8 +2828,17 @@ mod tests {
                         }
                     );
                     assert_eq!(
-                        terminal.backend().buffer().cell((toggle.x, toggle.y)).unwrap().bg,
-                        app.colors.ui.toolbar_hover.over(app.colors.ui.bg_breadcrumb).unwrap_or(app.colors.ui.bg_breadcrumb)
+                        terminal
+                            .backend()
+                            .buffer()
+                            .cell((toggle.x, toggle.y))
+                            .unwrap()
+                            .bg,
+                        app.colors
+                            .ui
+                            .toolbar_hover
+                            .over(app.colors.ui.bg_breadcrumb)
+                            .unwrap_or(app.colors.ui.bg_breadcrumb)
                     );
 
                     click(&mut app, toggle);
@@ -2164,12 +2881,14 @@ mod tests {
 
     fn test_colors() -> crate::app_theme::ThemeColors {
         let mut theme = crate::ui_control_visibility_tests::theme_with_popup_and_control_roles();
-        for (key, value) in [("sideBar.foreground", "#bbccdd"),
+        for (key, value) in [
+            ("sideBar.foreground", "#bbccdd"),
             ("gitDecoration.modifiedResourceForeground", "#ffee99"),
             ("gitDecoration.addedResourceForeground", "#bbff99"),
             ("gitDecoration.untrackedResourceForeground", "#bbddff"),
             ("gitDecoration.deletedResourceForeground", "#ffbbdd"),
-            ("gitDecoration.ignoredResourceForeground", "#c0ccde")] {
+            ("gitDecoration.ignoredResourceForeground", "#c0ccde"),
+        ] {
             theme.workbench_colors.insert(key.into(), value.into());
         }
         theme.to_theme_colors()
@@ -2234,19 +2953,27 @@ mod tests {
     fn status_badges_distinguish_every_git_state() {
         let colors = test_colors();
         assert_eq!(
-            git_status_badge(GitStatus::Modified, &colors, colors.bg_sidebar).unwrap().0,
+            git_status_badge(GitStatus::Modified, &colors, colors.bg_sidebar)
+                .unwrap()
+                .0,
             "M"
         );
         assert_eq!(
-            git_status_badge(GitStatus::Added, &colors, colors.bg_sidebar).unwrap().0,
+            git_status_badge(GitStatus::Added, &colors, colors.bg_sidebar)
+                .unwrap()
+                .0,
             "A"
         );
         assert_eq!(
-            git_status_badge(GitStatus::Untracked, &colors, colors.bg_sidebar).unwrap().0,
+            git_status_badge(GitStatus::Untracked, &colors, colors.bg_sidebar)
+                .unwrap()
+                .0,
             "U"
         );
         assert_eq!(
-            git_status_badge(GitStatus::Deleted, &colors, colors.bg_sidebar).unwrap().0,
+            git_status_badge(GitStatus::Deleted, &colors, colors.bg_sidebar)
+                .unwrap()
+                .0,
             "D"
         );
         assert!(git_status_badge(GitStatus::Unmodified, &colors, colors.bg_sidebar).is_none());
@@ -2265,46 +2992,77 @@ mod tests {
                 app.explorer_multi_selected.clear();
                 app.explorer_selection_anchor = None;
                 let root = app.explorer.root.clone();
-                app.explorer.entries = (0..14).map(|i| {
-                    let (path, name, depth, is_dir) = match i {
-                        0 => (root.join("src"), "src".to_string(), 0, true),
-                        1 => (root.join("src/nested"), "nested".to_string(), 1, true),
-                        _ => (root.join(format!("src/nested/file{i}.rs")), format!("file{i}.rs"), 2, false),
-                    };
-                    crate::explorer::FileEntry {
-                        path, name, depth, is_dir, expanded: is_dir,
-                        git_status: GitStatus::Unmodified,
-                        git_status_summary: GitStatusSummary::default(),
-                    }
-                }).collect();
+                app.explorer.entries = (0..14)
+                    .map(|i| {
+                        let (path, name, depth, is_dir) = match i {
+                            0 => (root.join("src"), "src".to_string(), 0, true),
+                            1 => (root.join("src/nested"), "nested".to_string(), 1, true),
+                            _ => (
+                                root.join(format!("src/nested/file{i}.rs")),
+                                format!("file{i}.rs"),
+                                2,
+                                false,
+                            ),
+                        };
+                        crate::explorer::FileEntry {
+                            path,
+                            name,
+                            depth,
+                            is_dir,
+                            expanded: is_dir,
+                            git_status: GitStatus::Unmodified,
+                            git_status_summary: GitStatusSummary::default(),
+                        }
+                    })
+                    .collect();
                 app.explorer.scroll_offset = 4;
                 let area = Rect::new(0, 0, 32, 10);
                 app.explorer_area = Some(area);
                 let mut terminal = Terminal::new(TestBackend::new(32, 10)).unwrap();
-                terminal.draw(|frame| draw_explorer(frame, &mut app, area)).unwrap();
+                terminal
+                    .draw(|frame| draw_explorer(frame, &mut app, area))
+                    .unwrap();
                 let tree_y = area.height - app.explorer.visible_height as u16;
                 let buffer = terminal.backend().buffer();
-                let row_text = |y| (0..32).map(|x| buffer.cell((x, y)).unwrap().symbol()).collect::<String>();
+                let row_text = |y| {
+                    (0..32)
+                        .map(|x| buffer.cell((x, y)).unwrap().symbol())
+                        .collect::<String>()
+                };
                 assert!(row_text(tree_y).contains("src"));
                 assert!(row_text(tree_y + 1).contains("nested"));
                 assert!(row_text(tree_y + 2).contains("file6.rs"));
                 assert_eq!(buffer.cell((10, tree_y)).unwrap().bg, app.colors.bg_sidebar);
 
                 let event = |kind, row| MouseEvent {
-                    kind, column: 10, row, modifiers: KeyModifiers::NONE,
+                    kind,
+                    column: 10,
+                    row,
+                    modifiers: KeyModifiers::NONE,
                 };
                 crate::mouse::handle_mouse(&mut app, event(MouseEventKind::Moved, tree_y + 1));
                 assert_eq!(app.hovered_explorer, Some(1));
-                crate::mouse::handle_mouse(&mut app, event(MouseEventKind::Down(MouseButton::Right), tree_y));
+                crate::mouse::handle_mouse(
+                    &mut app,
+                    event(MouseEventKind::Down(MouseButton::Right), tree_y),
+                );
                 assert_eq!(app.explorer_context_target, Some(root.join("src")));
                 app.explorer_context_active = false;
                 app.dragging_explorer_path = Some(root.join("src/nested/file6.rs"));
                 crate::mouse_drag::handle_left_drag(
-                    &mut app, 10, tree_y + 1, 10, tree_y + 2, KeyModifiers::NONE,
+                    &mut app,
+                    10,
+                    tree_y + 1,
+                    10,
+                    tree_y + 2,
+                    KeyModifiers::NONE,
                 );
                 assert_eq!(app.explorer_drop_target_idx, Some(1));
                 app.dragging_explorer_path = None;
-                crate::mouse::handle_mouse(&mut app, event(MouseEventKind::Down(MouseButton::Left), tree_y + 1));
+                crate::mouse::handle_mouse(
+                    &mut app,
+                    event(MouseEventKind::Down(MouseButton::Left), tree_y + 1),
+                );
                 assert_eq!(app.explorer.selected, 1);
                 assert!(!app.explorer.entries[1].expanded);
             }
@@ -2326,7 +3084,11 @@ mod tests {
         }];
         app.explorer.apply_git_status_changes(
             None,
-            [("src/changed.rs", 'M'), ("src/new.rs", 'A'), ("src/old.rs", 'D')],
+            [
+                ("src/changed.rs", 'M'),
+                ("src/new.rs", 'A'),
+                ("src/old.rs", 'D'),
+            ],
         );
         app.set_explorer_single_selection(0);
 
@@ -2368,13 +3130,19 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect();
         assert!(row.ends_with(" × "), "menu row: {row:?}");
-        assert!(!row.contains('─') && !row.contains('□'), "menu row: {row:?}");
-        assert!(row.contains('…'), "hidden menus expose an overflow affordance");
+        assert!(
+            !row.contains('─') && !row.contains('□'),
+            "menu row: {row:?}"
+        );
+        assert!(
+            row.contains('…'),
+            "hidden menus expose an overflow affordance"
+        );
         assert!(row.contains('◇'), "compact chat button stays accessible");
 
         for compact_width in [12, 8, 2] {
-            let mut compact = Terminal::new(TestBackend::new(compact_width, 1))
-                .expect("compact terminal");
+            let mut compact =
+                Terminal::new(TestBackend::new(compact_width, 1)).expect("compact terminal");
             compact
                 .draw(|frame| {
                     draw_menu_bar(frame, &app, Rect::new(0, 0, compact_width, 1));
@@ -2391,8 +3159,14 @@ mod tests {
                 .filter_map(|x| compact.backend().buffer().cell((x, 0)))
                 .map(|cell| cell.symbol())
                 .collect();
-            assert!(compact_row.contains('×'), "compact menu row: {compact_row:?}");
-            assert!(!compact_row.contains('─') && !compact_row.contains('□'), "compact menu row: {compact_row:?}");
+            assert!(
+                compact_row.contains('×'),
+                "compact menu row: {compact_row:?}"
+            );
+            assert!(
+                !compact_row.contains('─') && !compact_row.contains('□'),
+                "compact menu row: {compact_row:?}"
+            );
         }
     }
 
@@ -2418,7 +3192,10 @@ mod tests {
         assert!(row(0).starts_with('▎'));
         assert!(row(0).contains("EXPL"));
         assert!(row(1).contains("ORER"));
-        assert!(row(3).starts_with(' '), "inactive items have no active marker");
+        assert!(
+            row(3).starts_with(' '),
+            "inactive items have no active marker"
+        );
         assert!(row(3).contains("SEAR"));
         assert!(row(4).contains("CH"));
         assert!(row(6).contains("SRC"));
@@ -2429,7 +3206,10 @@ mod tests {
         assert!((15..18).all(|y| row(y).trim().is_empty()));
         assert!((0..18).all(|y| !row(y).contains("RUN")));
         assert!(row(18).contains("SETT"));
-        assert!(row(19).contains("INGS"), "settings action stays at the bottom");
+        assert!(
+            row(19).contains("INGS"),
+            "settings action stays at the bottom"
+        );
     }
 
     #[test]
@@ -2461,33 +3241,64 @@ mod tests {
         let selected = Color::Rgb(52, 58, 68);
         app.colors.ui.bg_activity_active = crate::theme_workbench::ColorLayer::opaque(selected);
         for (width, visible, button_width) in [
-            (1, 0, 1), (2, 0, 2), (5, 0, 3), (6, 1, 3), (12, 3, 3), (17, 4, 3),
-            (18, 6, 3), (23, 6, 3), (24, 6, 4), (25, 6, 4), (42, 6, 4), (80, 6, 4),
+            (1, 0, 1),
+            (2, 0, 2),
+            (5, 0, 3),
+            (6, 1, 3),
+            (12, 3, 3),
+            (17, 4, 3),
+            (18, 6, 3),
+            (23, 6, 3),
+            (24, 6, 4),
+            (25, 6, 4),
+            (42, 6, 4),
+            (80, 6, 4),
         ] {
             let area = Rect::new(0, 0, width, 1);
             let buttons = activity_item_regions(area, app.activity_bar_position);
             let expected_indexes: Vec<_> = (0..visible)
                 .chain((visible < TOP_ACTIVITY_ICONS.len()).then_some(ACTIVITY_OVERFLOW_INDEX))
                 .collect();
-            assert_eq!(buttons.iter().map(|&(_, index)| index).collect::<Vec<_>>(), expected_indexes);
+            assert_eq!(
+                buttons.iter().map(|&(_, index)| index).collect::<Vec<_>>(),
+                expected_indexes
+            );
             let left_padding = buttons.first().unwrap().0.x - area.x;
             let right_padding = area.right() - buttons.last().unwrap().0.right();
             assert!(left_padding.abs_diff(right_padding) <= 1, "width {width}");
-            assert!(buttons.windows(2).all(|pair| pair[0].0.right() == pair[1].0.x));
+            assert!(
+                buttons
+                    .windows(2)
+                    .all(|pair| pair[0].0.right() == pair[1].0.x)
+            );
             let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
-            for (state, badge) in [(State::Loading, "?"), (State::Failed, "!"), (State::Available, "")] {
+            for (state, badge) in [
+                (State::Loading, "?"),
+                (State::Failed, "!"),
+                (State::Available, ""),
+            ] {
                 app.source_control_repository_state = state;
-                terminal.draw(|frame| draw_activity_bar(frame, &app, area)).unwrap();
+                terminal
+                    .draw(|frame| draw_activity_bar(frame, &app, area))
+                    .unwrap();
                 let buffer = terminal.backend().buffer();
                 for &(button, index) in &buttons {
                     assert_eq!(button.width, button_width);
-                    let icon = TOP_ACTIVITY_ICONS.get(index).copied().unwrap_or(ACTIVITY_OVERFLOW_ICON);
+                    let icon = TOP_ACTIVITY_ICONS
+                        .get(index)
+                        .copied()
+                        .unwrap_or(ACTIVITY_OVERFLOW_ICON);
                     assert_eq!(icon.width(), 1);
                     let icon_x = button.x + (button.width - 1) / 2;
                     assert_eq!(buffer[(icon_x, button.y)].symbol(), icon);
                     let text: String = (button.x..button.right())
-                        .map(|x| buffer[(x, button.y)].symbol()).collect();
-                    let suffix = if index == 2 && button.width > 1 { badge } else { "" };
+                        .map(|x| buffer[(x, button.y)].symbol())
+                        .collect();
+                    let suffix = if index == 2 && button.width > 1 {
+                        badge
+                    } else {
+                        ""
+                    };
                     assert_eq!(text.trim(), format!("{icon}{suffix}"));
                     if index == 0 || visible == 0 {
                         for x in button.x..button.right() {
@@ -2509,7 +3320,12 @@ mod tests {
             ACTIVITY_LABEL_REMOTE,
             ACTIVITY_LABEL_SETTINGS,
         ] {
-            assert!(label.0.iter().all(|line| UnicodeWidthStr::width(*line) <= 4));
+            assert!(
+                label
+                    .0
+                    .iter()
+                    .all(|line| UnicodeWidthStr::width(*line) <= 4)
+            );
         }
     }
 
@@ -2543,16 +3359,22 @@ mod tests {
         let workspace_chars: Vec<char> = workspace_name.chars().collect();
         let command_x = (0..140u16.saturating_sub(workspace_chars.len() as u16))
             .find(|&start| {
-                workspace_chars.iter().enumerate().all(|(offset, expected)| {
-                    buffer
-                        .cell((start + offset as u16, 0))
-                        .is_some_and(|cell| cell.symbol() == expected.to_string())
-                })
+                workspace_chars
+                    .iter()
+                    .enumerate()
+                    .all(|(offset, expected)| {
+                        buffer
+                            .cell((start + offset as u16, 0))
+                            .is_some_and(|cell| cell.symbol() == expected.to_string())
+                    })
             })
             .expect("workspace in command center");
         assert_eq!(
             buffer.cell((command_x, 0)).map(|cell| cell.bg),
-            app.colors.ui.command_center_style(app.colors.ui.bg_title, true, false).bg
+            app.colors
+                .ui
+                .command_center_style(app.colors.ui.bg_title, true, false)
+                .bg
         );
     }
 

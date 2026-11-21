@@ -17,7 +17,12 @@ pub(crate) fn anchor_insertions<'a>(
     let mut aligned = Vec::with_capacity(ops.len());
     let mut remaining = ops.iter().copied().peekable();
     while let Some(op) = remaining.next() {
-        let DiffOp::Insert { old_index, new_index, new_len } = op else {
+        let DiffOp::Insert {
+            old_index,
+            new_index,
+            new_len,
+        } = op
+        else {
             aligned.push(op);
             continue;
         };
@@ -60,8 +65,12 @@ pub(crate) fn anchor_insertions<'a>(
         while run.end <= preferred[preferred.len() - 1] && same_line(added.start, run.end)? {
             run.end += 1;
         }
-        let mut rows: Vec<_> = preferred.iter().copied().filter(|row| run.contains(row))
-            .take(new_len).collect();
+        let mut rows: Vec<_> = preferred
+            .iter()
+            .copied()
+            .filter(|row| run.contains(row))
+            .take(new_len)
+            .collect();
         if rows.iter().all(|row| added.contains(row)) {
             aligned.push(op);
             continue;
@@ -70,33 +79,53 @@ pub(crate) fn anchor_insertions<'a>(
         // large. Default to the first unclaimed rows of the original op.
         let mut default_end = added.start + new_len - rows.len();
         for &row in &rows {
-            if (added.start..default_end).contains(&row) { default_end += 1; }
+            if (added.start..default_end).contains(&row) {
+                default_end += 1;
+            }
         }
         let defaults = added.start..default_end;
         rows.retain(|row| !defaults.contains(row));
-        let mut ranges: Vec<_> = rows.chunk_by(|a, b| *a + 1 == *b)
-            .map(|group| group[0]..group[group.len() - 1] + 1).collect();
+        let mut ranges: Vec<_> = rows
+            .chunk_by(|a, b| *a + 1 == *b)
+            .map(|group| group[0]..group[group.len() - 1] + 1)
+            .collect();
         if !defaults.is_empty() {
             let index = ranges.partition_point(|range| range.start < defaults.start);
             ranges.insert(index, defaults);
         }
 
-        if left != 0 { aligned.pop(); }
-        if right != 0 { remaining.next(); }
+        if left != 0 {
+            aligned.pop();
+        }
+        if right != 0 {
+            remaining.next();
+        }
         let mut old = old_start;
         let mut new = start;
         for range in ranges {
             let len = range.start - new;
             if len != 0 {
-                aligned.push(DiffOp::Equal { old_index: old, new_index: new, len });
+                aligned.push(DiffOp::Equal {
+                    old_index: old,
+                    new_index: new,
+                    len,
+                });
                 old += len;
                 new += len;
             }
-            aligned.push(DiffOp::Insert { old_index: old, new_index: new, new_len: range.len() });
+            aligned.push(DiffOp::Insert {
+                old_index: old,
+                new_index: new,
+                new_len: range.len(),
+            });
             new = range.end;
         }
         if new < end {
-            aligned.push(DiffOp::Equal { old_index: old, new_index: new, len: end - new });
+            aligned.push(DiffOp::Equal {
+                old_index: old,
+                new_index: new,
+                len: end - new,
+            });
         }
     }
     Some(Cow::Owned(aligned))

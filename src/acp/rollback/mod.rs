@@ -137,7 +137,9 @@ impl Summary {
             #[cfg(windows)]
             Err(_) if !self.root.as_os_str().as_encoded_bytes().contains(&0) => {
                 ordinary = crate::acp::files::agent_path(path);
-                ordinary.strip_prefix(crate::acp::files::agent_path(&self.root)).ok()?
+                ordinary
+                    .strip_prefix(crate::acp::files::agent_path(&self.root))
+                    .ok()?
             }
             Err(_) => return None,
         };
@@ -698,7 +700,9 @@ impl Journal {
                 } else {
                     storage::capture_path(&self.root, path)?
                 };
-                let Some(actual) = actual else { continue; };
+                let Some(actual) = actual else {
+                    continue;
+                };
                 if let Some(state) = storage::capture_with_repo(repo, &actual)? {
                     files.insert(path.clone(), state);
                 }
@@ -1476,9 +1480,11 @@ impl Journal {
             }
             if item.before.is_some() {
                 let path = storage::checked_path(&self.root, &item.path)?;
-                let identity = storage::backup_identity(&path)?
-                    .ok_or_else(|| format!("{} disappeared during rollback", item.path.display()))?;
-                let backup = storage::fresh_backup_path(path.parent().unwrap(), ".vtcode-rollback-")?;
+                let identity = storage::backup_identity(&path)?.ok_or_else(|| {
+                    format!("{} disappeared during rollback", item.path.display())
+                })?;
+                let backup =
+                    storage::fresh_backup_path(path.parent().unwrap(), ".vtcode-rollback-")?;
                 let relative = backup.strip_prefix(&self.root).map_err(|e| e.to_string())?;
                 if !slots.insert(relative.to_path_buf()) {
                     return Err("Rollback backup name overlaps another transaction path".into());
@@ -1515,7 +1521,10 @@ impl Journal {
             if let Some(expected) = &item.backup_identity
                 && storage::backup_identity(&path)?.as_ref() != Some(expected)
             {
-                return Err(format!("{} was replaced during rollback", item.path.display()));
+                return Err(format!(
+                    "{} was replaced during rollback",
+                    item.path.display()
+                ));
             }
             storage::displace_to_backup(&path, &backup)?;
             if storage::capture(&self.repository, &backup)? != item.before
@@ -1659,7 +1668,10 @@ impl Journal {
             }
             if expected.is_some() {
                 // Retain any intervening file as well, until manually inspected.
-                let saved = storage::fresh_backup_path(path.parent().unwrap(), ".vtcode-rollback-recovery-")?;
+                let saved = storage::fresh_backup_path(
+                    path.parent().unwrap(),
+                    ".vtcode-rollback-recovery-",
+                )?;
                 storage::displace_to_backup(&path, &saved)?;
                 if storage::capture(&self.repository, &saved)? != expected {
                     return Err(format!(

@@ -1,7 +1,7 @@
 use crate::app::{App, fuzzy_match};
-use std::path::PathBuf;
 #[cfg(test)]
 use crate::source_symbols::source_symbol;
+use std::path::PathBuf;
 
 #[cfg(test)]
 #[path = "source_symbol_performance_tests.rs"]
@@ -164,8 +164,17 @@ impl QuickOpenIndex {
         watched: bool,
         cancel: &crate::background::CancellationToken,
     ) -> Option<std::sync::Arc<Vec<QuickOpenEntry>>> {
-        self.files_with_remote(root, generation, watched, cancel, None,
-            &crate::settings::default_files_exclude().into_iter().chain(crate::settings::default_search_exclude()).collect())
+        self.files_with_remote(
+            root,
+            generation,
+            watched,
+            cancel,
+            None,
+            &crate::settings::default_files_exclude()
+                .into_iter()
+                .chain(crate::settings::default_search_exclude())
+                .collect(),
+        )
     }
     fn files_with_remote(
         &self,
@@ -833,44 +842,42 @@ impl<'a> SnapshotReplacer<'a> {
                 // Search results can outlive a disk change or buffer edit. The
                 // engine that produced workspace matches must still match exactly
                 // this range before template/capture fallback rules may run.
-                let (validation, validation_start, validation_end) = if options.selection.is_some()
-                    && regex.needs_document
-                {
-                    let full = validation_document.get_or_init(|| {
-                        SearchText::from_rope(source.slice(..), true)
-                    });
-                    (
-                        full,
-                        full.normalized_offset(source_start_byte),
-                        full.normalized_offset(source_end_byte),
-                    )
-                } else if options.selection.is_some()
-                    && (bounds.0 > line_start
-                        || bounds.1 < line_start + source.line(row).len_chars())
-                {
-                    // A zero-width match at the selection edge can depend on
-                    // lookaround outside that selection. Validate against the
-                    // same full line the workspace scanner saw, while keeping
-                    // the established template preview context below intact.
-                    if validation_row != Some(row) {
-                        let line = source.line(row);
-                        let mut end = line.len_chars();
-                        while end > 0 && matches!(line.char(end - 1), '\r' | '\n') {
-                            end -= 1;
+                let (validation, validation_start, validation_end) =
+                    if options.selection.is_some() && regex.needs_document {
+                        let full = validation_document
+                            .get_or_init(|| SearchText::from_rope(source.slice(..), true));
+                        (
+                            full,
+                            full.normalized_offset(source_start_byte),
+                            full.normalized_offset(source_end_byte),
+                        )
+                    } else if options.selection.is_some()
+                        && (bounds.0 > line_start
+                            || bounds.1 < line_start + source.line(row).len_chars())
+                    {
+                        // A zero-width match at the selection edge can depend on
+                        // lookaround outside that selection. Validate against the
+                        // same full line the workspace scanner saw, while keeping
+                        // the established template preview context below intact.
+                        if validation_row != Some(row) {
+                            let line = source.line(row);
+                            let mut end = line.len_chars();
+                            while end > 0 && matches!(line.char(end - 1), '\r' | '\n') {
+                                end -= 1;
+                            }
+                            validation_line = Some(SearchText::from_rope(line.slice(..end), true));
+                            validation_row = Some(row);
                         }
-                        validation_line = Some(SearchText::from_rope(line.slice(..end), true));
-                        validation_row = Some(row);
-                    }
-                    let full = validation_line.as_ref().unwrap();
-                    let offset = source.char_to_byte(line_start);
-                    (
-                        full,
-                        full.normalized_offset(source_start_byte - offset),
-                        full.normalized_offset(source_end_byte - offset),
-                    )
-                } else {
-                    (input, start_byte, end_byte)
-                };
+                        let full = validation_line.as_ref().unwrap();
+                        let offset = source.char_to_byte(line_start);
+                        (
+                            full,
+                            full.normalized_offset(source_start_byte - offset),
+                            full.normalized_offset(source_end_byte - offset),
+                        )
+                    } else {
+                        (input, start_byte, end_byte)
+                    };
                 if regex.find_at(&validation.text, validation_start)
                     != Some(validation_start..validation_end)
                 {
@@ -901,7 +908,13 @@ impl<'a> SnapshotReplacer<'a> {
                         // Match.replaceString tries the match text first, then its preview
                         // context, and finally falls back to the parsed static template.
                         let matched = SearchText::from_rope(source.slice(start..end), true);
-                        pattern.expand_match(regex, &matched.text, &input.text, start_byte, options.preserve)
+                        pattern.expand_match(
+                            regex,
+                            &matched.text,
+                            &input.text,
+                            start_byte,
+                            options.preserve,
+                        )
                     }
                 }
             } else {
@@ -987,14 +1000,16 @@ fn apply_open_replace_result<'a>(
             continue;
         }
         let request = if save && editor.modified {
-            editor.background_save_request(false, false, false).map(|mut request| {
-                // Save the replacement bytes as prepared, including mixed
-                // newlines and whitespace outside the replaced ranges.
-                request.line_ending = "LF";
-                request.trim_trailing = false;
-                request.insert_final_newline = false;
-                request
-            })
+            editor
+                .background_save_request(false, false, false)
+                .map(|mut request| {
+                    // Save the replacement bytes as prepared, including mixed
+                    // newlines and whitespace outside the replaced ranges.
+                    request.line_ending = "LF";
+                    request.trim_trailing = false;
+                    request.insert_final_newline = false;
+                    request
+                })
         } else {
             None
         };
@@ -1329,7 +1344,10 @@ impl App {
         }
         self.adjust_search_selection_after_replace(&before, prepared.rope());
         self.last_edit_time = std::time::Instant::now();
-        self.notify(format!("Replaced {}", crate::helpers::counted(replacements, "occurrence", "occurrences")));
+        self.notify(format!(
+            "Replaced {}",
+            crate::helpers::counted(replacements, "occurrence", "occurrences")
+        ));
         self.update_search();
     }
 
@@ -1436,7 +1454,9 @@ impl App {
     }
 
     pub(crate) fn replace_global_search_result(&mut self, index: usize, revision: u64) {
-        if revision != self.global_search_results.revision() || !self.can_replace_global_search_result(index) {
+        if revision != self.global_search_results.revision()
+            || !self.can_replace_global_search_result(index)
+        {
             return;
         }
         self.global_search_selected = index;
@@ -1465,7 +1485,9 @@ impl App {
             PathBuf,
             (Vec<(usize, usize, usize)>, Option<Snapshot>),
         > = rustc_hash::FxHashMap::default();
-        let range = selected.map_or(0..self.global_search_results.len(), |index| index..index + 1);
+        let range = selected.map_or(0..self.global_search_results.len(), |index| {
+            index..index + 1
+        });
         for found in &self.global_search_results[range] {
             by_file.entry(found.file_path.clone()).or_default().0.push((
                 found.line_num,
@@ -1484,7 +1506,12 @@ impl App {
             if tab.kind != crate::app::TabKind::File {
                 continue;
             }
-            let Some((_, snapshot)) = tab.editor.file_path.as_ref().and_then(|path| by_file.get_mut(path)) else {
+            let Some((_, snapshot)) = tab
+                .editor
+                .file_path
+                .as_ref()
+                .and_then(|path| by_file.get_mut(path))
+            else {
                 continue;
             };
             if snapshot.is_some() {
@@ -1519,8 +1546,8 @@ impl App {
         self.global_replace_generation = self.global_replace_generation.wrapping_add(1);
         self.bg_global_replace_running = true;
         self.workspace_replace = Default::default();
-        self.workspace_replace.selection = selected.map(|index|
-            (self.search_generation, index, self.global_search_scroll));
+        self.workspace_replace.selection =
+            selected.map(|index| (self.search_generation, index, self.global_search_scroll));
         self.status_message = format!("Replacing matches in {} files...", targets.len());
         let job = Job {
             workspace_generation: self.workspace_generation,
@@ -1555,13 +1582,25 @@ impl App {
     }
 
     pub(crate) fn start_ready_workspace_replace(&mut self) {
-        let Some((_, waiting)) = &self.workspace_replace.waiting_for_files else { return };
+        let Some((_, waiting)) = &self.workspace_replace.waiting_for_files else {
+            return;
+        };
         let is_waiting = |tab: &crate::app::Tab| {
             tab.kind == crate::app::TabKind::File
                 && tab.editor.bg_loading
-                && tab.editor.file_path.as_ref().and_then(|path| waiting.get(path)) == Some(&tab.editor.save_identity)
+                && tab
+                    .editor
+                    .file_path
+                    .as_ref()
+                    .and_then(|path| waiting.get(path))
+                    == Some(&tab.editor.save_identity)
         };
-        if self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs)).any(is_waiting) {
+        if self
+            .tabs
+            .iter()
+            .chain(self.groups.iter().flat_map(|group| &group.tabs))
+            .any(is_waiting)
+        {
             return;
         }
         let (mut job, waiting) = self.workspace_replace.waiting_for_files.take().unwrap();
@@ -1611,7 +1650,10 @@ impl App {
         let mut changed = false;
         self.workspace_replace.open.failures += failures;
         for result in open_files {
-            let tabs = self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs));
+            let tabs = self
+                .tabs
+                .iter_mut()
+                .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs));
             if let OpenReplacement::Applied(save) = apply_open_replace_result(tabs, &result) {
                 self.workspace_replace.open.replacements += result.replacements;
                 self.workspace_replace.open.files_changed += 1;
@@ -1621,7 +1663,10 @@ impl App {
                     if self.queue_background_save_job(request) {
                         self.workspace_replace.pending_saves.insert(path);
                     } else {
-                        self.notify_warn(format!("Could not automatically save replacements in {}", self.display_path(&path)));
+                        self.notify_warn(format!(
+                            "Could not automatically save replacements in {}",
+                            self.display_path(&path)
+                        ));
                     }
                 }
             } else {
@@ -1651,7 +1696,11 @@ impl App {
         {
             return false;
         }
-        self.workspace_replace.completion = Some(crate::workspace_replace::Completion { outcome, candidates, error });
+        self.workspace_replace.completion = Some(crate::workspace_replace::Completion {
+            outcome,
+            candidates,
+            error,
+        });
         if !self.complete_workspace_replace() {
             self.status_message = "Saving workspace replacements...".into();
         }
@@ -1673,8 +1722,11 @@ impl App {
         if !self.workspace_replace.pending_saves.is_empty() {
             return false;
         }
-        let Some(crate::workspace_replace::Completion { mut outcome, candidates, error }) =
-            self.workspace_replace.completion.take()
+        let Some(crate::workspace_replace::Completion {
+            mut outcome,
+            candidates,
+            error,
+        }) = self.workspace_replace.completion.take()
         else {
             return false;
         };
@@ -1694,10 +1746,15 @@ impl App {
         } else if outcome.cancelled {
             self.notify(format!(
                 "Stopped replacement after {} in {}",
-                crate::helpers::counted(count, "occurrence", "occurrences"), crate::helpers::counted(files, "file", "files")
+                crate::helpers::counted(count, "occurrence", "occurrences"),
+                crate::helpers::counted(files, "file", "files")
             ));
         } else {
-            self.notify(format!("Replaced {} in {}", crate::helpers::counted(count, "occurrence", "occurrences"), crate::helpers::counted(files, "file", "files")));
+            self.notify(format!(
+                "Replaced {} in {}",
+                crate::helpers::counted(count, "occurrence", "occurrences"),
+                crate::helpers::counted(files, "file", "files")
+            ));
         }
         if outcome.failures > 0 {
             self.notify_warn(format!(
@@ -1726,19 +1783,28 @@ impl App {
             self.refresh_explorer_async();
             self.refresh_source_control_async();
         }
-        let selection = self.workspace_replace.selection.take()
+        let selection = self
+            .workspace_replace
+            .selection
+            .take()
             .filter(|(generation, _, _)| *generation == self.search_generation);
         self.global_search_results.clear();
         self.update_global_search();
-        self.workspace_replace.selection = selection.map(|(_, index, scroll)|
-            (self.search_generation, index, scroll));
-        if !self.bg_global_search_running { self.restore_workspace_replace_selection(); }
+        self.workspace_replace.selection =
+            selection.map(|(_, index, scroll)| (self.search_generation, index, scroll));
+        if !self.bg_global_search_running {
+            self.restore_workspace_replace_selection();
+        }
         true
     }
 
     pub(crate) fn restore_workspace_replace_selection(&mut self) {
-        let Some((generation, index, scroll)) = self.workspace_replace.selection.take() else { return; };
-        if generation != self.search_generation { return; }
+        let Some((generation, index, scroll)) = self.workspace_replace.selection.take() else {
+            return;
+        };
+        if generation != self.search_generation {
+            return;
+        }
         self.global_search_selected = index.min(self.global_search_results.len().saturating_sub(1));
         self.global_search_selected_header = None;
         self.global_search_scroll = scroll;
@@ -1755,12 +1821,28 @@ impl App {
         self.bg_quick_open_running = false;
 
         let settings = self.settings_for_scope(crate::settings::SettingsScope::Workspace);
-        let excludes: crate::settings::ExcludePatterns = settings.files_exclude.into_iter().chain(settings.search_exclude).collect();
-        if self.quick_open_query.is_empty() && self.remote_workspace.is_none()
-            && !excludes.values().any(serde_json::Value::is_object) {
+        let excludes: crate::settings::ExcludePatterns = settings
+            .files_exclude
+            .into_iter()
+            .chain(settings.search_exclude)
+            .collect();
+        if self.quick_open_query.is_empty()
+            && self.remote_workspace.is_none()
+            && !excludes.values().any(serde_json::Value::is_object)
+        {
             let rules = crate::search_paths::ExcludeRules::new(&excludes, &Default::default());
-            self.quick_open_results = self.recent_files.iter().filter(|path| !rules.excludes_with(
-                &crate::search_paths::Candidate::new(path), std::path::Path::new(""), |_| false)).cloned().collect();
+            self.quick_open_results = self
+                .recent_files
+                .iter()
+                .filter(|path| {
+                    !rules.excludes_with(
+                        &crate::search_paths::Candidate::new(path),
+                        std::path::Path::new(""),
+                        |_| false,
+                    )
+                })
+                .cloned()
+                .collect();
             self.quick_open_selected = 0;
             return;
         }
@@ -1775,44 +1857,86 @@ impl App {
         let sender = self.background.sender.clone();
         self.quick_open_selected = 0;
         let remote = self.remote_workspace.clone();
-        let recent = (self.quick_open_query.is_empty() || !self.has_open_folder()).then(|| self.recent_files.clone());
+        let recent = (self.quick_open_query.is_empty() || !self.has_open_folder())
+            .then(|| self.recent_files.clone());
         let token = index.submit_latest(&mut self.background, move |index, cancel| {
             if root.as_os_str().is_empty() {
                 let mut paths = recent.unwrap_or_default();
                 let direct = PathBuf::from(query.trim());
                 if !query.trim().is_empty() && direct.is_file() {
                     if let Ok(path) = std::path::absolute(&direct) {
-                        if !paths.contains(&path) { paths.push(path); }
+                        if !paths.contains(&path) {
+                            paths.push(path);
+                        }
                     }
                 }
-                let entries = std::sync::Arc::new(paths.into_iter().map(|path| QuickOpenEntry {
-                    name: path.file_name().unwrap_or_default().to_string_lossy().to_lowercase(),
-                    relative: path.to_string_lossy().to_lowercase().replace('\\', "/"), path,
-                }).collect());
+                let entries = std::sync::Arc::new(
+                    paths
+                        .into_iter()
+                        .map(|path| QuickOpenEntry {
+                            name: path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_lowercase(),
+                            relative: path.to_string_lossy().to_lowercase().replace('\\', "/"),
+                            path,
+                        })
+                        .collect(),
+                );
                 if let Some(files) = index.rank_files(&entries, &query, &cancel) {
-                    if !cancel.is_cancelled() { let _ = sender.send(crate::background::BackgroundResult::QuickOpenFiles { files, generation }); }
+                    if !cancel.is_cancelled() {
+                        let _ = sender.send(crate::background::BackgroundResult::QuickOpenFiles {
+                            files,
+                            generation,
+                        });
+                    }
                 }
                 return;
             }
             if let Some(paths) = recent {
                 let files = if let Some(remote) = &remote {
-                    let indices = remote.search_history_scope(&paths, &excludes, &cancel).unwrap_or_default();
+                    let indices = remote
+                        .search_history_scope(&paths, &excludes, &cancel)
+                        .unwrap_or_default();
                     indices.into_iter().map(|i| (0, paths[i].clone())).collect()
                 } else {
-                    let rules = crate::search_paths::ExcludeRules::new(&excludes, &Default::default());
-                    paths.into_iter().filter(|path| !rules.excludes(&crate::search_paths::Candidate::new(path), std::path::Path::new("")))
-                        .map(|path| (0, path)).collect()
+                    let rules =
+                        crate::search_paths::ExcludeRules::new(&excludes, &Default::default());
+                    paths
+                        .into_iter()
+                        .filter(|path| {
+                            !rules.excludes(
+                                &crate::search_paths::Candidate::new(path),
+                                std::path::Path::new(""),
+                            )
+                        })
+                        .map(|path| (0, path))
+                        .collect()
                 };
-                if !cancel.is_cancelled() { let _ = sender.send(crate::background::BackgroundResult::QuickOpenFiles { files, generation }); }
+                if !cancel.is_cancelled() {
+                    let _ = sender.send(crate::background::BackgroundResult::QuickOpenFiles {
+                        files,
+                        generation,
+                    });
+                }
                 return;
             }
-            let Some(entries) =
-                index.files_with_remote(&root, index_generation, watched, &cancel, remote.as_ref(), &excludes)
-            else {
+            let Some(entries) = index.files_with_remote(
+                &root,
+                index_generation,
+                watched,
+                &cancel,
+                remote.as_ref(),
+                &excludes,
+            ) else {
                 // A failed remote listing still finishes this search, so the
                 // picker leaves its loading state instead of waiting forever.
                 if !cancel.is_cancelled() {
-                    let _ = sender.send(crate::background::BackgroundResult::QuickOpenFiles { files: Vec::new(), generation }); // Error OK: receiver dropped means no listener
+                    let _ = sender.send(crate::background::BackgroundResult::QuickOpenFiles {
+                        files: Vec::new(),
+                        generation,
+                    }); // Error OK: receiver dropped means no listener
                 }
                 return;
             };

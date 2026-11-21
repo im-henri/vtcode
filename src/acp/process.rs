@@ -7,23 +7,31 @@ use std::process::{Child, Command};
 /// Background tools have explicit pipe streams. They must not bypass those
 /// streams by opening the editor's (or headless protocol's) controlling TTY.
 pub fn without_controlling_terminal(command: &mut Command) {
-    #[cfg(unix)] {
+    #[cfg(unix)]
+    {
         use std::os::unix::process::CommandExt;
         // SAFETY: this child-only callback uses async-signal-safe syscalls,
         // closes its descriptor on every path, and touches no shared Rust state.
-        unsafe { command.pre_exec(|| {
-            let tty = libc::open(c"/dev/tty".as_ptr(),libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC);
-            if tty < 0 { return Ok(()); }
-            // Detach only this child, never the parent editor or job shell.
-            if libc::getsid(0) == libc::getpid() {
+        unsafe {
+            command.pre_exec(|| {
+                let tty = libc::open(
+                    c"/dev/tty".as_ptr(),
+                    libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC,
+                );
+                if tty < 0 {
+                    return Ok(());
+                }
+                // Detach only this child, never the parent editor or job shell.
+                if libc::getsid(0) == libc::getpid() {
+                    libc::close(tty);
+                    return Err(io::Error::from_raw_os_error(libc::ENOTTY));
+                }
+                let result = libc::ioctl(tty, libc::TIOCNOTTY);
+                let error = io::Error::last_os_error();
                 libc::close(tty);
-                return Err(io::Error::from_raw_os_error(libc::ENOTTY));
-            }
-            let result = libc::ioctl(tty,libc::TIOCNOTTY);
-            let error = io::Error::last_os_error();
-            libc::close(tty);
-            if result < 0 { Err(error) } else { Ok(()) }
-        }); }
+                if result < 0 { Err(error) } else { Ok(()) }
+            });
+        }
     }
     #[cfg(not(unix))]
     let _ = command;
@@ -187,26 +195,38 @@ struct Control {
 pub struct ProcessKiller(std::sync::Weak<std::sync::Mutex<Control>>);
 impl ProcessKiller {
     pub fn active(&self) -> bool {
-        self.0.upgrade().is_some_and(|control| !control.lock().unwrap_or_else(|e| e.into_inner()).terminated)
+        self.0
+            .upgrade()
+            .is_some_and(|control| !control.lock().unwrap_or_else(|e| e.into_inner()).terminated)
     }
     pub fn kill(&self) {
-        if let Some(control) = self.0.upgrade() { control.lock().unwrap_or_else(|e| e.into_inner()).kill(); }
+        if let Some(control) = self.0.upgrade() {
+            control.lock().unwrap_or_else(|e| e.into_inner()).kill();
+        }
     }
 }
 impl Control {
     fn kill(&mut self) {
-        if self.terminated { return; }
+        if self.terminated {
+            return;
+        }
         self.terminated = true;
         #[cfg(windows)]
         // SAFETY: Control owns this live job handle until its final reference drops.
-        unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job as _, 1); }
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job as _, 1);
+        }
         #[cfg(unix)]
         // SAFETY: the owned child started in this group; reaping is coordinated
         // with this mutex so a later cancellation cannot signal a reused ID.
         {
             #[cfg(target_os = "linux")]
-            if child_exit_ready(self.group).is_err() { return; }
-            unsafe { libc::kill(-self.group, libc::SIGKILL); }
+            if child_exit_ready(self.group).is_err() {
+                return;
+            }
+            unsafe {
+                libc::kill(-self.group, libc::SIGKILL);
+            }
         }
     }
 }
@@ -215,7 +235,9 @@ impl Drop for Control {
         self.kill();
         #[cfg(windows)]
         // SAFETY: the job is uniquely owned by the final Control reference.
-        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.job as _); }
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.job as _);
+        }
     }
 }
 
@@ -263,33 +285,52 @@ impl Process {
                 }
                 Ok(Self {
                     child,
-                    control: std::sync::Arc::new(std::sync::Mutex::new(Control { terminated: false, job: job as usize })),
+                    control: std::sync::Arc::new(std::sync::Mutex::new(Control {
+                        terminated: false,
+                        job: job as usize,
+                    })),
                 })
             }
         }
         #[cfg(not(windows))]
         {
             let group = child.id() as i32;
-            Ok(Self { child, control: std::sync::Arc::new(std::sync::Mutex::new(Control { terminated: false, #[cfg(unix)] group })) })
+            Ok(Self {
+                child,
+                control: std::sync::Arc::new(std::sync::Mutex::new(Control {
+                    terminated: false,
+                    #[cfg(unix)]
+                    group,
+                })),
+            })
         }
     }
 
     pub fn kill(&mut self) {
-        self.control.lock().unwrap_or_else(|e| e.into_inner()).kill();
+        self.control
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .kill();
         let _ = self.child.kill();
     }
-    pub fn killer(&self) -> ProcessKiller { ProcessKiller(std::sync::Arc::downgrade(&self.control)) }
+    pub fn killer(&self) -> ProcessKiller {
+        ProcessKiller(std::sync::Arc::downgrade(&self.control))
+    }
     pub fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
         let mut control = self.control.lock().unwrap_or_else(|e| e.into_inner());
         #[cfg(target_os = "linux")]
         if !control.terminated {
             // Keep the dead leader unreaped until its remaining process group
             // is killed. Reaping first permits the kernel to reuse that ID.
-            if !child_exit_ready(control.group)? { return Ok(None); }
+            if !child_exit_ready(control.group)? {
+                return Ok(None);
+            }
             control.kill();
         }
         let status = self.child.try_wait()?;
-        if status.is_some() { control.kill(); }
+        if status.is_some() {
+            control.kill();
+        }
         Ok(status)
     }
 
@@ -308,10 +349,15 @@ impl Process {
                 // outlive our handle; other callers keep the default policy.
                 unsafe {
                     let limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                    if SetInformationJobObject(control.job as _, JobObjectExtendedLimitInformation,
+                    if SetInformationJobObject(
+                        control.job as _,
+                        JobObjectExtendedLimitInformation,
                         (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                        std::mem::size_of_val(&limits) as u32) == 0
-                    { return Err(io::Error::last_os_error()); }
+                        std::mem::size_of_val(&limits) as u32,
+                    ) == 0
+                    {
+                        return Err(io::Error::last_os_error());
+                    }
                 }
             }
             // No group may be signalled after reaping its leader: the OS can
@@ -328,43 +374,76 @@ fn child_exit_ready(pid: libc::pid_t) -> io::Result<bool> {
         // SAFETY: waitid fills this initialized buffer, never reaps (WNOWAIT),
         // and checks only this process's specified child, not unrelated jobs.
         let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        if unsafe { libc::waitid(libc::P_PID, pid as _, &mut status, libc::WEXITED | libc::WNOHANG | libc::WNOWAIT) } == 0 {
+        if unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as _,
+                &mut status,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        } == 0
+        {
             return Ok(unsafe { status.si_pid() } != 0);
         }
         let error = io::Error::last_os_error();
-        if error.kind() != io::ErrorKind::Interrupted { return Err(error); }
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
     }
 }
 
 #[cfg(all(test, target_os = "linux"))]
 mod unix_ownership_tests {
     use super::*;
-    use std::{io::BufRead, process::Stdio, time::{Duration, Instant}};
+    use std::{
+        io::BufRead,
+        process::Stdio,
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn observing_exit_kills_remaining_children_before_reaping_the_group_leader() {
         let mut command = Command::new("/bin/sh");
-        command.args(["-c", "sleep 30 & printf '%s\\n' \"$!\"; exit 0"])
-            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+        command
+            .args(["-c", "sleep 30 & printf '%s\\n' \"$!\"; exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
         let mut process = Process::spawn(&mut command).unwrap();
         let killer = process.killer();
         let mut line = String::new();
-        std::io::BufReader::new(process.child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+        std::io::BufReader::new(process.child.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
         let child: u32 = line.trim().parse().unwrap();
         let end = Instant::now() + Duration::from_secs(5);
         while process.try_wait().unwrap().is_none() {
-            assert!(Instant::now() < end, "Leader must exit without waiting for its background child");
+            assert!(
+                Instant::now() < end,
+                "Leader must exit without waiting for its background child"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(!killer.active());
         loop {
-            let live = std::fs::read_to_string(format!("/proc/{child}/stat")).ok()
-                .is_some_and(|stat| stat.rsplit_once(')').unwrap().1.split_whitespace().next() != Some("Z"));
-            if !live { break; }
-            assert!(Instant::now() < end, "Background child survived the observed parent exit");
+            let live = std::fs::read_to_string(format!("/proc/{child}/stat"))
+                .ok()
+                .is_some_and(|stat| {
+                    stat.rsplit_once(')').unwrap().1.split_whitespace().next() != Some("Z")
+                });
+            if !live {
+                break;
+            }
+            assert!(
+                Instant::now() < end,
+                "Background child survived the observed parent exit"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(process.try_wait().unwrap().unwrap().success(), "Repeated wait retains the original status");
+        assert!(
+            process.try_wait().unwrap().unwrap().success(),
+            "Repeated wait retains the original status"
+        );
     }
 }
 

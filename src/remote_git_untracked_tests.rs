@@ -29,7 +29,9 @@ fn headless_status_omits_untracked_discovery_but_keeps_staged_and_modified_files
     let mut service = Service::new(root.path()).unwrap();
     for include_untracked in [false, true, false] {
         let Reply::GitStatus { scans, .. } = service
-            .execute(Command::GitStatus { progress: None, revalidate: false,
+            .execute(Command::GitStatus {
+                progress: None,
+                revalidate: false,
                 changed: None,
                 known: None,
                 parent_open: false,
@@ -62,7 +64,8 @@ fn headless_status_omits_untracked_discovery_but_keeps_staged_and_modified_files
             assert!(directory.directory);
             assert_eq!(directory.path, path("generated"));
             let encoded = serde_json::to_vec(directory).unwrap();
-            let decoded: crate::app::GitFileChange<RemotePath> = serde_json::from_slice(&encoded).unwrap();
+            let decoded: crate::app::GitFileChange<RemotePath> =
+                serde_json::from_slice(&encoded).unwrap();
             assert!(decoded.directory);
         }
     }
@@ -182,9 +185,15 @@ fn remote_reopen_dropdown_is_local_and_reopens_only_the_selected_closed_reposito
     use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 
     let root = tempfile::tempdir().unwrap();
-    for name in ["first", "second", "third"] { init(&root.path().join(name)); }
+    for name in ["first", "second", "third"] {
+        init(&root.path().join(name));
+    }
     let traffic = Arc::new(AtomicUsize::new(0));
-    let workspace = workspace::Workspace::new(tests::connection(root.path(), Arc::default(), traffic.clone()));
+    let workspace = workspace::Workspace::new(tests::connection(
+        root.path(),
+        Arc::default(),
+        traffic.clone(),
+    ));
     let mut app = App::new_deferred(workspace.view_root.clone());
     app.remote_workspace = Some(workspace.clone());
     app.show_explorer = true;
@@ -192,10 +201,14 @@ fn remote_reopen_dropdown_is_local_and_reopens_only_the_selected_closed_reposito
     app.active_pane = ActivePane::Explorer;
     app.workspace_watcher_active = true;
     app.refresh_source_control_async();
-    let settle = |app: &mut App| app.wait_for_background(Duration::from_secs(15), |app| {
-        !app.bg_git_status_running && !app.bg_git_status_pending
-            && !app.bg_git_branch_running && !app.bg_git_log_running
-    });
+    let settle = |app: &mut App| {
+        app.wait_for_background(Duration::from_secs(15), |app| {
+            !app.bg_git_status_running
+                && !app.bg_git_status_pending
+                && !app.bg_git_branch_running
+                && !app.bg_git_log_running
+        })
+    };
     settle(&mut app);
     let first = workspace.target_key("first").unwrap();
     let second = workspace.target_key("second").unwrap();
@@ -209,21 +222,56 @@ fn remote_reopen_dropdown_is_local_and_reopens_only_the_selected_closed_reposito
     app.explorer_area = Some(Rect::new(0, 0, 60, 28));
     let mut terminal = Terminal::new(TestBackend::new(140, 30)).unwrap();
     let before = traffic.load(Ordering::Relaxed);
-    terminal.draw(|frame| crate::ui_source_control::draw_source_control_sidebar(
-        frame, &mut app, Rect::new(0, 0, 60, 28))).unwrap();
+    terminal
+        .draw(|frame| {
+            crate::ui_source_control::draw_source_control_sidebar(
+                frame,
+                &mut app,
+                Rect::new(0, 0, 60, 28),
+            )
+        })
+        .unwrap();
     let button = app.repositories.reopen_button.unwrap();
-    crate::mouse::handle_mouse(&mut app, MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left), column: button.x,
-        row: button.y, modifiers: KeyModifiers::NONE,
-    });
+    crate::mouse::handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: button.x,
+            row: button.y,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
     assert!(app.context_menu_active);
     assert_eq!(app.repositories.reopen_candidates.len(), 2);
-    assert!(app.context_menu_items.iter().any(|item| item.label.starts_with("second — ")));
-    assert!(app.context_menu_items.iter().any(|item| item.label.starts_with("third — ")));
-    assert!(app.context_menu_items.iter().all(|item| !item.label.contains(&workspace.view_root.to_string_lossy().to_string())));
-    terminal.draw(|frame| crate::ui_dialogs::draw_context_menu(frame, &mut app)).unwrap();
-    assert_eq!(traffic.load(Ordering::Relaxed), before, "listing closed repositories must send no requests");
-    app.context_menu_selected = app.repositories.reopen_candidates.iter().position(|root| root == &second).unwrap();
+    assert!(
+        app.context_menu_items
+            .iter()
+            .any(|item| item.label.starts_with("second — "))
+    );
+    assert!(
+        app.context_menu_items
+            .iter()
+            .any(|item| item.label.starts_with("third — "))
+    );
+    assert!(app.context_menu_items.iter().all(|item| {
+        !item
+            .label
+            .contains(&workspace.view_root.to_string_lossy().to_string())
+    }));
+    terminal
+        .draw(|frame| crate::ui_dialogs::draw_context_menu(frame, &mut app))
+        .unwrap();
+    assert_eq!(
+        traffic.load(Ordering::Relaxed),
+        before,
+        "listing closed repositories must send no requests"
+    );
+    app.context_menu_selected = app
+        .repositories
+        .reopen_candidates
+        .iter()
+        .position(|root| root == &second)
+        .unwrap();
     crate::input_pickers::handle_context_menu_key(&mut app, KeyCode::Enter);
     settle(&mut app);
     assert_eq!(app.source_control_root(), second);

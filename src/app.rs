@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-
 use crate::editor::Editor;
 use crate::explorer::FileExplorer;
 use crate::highlight::Highlighter;
@@ -31,17 +30,18 @@ pub(crate) type OverviewChangeRowsKey = (
 );
 pub(crate) type CursorWordKey = (u64, usize, usize, u64);
 
-pub(crate) use types::{
-    default_keybindings, ActivePane, AlignedDiffRow, AutoSaveMode,
-    CallHierarchyEntry, CallHierarchyMode, ContextMenuItem, CursorStyle, DiffBaseRevision,
-    DiffLabels, DiffMode, DiffRenderCache, DiffScopeLineSummary, EditorGroup, ExtensionPaletteAction, ExtensionViewTabRef,
-    GitBranchPickerItem, GitCommitInfo, GitCommitReference, GitFileChange, GlobalSearchResult, InlayHintDisplay, KeyBinding, NotifyLevel,
-    PaletteCommand, PaletteState, PeekDefinition, RenameState, SidebarView,
-    SourceControlRepositoryState, SplitDirection, SplitNode, SymbolItem, Tab, TabDropZone, TabKind, TabTextColor,
-    TerminalDock, TerminalTab, TypeHierarchyMode, WhitespaceMode,
-};
 #[cfg(test)]
 pub(crate) use types::compute_file_diff;
+pub(crate) use types::{
+    ActivePane, AlignedDiffRow, AutoSaveMode, CallHierarchyEntry, CallHierarchyMode,
+    ContextMenuItem, CursorStyle, DiffBaseRevision, DiffLabels, DiffMode, DiffRenderCache,
+    DiffScopeLineSummary, EditorGroup, ExtensionPaletteAction, ExtensionViewTabRef,
+    GitBranchPickerItem, GitCommitInfo, GitCommitReference, GitFileChange, GlobalSearchResult,
+    InlayHintDisplay, KeyBinding, NotifyLevel, PaletteCommand, PaletteState, PeekDefinition,
+    RenameState, SidebarView, SourceControlRepositoryState, SplitDirection, SplitNode, SymbolItem,
+    Tab, TabDropZone, TabKind, TabTextColor, TerminalDock, TerminalTab, TypeHierarchyMode,
+    WhitespaceMode, default_keybindings,
+};
 pub(crate) use types::{contains_ignore_case, fuzzy_match, fuzzy_match_indices, fuzzy_match_score};
 
 #[derive(Default)]
@@ -52,7 +52,9 @@ struct RemoteDiskChecks {
 
 impl Drop for RemoteDiskChecks {
     fn drop(&mut self) {
-        if let Some(cancel) = &self.running { cancel.cancel(); }
+        if let Some(cancel) = &self.running {
+            cancel.cancel();
+        }
     }
 }
 
@@ -136,7 +138,7 @@ pub(crate) struct App {
     pub chord_pending: bool, // Ctrl+K chord mode
     pub(crate) shortcut_chord_prefix: Option<crate::app_shortcuts::Stroke>,
     pub chord_start: std::time::Instant, // When chord was initiated (for timeout)
-    pub cursor_visible: bool, // For blink effect
+    pub cursor_visible: bool,            // For blink effect
     pub cursor_blinking: bool,
     /// Crossterm focus state. Background/minimized windows must not animate a
     /// logical editor caret or manufacture idle frames.
@@ -199,12 +201,18 @@ pub(crate) struct App {
     pub(crate) settings_scrollbar_drag: Option<crate::settings_layout::Drag>,
     /// Text-field hit maps rebuilt from the actual rendered viewport each frame.
     pub text_input_regions: Vec<crate::text_input::TextInputRegion>,
-    pub(crate) text_input_viewports: std::collections::HashMap<(crate::text_input::TextInputId, Option<u64>), crate::text_input::InputViewport>,
+    pub(crate) text_input_viewports: std::collections::HashMap<
+        (crate::text_input::TextInputId, Option<u64>),
+        crate::text_input::InputViewport,
+    >,
     pub(crate) text_input_viewport_generation: u64,
     /// Active pointer selection: (field identity, UTF-8 byte anchor).
     pub text_input_drag: Option<(crate::text_input::TextInputId, usize)>,
     pub(crate) text_input_context_menu: Option<crate::text_input::ContextMenu>,
-    pub(crate) text_input_histories: std::collections::HashMap<crate::text_input::TextInputId, crate::text_input::TextInputHistory>,
+    pub(crate) text_input_histories: std::collections::HashMap<
+        crate::text_input::TextInputId,
+        crate::text_input::TextInputHistory,
+    >,
     pub(crate) text_input_click_id: Option<crate::text_input::TextInputId>,
     pub(crate) text_input_drag_unit: Option<(usize, usize, bool)>,
     pub status_bar_area: Option<ratatui::layout::Rect>,
@@ -328,13 +336,15 @@ pub(crate) struct App {
     // VTComplete
     pub vtcomplete_active: bool,
     pub vtcomplete_suggestions: Vec<String>,
-    pub(crate) vtcomplete_details: rustc_hash::FxHashMap<String, crate::app_vtcomplete::CompletionDetail>,
+    pub(crate) vtcomplete_details:
+        rustc_hash::FxHashMap<String, crate::app_vtcomplete::CompletionDetail>,
     pub vtcomplete_selected: usize,
     pub(crate) vtcomplete_explicit: bool,
     pub(crate) vtcomplete_navigated: bool,
     pub(crate) vtcomplete_inline: crate::app_vtcomplete_inline::State,
     pub(crate) completion_preferences: crate::app_vtcomplete_settings::Preferences,
-    pub(crate) completion_history: Option<(u64, std::sync::Arc<crate::completion_history::History>)>,
+    pub(crate) completion_history:
+        Option<(u64, std::sync::Arc<crate::completion_history::History>)>,
     pub(crate) vtcomplete_generation: u64,
     pub(crate) vtcomplete_cancel_token: Option<crate::background::CancellationToken>,
     pub(crate) vtcomplete_worker: crate::app_vtcomplete::VtCompleteWorker,
@@ -433,7 +443,8 @@ pub(crate) struct App {
     pub symbol_list_workspace: bool,
     pub(crate) source_symbol_work: crate::source_symbols::State,
     pub closed_tab_paths: std::collections::VecDeque<(PathBuf, usize, usize)>,
-    pub(crate) closed_file_views: rustc_hash::FxHashMap<PathBuf, crate::editor_view_state::ViewState>,
+    pub(crate) closed_file_views:
+        rustc_hash::FxHashMap<PathBuf, crate::editor_view_state::ViewState>,
     pub dragging_tab: Option<usize>,
     pub dragging_tab_source_group: Option<usize>,
     pub(crate) tab_window_request: Option<crate::tab_windows::Request>,
@@ -522,7 +533,8 @@ pub(crate) struct App {
     pub resizing_explorer: bool,
     pub peek_definition: Option<PeekDefinition>,
     pub blame_cache: Option<(PathBuf, std::sync::Arc<crate::git_blame::Document>)>,
-    pub(crate) blame_documents: rustc_hash::FxHashMap<u64, std::sync::Arc<crate::git_blame::Document>>,
+    pub(crate) blame_documents:
+        rustc_hash::FxHashMap<u64, std::sync::Arc<crate::git_blame::Document>>,
     pub(crate) inline_blame_hover: Option<crate::ui_inline_blame::Hover>,
     pub blame_cache_key: Option<crate::background::BlameCacheKey>,
     pub blame_requested_path: Option<PathBuf>,
@@ -557,7 +569,8 @@ pub(crate) struct App {
     pub(crate) terminal_close: Option<crate::app_terminal::CloseTerminal>,
     pub(crate) next_terminal_to_process: usize,
     pub(crate) terminal_surfaces: Vec<crate::app_terminal_selection::TerminalSurface>,
-    pub(crate) background_main_terminal_surfaces: Vec<crate::app_terminal_selection::TerminalSurface>,
+    pub(crate) background_main_terminal_surfaces:
+        Vec<crate::app_terminal_selection::TerminalSurface>,
     pub(crate) terminal_find: crate::app_terminal_find::Controller,
     pub(crate) terminal_links: crate::app_terminal_links::Controller,
     pub(crate) terminal_scrollbar: crate::terminal_scrollbar::State,
@@ -847,7 +860,8 @@ pub(crate) struct App {
     pub cached_max_line_width: usize,
     pub cached_editor_word_count: usize,
     pub cached_editor_analysis_target: Option<crate::background::EditorAnalysisTarget>,
-    pub(crate) content_analysis_cache: std::sync::Arc<std::sync::Mutex<crate::app_event_loop::content_analysis::Cache>>,
+    pub(crate) content_analysis_cache:
+        std::sync::Arc<std::sync::Mutex<crate::app_event_loop::content_analysis::Cache>>,
     // Cached word occurrence count for status bar (invalidated on cursor/content change)
     pub cached_word_occ: Option<String>,
     pub cached_word_occ_target: Option<crate::background::WordOccurrenceTarget>,
@@ -912,10 +926,12 @@ pub(crate) struct App {
     pub extension_palette_action_map: rustc_hash::FxHashMap<usize, ExtensionPaletteAction>,
     /// Active extension overlays with their extension IDs and drag state
     pub extension_overlay_drag: Option<(String, String, i16, i16)>, // (ext_id, overlay_id, offset_x, offset_y)
-    pub extension_overlay_last_tick: rustc_hash::FxHashMap<String, rustc_hash::FxHashMap<String, std::time::Instant>>,
+    pub extension_overlay_last_tick:
+        rustc_hash::FxHashMap<String, rustc_hash::FxHashMap<String, std::time::Instant>>,
     // LSP (Language Server Protocol)
     pub lsp_manager: crate::lsp::LspManager,
-    pub pending_lsp_workspace_edits: std::collections::VecDeque<crate::app_lsp_workspace_edit::PendingWorkspaceEdit>,
+    pub pending_lsp_workspace_edits:
+        std::collections::VecDeque<crate::app_lsp_workspace_edit::PendingWorkspaceEdit>,
     pub lsp_suggestions: crate::app_lsp_interactive::LspSuggestions,
     /// Active LSP completion popup state
     pub lsp_completion_active: bool,
@@ -973,8 +989,7 @@ pub(crate) struct App {
     pub lsp_semantic_tokens_last_version: u64,
     /// Exact editor snapshot associated with the outstanding semantic-token
     /// request. A content version alone is not unique across tabs.
-    pub(crate) lsp_semantic_tokens_request_target:
-        Option<crate::background::EditorAnalysisTarget>,
+    pub(crate) lsp_semantic_tokens_request_target: Option<crate::background::EditorAnalysisTarget>,
     /// Whether semantic token highlighting is enabled
     pub show_semantic_tokens: bool,
     /// Cached document highlights for the current cursor position
@@ -1079,17 +1094,26 @@ pub(crate) struct App {
     pub bg_git_diff_pending: bool,
     /// True while exact content-derived editor caches are being computed.
     pub bg_editor_analysis_running: bool,
-    pub(crate) pending_editor_analysis: Option<(crate::background::EditorAnalysisTarget, crate::background::CancellationToken)>,
+    pub(crate) pending_editor_analysis: Option<(
+        crate::background::EditorAnalysisTarget,
+        crate::background::CancellationToken,
+    )>,
     /// A modified editor needs whole-file analysis once the typing quiet
     /// period expires. Keeping this explicit lets the event loop wake the
     /// worker without manufacturing redraws while the screen is stable.
     pub(crate) editor_analysis_deferred: bool,
     /// True while viewport bracket guides are being prepared.
     pub(crate) bg_bracket_analysis_running: bool,
-    pub(crate) pending_bracket_analysis: Option<(crate::background::BracketAnalysisTarget, crate::background::CancellationToken)>,
+    pub(crate) pending_bracket_analysis: Option<(
+        crate::background::BracketAnalysisTarget,
+        crate::background::CancellationToken,
+    )>,
     /// True while matching bracket/tag decorations are being prepared.
     pub(crate) bg_cursor_match_running: bool,
-    pub(crate) pending_cursor_match: Option<(crate::background::CursorMatchTarget, crate::background::CancellationToken)>,
+    pub(crate) pending_cursor_match: Option<(
+        crate::background::CursorMatchTarget,
+        crate::background::CancellationToken,
+    )>,
     /// True while the Problems panel marker list is being scanned.
     pub(crate) bg_problems_analysis_running: bool,
     /// True while an exact word-occurrence count is being computed.
@@ -1113,8 +1137,7 @@ pub(crate) struct App {
     )>,
     /// Latest wrap request for each visible pane. Stable identities let a
     /// request survive focus changes and tab/group moves during resizing.
-    pub(crate) pending_wrap_layouts:
-        rustc_hash::FxHashMap<u64, crate::app_wrap::PendingWrapLayout>,
+    pub(crate) pending_wrap_layouts: rustc_hash::FxHashMap<u64, crate::app_wrap::PendingWrapLayout>,
     /// Serialize writes per path and retain only the newest snapshot requested
     /// while an earlier save is still in flight.
     pub(crate) pending_file_saves: rustc_hash::FxHashMap<PathBuf, (u64, crate::editor::SaveIntent)>,
@@ -1163,21 +1186,42 @@ impl App {
     }
 
     pub(crate) fn new_startup(root: PathBuf, wake: crate::background::UiWake) -> Self {
-        Self::new_with_background(root, true, crate::background::BackgroundWorkers::with_wake(wake))
+        Self::new_with_background(
+            root,
+            true,
+            crate::background::BackgroundWorkers::with_wake(wake),
+        )
     }
 
     #[cfg(test)]
     fn new_with_explorer(root: PathBuf, defer_explorer_scan: bool) -> Self {
-        Self::new_with_background(root, defer_explorer_scan, crate::background::BackgroundWorkers::new())
+        Self::new_with_background(
+            root,
+            defer_explorer_scan,
+            crate::background::BackgroundWorkers::new(),
+        )
     }
 
-    fn new_with_background(root: PathBuf, defer_explorer_scan: bool, background: crate::background::BackgroundWorkers) -> Self {
+    fn new_with_background(
+        root: PathBuf,
+        defer_explorer_scan: bool,
+        background: crate::background::BackgroundWorkers,
+    ) -> Self {
         let browser_path = root.clone();
         let loaded_themes = if defer_explorer_scan {
-            vec![crate::app_theme_loader::builtin_theme("dark").unwrap().clone()]
-        } else { crate::app_theme::load_builtin_themes() };
-        let highlighter = if defer_explorer_scan { Highlighter::new_deferred() }
-            else { Highlighter::new() };
+            vec![
+                crate::app_theme_loader::builtin_theme("dark")
+                    .unwrap()
+                    .clone(),
+            ]
+        } else {
+            crate::app_theme::load_builtin_themes()
+        };
+        let highlighter = if defer_explorer_scan {
+            Highlighter::new_deferred()
+        } else {
+            Highlighter::new()
+        };
         let syntax_names = highlighter.syntax_names();
         let palette_commands = Self::build_command_list_with_themes(&loaded_themes, &syntax_names);
         let ui_wake = background.wake_handle();
@@ -1606,7 +1650,8 @@ impl App {
             workbench_body_area: None,
             terminal_dock_drop_target: None,
             terminals: vec![TerminalTab::placeholder(
-                browser_path.clone(), TerminalDock::Right,
+                browser_path.clone(),
+                TerminalDock::Right,
             )],
             active_terminal: 0,
             terminal_rename: Default::default(),
@@ -1910,10 +1955,7 @@ impl App {
             extension_palette_action_map: rustc_hash::FxHashMap::default(),
             extension_overlay_drag: None,
             extension_overlay_last_tick: rustc_hash::FxHashMap::default(),
-            lsp_manager: crate::lsp::LspManager::new_with_wake(
-                browser_path.clone(),
-                ui_wake,
-            ),
+            lsp_manager: crate::lsp::LspManager::new_with_wake(browser_path.clone(), ui_wake),
             lsp_completion_active: false,
             lsp_completion_selected: 0,
             _lsp_completion_filter: String::new(),
@@ -2039,9 +2081,8 @@ impl App {
             workspace_watcher_active: false,
             reap_frame_counter: 0,
         };
-        app.animation_settings.set_duration(
-            crate::animation_config::AnimationEffect::CursorSmear, 300,
-        );
+        app.animation_settings
+            .set_duration(crate::animation_config::AnimationEffect::CursorSmear, 300);
         let mut defaults = app.current_settings();
         defaults.files_exclude = crate::settings::default_files_exclude();
         defaults.search_exclude = crate::settings::default_search_exclude();
@@ -2061,9 +2102,14 @@ impl App {
     }
 
     pub(crate) fn poll_background_results_until(&mut self, deadline: std::time::Instant) -> bool {
-        if let Some(remote) = &self.remote_workspace { remote.apply_notifications(&self.background.sender, self.workspace_generation); }
-        let disconnected = self.poll_remote_connection(deadline) | self.poll_remote_target(deadline);
-        if self.workspace_visible { self.sync_diff_tab(); }
+        if let Some(remote) = &self.remote_workspace {
+            remote.apply_notifications(&self.background.sender, self.workspace_generation);
+        }
+        let disconnected =
+            self.poll_remote_connection(deadline) | self.poll_remote_target(deadline);
+        if self.workspace_visible {
+            self.sync_diff_tab();
+        }
         let mut budget = crate::background::ResultBudget::until(deadline);
         // A worker reply is not necessarily a visual change. Periodic disk,
         // branch, and blame probes commonly return the exact state already on
@@ -2074,34 +2120,50 @@ impl App {
         while let Some(result) = budget.next(&mut self.background) {
             let result = match result {
                 crate::background::BackgroundResult::WorkspaceResult { generation, result } => {
-                    if generation != self.workspace_generation { continue; }
+                    if generation != self.workspace_generation {
+                        continue;
+                    }
                     *result
                 }
                 result => result,
             };
             let result = match result {
                 crate::background::BackgroundResult::FileWatcherEvent { cancelled, result } => {
-                    if cancelled.load(std::sync::atomic::Ordering::Acquire) { continue; }
+                    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                        continue;
+                    }
                     *result
                 }
                 result => result,
             };
             let result = match result {
                 crate::background::BackgroundResult::SourceControlRead { cancel, result } => {
-                    if !self.source_control_enabled || cancel.is_cancelled() { continue; }
+                    if !self.source_control_enabled || cancel.is_cancelled() {
+                        continue;
+                    }
                     *result
                 }
                 result => result,
             };
             let result = match result {
-                crate::background::BackgroundResult::RepositoryRead { root, generation, result } => {
-                    if root != self.source_control_root() || generation != self.repositories.view_generation { continue; }
+                crate::background::BackgroundResult::RepositoryRead {
+                    root,
+                    generation,
+                    result,
+                } => {
+                    if root != self.source_control_root()
+                        || generation != self.repositories.view_generation
+                    {
+                        continue;
+                    }
                     *result
                 }
                 result => result,
             };
             let (result, remote_checkpoint) = match result {
-                crate::background::BackgroundResult::RemoteFileResult { checkpoint, result } => (*result, Some(checkpoint)),
+                crate::background::BackgroundResult::RemoteFileResult { checkpoint, result } => {
+                    (*result, Some(checkpoint))
+                }
                 result => (result, None),
             };
             let redraws_by_default = !matches!(
@@ -2165,13 +2227,25 @@ impl App {
             );
             has_visual_changes |= redraws_by_default;
             match result {
-                crate::background::BackgroundResult::RemoteReconnectStarted { generation, serial, result } => {
+                crate::background::BackgroundResult::RemoteReconnectStarted {
+                    generation,
+                    serial,
+                    result,
+                } => {
                     self.remote_reconnect_started(generation, serial, result);
                 }
-                crate::background::BackgroundResult::RemoteReconnected { generation, serial, result } => {
+                crate::background::BackgroundResult::RemoteReconnected {
+                    generation,
+                    serial,
+                    result,
+                } => {
                     self.finish_remote_reconnect(generation, serial, result);
                 }
-                crate::background::BackgroundResult::SharedRemoteReconnected { generation, serial, result } => {
+                crate::background::BackgroundResult::SharedRemoteReconnected {
+                    generation,
+                    serial,
+                    result,
+                } => {
                     self.finish_shared_remote_reconnect(generation, serial, result);
                 }
                 crate::background::BackgroundResult::RemoteReconnectFile { generation, check } => {
@@ -2180,79 +2254,182 @@ impl App {
                 crate::background::BackgroundResult::RemoteLocationResolved { id, result } => {
                     has_visual_changes |= self.apply_remote_location(id, result);
                 }
-                crate::background::BackgroundResult::RemoteLocationProgress { id, completed, total } => {
+                crate::background::BackgroundResult::RemoteLocationProgress {
+                    id,
+                    completed,
+                    total,
+                } => {
                     has_visual_changes |= self.apply_remote_location_progress(id, completed, total);
                 }
-                crate::background::BackgroundResult::AgentFileResolved { agent, handle, id, ticket, request, aliases } => {
+                crate::background::BackgroundResult::AgentFileResolved {
+                    agent,
+                    handle,
+                    id,
+                    ticket,
+                    request,
+                    aliases,
+                } => {
                     self.apply_agent_file_resolved(agent, handle, id, ticket, request, aliases);
                 }
-                crate::background::BackgroundResult::RemoteTransferProgress { generation, path, saving, completed, total } => {
-                    if generation != self.workspace_generation { continue; }
-                    let active = if saving { self.pending_file_saves.contains_key(&path) } else {
-                        self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
-                            .any(|tab| tab.editor.bg_loading && tab.editor.file_path.as_ref() == Some(&path))
-                    };
-                    if !active { continue; }
-                    has_visual_changes = true;
-                    if saving && completed == total {
-                        self.status_message = format!("Saving {} · upload complete, waiting for disk", self.display_path(&path));
+                crate::background::BackgroundResult::RemoteTransferProgress {
+                    generation,
+                    path,
+                    saving,
+                    completed,
+                    total,
+                } => {
+                    if generation != self.workspace_generation {
                         continue;
                     }
-                    let percent = if total == 0 { 100 } else { ((completed as u128 * 100) / total as u128).min(100) };
-                    self.status_message = format!("{} {} · {:.1}/{:.1} MiB ({percent}%)",
-                        if saving { "Saving" } else { "Opening" }, self.display_path(&path),
-                        completed as f64 / 1_048_576.0, total as f64 / 1_048_576.0);
+                    let active = if saving {
+                        self.pending_file_saves.contains_key(&path)
+                    } else {
+                        self.tabs
+                            .iter()
+                            .chain(self.groups.iter().flat_map(|group| &group.tabs))
+                            .any(|tab| {
+                                tab.editor.bg_loading
+                                    && tab.editor.file_path.as_ref() == Some(&path)
+                            })
+                    };
+                    if !active {
+                        continue;
+                    }
+                    has_visual_changes = true;
+                    if saving && completed == total {
+                        self.status_message = format!(
+                            "Saving {} · upload complete, waiting for disk",
+                            self.display_path(&path)
+                        );
+                        continue;
+                    }
+                    let percent = if total == 0 {
+                        100
+                    } else {
+                        ((completed as u128 * 100) / total as u128).min(100)
+                    };
+                    self.status_message = format!(
+                        "{} {} · {:.1}/{:.1} MiB ({percent}%)",
+                        if saving { "Saving" } else { "Opening" },
+                        self.display_path(&path),
+                        completed as f64 / 1_048_576.0,
+                        total as f64 / 1_048_576.0
+                    );
                 }
                 #[cfg(test)]
-                crate::background::BackgroundResult::RemoteWorkspaceOpened { request, source, result } => {
-                    if request != self.workspace_open_generation || source != self.workspace_generation { continue; }
+                crate::background::BackgroundResult::RemoteWorkspaceOpened {
+                    request,
+                    source,
+                    result,
+                } => {
+                    if request != self.workspace_open_generation
+                        || source != self.workspace_generation
+                    {
+                        continue;
+                    }
                     match result {
                         Ok(remote) => {
                             let path = remote.view_root.clone();
                             self.change_workspace_ready(&path, Some(remote));
                         }
-                        Err(error) => self.notify_error(format!("Cannot open remote folder: {error}")),
+                        Err(error) => {
+                            self.notify_error(format!("Cannot open remote folder: {error}"))
+                        }
                     }
                 }
                 crate::background::BackgroundResult::RemoteDiskChecksFailed { paths } => {
-                    for path in paths { self.pending_disk_checks.remove(&path); }
+                    for path in paths {
+                        self.pending_disk_checks.remove(&path);
+                    }
                 }
                 crate::background::BackgroundResult::RemoteDiskChecksDone(cancel) => {
-                    if self.remote_disk_checks.running.as_ref().is_some_and(|running| running.same_task(&cancel)) {
+                    if self
+                        .remote_disk_checks
+                        .running
+                        .as_ref()
+                        .is_some_and(|running| running.same_task(&cancel))
+                    {
                         self.remote_disk_checks.running = None;
                         self.start_remote_disk_checks();
                     }
                 }
-                crate::background::BackgroundResult::RemoteFileValidated { generation, path, document, baseline, result } => {
-                    has_visual_changes |= self.finish_remote_file_validation(generation, path, document, baseline, result);
+                crate::background::BackgroundResult::RemoteFileValidated {
+                    generation,
+                    path,
+                    document,
+                    baseline,
+                    result,
+                } => {
+                    has_visual_changes |= self.finish_remote_file_validation(
+                        generation, path, document, baseline, result,
+                    );
                 }
-                crate::background::BackgroundResult::NativeFileValidated { generation, path, document, baseline, cancel, result } => {
-                    if generation != self.workspace_generation { continue; }
+                crate::background::BackgroundResult::NativeFileValidated {
+                    generation,
+                    path,
+                    document,
+                    baseline,
+                    cancel,
+                    result,
+                } => {
+                    if generation != self.workspace_generation {
+                        continue;
+                    }
                     if cancel.is_cancelled() {
                         self.pending_file_reloads.remove(&path);
                         self.pending_file_reload_again.remove(&path);
                         self.queue_workspace_file_check(path);
                         continue;
                     }
-                    has_visual_changes |= self.finish_file_validation(generation, path, document, baseline, result);
+                    has_visual_changes |=
+                        self.finish_file_validation(generation, path, document, baseline, result);
                 }
-                crate::background::BackgroundResult::SourceControlRead { .. } => unreachable!("nested Git result"),
-                crate::background::BackgroundResult::RepositoryRead { .. } => unreachable!("nested repository result"),
-                crate::background::BackgroundResult::RemoteFileResult { .. } => unreachable!("nested remote file result"),
-                crate::background::BackgroundResult::WorkspaceResult { .. } => unreachable!("nested workspace result"),
-                crate::background::BackgroundResult::FileWatcherEvent { .. } => unreachable!("nested watcher result"),
+                crate::background::BackgroundResult::SourceControlRead { .. } => {
+                    unreachable!("nested Git result")
+                }
+                crate::background::BackgroundResult::RepositoryRead { .. } => {
+                    unreachable!("nested repository result")
+                }
+                crate::background::BackgroundResult::RemoteFileResult { .. } => {
+                    unreachable!("nested remote file result")
+                }
+                crate::background::BackgroundResult::WorkspaceResult { .. } => {
+                    unreachable!("nested workspace result")
+                }
+                crate::background::BackgroundResult::FileWatcherEvent { .. } => {
+                    unreachable!("nested watcher result")
+                }
                 crate::background::BackgroundResult::GitRepositories {
-                    root, workspace_generation, repository_generation, complete, include_untracked, discovery, scans,
+                    root,
+                    workspace_generation,
+                    repository_generation,
+                    complete,
+                    include_untracked,
+                    discovery,
+                    scans,
                 } => {
-                    if root != self.explorer.root || workspace_generation != self.workspace_generation { continue; }
+                    if root != self.explorer.root
+                        || workspace_generation != self.workspace_generation
+                    {
+                        continue;
+                    }
                     let obsolete = repository_generation != self.repositories.membership_generation
                         || (self.sc_visibility.untracked && !include_untracked);
                     if obsolete {
-                        self.background.spawn("stale-git-status-drop", move || drop((discovery, scans)));
+                        self.background
+                            .spawn("stale-git-status-drop", move || drop((discovery, scans)));
                     } else {
-                        has_visual_changes |= self.apply_repository_scan(root, workspace_generation, discovery, scans, complete);
+                        has_visual_changes |= self.apply_repository_scan(
+                            root,
+                            workspace_generation,
+                            discovery,
+                            scans,
+                            complete,
+                        );
                     }
-                    if !complete { continue; }
+                    if !complete {
+                        continue;
+                    }
                     self.bg_git_status_running = false;
                     self.bg_git_status_passive = false;
                     if obsolete {
@@ -2266,7 +2443,12 @@ impl App {
                     }
                 }
                 crate::background::BackgroundResult::GitBranch(branch) => {
-                    if let Some(repo) = self.repositories.entries.iter_mut().find(|repo| Some(&repo.root) == self.repositories.active.as_ref()) {
+                    if let Some(repo) = self
+                        .repositories
+                        .entries
+                        .iter_mut()
+                        .find(|repo| Some(&repo.root) == self.repositories.active.as_ref())
+                    {
                         repo.branch = branch.clone();
                     }
                     has_visual_changes |= self.cached_git_branch != branch;
@@ -2277,16 +2459,27 @@ impl App {
                         self.refresh_git_branch_async();
                     }
                 }
-                crate::background::BackgroundResult::GitRepositoryFound { root, workspace_generation, repository_generation, repository, branch } => {
+                crate::background::BackgroundResult::GitRepositoryFound {
+                    root,
+                    workspace_generation,
+                    repository_generation,
+                    repository,
+                    branch,
+                } => {
                     if self.explorer.root == root
                         && self.workspace_generation == workspace_generation
                         && self.repositories.membership_generation == repository_generation
-                        && matches!(self.source_control_repository_state,
-                            SourceControlRepositoryState::Checking | SourceControlRepositoryState::Missing | SourceControlRepositoryState::Loading)
+                        && matches!(
+                            self.source_control_repository_state,
+                            SourceControlRepositoryState::Checking
+                                | SourceControlRepositoryState::Missing
+                                | SourceControlRepositoryState::Loading
+                        )
                     {
                         self.repositories.loading_root = Some(repository);
                         self.cached_git_branch = branch;
-                        self.source_control_repository_state = SourceControlRepositoryState::Loading;
+                        self.source_control_repository_state =
+                            SourceControlRepositoryState::Loading;
                         has_visual_changes = true;
                     }
                 }
@@ -2295,7 +2488,9 @@ impl App {
                     snapshot,
                 } => {
                     if generation == self.explorer_refresh_generation
-                        && self.explorer_refresh_active_generation.is_none_or(|active| active == generation)
+                        && self
+                            .explorer_refresh_active_generation
+                            .is_none_or(|active| active == generation)
                         && !self.bg_explorer_refresh_pending
                         && !snapshot.matches_presentation(&self.explorer)
                     {
@@ -2303,7 +2498,12 @@ impl App {
                         let sender = self.background.sender.clone();
                         self.background.spawn("explorer-refresh", move || {
                             let snapshot = Box::new(snapshot.reprepare(presentation));
-                            let _ = sender.send(crate::background::BackgroundResult::ExplorerRefreshed { generation, snapshot });
+                            let _ = sender.send(
+                                crate::background::BackgroundResult::ExplorerRefreshed {
+                                    generation,
+                                    snapshot,
+                                },
+                            );
                         });
                     } else if self.finish_explorer_refresh(generation) {
                         self.remote_explorer_error = None;
@@ -2312,13 +2512,26 @@ impl App {
                         self.cancel_stale_terminal_directory_reveal();
                         let retired = self.explorer.apply_prepared_refresh(*snapshot);
                         if retired.is_large() {
-                            let _ = self.background.pool_sender().send(Box::new(move || drop(retired)));
+                            let _ = self
+                                .background
+                                .pool_sender()
+                                .send(Box::new(move || drop(retired)));
                         }
-                        if self.remote_workspace.is_some() && self.rename.active && self.rename.placeholder_active
+                        if self.remote_workspace.is_some()
+                            && self.rename.active
+                            && self.rename.placeholder_active
                             && let Some(path) = self.rename.target.clone()
                         {
-                            let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                            self.explorer.insert_remote_placeholder(path, name, self.creating_new_folder);
+                            let name = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned();
+                            self.explorer.insert_remote_placeholder(
+                                path,
+                                name,
+                                self.creating_new_folder,
+                            );
                         }
                         if select_find_match {
                             self.clear_explorer_selection();
@@ -2328,47 +2541,81 @@ impl App {
                         self.finish_terminal_directory_reveal(None);
                         has_visual_changes = true;
                     } else if snapshot.is_large() {
-                        let _ = self.background.pool_sender().send(Box::new(move || drop(snapshot)));
+                        let _ = self
+                            .background
+                            .pool_sender()
+                            .send(Box::new(move || drop(snapshot)));
                     }
                 }
-                crate::background::BackgroundResult::ExplorerRefreshFailed { generation, error } => {
+                crate::background::BackgroundResult::ExplorerRefreshFailed {
+                    generation,
+                    error,
+                } => {
                     if self.finish_explorer_refresh(generation) {
                         // A failed request is not an empty directory. Keep the
                         // last complete tree and its selection/scroll position.
                         self.remote_explorer_error = Some(error.clone());
-                        self.explorer.cancel_unloaded_expansions(std::mem::take(&mut self.explorer_expanding));
+                        self.explorer.cancel_unloaded_expansions(std::mem::take(
+                            &mut self.explorer_expanding,
+                        ));
                         self.explorer.find.loading = false;
                         self.explorer.find.select_first = false;
                         self.finish_terminal_directory_reveal(Some(&error));
-                        if self.explorer.find.open { self.explorer.find.results.error = Some(error.clone()); }
-                        if let Some(log) = self.remote_workspace.as_ref().and_then(|remote| remote.diagnostics()) {
-                            log.event("Explorer", &format!("Refresh failed; retaining cached files: {error}"));
+                        if self.explorer.find.open {
+                            self.explorer.find.results.error = Some(error.clone());
+                        }
+                        if let Some(log) = self
+                            .remote_workspace
+                            .as_ref()
+                            .and_then(|remote| remote.diagnostics())
+                        {
+                            log.event(
+                                "Explorer",
+                                &format!("Refresh failed; retaining cached files: {error}"),
+                            );
                         }
                         self.status_message = "Remote Explorer unavailable; showing cached files. View > Output has connection details.".into();
                         has_visual_changes = true;
                     }
                 }
                 crate::background::BackgroundResult::ExplorerHoverInfo { generation, info } => {
-                    if self.explorer_hover.finish(generation) && let Some(info) = info {
-                        has_visual_changes |= self.hovered_explorer
+                    if self.explorer_hover.finish(generation)
+                        && let Some(info) = info
+                    {
+                        has_visual_changes |= self
+                            .hovered_explorer
                             .and_then(|index| self.explorer.entries.get(index))
                             .is_some_and(|entry| entry.path == info.path);
                         if let Some(line_count) = info.line_count {
-                            self.explorer_line_count_cache.insert(info.path.clone(), line_count);
+                            self.explorer_line_count_cache
+                                .insert(info.path.clone(), line_count);
                         }
-                        self.explorer_hover_info_cache.insert(info.path.clone(), info);
+                        self.explorer_hover_info_cache
+                            .insert(info.path.clone(), info);
                     }
                 }
                 crate::background::BackgroundResult::SourceControlFileStats(stats) => {
                     has_visual_changes |= crate::app_source_control_hover::finish(self, stats);
                 }
-                crate::background::BackgroundResult::FolderBrowserEntries { path, generation, entries, directory_count, modified, locations, error } => {
-                    if self.folder_browser_path == path && self.folder_browser.generation == generation {
+                crate::background::BackgroundResult::FolderBrowserEntries {
+                    path,
+                    generation,
+                    entries,
+                    directory_count,
+                    modified,
+                    locations,
+                    error,
+                } => {
+                    if self.folder_browser_path == path
+                        && self.folder_browser.generation == generation
+                    {
                         self.folder_browser_entries = entries;
                         self.folder_browser.directory_count = directory_count;
                         self.folder_browser.modified = modified;
                         self.folder_browser.locations = locations;
-                        if self.folder_browser.error.is_none() { self.folder_browser.error = error; }
+                        if self.folder_browser.error.is_none() {
+                            self.folder_browser.error = error;
+                        }
                         self.folder_browser_selected = 0;
                         self.folder_browser_scroll = 0;
                         self.folder_browser_loading = false;
@@ -2376,7 +2623,11 @@ impl App {
                         has_visual_changes = true;
                     }
                 }
-                crate::background::BackgroundResult::FolderBrowserCreated { path, generation, error } => {
+                crate::background::BackgroundResult::FolderBrowserCreated {
+                    path,
+                    generation,
+                    error,
+                } => {
                     if self.folder_browser.generation == generation {
                         self.folder_browser.creating = false;
                         if let Some(error) = error {
@@ -2459,7 +2710,10 @@ impl App {
                     if matches!(action, "rebase" | "cherry-pick") && self.git_operation_ui.pending {
                         self.git_operation_ui.pending = false;
                         match &result {
-                            Ok(_) => { self.git_operation_ui.request = None; self.modal = Default::default(); }
+                            Ok(_) => {
+                                self.git_operation_ui.request = None;
+                                self.modal = Default::default();
+                            }
                             Err(error) => self.modal.error = Some(error.clone()),
                         }
                     }
@@ -2467,7 +2721,9 @@ impl App {
                         Ok(outcome) => {
                             if let Some(request) = outcome.stage_all_commit_request {
                                 self.refresh_source_control_async();
-                                if self.source_control_enabled && self.current_repository_matches(&request.root) {
+                                if self.source_control_enabled
+                                    && self.current_repository_matches(&request.root)
+                                {
                                     self.sc_stage_all_commit_request = Some(request);
                                     self.modal = crate::ui_modal::ModalState::default();
                                 }
@@ -2508,7 +2764,9 @@ impl App {
                             if outcome.reload_all_clean_files {
                                 self.queue_all_clean_file_reloads();
                             }
-                            if outcome.refresh_log { self.refresh_git_branch_async(); }
+                            if outcome.refresh_log {
+                                self.refresh_git_branch_async();
+                            }
                             self.notify(outcome.message);
                         }
                         Err(error) => {
@@ -2545,34 +2803,50 @@ impl App {
                         }
                     }
                 }
-                crate::background::BackgroundResult::ExternalOpenDone(result) => {
-                    match result {
-                        Ok(message) => self.notify(message),
-                        Err(error) => self.notify_error(error),
-                    }
-                }
+                crate::background::BackgroundResult::ExternalOpenDone(result) => match result {
+                    Ok(message) => self.notify(message),
+                    Err(error) => self.notify_error(error),
+                },
                 crate::background::BackgroundResult::DeletionProgress(token) => {
                     if let Some(deletion) = &self.file_deletion
-                        && deletion.cancel.same_task(&token) {
+                        && deletion.cancel.same_task(&token)
+                    {
                         deletion.shared.acknowledge();
                         has_visual_changes = true;
                     }
                 }
                 crate::background::BackgroundResult::FilesystemActionDone { action, result } => {
                     self.bg_filesystem_action_running = false;
-                    if action == "Delete" && let Some(deletion) = &mut self.file_deletion {
-                        if deletion.visible() || result.as_ref().map_or(true, |outcome| outcome.warning) { deletion.finished = Some(std::time::Instant::now()); deletion.shown = true; }
-                        else { self.file_deletion = None; }
+                    if action == "Delete"
+                        && let Some(deletion) = &mut self.file_deletion
+                    {
+                        if deletion.visible()
+                            || result.as_ref().map_or(true, |outcome| outcome.warning)
+                        {
+                            deletion.finished = Some(std::time::Instant::now());
+                            deletion.shown = true;
+                        } else {
+                            self.file_deletion = None;
+                        }
                     }
                     match result {
                         Ok(outcome) => {
-                            if outcome.finish_rename.as_ref().is_some_and(|target| self.rename.target.as_ref() == Some(target)) {
-                                self.rename.active = false; self.rename.target = None;
-                                self.rename.placeholder_active = false; self.creating_new_file = false; self.creating_new_folder = false;
+                            if outcome
+                                .finish_rename
+                                .as_ref()
+                                .is_some_and(|target| self.rename.target.as_ref() == Some(target))
+                            {
+                                self.rename.active = false;
+                                self.rename.target = None;
+                                self.rename.placeholder_active = false;
+                                self.creating_new_file = false;
+                                self.creating_new_folder = false;
                             }
                             let update_tabs = |tabs: &mut Vec<crate::app::Tab>| {
                                 for tab in tabs {
-                                    if tab.kind == TabKind::GitRevision { continue; }
+                                    if tab.kind == TabKind::GitRevision {
+                                        continue;
+                                    }
                                     tab.editor.refresh_document();
                                     let Some(path) = tab.editor.file_path.clone() else {
                                         continue;
@@ -2601,19 +2875,28 @@ impl App {
                             // only some children. Probe open files asynchronously;
                             // never close all tabs merely because their root was selected.
                             if !outcome.check_deleted_paths.is_empty() {
-                                let paths: Vec<_> = self.tabs.iter()
+                                let paths: Vec<_> = self
+                                    .tabs
+                                    .iter()
                                     .chain(self.groups.iter().flat_map(|group| &group.tabs))
                                     .filter_map(|tab| tab.editor.file_path.as_ref())
-                                    .filter(|path| outcome.check_deleted_paths.iter().any(|root| path.ancestors().any(|ancestor| Self::same_open_path(ancestor, root))))
-                                    .cloned().collect();
+                                    .filter(|path| {
+                                        outcome.check_deleted_paths.iter().any(|root| {
+                                            path.ancestors().any(|ancestor| {
+                                                Self::same_open_path(ancestor, root)
+                                            })
+                                        })
+                                    })
+                                    .cloned()
+                                    .collect();
                                 self.queue_file_disk_checks(paths);
                             }
                             self.finish_explorer_cut(&outcome);
                             self.explorer_multi_selected.retain(|path| {
-                                !outcome
-                                    .deleted
-                                    .iter()
-                                    .any(|deleted| crate::native_paths::strip_spelling_prefix(path, deleted).is_some())
+                                !outcome.deleted.iter().any(|deleted| {
+                                    crate::native_paths::strip_spelling_prefix(path, deleted)
+                                        .is_some()
+                                })
                             });
                             self.explorer_hover.invalidate(None);
                             self.explorer_hover_info_cache.clear();
@@ -2623,10 +2906,15 @@ impl App {
                                 self.explorer_paste_reveal = outcome.pasted_paths;
                             }
                             self.refresh_explorer_async();
-                            if let Some(path) = &outcome.open_file { self.open_file(path); }
+                            if let Some(path) = &outcome.open_file {
+                                self.open_file(path);
+                            }
                             self.status_message = outcome.message.clone();
-                            if outcome.warning { self.notify_warn(outcome.message); }
-                            else { self.notify(outcome.message); }
+                            if outcome.warning {
+                                self.notify_warn(outcome.message);
+                            } else {
+                                self.notify(outcome.message);
+                            }
                         }
                         Err(error) => self.notify_error(format!("{action} failed: {error}")),
                     }
@@ -2646,8 +2934,14 @@ impl App {
                     self.finish_exit_recovery(generation, result);
                     has_visual_changes = true;
                 }
-                crate::background::BackgroundResult::GlobalSearchFileResults { path, serial, generation, result } => {
-                    has_visual_changes |= self.apply_global_search_file_results(path, serial, generation, result);
+                crate::background::BackgroundResult::GlobalSearchFileResults {
+                    path,
+                    serial,
+                    generation,
+                    result,
+                } => {
+                    has_visual_changes |=
+                        self.apply_global_search_file_results(path, serial, generation, result);
                 }
                 crate::background::BackgroundResult::GlobalSearchResults {
                     mut results,
@@ -2658,7 +2952,9 @@ impl App {
                     // Discard stale results from a previous search
                     if generation == self.search_generation {
                         has_visual_changes = true;
-                        results.retain(|result| self.global_search_results.accepts_streamed_result(result));
+                        results.retain(|result| {
+                            self.global_search_results.accepts_streamed_result(result)
+                        });
                         if truncated {
                             self.global_search_truncated = true;
                         }
@@ -2673,25 +2969,43 @@ impl App {
                             if results.len() > remaining {
                                 self.global_search_truncated = true;
                             }
-                            let selected = self.global_search_results.get(self.global_search_selected).cloned();
-                            let anchor = (self.global_search_scroll > 0).then(|| {
-                                self.global_search_results.row_at(self.global_search_scroll).map(|row| {
-                                    let (index, header) = match row {
-                                        crate::search_results::SearchRow::Header(index) => (index, true),
-                                        crate::search_results::SearchRow::Result(index) => (index, false),
-                                    };
-                                    (self.global_search_results[index].clone(), header)
+                            let selected = self
+                                .global_search_results
+                                .get(self.global_search_selected)
+                                .cloned();
+                            let anchor = (self.global_search_scroll > 0)
+                                .then(|| {
+                                    self.global_search_results
+                                        .row_at(self.global_search_scroll)
+                                        .map(|row| {
+                                            let (index, header) = match row {
+                                                crate::search_results::SearchRow::Header(index) => {
+                                                    (index, true)
+                                                }
+                                                crate::search_results::SearchRow::Result(index) => {
+                                                    (index, false)
+                                                }
+                                            };
+                                            (self.global_search_results[index].clone(), header)
+                                        })
                                 })
-                            }).flatten();
+                                .flatten();
                             self.global_search_results
                                 .extend(results.into_iter().take(remaining));
-                            if let Some(index) = selected.as_ref().and_then(|result| self.global_search_results.index_of(result)) {
+                            if let Some(index) = selected
+                                .as_ref()
+                                .and_then(|result| self.global_search_results.index_of(result))
+                            {
                                 self.global_search_selected = index;
                             }
                             if let Some((result, header)) = anchor
                                 && let Some(index) = self.global_search_results.index_of(&result)
-                                && let Some(row) = if header { self.global_search_results.header_row(index) }
-                                    else { self.global_search_results.result_row(index) } {
+                                && let Some(row) = if header {
+                                    self.global_search_results.header_row(index)
+                                } else {
+                                    self.global_search_results.result_row(index)
+                                }
+                            {
                                 self.global_search_scroll = row;
                             }
                             self.ensure_global_search_selection_visible();
@@ -2718,7 +3032,9 @@ impl App {
                     truncated,
                     error,
                 } => {
-                    has_visual_changes |= self.apply_tab_search_matches(owner, generation, target, matches, truncated, error);
+                    has_visual_changes |= self.apply_tab_search_matches(
+                        owner, generation, target, matches, truncated, error,
+                    );
                 }
                 crate::background::BackgroundResult::FileReplaceDone {
                     generation,
@@ -2733,7 +3049,9 @@ impl App {
                         // since this view was last drawn. Validate live state.
                         let _ = self.editor_mut();
                         if self.editor_content_target().as_ref() == Some(&target)
-                            && self.editor().is_some_and(|editor| editor.save_identity == source_document_id)
+                            && self
+                                .editor()
+                                .is_some_and(|editor| editor.save_identity == source_document_id)
                         {
                             self.apply_file_replacement(&prepared, replacements);
                             has_visual_changes = true;
@@ -2743,11 +3061,33 @@ impl App {
                         }
                     }
                 }
-                crate::background::BackgroundResult::GlobalReplaceOpenPrepared { workspace_generation, generation, open_files, failures } => {
-                    has_visual_changes |= self.apply_workspace_replace_prepared(workspace_generation, generation, open_files, failures);
+                crate::background::BackgroundResult::GlobalReplaceOpenPrepared {
+                    workspace_generation,
+                    generation,
+                    open_files,
+                    failures,
+                } => {
+                    has_visual_changes |= self.apply_workspace_replace_prepared(
+                        workspace_generation,
+                        generation,
+                        open_files,
+                        failures,
+                    );
                 }
-                crate::background::BackgroundResult::GlobalReplaceDone { workspace_generation, generation, outcome, candidates, error } => {
-                    has_visual_changes |= self.finish_workspace_replace(workspace_generation, generation, outcome, candidates, error);
+                crate::background::BackgroundResult::GlobalReplaceDone {
+                    workspace_generation,
+                    generation,
+                    outcome,
+                    candidates,
+                    error,
+                } => {
+                    has_visual_changes |= self.finish_workspace_replace(
+                        workspace_generation,
+                        generation,
+                        outcome,
+                        candidates,
+                        error,
+                    );
                 }
                 crate::background::BackgroundResult::SourceSymbols(reply) => {
                     has_visual_changes |= self.apply_source_symbols(reply);
@@ -2759,21 +3099,52 @@ impl App {
                         has_visual_changes = true;
                     }
                 }
-                crate::background::BackgroundResult::ChatFileSuggestions { agent, generation, root, paths } => {
-                    has_visual_changes |= self.with_agent_context(agent, agent != self.chat.active_agent,
-                        |app| app.apply_chat_file_suggestions(generation, root, paths)).unwrap_or(false);
+                crate::background::BackgroundResult::ChatFileSuggestions {
+                    agent,
+                    generation,
+                    root,
+                    paths,
+                } => {
+                    has_visual_changes |= self
+                        .with_agent_context(agent, agent != self.chat.active_agent, |app| {
+                            app.apply_chat_file_suggestions(generation, root, paths)
+                        })
+                        .unwrap_or(false);
                 }
-                crate::background::BackgroundResult::ChatAttachmentsPrepared { agent, serial, result } => {
-                    has_visual_changes |= self.with_agent_context(agent, agent != self.chat.active_agent,
-                        |app| app.apply_remote_chat_attachments(serial, result)).unwrap_or(false);
+                crate::background::BackgroundResult::ChatAttachmentsPrepared {
+                    agent,
+                    serial,
+                    result,
+                } => {
+                    has_visual_changes |= self
+                        .with_agent_context(agent, agent != self.chat.active_agent, |app| {
+                            app.apply_remote_chat_attachments(serial, result)
+                        })
+                        .unwrap_or(false);
                 }
-                crate::background::BackgroundResult::ChatPastePrepared { agent, serial, result } => {
-                    has_visual_changes |= self.with_agent_context(agent, agent != self.chat.active_agent,
-                        |app| app.apply_remote_chat_paste(serial, result)).unwrap_or(false);
+                crate::background::BackgroundResult::ChatPastePrepared {
+                    agent,
+                    serial,
+                    result,
+                } => {
+                    has_visual_changes |= self
+                        .with_agent_context(agent, agent != self.chat.active_agent, |app| {
+                            app.apply_remote_chat_paste(serial, result)
+                        })
+                        .unwrap_or(false);
                 }
-                crate::background::BackgroundResult::ChatPromptPrepared { agent, session, serial, result, draft } => {
-                    has_visual_changes |= self.with_agent_context(agent, agent != self.chat.active_agent,
-                        |app| app.apply_chat_prompt_context(session, serial, result, draft)).unwrap_or(false);
+                crate::background::BackgroundResult::ChatPromptPrepared {
+                    agent,
+                    session,
+                    serial,
+                    result,
+                    draft,
+                } => {
+                    has_visual_changes |= self
+                        .with_agent_context(agent, agent != self.chat.active_agent, |app| {
+                            app.apply_chat_prompt_context(session, serial, result, draft)
+                        })
+                        .unwrap_or(false);
                 }
                 crate::background::BackgroundResult::FileDiskState(change) => {
                     self.pending_disk_checks.remove(&change.path);
@@ -2793,7 +3164,9 @@ impl App {
                         continue;
                     }
                     if self.source_control_diff_disk_changed(&change) {
-                        self.refresh_source_control_diffs_for_paths(Some(&[change.path.clone()].into_iter().collect()));
+                        self.refresh_source_control_diffs_for_paths(Some(
+                            &[change.path.clone()].into_iter().collect(),
+                        ));
                     }
                     if !change.exists {
                         let closed = self.close_deleted_file_tabs(&change.path, false);
@@ -2820,13 +3193,19 @@ impl App {
                     let mut disk_state_changed = false;
                     let mut should_reload = false;
                     let mut changed_unsaved = false;
-                    let remote_path = self.remote_workspace.is_some() && crate::remote::workspace::is_view_key(&change.path);
+                    let remote_path = self.remote_workspace.is_some()
+                        && crate::remote::workspace::is_view_key(&change.path);
                     let mut inspect_tabs = |tabs: &mut Vec<crate::app::Tab>| {
                         for tab in tabs {
                             tab.editor.refresh_document();
                             if tab.editor.file_path.as_deref() != Some(change.path.as_path())
                                 || tab.editor.bg_loading
-                                || matches!(tab.kind, TabKind::Diff(_) | TabKind::GitRevision | TabKind::CommitDetails)
+                                || matches!(
+                                    tab.kind,
+                                    TabKind::Diff(_)
+                                        | TabKind::GitRevision
+                                        | TabKind::CommitDetails
+                                )
                             {
                                 continue;
                             }
@@ -2850,7 +3229,9 @@ impl App {
                                 tab.editor.publish_document();
                                 if tab.editor.modified && !remote_path {
                                     changed_unsaved = true;
-                                } else { should_reload = true; }
+                                } else {
+                                    should_reload = true;
+                                }
                             }
                         }
                     };
@@ -2865,8 +3246,11 @@ impl App {
                         self.explorer_line_count_cache.remove(&change.path);
                     }
                     if should_reload {
-                        if remote_path { self.queue_remote_file_change(change.path.clone()); }
-                        else { self.queue_file_reload(change.path.clone()); }
+                        if remote_path {
+                            self.queue_remote_file_change(change.path.clone());
+                        } else {
+                            self.queue_file_reload(change.path.clone());
+                        }
                     }
                     if changed_unsaved {
                         has_visual_changes |= self.warn_file_changed_on_disk(&change.path);
@@ -2885,14 +3269,24 @@ impl App {
                 crate::background::BackgroundResult::FileWatcherState { root, active } => {
                     if root == self.explorer.root {
                         self.workspace_watcher_active = active;
-                        self.explorer.set_directory_watcher_active(self.workspace_watcher_active);
+                        self.explorer
+                            .set_directory_watcher_active(self.workspace_watcher_active);
                     }
                 }
                 crate::background::BackgroundResult::FilesChanged {
-                    root, changes, structure_changed, rescan, git_metadata_changed,
+                    root,
+                    changes,
+                    structure_changed,
+                    rescan,
+                    git_metadata_changed,
                 } => {
                     has_visual_changes |= self.apply_workspace_file_changes(
-                        root, changes, structure_changed, rescan, git_metadata_changed);
+                        root,
+                        changes,
+                        structure_changed,
+                        rescan,
+                        git_metadata_changed,
+                    );
                 }
 
                 crate::background::BackgroundResult::HighlightBatch(batch) => {
@@ -2903,7 +3297,8 @@ impl App {
                     let applied = outcome.accepted();
                     has_visual_changes |= outcome.visual_changes();
                     // Other windows may show this file and requested these colors.
-                    self.tab_window_redraw_pending |= outcome.visual_changes() && self.has_detached_windows();
+                    self.tab_window_redraw_pending |=
+                        outcome.visual_changes() && self.has_detached_windows();
                     if !provisional
                         && applied
                         && self
@@ -2930,11 +3325,19 @@ impl App {
                         }
                     }
                     if !provisional && applied {
-                        if self.visible_highlight_key.as_ref().is_some_and(|key| key.0 == file_path && key.1 == content_version) {
+                        if self
+                            .visible_highlight_key
+                            .as_ref()
+                            .is_some_and(|key| key.0 == file_path && key.1 == content_version)
+                        {
                             self.visible_highlight_key = None;
                         }
                         for group in &mut self.groups {
-                            if group.visible_highlight_key.as_ref().is_some_and(|key| key.0 == file_path && key.1 == content_version) {
+                            if group
+                                .visible_highlight_key
+                                .as_ref()
+                                .is_some_and(|key| key.0 == file_path && key.1 == content_version)
+                            {
                                 group.visible_highlight_key = None;
                             }
                         }
@@ -2966,20 +3369,27 @@ impl App {
                         // This request covered the complete diff viewport.
                         // Retain its key until the viewport, document, or theme changes.
                         has_visual_changes |= has_entries;
-                        self.tab_window_redraw_pending |= has_entries && self.has_detached_windows();
+                        self.tab_window_redraw_pending |=
+                            has_entries && self.has_detached_windows();
                     }
                 }
                 crate::background::BackgroundResult::SessionUntitledLoaded { restores } => {
                     self.preserve_unreadable_session_recovery(&restores);
-                    let mut restores: rustc_hash::FxHashMap<_, _> =
-                        restores.into_iter().map(|restore| (restore.id, restore)).collect();
+                    let mut restores: rustc_hash::FxHashMap<_, _> = restores
+                        .into_iter()
+                        .map(|restore| (restore.id, restore))
+                        .collect();
                     let threshold = self.large_file_threshold_mb.saturating_mul(1024 * 1024);
-                    for tab in self.tabs.iter_mut().chain(
-                        self.groups.iter_mut().flat_map(|group| &mut group.tabs),
-                    ) {
+                    for tab in self
+                        .tabs
+                        .iter_mut()
+                        .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+                    {
                         let editor = &mut tab.editor;
                         if editor.file_path.is_none()
-                            && let Some(restore) = editor.pending_session_restore.as_ref()
+                            && let Some(restore) = editor
+                                .pending_session_restore
+                                .as_ref()
                                 .and_then(|pending| restores.remove(&pending.id))
                         {
                             crate::editor_document::edit!(editor, {
@@ -2998,14 +3408,27 @@ impl App {
                     }
                 }
                 crate::background::BackgroundResult::SessionFileDeferred {
-                    workspace_generation, path, restore_id, file_size, last_disk_modified,
+                    workspace_generation,
+                    path,
+                    restore_id,
+                    file_size,
+                    last_disk_modified,
                 } => {
                     if workspace_generation == self.workspace_generation {
-                        has_visual_changes |= self.apply_deferred_session_file(&path, restore_id, file_size, last_disk_modified);
+                        has_visual_changes |= self.apply_deferred_session_file(
+                            &path,
+                            restore_id,
+                            file_size,
+                            last_disk_modified,
+                        );
                     }
                 }
                 #[cfg(windows)]
-                crate::background::BackgroundResult::NativeOpenResolved { generation, request, source } => {
+                crate::background::BackgroundResult::NativeOpenResolved {
+                    generation,
+                    request,
+                    source,
+                } => {
                     if generation == self.workspace_generation {
                         has_visual_changes |= match source {
                             Some(source) => self.finish_native_file_open_alias(request, source),
@@ -3032,7 +3455,8 @@ impl App {
                     let open_commands = if skip_open_prompt {
                         Vec::new()
                     } else {
-                        let mut commands = self.extension_manager.file_open_commands_for_path(&path);
+                        let mut commands =
+                            self.extension_manager.file_open_commands_for_path(&path);
                         if encoding == "Binary" {
                             for command in self.extension_manager.binary_open_commands() {
                                 if !commands.iter().any(|existing| {
@@ -3047,21 +3471,31 @@ impl App {
                     };
                     if !open_commands.is_empty() {
                         let mut removed_placeholder = false;
-                        crate::tab_collection::retain(&mut self.tabs, &mut self.active_tab, &mut self.tab_mru_order, |_, tab| {
-                            let remove = tab.editor.bg_loading
-                                && tab.editor.pending_session_restore.is_none()
-                                && tab.editor.file_path.as_deref() == Some(path.as_path());
-                            removed_placeholder |= remove;
-                            !remove
-                        });
-                        for group in &mut self.groups {
-                            crate::tab_collection::retain(&mut group.tabs, &mut group.active_tab, &mut group.tab_mru_order, |_, tab| {
+                        crate::tab_collection::retain(
+                            &mut self.tabs,
+                            &mut self.active_tab,
+                            &mut self.tab_mru_order,
+                            |_, tab| {
                                 let remove = tab.editor.bg_loading
                                     && tab.editor.pending_session_restore.is_none()
                                     && tab.editor.file_path.as_deref() == Some(path.as_path());
                                 removed_placeholder |= remove;
                                 !remove
-                            });
+                            },
+                        );
+                        for group in &mut self.groups {
+                            crate::tab_collection::retain(
+                                &mut group.tabs,
+                                &mut group.active_tab,
+                                &mut group.tab_mru_order,
+                                |_, tab| {
+                                    let remove = tab.editor.bg_loading
+                                        && tab.editor.pending_session_restore.is_none()
+                                        && tab.editor.file_path.as_deref() == Some(path.as_path());
+                                    removed_placeholder |= remove;
+                                    !remove
+                                },
+                            );
                         }
                         self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
                         if removed_placeholder {
@@ -3102,7 +3536,8 @@ impl App {
                     let mut loaded_large_file_mode = false;
                     let navigation = &mut self.navigation;
                     let mut apply_loaded = |tab: &mut crate::app::Tab| {
-                        if tab.editor.file_path.as_deref() != Some(&path) || !tab.editor.bg_loading {
+                        if tab.editor.file_path.as_deref() != Some(&path) || !tab.editor.bg_loading
+                        {
                             return;
                         }
                         let pending_restore_id = tab
@@ -3110,15 +3545,20 @@ impl App {
                             .pending_session_restore
                             .as_ref()
                             .map(|restore| restore.id);
-                        let matching_restore = pending_restore_id.and_then(|id| session_restores.get(&id));
+                        let matching_restore =
+                            pending_restore_id.and_then(|id| session_restores.get(&id));
                         let belongs_to_result = if session_result {
                             matching_restore.is_some()
                         } else {
                             pending_restore_id.is_none()
                         };
                         if belongs_to_result {
-                            let resumed = tab.editor.restoring_deferred_file().then_some(tab.editor.content_version);
-                            let pending_selection = crate::app_navigation::NavigationSelection::capture(&tab.editor);
+                            let resumed = tab
+                                .editor
+                                .restoring_deferred_file()
+                                .then_some(tab.editor.content_version);
+                            let pending_selection =
+                                crate::app_navigation::NavigationSelection::capture(&tab.editor);
                             if let Some(saved) = matching_restore
                                 && let Some(restore) = &mut tab.editor.pending_session_restore
                             {
@@ -3140,7 +3580,8 @@ impl App {
                             tab.editor.set_remote_checkpoint(remote_checkpoint.clone());
                             tab.editor.set_language_associations(&language_associations);
                             tab.editor.scope_bubble_rules = scope_rules.clone();
-                            tab.editor.read_only = default_read_only || encoding == "Binary"
+                            tab.editor.read_only = default_read_only
+                                || encoding == "Binary"
                                 || matches!(tab.kind, TabKind::Diff(_) | TabKind::CommitDetails);
                             tab.editor.word_wrap = default_word_wrap && !tab.editor.large_file_mode;
                             tab.editor.word_wrap_column = word_wrap_column;
@@ -3188,7 +3629,11 @@ impl App {
                         if encoding == "Binary" {
                             self.notify("Binary file — editing disabled");
                         } else if !loaded_large_file_mode && applied_file {
-                            self.queue_lsp_document_sync(path.clone(), resumed_version.unwrap_or(0), rope.clone());
+                            self.queue_lsp_document_sync(
+                                path.clone(),
+                                resumed_version.unwrap_or(0),
+                                rope.clone(),
+                            );
                         } else if loaded_large_file_mode {
                             self.notify(format!(
                                 "Large file mode: rich features paused for {}",
@@ -3248,17 +3693,27 @@ impl App {
                             .is_some_and(|saved| saved.pending_unsaved_content.is_none())
                     };
                     let mut removed_session_tabs = 0usize;
-                    crate::tab_collection::retain(&mut self.tabs, &mut self.active_tab, &mut self.tab_mru_order, |_, tab| {
-                        let remove = is_missing_session_tab(tab);
-                        removed_session_tabs += usize::from(remove);
-                        !remove
-                    });
-                    for group in &mut self.groups {
-                        crate::tab_collection::retain(&mut group.tabs, &mut group.active_tab, &mut group.tab_mru_order, |_, tab| {
+                    crate::tab_collection::retain(
+                        &mut self.tabs,
+                        &mut self.active_tab,
+                        &mut self.tab_mru_order,
+                        |_, tab| {
                             let remove = is_missing_session_tab(tab);
                             removed_session_tabs += usize::from(remove);
                             !remove
-                        });
+                        },
+                    );
+                    for group in &mut self.groups {
+                        crate::tab_collection::retain(
+                            &mut group.tabs,
+                            &mut group.active_tab,
+                            &mut group.tab_mru_order,
+                            |_, tab| {
+                                let remove = is_missing_session_tab(tab);
+                                removed_session_tabs += usize::from(remove);
+                                !remove
+                            },
+                        );
                         group.active_tab = group.active_tab.min(group.tabs.len().saturating_sub(1));
                     }
                     self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
@@ -3269,7 +3724,8 @@ impl App {
                     let default_read_only = self.default_read_only;
                     let navigation = &mut self.navigation;
                     let mut apply_error = |tab: &mut crate::app::Tab| {
-                        if tab.editor.file_path.as_deref() != Some(&path) || !tab.editor.bg_loading {
+                        if tab.editor.file_path.as_deref() != Some(&path) || !tab.editor.bg_loading
+                        {
                             return;
                         }
                         let pending_restore_id = tab
@@ -3277,14 +3733,16 @@ impl App {
                             .pending_session_restore
                             .as_ref()
                             .map(|restore| restore.id);
-                        let matching_restore = pending_restore_id.and_then(|id| session_restores.get(&id));
+                        let matching_restore =
+                            pending_restore_id.and_then(|id| session_restores.get(&id));
                         let belongs_to_result = if session_result {
                             matching_restore.is_some()
                         } else {
                             pending_restore_id.is_none()
                         };
                         if belongs_to_result {
-                            let pending_selection = crate::app_navigation::NavigationSelection::capture(&tab.editor);
+                            let pending_selection =
+                                crate::app_navigation::NavigationSelection::capture(&tab.editor);
                             if let Some(saved) = matching_restore
                                 && let Some(restore) = &mut tab.editor.pending_session_restore
                             {
@@ -3294,16 +3752,18 @@ impl App {
                                 .editor
                                 .pending_session_restore
                                 .as_ref()
-                                .and_then(|restore| {
-                                    restore.tab.pending_unsaved_content.as_ref()
-                                })
+                                .and_then(|restore| restore.tab.pending_unsaved_content.as_ref())
                                 .is_some();
                             if has_unsaved_restore {
                                 tab.editor.rope = ropey::Rope::new();
                                 tab.editor.saved_rope = None;
                                 tab.editor.bg_loading = false;
                                 tab.editor.load_failed = false;
-                                tab.editor.read_only = default_read_only || matches!(tab.kind, TabKind::Diff(_) | TabKind::CommitDetails);
+                                tab.editor.read_only = default_read_only
+                                    || matches!(
+                                        tab.kind,
+                                        TabKind::Diff(_) | TabKind::CommitDetails
+                                    );
                                 tab.editor.apply_pending_session_restore(threshold_bytes);
                                 tab.editor.apply_pending_file_navigation();
                                 navigation.resolve_loaded_editor(&tab.editor, pending_selection);
@@ -3315,7 +3775,8 @@ impl App {
                                 tab.editor.rope =
                                     ropey::Rope::from_str(&format!("Error loading file:\n{error}"));
                                 tab.editor.load_failed = true;
-                                tab.editor.mark_syntax_dirty_range(0, tab.editor.rope.len_lines());
+                                tab.editor
+                                    .mark_syntax_dirty_range(0, tab.editor.rope.len_lines());
                                 tab.editor.bg_loading = false;
                                 tab.editor.pending_cursor_position = None;
                                 tab.editor.pending_navigation_selection = None;
@@ -3363,7 +3824,13 @@ impl App {
                         ));
                     }
                 }
-                crate::background::BackgroundResult::SearchFileReloaded { workspace_generation, generation, path, targets, loaded } => {
+                crate::background::BackgroundResult::SearchFileReloaded {
+                    workspace_generation,
+                    generation,
+                    path,
+                    targets,
+                    loaded,
+                } => {
                     if workspace_generation == self.workspace_generation
                         && generation == self.search_generation
                         && !self.pending_file_reloads.contains(&path)
@@ -3371,16 +3838,30 @@ impl App {
                         && !self.remote_connection.checking.contains(&path)
                         && !self.chat.rollback.file_busy(&path)
                     {
-                        self.refresh_source_control_diffs_for_paths(Some(&[path.clone()].into_iter().collect()));
-                        has_visual_changes |= self.apply_open_file_reload(&path, &targets, loaded, &mut file_reload_names);
+                        self.refresh_source_control_diffs_for_paths(Some(
+                            &[path.clone()].into_iter().collect(),
+                        ));
+                        has_visual_changes |= self.apply_open_file_reload(
+                            &path,
+                            &targets,
+                            loaded,
+                            &mut file_reload_names,
+                        );
                     }
                 }
-                crate::background::BackgroundResult::FileReloaded { workspace_generation, path, targets, result } => {
+                crate::background::BackgroundResult::FileReloaded {
+                    workspace_generation,
+                    path,
+                    targets,
+                    result,
+                } => {
                     if workspace_generation != self.workspace_generation {
                         continue;
                     }
                     self.pending_file_reloads.remove(&path);
-                    if self.chat.rollback.file_busy(&path) || self.pending_file_saves.contains_key(&path) {
+                    if self.chat.rollback.file_busy(&path)
+                        || self.pending_file_saves.contains_key(&path)
+                    {
                         self.pending_file_reload_again.remove(&path);
                         continue;
                     }
@@ -3391,12 +3872,19 @@ impl App {
                         self.queue_workspace_file_check(path);
                         continue;
                     }
-                    self.refresh_source_control_diffs_for_paths(Some(&[path.clone()].into_iter().collect()));
+                    self.refresh_source_control_diffs_for_paths(Some(
+                        &[path.clone()].into_iter().collect(),
+                    ));
 
                     match result {
                         Ok(loaded) => {
                             self.remote_change_warnings.remove(&path);
-                            has_visual_changes |= self.apply_open_file_reload(&path, &targets, loaded, &mut file_reload_names);
+                            has_visual_changes |= self.apply_open_file_reload(
+                                &path,
+                                &targets,
+                                loaded,
+                                &mut file_reload_names,
+                            );
                         }
                         Err(error) => {
                             let still_open =
@@ -3409,10 +3897,12 @@ impl App {
                                 });
                             if still_open {
                                 has_visual_changes = true;
-                                if self.remote_change_warnings.insert(path.clone()) { self.notify_error(format!(
-                                    "Could not reload {}: {error}",
-                                    self.display_path(&path)
-                                )); }
+                                if self.remote_change_warnings.insert(path.clone()) {
+                                    self.notify_error(format!(
+                                        "Could not reload {}: {error}",
+                                        self.display_path(&path)
+                                    ));
+                                }
                             }
                         }
                     }
@@ -3443,21 +3933,35 @@ impl App {
                     self.restore_pending_custom_documents();
                 }
                 crate::background::BackgroundResult::ExtensionViewEventDone {
-                    extension_index, extension_id, result, runtime, close_view, exit_action,
+                    extension_index,
+                    extension_id,
+                    result,
+                    runtime,
+                    close_view,
+                    exit_action,
                 } => {
-                    has_visual_changes |= self.extension_manager.restore_runtime(extension_index, runtime)
-                        || exit_action || close_view.is_some() || result.is_err();
+                    has_visual_changes |= self
+                        .extension_manager
+                        .restore_runtime(extension_index, runtime)
+                        || exit_action
+                        || close_view.is_some()
+                        || result.is_err();
                     if exit_action {
                         self.custom_exit_remaining = self.custom_exit_remaining.saturating_sub(1);
                         self.custom_exit_failed |= result.is_err();
                     }
-                    if let Err(error) = result { self.notify_error(error); }
+                    if let Err(error) = result {
+                        self.notify_error(error);
+                    }
                     for text in self.extension_manager.take_clipboard_writes() {
                         let _ = crate::clipboard::set_text(&text);
                         self.clipboard_history.push_front(text);
                         self.clipboard_history.truncate(50);
                     }
-                    if let Some(view_id) = self.extension_manager.take_requested_open_view(&extension_id) {
+                    if let Some(view_id) = self
+                        .extension_manager
+                        .take_requested_open_view(&extension_id)
+                    {
                         has_visual_changes = true;
                         self.open_extension_view(&extension_id, &view_id);
                     }
@@ -3473,8 +3977,10 @@ impl App {
                     result,
                     runtime,
                 } => {
-                    has_visual_changes |= self.extension_manager
-                        .restore_runtime(extension_index, runtime) || result.is_err();
+                    has_visual_changes |= self
+                        .extension_manager
+                        .restore_runtime(extension_index, runtime)
+                        || result.is_err();
                     if let Err(error) = result {
                         self.notify_error(error);
                     }
@@ -3493,13 +3999,17 @@ impl App {
                 } => {
                     self.bg_extension_scan_running = false;
                     if generation == self.extension_scan_generation {
-                        has_visual_changes |=
-                            self.apply_discovered_extensions(discovered, notices);
+                        has_visual_changes |= self.apply_discovered_extensions(discovered, notices);
                     }
                     self.resume_pending_extension_scan();
                 }
-                crate::background::BackgroundResult::ExtensionsInitialized { generation, manager, notices } => {
-                    has_visual_changes |= self.apply_initialized_extensions(generation, manager, notices);
+                crate::background::BackgroundResult::ExtensionsInitialized {
+                    generation,
+                    manager,
+                    notices,
+                } => {
+                    has_visual_changes |=
+                        self.apply_initialized_extensions(generation, manager, notices);
                 }
                 crate::background::BackgroundResult::ThemeInstalled(result) => {
                     self.finish_theme_install(result);
@@ -3508,7 +4018,10 @@ impl App {
                     self.finish_syntax_install(generation, result);
                     has_visual_changes = true;
                 }
-                crate::background::BackgroundResult::ExtensionVersionsDiscovered { request, result } => {
+                crate::background::BackgroundResult::ExtensionVersionsDiscovered {
+                    request,
+                    result,
+                } => {
                     self.finish_extension_versions(request, result);
                 }
                 crate::background::BackgroundResult::ExtensionInstalled { request, result } => {
@@ -3530,14 +4043,11 @@ impl App {
                         has_visual_changes = true;
                     }
                 }
-                crate::background::BackgroundResult::GitLineDiff {
-                    file_path,
-                    status,
-                } => {
+                crate::background::BackgroundResult::GitLineDiff { file_path, status } => {
                     self.bg_git_diff_running = false;
                     if !self.active_diff_uses_snapshot_target() {
-                        has_visual_changes |= self
-                            .apply_git_line_status_to_open_editors(&file_path, &status);
+                        has_visual_changes |=
+                            self.apply_git_line_status_to_open_editors(&file_path, &status);
                     }
                     if self.bg_git_diff_pending {
                         self.bg_git_diff_pending = false;
@@ -3589,7 +4099,9 @@ impl App {
                             }
                             self.compare_base_path = None;
                             self.compare_base_content = Some(prepared.base_content);
-                            let revisions = match self.tabs.get(self.active_tab)
+                            let revisions = match self
+                                .tabs
+                                .get(self.active_tab)
                                 .and_then(|tab| self.diff_tabs.staged_for_tab(tab))
                             {
                                 Some(true) => ("HEAD", "Index"),
@@ -3610,11 +4122,12 @@ impl App {
                                 source_label(revisions.1),
                             ));
                             self.diff_target_path = Some(target.file_path.clone());
-                            self.diff_mode = if prepared.is_new_file && !self.has_diff_layout_preference() {
-                                DiffMode::Inline
-                            } else {
-                                self.preferred_diff_mode
-                            };
+                            self.diff_mode =
+                                if prepared.is_new_file && !self.has_diff_layout_preference() {
+                                    DiffMode::Inline
+                                } else {
+                                    self.preferred_diff_mode
+                                };
                             self.apply_prepared_compare_diff(
                                 prepared.diff_lines,
                                 prepared.render_cache,
@@ -3634,7 +4147,9 @@ impl App {
                     }
                 }
                 crate::background::BackgroundResult::SourceControlDiffs {
-                    root, generation, updates,
+                    root,
+                    generation,
+                    updates,
                 } => {
                     has_visual_changes |=
                         self.finish_source_control_diff_refresh(root, generation, updates);
@@ -3712,24 +4227,42 @@ impl App {
                 crate::background::BackgroundResult::EditorWorkCancelled { kind, token } => {
                     use crate::background::EditorWorkKind;
                     match kind {
-                        EditorWorkKind::Metrics if self.pending_editor_analysis.as_ref().is_some_and(|(_, pending)| pending.same_task(&token)) => {
+                        EditorWorkKind::Metrics
+                            if self
+                                .pending_editor_analysis
+                                .as_ref()
+                                .is_some_and(|(_, pending)| pending.same_task(&token)) =>
+                        {
                             self.pending_editor_analysis = None;
                             self.bg_editor_analysis_running = false;
-                            self.editor_analysis_deferred = self.editor_analysis_target().is_some_and(|target| {
-                                self.cached_editor_analysis_target.as_ref() != Some(&target)
-                            });
+                            self.editor_analysis_deferred =
+                                self.editor_analysis_target().is_some_and(|target| {
+                                    self.cached_editor_analysis_target.as_ref() != Some(&target)
+                                });
                         }
-                        EditorWorkKind::Brackets if self.pending_bracket_analysis.as_ref().is_some_and(|(_, pending)| pending.same_task(&token)) => {
+                        EditorWorkKind::Brackets
+                            if self
+                                .pending_bracket_analysis
+                                .as_ref()
+                                .is_some_and(|(_, pending)| pending.same_task(&token)) =>
+                        {
                             self.pending_bracket_analysis = None;
                             self.bg_bracket_analysis_running = false;
-                            has_visual_changes |= self.bracket_pair_colorization && self.editor_analysis_target().is_some();
+                            has_visual_changes |= self.bracket_pair_colorization
+                                && self.editor_analysis_target().is_some();
                         }
-                        EditorWorkKind::Cursor if self.pending_cursor_match.as_ref().is_some_and(|(_, pending)| pending.same_task(&token)) => {
+                        EditorWorkKind::Cursor
+                            if self
+                                .pending_cursor_match
+                                .as_ref()
+                                .is_some_and(|(_, pending)| pending.same_task(&token)) =>
+                        {
                             self.pending_cursor_match = None;
                             self.bg_cursor_match_running = false;
-                            has_visual_changes |= self.cursor_match_target().is_some_and(|target| {
-                                self.cached_cursor_match_target.as_ref() != Some(&target)
-                            });
+                            has_visual_changes |=
+                                self.cursor_match_target().is_some_and(|target| {
+                                    self.cached_cursor_match_target.as_ref() != Some(&target)
+                                });
                         }
                         _ => {}
                     }
@@ -3758,17 +4291,26 @@ impl App {
                         self.cached_editor_analysis_target = Some(target.clone());
                         self.cached_sticky_scopes = sticky_scopes;
                         self.cached_sticky_key = u64::MAX;
-                        if let Some(content) = self.editor().map(|editor| (editor.navigation_id, editor.content_version, editor.rope.len_bytes())) {
-                            self.editor_analysis_memo.remember(content, crate::app_event_loop::AnalysisSummary {
-                                errors, warnings, max_line_width, word_count,
-                                sticky_scopes: self.cached_sticky_scopes.clone(),
-                            });
+                        if let Some(content) = self.editor().map(|editor| {
+                            (
+                                editor.navigation_id,
+                                editor.content_version,
+                                editor.rope.len_bytes(),
+                            )
+                        }) {
+                            self.editor_analysis_memo.remember(
+                                content,
+                                crate::app_event_loop::AnalysisSummary {
+                                    errors,
+                                    warnings,
+                                    max_line_width,
+                                    word_count,
+                                    sticky_scopes: self.cached_sticky_scopes.clone(),
+                                },
+                            );
                         }
                         if let Some(editor) = self.editor_mut() {
-                            editor.apply_unsaved_diff_cache(
-                                target.content_version,
-                                unsaved_diff,
-                            );
+                            editor.apply_unsaved_diff_cache(target.content_version, unsaved_diff);
                         }
                     } else if self.editor_analysis_target().is_some() {
                         // A newer edit landed while this coalesced scan was in
@@ -3887,9 +4429,9 @@ impl App {
                 crate::background::BackgroundResult::StructuralScopes { request, index } => {
                     self.pending_structural_scope = None;
                     self.structural_scope_cancel = None;
-                    let enabled = self.editor().is_some_and(|editor| {
-                        self.animation_settings.scope_enabled_for(editor)
-                    });
+                    let enabled = self
+                        .editor()
+                        .is_some_and(|editor| self.animation_settings.scope_enabled_for(editor));
                     let source_matches = enabled
                         && self
                             .editor()
@@ -3919,7 +4461,7 @@ impl App {
                     target,
                     bracket,
                     tag,
-                    } => {
+                } => {
                     self.bg_cursor_match_running = false;
                     self.pending_cursor_match = None;
                     let current = self.cursor_match_target();
@@ -3973,8 +4515,7 @@ impl App {
                         self.bg_word_occ_running = false;
                     }
                     if self.word_occurrence_target().as_ref() == Some(&target) {
-                        let occurrence =
-                            (count > 1).then(|| format!("{count} occurrences"));
+                        let occurrence = (count > 1).then(|| format!("{count} occurrences"));
                         has_visual_changes |= self.cached_word_occ != occurrence;
                         self.cached_word_occ = occurrence;
                         self.cached_word_occ_target = Some(target);
@@ -4000,10 +4541,14 @@ impl App {
                         work_outcome != crate::app_vtcomplete::VtCompleteWorkOutcome::Exact
                             || deferred_candidates == 0
                     );
-                    let matches_editor = generation == self.vtcomplete_generation && self.active_group == active_group
+                    let matches_editor = generation == self.vtcomplete_generation
+                        && self.active_group == active_group
                         && self.active_tab == active_tab
                         && self.editor().is_some_and(|editor| {
-                            crate::completion_source::Source::new(editor.file_path.as_deref(), editor.language_name()) == source_identity
+                            crate::completion_source::Source::new(
+                                editor.file_path.as_deref(),
+                                editor.language_name(),
+                            ) == source_identity
                                 && editor.navigation_id == document_id
                                 && editor.cursor_line == cursor_line
                                 && editor.cursor_col == cursor_col
@@ -4013,23 +4558,33 @@ impl App {
                         });
                     if generation == self.vtcomplete_generation && matches_editor {
                         has_visual_changes = true;
-                        let selected = self.vtcomplete_navigated.then(|| self
-                            .vtcomplete_suggestions
-                            .get(self.vtcomplete_selected)
-                            .and_then(|selected| {
-                                suggestions.iter().position(|word| word == selected)
-                            })).flatten();
+                        let selected = self
+                            .vtcomplete_navigated
+                            .then(|| {
+                                self.vtcomplete_suggestions
+                                    .get(self.vtcomplete_selected)
+                                    .and_then(|selected| {
+                                        suggestions.iter().position(|word| word == selected)
+                                    })
+                            })
+                            .flatten();
                         if selected.is_none() {
                             self.vtcomplete_navigated = false;
                         }
                         self.vtcomplete_active = !suggestions.is_empty();
-                        self.vtcomplete_details = suggestions.iter().cloned().zip(details).collect();
+                        self.vtcomplete_details =
+                            suggestions.iter().cloned().zip(details).collect();
                         self.vtcomplete_suggestions = suggestions;
                         self.vtcomplete_selected = selected.unwrap_or(0);
                         self.vtcomplete_cancel_token = None;
                     }
                 }
-                crate::background::BackgroundResult::VtCompleteInline { generation, target, rope, text } => {
+                crate::background::BackgroundResult::VtCompleteInline {
+                    generation,
+                    target,
+                    rope,
+                    text,
+                } => {
                     has_visual_changes |= self.receive_inline(generation, target, rope, text);
                 }
                 crate::background::BackgroundResult::LspSemanticTokens { target, tokens } => {
@@ -4054,11 +4609,16 @@ impl App {
                     has_visual_changes |= self.apply_save_conflict_diff(result);
                 }
                 crate::background::BackgroundResult::MergeConflicts { view, index } => {
-                    for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
+                    for tab in self
+                        .tabs
+                        .iter_mut()
+                        .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+                    {
                         if tab.editor.navigation_id == view {
                             tab.editor.merge_conflicts.pending = false;
                             if let Some(review) = tab.editor.merge_conflicts.review.as_mut()
-                                && let Some(region) = index.region_for_line(tab.editor.cursor_line)
+                                && let Some(region) = index
+                                    .region_for_line(tab.editor.cursor_line)
                                     .or_else(|| index.regions.first().copied())
                             {
                                 review.source = index.source.clone();
@@ -4090,21 +4650,55 @@ impl App {
                     disk_written,
                     saved_rope,
                 } => {
-                    if workspace_generation != self.workspace_generation && crate::remote::workspace::is_view_key(&path) {
-                        if self.pending_file_saves.get(&path).is_some_and(|(generation, _)| *generation == workspace_generation) { self.pending_file_saves.remove(&path); }
-                        if self.deferred_file_saves.get(&path).is_some_and(|(generation, _)| *generation == workspace_generation) { self.deferred_file_saves.remove(&path); }
+                    if workspace_generation != self.workspace_generation
+                        && crate::remote::workspace::is_view_key(&path)
+                    {
+                        if self
+                            .pending_file_saves
+                            .get(&path)
+                            .is_some_and(|(generation, _)| *generation == workspace_generation)
+                        {
+                            self.pending_file_saves.remove(&path);
+                        }
+                        if self
+                            .deferred_file_saves
+                            .get(&path)
+                            .is_some_and(|(generation, _)| *generation == workspace_generation)
+                        {
+                            self.deferred_file_saves.remove(&path);
+                        }
                         continue;
                     }
-                    let save_options = self.pending_file_saves.remove(&path)
+                    let save_options = self
+                        .pending_file_saves
+                        .remove(&path)
                         .filter(|(generation, _)| *generation == workspace_generation)
-                        .and_then(|(_, intent)| intent.completed_options(source_document_id, source_content_version, &source_rope));
-                    let completed_save_as = self.pending_save_as.get(&source_document_id)
-                        .is_some_and(|(generation, target)| *generation == workspace_generation && target == &path);
-                    if completed_save_as { self.pending_save_as.remove(&source_document_id); }
+                        .and_then(|(_, intent)| {
+                            intent.completed_options(
+                                source_document_id,
+                                source_content_version,
+                                &source_rope,
+                            )
+                        });
+                    let completed_save_as = self
+                        .pending_save_as
+                        .get(&source_document_id)
+                        .is_some_and(|(generation, target)| {
+                            *generation == workspace_generation && target == &path
+                        });
+                    if completed_save_as {
+                        self.pending_save_as.remove(&source_document_id);
+                    }
                     self.chat.rollback.note_disk_write_finished(&path);
-                    if disk_written || error.is_some() || !crate::remote::workspace::is_view_key(&path) { self.queue_file_disk_checks(std::iter::once(path.clone())); }
+                    if disk_written
+                        || error.is_some()
+                        || !crate::remote::workspace::is_view_key(&path)
+                    {
+                        self.queue_file_disk_checks(std::iter::once(path.clone()));
+                    }
                     let mut deferred = self.deferred_file_saves.remove(&path);
-                    if error.is_none() && let Some(saved) = saved_rope.as_ref()
+                    if error.is_none()
+                        && let Some(saved) = saved_rope.as_ref()
                         && let Some((_, next)) = deferred.as_mut()
                     {
                         let same_baseline = match (&previous_disk, &next.expected_disk) {
@@ -4114,7 +4708,8 @@ impl App {
                         };
                         if same_baseline {
                             next.expected_disk = Some(crate::editor::DiskSaveBaseline {
-                                rope: saved.clone(), encoding: saved_encoding,
+                                rope: saved.clone(),
+                                encoding: saved_encoding,
                             });
                             next.fail_if_exists = false;
                         }
@@ -4122,18 +4717,29 @@ impl App {
                     if let Some(err) = error {
                         // One failed exit save is a failure, never permission
                         // to requeue the same write on every event-loop turn.
-                        if workspace_generation == self.workspace_generation && self.exit_save_and_quit {
+                        if workspace_generation == self.workspace_generation
+                            && self.exit_save_and_quit
+                        {
                             self.exit_save_and_quit = false;
                             self.custom_exit_started = false;
                             self.exit_confirm_active = true;
                         }
-                        if crate::editor::save::is_conflict(&err) || err.kind() == std::io::ErrorKind::AlreadyExists {
+                        if crate::editor::save::is_conflict(&err)
+                            || err.kind() == std::io::ErrorKind::AlreadyExists
+                        {
                             deferred = None;
                         }
-                        self.show_file_save_error(&path, source_document_id, workspace_generation, err);
+                        self.show_file_save_error(
+                            &path,
+                            source_document_id,
+                            workspace_generation,
+                            err,
+                        );
                     } else if workspace_generation == self.workspace_generation {
                         self.remote_change_warnings.remove(&path);
-                        if completed_save_as { self.finish_save_as(source_document_id, &path); }
+                        if completed_save_as {
+                            self.finish_save_as(source_document_id, &path);
+                        }
                         self.auto_save_attempted_versions.remove(&path);
                         self.notify("File saved");
                         self.status_message = String::from("File saved.");
@@ -4143,7 +4749,8 @@ impl App {
                         for tab in &mut self.tabs {
                             if tab.kind == TabKind::File
                                 && tab.editor.file_path.as_deref() == Some(&path)
-                                && (tab.editor.saved_rope.is_some() || tab.editor.save_identity == source_document_id)
+                                && (tab.editor.saved_rope.is_some()
+                                    || tab.editor.save_identity == source_document_id)
                             {
                                 tab.editor.apply_background_save(
                                     source_content_version,
@@ -4163,7 +4770,8 @@ impl App {
                             for tab in &mut group.tabs {
                                 if tab.kind == TabKind::File
                                     && tab.editor.file_path.as_deref() == Some(&path)
-                                    && (tab.editor.saved_rope.is_some() || tab.editor.save_identity == source_document_id)
+                                    && (tab.editor.saved_rope.is_some()
+                                        || tab.editor.save_identity == source_document_id)
                                 {
                                     tab.editor.apply_background_save(
                                         source_content_version,
@@ -4186,7 +4794,9 @@ impl App {
                             .chain(self.groups.iter().flat_map(|group| group.tabs.iter()))
                             .find(|tab| tab.editor.file_path.as_deref() == Some(path.as_path()))
                             .map(|tab| (tab.editor.content_version, tab.editor.rope.clone()));
-                        if (disk_written || !crate::remote::workspace::is_view_key(&path)) && let Some((version, rope)) = lsp_snapshot {
+                        if (disk_written || !crate::remote::workspace::is_view_key(&path))
+                            && let Some((version, rope)) = lsp_snapshot
+                        {
                             let already_synced = self
                                 .lsp_manager
                                 .last_notified_version
@@ -4203,12 +4813,17 @@ impl App {
                             self.explorer_hover.invalidate(Some(&path));
                             self.explorer_hover_info_cache.remove(&path);
                             self.explorer_line_count_cache.remove(&path);
-                            self.refresh_explorer_changed_paths(std::iter::once(path.as_path()), previous_disk.is_none());
+                            self.refresh_explorer_changed_paths(
+                                std::iter::once(path.as_path()),
+                                previous_disk.is_none(),
+                            );
                             // The native watcher publishes the same save shortly
                             // afterward. Refresh once from that batch, including
                             // edits made externally while the save was running.
-                            let watched_save = self.workspace_watcher_active && self.remote_workspace.as_ref()
-                                .is_some_and(|remote| remote.save_is_watched(&path, remote_checkpoint.as_deref()));
+                            let watched_save = self.workspace_watcher_active
+                                && self.remote_workspace.as_ref().is_some_and(|remote| {
+                                    remote.save_is_watched(&path, remote_checkpoint.as_deref())
+                                });
                             if !watched_save {
                                 self.refresh_source_control_changed_paths([path.clone()]);
                             }
@@ -4219,41 +4834,77 @@ impl App {
                         self.queue_background_save_job_for_workspace(next, generation);
                     }
                     has_visual_changes |= self.workspace_replace_save_finished(&path);
-                    if workspace_generation == self.workspace_generation && self.remote_changes_deferred.remove(&path) {
+                    if workspace_generation == self.workspace_generation
+                        && self.remote_changes_deferred.remove(&path)
+                    {
                         self.queue_workspace_file_check(path);
                     }
                 }
-                crate::background::BackgroundResult::BlameHistory { navigation_id, generation, result } => {
-                    has_visual_changes |= crate::git_blame::finish_history(self, navigation_id, generation, result);
+                crate::background::BackgroundResult::BlameHistory {
+                    navigation_id,
+                    generation,
+                    result,
+                } => {
+                    has_visual_changes |=
+                        crate::git_blame::finish_history(self, navigation_id, generation, result);
                 }
-                crate::background::BackgroundResult::BlameSnapshot { navigation_id, generation, result } => {
-                    has_visual_changes |= crate::git_blame::finish_snapshot(self, navigation_id, generation, result);
+                crate::background::BackgroundResult::BlameSnapshot {
+                    navigation_id,
+                    generation,
+                    result,
+                } => {
+                    has_visual_changes |=
+                        crate::git_blame::finish_snapshot(self, navigation_id, generation, result);
                 }
-                crate::background::BackgroundResult::BlameCache { navigation_id, file_path, document } => {
+                crate::background::BackgroundResult::BlameCache {
+                    navigation_id,
+                    file_path,
+                    document,
+                } => {
                     self.bg_blame_running = false;
                     let editors = self.tabs.iter().chain(
-                        self.groups.iter().enumerate()
+                        self.groups
+                            .iter()
+                            .enumerate()
                             .filter(|(index, _)| *index != self.active_group)
-                            .flat_map(|(_, group)| &group.tabs));
-                    let current = editors.filter(|tab| matches!(tab.kind, TabKind::File | TabKind::GitRevision)).any(|tab| {
-                        tab.editor.navigation_id == navigation_id && !tab.editor.bg_loading
-                            && tab.editor.file_path.as_deref() == Some(file_path.as_path())
-                            && tab.editor.rope.is_instance(&document.rope)
-                            && tab.editor.blame.revision == document.revision
-                    });
+                            .flat_map(|(_, group)| &group.tabs),
+                    );
+                    let current = editors
+                        .filter(|tab| matches!(tab.kind, TabKind::File | TabKind::GitRevision))
+                        .any(|tab| {
+                            tab.editor.navigation_id == navigation_id
+                                && !tab.editor.bg_loading
+                                && tab.editor.file_path.as_deref() == Some(file_path.as_path())
+                                && tab.editor.rope.is_instance(&document.rope)
+                                && tab.editor.blame.revision == document.revision
+                        });
                     if current {
                         has_visual_changes = true;
                         self.blame_documents.insert(navigation_id, document.clone());
-                        if self.editor().is_some_and(|editor| editor.navigation_id == navigation_id) {
+                        if self
+                            .editor()
+                            .is_some_and(|editor| editor.navigation_id == navigation_id)
+                        {
                             self.blame_cache_key = document.key.clone();
                             self.blame_cache = Some((file_path, document));
                         }
-                        let open_ids: rustc_hash::FxHashSet<_> = self.tabs.iter()
-                            .chain(self.groups.iter().enumerate().filter(|(index, _)| *index != self.active_group)
-                                .flat_map(|(_, group)| &group.tabs))
-                            .map(|tab| tab.editor.navigation_id).collect();
+                        let open_ids: rustc_hash::FxHashSet<_> = self
+                            .tabs
+                            .iter()
+                            .chain(
+                                self.groups
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(index, _)| *index != self.active_group)
+                                    .flat_map(|(_, group)| &group.tabs),
+                            )
+                            .map(|tab| tab.editor.navigation_id)
+                            .collect();
                         self.blame_documents.retain(|id, _| open_ids.contains(id));
-                    } else if self.editor().is_some_and(|editor| editor.navigation_id == navigation_id) {
+                    } else if self
+                        .editor()
+                        .is_some_and(|editor| editor.navigation_id == navigation_id)
+                    {
                         has_visual_changes |= self.blame_cache.take().is_some();
                         self.blame_cache_key = None;
                         self.blame_requested_path = None;
@@ -4287,7 +4938,10 @@ impl App {
     }
 
     pub(crate) fn editor_mut(&mut self) -> Option<&mut Editor> {
-        self.tabs.get_mut(self.active_tab).map(|t| {t.editor.refresh_document(); &mut t.editor})
+        self.tabs.get_mut(self.active_tab).map(|t| {
+            t.editor.refresh_document();
+            &mut t.editor
+        })
     }
 
     fn apply_open_file_reload(
@@ -4298,7 +4952,11 @@ impl App {
         file_reload_names: &mut Vec<String>,
     ) -> bool {
         let mut applied = false;
-        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
+        for tab in self
+            .tabs
+            .iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+        {
             if tab.editor.file_path.as_deref() != Some(path)
                 || tab.reloadable_file_path() != Some(path)
                 || !targets.contains(&(tab.editor.navigation_id, tab.editor.content_version))
@@ -4327,9 +4985,20 @@ impl App {
                 self.evict_inactive_large_files();
             }
         } else if crate::remote::workspace::is_view_key(path)
-            && self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
-                .any(|tab| tab.kind == TabKind::File && tab.editor.file_path.as_deref() == Some(path)
-                    && tab.editor.modified && tab.editor.saved_rope.as_ref().is_some_and(|saved| !saved.is_instance(&loaded.rope)))
+            && self
+                .tabs
+                .iter()
+                .chain(self.groups.iter().flat_map(|group| &group.tabs))
+                .any(|tab| {
+                    tab.kind == TabKind::File
+                        && tab.editor.file_path.as_deref() == Some(path)
+                        && tab.editor.modified
+                        && tab
+                            .editor
+                            .saved_rope
+                            .as_ref()
+                            .is_some_and(|saved| !saved.is_instance(&loaded.rope))
+                })
         {
             self.queue_remote_file_change(path.to_owned());
         }
@@ -4345,7 +5014,9 @@ impl App {
             return;
         }
         if self.pending_file_saves.contains_key(&path) {
-            if crate::remote::workspace::is_view_key(&path) { self.remote_changes_deferred.insert(path.clone()); }
+            if crate::remote::workspace::is_view_key(&path) {
+                self.remote_changes_deferred.insert(path.clone());
+            }
             if self.pending_file_reloads.contains(&path) {
                 self.pending_file_reload_again.insert(path);
             }
@@ -4358,50 +5029,100 @@ impl App {
 
         let workspace_generation = self.workspace_generation;
         let mut baseline = None;
-        let targets: Vec<_> = self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+        let targets: Vec<_> = self
+            .tabs
+            .iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
             .filter_map(|tab| {
                 if tab.editor.file_path.as_deref() != Some(path.as_path())
-                    || tab.reloadable_file_path() != Some(path.as_path()) { return None; }
+                    || tab.reloadable_file_path() != Some(path.as_path())
+                {
+                    return None;
+                }
                 if baseline.is_none() {
-                    baseline = tab.editor.remote_checkpoint.as_ref().map(|checkpoint| crate::remote::workspace::Baseline {
-                        checkpoint: checkpoint.clone(), rope: tab.editor.rope.clone(), encoding: tab.editor.encoding });
+                    baseline = tab.editor.remote_checkpoint.as_ref().map(|checkpoint| {
+                        crate::remote::workspace::Baseline {
+                            checkpoint: checkpoint.clone(),
+                            rope: tab.editor.rope.clone(),
+                            encoding: tab.editor.encoding,
+                        }
+                    });
                 }
                 Some((tab.editor.navigation_id, tab.editor.content_version))
-            }).collect();
+            })
+            .collect();
         // Agent/watcher notifications can outlive a tab or arrive while the
         // user is editing. No eligible view means the read cannot be applied;
         // do not decode, hash and transfer a file just to discard its contents.
-        if targets.is_empty() { return; }
+        if targets.is_empty() {
+            return;
+        }
         self.pending_file_reloads.insert(path.clone());
         let sender = self.background.sender.clone();
         let activity_path = path.clone();
-        let remote = self.remote_workspace.clone().filter(|_| crate::remote::workspace::is_view_key(&path));
-        self.background.read_for_file("file-reload", &activity_path, false, move || {
-            let result = remote.as_ref().map_or_else(|| crate::editor::load_text_file(&path), |remote| remote.reload(&path, baseline.as_ref()));
-            let missing = result.as_ref().err().is_some_and(|error| matches!(error.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory));
-            let _ = sender.send(crate::background::BackgroundResult::FileReloaded { workspace_generation, path: path.clone(), targets, result: result.map_err(|error| error.to_string()) });
-            // Only absence needs a follow-up metadata check. Re-probing every
-            // read error forms an endless check/reload loop for directories or
-            // unreadable files replacing an open document.
-            if missing {
-                let change = remote.map_or_else(|| Some(crate::background::inspect_workspace_path(path.clone())), |remote|
-                    remote.inspect(std::slice::from_ref(&path), &crate::background::CancellationToken::new()).ok().and_then(|mut states| states.pop()));
-                if let Some(change) = change {
-                    let _ = sender.send(crate::background::BackgroundResult::WorkspaceResult { generation: workspace_generation,
-                        result: Box::new(crate::background::BackgroundResult::FileDiskState(change)) });
+        let remote = self
+            .remote_workspace
+            .clone()
+            .filter(|_| crate::remote::workspace::is_view_key(&path));
+        self.background
+            .read_for_file("file-reload", &activity_path, false, move || {
+                let result = remote.as_ref().map_or_else(
+                    || crate::editor::load_text_file(&path),
+                    |remote| remote.reload(&path, baseline.as_ref()),
+                );
+                let missing = result.as_ref().err().is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    )
+                });
+                let _ = sender.send(crate::background::BackgroundResult::FileReloaded {
+                    workspace_generation,
+                    path: path.clone(),
+                    targets,
+                    result: result.map_err(|error| error.to_string()),
+                });
+                // Only absence needs a follow-up metadata check. Re-probing every
+                // read error forms an endless check/reload loop for directories or
+                // unreadable files replacing an open document.
+                if missing {
+                    let change = remote.map_or_else(
+                        || Some(crate::background::inspect_workspace_path(path.clone())),
+                        |remote| {
+                            remote
+                                .inspect(
+                                    std::slice::from_ref(&path),
+                                    &crate::background::CancellationToken::new(),
+                                )
+                                .ok()
+                                .and_then(|mut states| states.pop())
+                        },
+                    );
+                    if let Some(change) = change {
+                        let _ = sender.send(crate::background::BackgroundResult::WorkspaceResult {
+                            generation: workspace_generation,
+                            result: Box::new(crate::background::BackgroundResult::FileDiskState(
+                                change,
+                            )),
+                        });
+                    }
                 }
-            }
-        });
+            });
     }
 
     pub(crate) fn refresh_pending_file_reload(&mut self, path: PathBuf) {
-        if self.pending_file_reloads.contains(&path) { self.queue_file_reload(path); }
+        if self.pending_file_reloads.contains(&path) {
+            self.queue_file_reload(path);
+        }
     }
 
     pub(crate) fn queue_all_clean_file_reloads(&mut self) {
-        let paths: rustc_hash::FxHashSet<_> = self.tabs.iter_mut()
+        let paths: rustc_hash::FxHashSet<_> = self
+            .tabs
+            .iter_mut()
             .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
-            .filter_map(|tab| tab.reloadable_file_path().map(Path::to_path_buf)).collect();
+            .filter_map(|tab| tab.reloadable_file_path().map(Path::to_path_buf))
+            .collect();
         for path in paths {
             self.queue_file_reload(path);
         }
@@ -4412,57 +5133,83 @@ impl App {
     /// terminal frame.
     pub(crate) fn queue_file_disk_checks(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         for path in paths {
-            if !self.pending_disk_checks.insert(path.clone()) { continue; }
+            if !self.pending_disk_checks.insert(path.clone()) {
+                continue;
+            }
             if self.remote_workspace.is_some() && crate::remote::workspace::is_view_key(&path) {
                 self.remote_disk_checks.queued.insert(path);
                 continue;
             }
             let sender = self.background.sender.clone();
             let activity_path = path.clone();
-            self.background.read_for_file("file-check", &activity_path, false, move || {
-                let change = crate::background::inspect_workspace_path(path);
-                let _ = sender.send(crate::background::BackgroundResult::FileDiskState(change));
-            });
+            self.background
+                .read_for_file("file-check", &activity_path, false, move || {
+                    let change = crate::background::inspect_workspace_path(path);
+                    let _ = sender.send(crate::background::BackgroundResult::FileDiskState(change));
+                });
         }
         self.start_remote_disk_checks();
     }
 
     fn start_remote_disk_checks(&mut self) {
-        if self.remote_disk_checks.running.is_some() || self.remote_disk_checks.queued.is_empty() { return; }
-        let Some(remote) = self.remote_workspace.clone() else { return; };
+        if self.remote_disk_checks.running.is_some() || self.remote_disk_checks.queued.is_empty() {
+            return;
+        }
+        let Some(remote) = self.remote_workspace.clone() else {
+            return;
+        };
         let paths: Vec<_> = self.remote_disk_checks.queued.drain().collect();
         let sender = self.background.sender.clone();
         let generation = self.workspace_generation;
         // One in-flight RPC worker; focus/watcher/fallback bursts accumulate as
         // unique paths, not waiting threads or requests. Small batches bound
         // response latency without issuing one round trip per open document.
-        self.remote_disk_checks.running = Some(self.background.spawn_cancellable("remote-file-check", move |cancel| {
-            let send = |result| sender.send(crate::background::BackgroundResult::WorkspaceResult {
-                generation, result: Box::new(result),
-            });
-            for (index, batch) in paths.chunks(64).enumerate() {
-                match remote.inspect(batch, &cancel) {
-                    Ok(changes) => for change in changes {
-                        if send(crate::background::BackgroundResult::FileDiskState(change)).is_err() { return; }
-                    },
-                    Err(_) => {
-                        let _ = send(crate::background::BackgroundResult::RemoteDiskChecksFailed {
-                            paths: paths[index * 64..].to_vec(),
-                        });
-                        break;
+        self.remote_disk_checks.running = Some(self.background.spawn_cancellable(
+            "remote-file-check",
+            move |cancel| {
+                let send = |result| {
+                    sender.send(crate::background::BackgroundResult::WorkspaceResult {
+                        generation,
+                        result: Box::new(result),
+                    })
+                };
+                for (index, batch) in paths.chunks(64).enumerate() {
+                    match remote.inspect(batch, &cancel) {
+                        Ok(changes) => {
+                            for change in changes {
+                                if send(crate::background::BackgroundResult::FileDiskState(change))
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            let _ = send(
+                                crate::background::BackgroundResult::RemoteDiskChecksFailed {
+                                    paths: paths[index * 64..].to_vec(),
+                                },
+                            );
+                            break;
+                        }
                     }
                 }
-            }
-            let _ = send(crate::background::BackgroundResult::RemoteDiskChecksDone(cancel));
-        }));
+                let _ = send(crate::background::BackgroundResult::RemoteDiskChecksDone(
+                    cancel,
+                ));
+            },
+        ));
     }
 
     pub(crate) fn cancel_remote_disk_checks(&mut self) {
         self.remote_changes_deferred.clear();
         self.remote_change_warnings.clear();
-        if let Some(cancel) = self.remote_disk_checks.running.take() { cancel.cancel(); }
+        if let Some(cancel) = self.remote_disk_checks.running.take() {
+            cancel.cancel();
+        }
         self.remote_disk_checks.queued.clear();
-        self.pending_disk_checks.retain(|path| !crate::remote::workspace::is_view_key(path));
+        self.pending_disk_checks
+            .retain(|path| !crate::remote::workspace::is_view_key(path));
     }
 
     /// Keep an older worker snapshot from replacing a filesystem edit's tree.
@@ -4486,8 +5233,12 @@ impl App {
     /// Rebuild the visible Explorer tree on a worker. Filesystem traversal and
     /// size/date metadata sorting never need to occupy the event loop.
     pub(crate) fn refresh_explorer_async(&mut self) {
-        if self.defer_explorer_refresh(true) { return; }
-        if let Some(remote) = &self.remote_workspace { remote.invalidate_directories(); }
+        if self.defer_explorer_refresh(true) {
+            return;
+        }
+        if let Some(remote) = &self.remote_workspace {
+            remote.invalidate_directories();
+        }
         self.explorer.invalidate_directory_cache();
         self.workspace_file_index_generation = self.workspace_file_index_generation.wrapping_add(1);
         self.refresh_explorer_tree_async();
@@ -4496,42 +5247,68 @@ impl App {
     /// Reuse unaffected directory snapshots and preserve the Quick Open index
     /// when a watcher burst only changes file contents or metadata.
     pub(crate) fn refresh_explorer_changed_paths<'a>(
-        &mut self, paths: impl IntoIterator<Item = &'a Path>, structural: bool,
+        &mut self,
+        paths: impl IntoIterator<Item = &'a Path>,
+        structural: bool,
     ) {
-        self.refresh_explorer_changed_path_states(paths.into_iter().map(|path| (path, None)), structural);
+        self.refresh_explorer_changed_path_states(
+            paths.into_iter().map(|path| (path, None)),
+            structural,
+        );
     }
 
     pub(crate) fn refresh_explorer_changed_path_states<'a>(
-        &mut self, paths: impl IntoIterator<Item = (&'a Path, Option<bool>)>, structural: bool,
+        &mut self,
+        paths: impl IntoIterator<Item = (&'a Path, Option<bool>)>,
+        structural: bool,
     ) {
         if !self.workspace_is_displayed() {
             self.defer_explorer_paths(paths, structural);
             return;
         }
-        if let Some(remote) = &self.remote_workspace { remote.invalidate_directories(); }
+        if let Some(remote) = &self.remote_workspace {
+            remote.invalidate_directories();
+        }
         let mut ignore_rules_changed = false;
         let mut visible_change = false;
         let mut kind_changes = Vec::new();
         let mut missing_ancestors = Vec::new();
         let explorer = &self.explorer;
-        self.explorer.invalidate_directory_paths(paths.into_iter().map(|(path, is_dir)| {
-            ignore_rules_changed |= path.file_name().is_some_and(|name| name == ".gitignore");
-            visible_change |= explorer.changed_path_affects_tree(path, is_dir);
-            if !structural && explorer.changed_path_kind(path, is_dir) { kind_changes.push(path); }
-            if structural && let Some(ancestor) = explorer.changed_path_listing(path) { missing_ancestors.push(ancestor); }
-            path
-        }), structural);
+        self.explorer.invalidate_directory_paths(
+            paths.into_iter().map(|(path, is_dir)| {
+                ignore_rules_changed |= path.file_name().is_some_and(|name| name == ".gitignore");
+                visible_change |= explorer.changed_path_affects_tree(path, is_dir);
+                if !structural && explorer.changed_path_kind(path, is_dir) {
+                    kind_changes.push(path);
+                }
+                if structural && let Some(ancestor) = explorer.changed_path_listing(path) {
+                    missing_ancestors.push(ancestor);
+                }
+                path
+            }),
+            structural,
+        );
         let kind_changed = !kind_changes.is_empty();
-        if kind_changed { self.explorer.invalidate_directory_paths(kind_changes, true); }
+        if kind_changed {
+            self.explorer.invalidate_directory_paths(kind_changes, true);
+        }
         if !missing_ancestors.is_empty() {
-            self.explorer.invalidate_directory_paths(missing_ancestors.iter().map(PathBuf::as_path), true);
+            self.explorer
+                .invalidate_directory_paths(missing_ancestors.iter().map(PathBuf::as_path), true);
         }
         let structural = structural || kind_changed;
         if structural {
-            self.workspace_file_index_generation = self.workspace_file_index_generation.wrapping_add(1);
+            self.workspace_file_index_generation =
+                self.workspace_file_index_generation.wrapping_add(1);
         }
-        if (self.source_control_enabled && ignore_rules_changed) || (visible_change && (structural || matches!(self.explorer.sort_mode,
-            crate::explorer::ExplorerSortMode::Size | crate::explorer::ExplorerSortMode::Modified)))
+        if (self.source_control_enabled && ignore_rules_changed)
+            || (visible_change
+                && (structural
+                    || matches!(
+                        self.explorer.sort_mode,
+                        crate::explorer::ExplorerSortMode::Size
+                            | crate::explorer::ExplorerSortMode::Modified
+                    )))
         {
             self.refresh_explorer_tree_async();
         }
@@ -4540,9 +5317,16 @@ impl App {
     /// Visible-tree changes do not change workspace file eligibility. Reuse the
     /// Quick Open index across expansion, collapse, sort and automatic reveal.
     pub(crate) fn refresh_explorer_tree_async(&mut self) {
-        if self.defer_explorer_refresh(false) { return; }
-        self.explorer.set_files_exclude(&self.settings_effective.files_exclude);
-        if self.remote_workspace.as_ref().is_some_and(|remote| !remote.client.connected()) {
+        if self.defer_explorer_refresh(false) {
+            return;
+        }
+        self.explorer
+            .set_files_exclude(&self.settings_effective.files_exclude);
+        if self
+            .remote_workspace
+            .as_ref()
+            .is_some_and(|remote| !remote.client.connected())
+        {
             self.remote_explorer_error = Some("Connection lost. Showing cached files.".into());
             self.explorer.find.loading = false;
             self.finish_terminal_directory_reveal(Some("Connection lost; cannot reveal folder"));
@@ -4551,7 +5335,9 @@ impl App {
         self.explorer_refresh_generation = self.explorer_refresh_generation.wrapping_add(1);
         if self.bg_explorer_refresh_running {
             self.bg_explorer_refresh_pending = true;
-            if let Some(cancel) = &self.explorer.find.cancel { cancel.cancel(); }
+            if let Some(cancel) = &self.explorer.find.cancel {
+                cancel.cancel();
+            }
             return;
         }
         self.bg_explorer_refresh_running = true;
@@ -4568,20 +5354,40 @@ impl App {
             let cancel = self.explorer.find.cancel.clone().unwrap_or_default();
             let sender = self.background.sender.clone();
             let workspace_generation = self.workspace_generation;
-            self.background.read_for_file("remote-explorer", &self.explorer.root, true, move || {
-                let result = match remote.explorer_tree(&expanded,sort,find,source_control,&files_exclude,&cancel) {
-                    Ok((entries, matches)) => crate::background::BackgroundResult::ExplorerRefreshed {
-                        generation,
-                        snapshot: Box::new(presentation.prepare(remote.view_root, entries, matches)),
-                    },
-                    Err(error) => crate::background::BackgroundResult::ExplorerRefreshFailed {
-                        generation, error: error.to_string(),
-                    },
-                };
-                let _ = sender.send(crate::background::BackgroundResult::WorkspaceResult {
-                    generation: workspace_generation, result: Box::new(result),
-                });
-            });
+            self.background.read_for_file(
+                "remote-explorer",
+                &self.explorer.root,
+                true,
+                move || {
+                    let result = match remote.explorer_tree(
+                        &expanded,
+                        sort,
+                        find,
+                        source_control,
+                        &files_exclude,
+                        &cancel,
+                    ) {
+                        Ok((entries, matches)) => {
+                            crate::background::BackgroundResult::ExplorerRefreshed {
+                                generation,
+                                snapshot: Box::new(presentation.prepare(
+                                    remote.view_root,
+                                    entries,
+                                    matches,
+                                )),
+                            }
+                        }
+                        Err(error) => crate::background::BackgroundResult::ExplorerRefreshFailed {
+                            generation,
+                            error: error.to_string(),
+                        },
+                    };
+                    let _ = sender.send(crate::background::BackgroundResult::WorkspaceResult {
+                        generation: workspace_generation,
+                        result: Box::new(result),
+                    });
+                },
+            );
             return;
         }
         let request = self.explorer.refresh_request();
@@ -4597,16 +5403,33 @@ impl App {
     }
 
     pub(crate) fn toggle_or_open_explorer_async(&mut self) -> Option<PathBuf> {
-        if self.remote_workspace.as_ref().is_some_and(|remote| !remote.client.connected())
-            && !(self.explorer.find.filtering() && self.explorer.find.results.filtered_tree.is_some())
-            && self.explorer.entries.get(self.explorer.selected).is_some_and(|entry| entry.is_dir && !entry.expanded) {
+        if self
+            .remote_workspace
+            .as_ref()
+            .is_some_and(|remote| !remote.client.connected())
+            && !(self.explorer.find.filtering()
+                && self.explorer.find.results.filtered_tree.is_some())
+            && self
+                .explorer
+                .entries
+                .get(self.explorer.selected)
+                .is_some_and(|entry| entry.is_dir && !entry.expanded)
+        {
             self.status_message = "Remote folders cannot be loaded while disconnected. Existing files and local edits are retained.".into();
             return None;
         }
         if !self.explorer.find.filtering()
-            && let Some(entry) = self.explorer.entries.get(self.explorer.selected).filter(|entry| entry.is_dir) {
-            if entry.expanded { self.explorer_expanding.remove(&entry.path); }
-            else { self.explorer_expanding.insert(entry.path.clone()); }
+            && let Some(entry) = self
+                .explorer
+                .entries
+                .get(self.explorer.selected)
+                .filter(|entry| entry.is_dir)
+        {
+            if entry.expanded {
+                self.explorer_expanding.remove(&entry.path);
+            } else {
+                self.explorer_expanding.insert(entry.path.clone());
+            }
         }
         let (path, tree_changed) = self.explorer.toggle_or_open_deferred();
         if tree_changed {
@@ -4644,7 +5467,10 @@ impl App {
     }
 
     fn finish_explorer_refresh(&mut self, generation: u64) -> bool {
-        if self.explorer_refresh_active_generation.is_some_and(|active| active != generation) {
+        if self
+            .explorer_refresh_active_generation
+            .is_some_and(|active| active != generation)
+        {
             return false;
         }
         self.bg_explorer_refresh_running = false;
@@ -4697,19 +5523,28 @@ impl App {
         if let Some((_, token)) = self.pending_lsp_semantic_decode.take() {
             token.cancel();
         }
-        let Some(rope) = self.editor().map(|editor| editor.rope.clone()) else { return; };
+        let Some(rope) = self.editor().map(|editor| editor.rope.clone()) else {
+            return;
+        };
         let request_target = target.clone();
         let sender = self.background.sender.clone();
         let token = self.background.submit_cancellable(move |cancel| {
-            let Some(mut tokens) = crate::lsp::decode_semantic_tokens_cancellable(&data, || {
-                cancel.is_cancelled()
-            }) else {
+            let Some(mut tokens) =
+                crate::lsp::decode_semantic_tokens_cancellable(&data, || cancel.is_cancelled())
+            else {
                 return;
             };
             for (index, token) in tokens.iter_mut().enumerate() {
-                if index % 1024 == 0 && cancel.is_cancelled() { return; }
-                let start = crate::lsp_positions::from_utf16(&rope, token.line as usize, token.start_char);
-                let end = crate::lsp_positions::from_utf16(&rope, token.line as usize, token.start_char.saturating_add(token.length));
+                if index % 1024 == 0 && cancel.is_cancelled() {
+                    return;
+                }
+                let start =
+                    crate::lsp_positions::from_utf16(&rope, token.line as usize, token.start_char);
+                let end = crate::lsp_positions::from_utf16(
+                    &rope,
+                    token.line as usize,
+                    token.start_char.saturating_add(token.length),
+                );
                 token.start_char = start as u32;
                 token.length = end.saturating_sub(start) as u32;
             }
@@ -4744,7 +5579,8 @@ impl App {
             return None;
         }
         let word = crate::ui_editor::cached_cursor_word(
-            editor, &mut self.editor_cursor_word_cache.borrow_mut(),
+            editor,
+            &mut self.editor_cursor_word_cache.borrow_mut(),
         )?;
         Some(crate::background::WordOccurrenceTarget {
             editor: target,
@@ -4771,20 +5607,34 @@ impl App {
     /// Pending remote input suspends blinking. An acknowledgement starts a
     /// fresh blink interval even when the program does not echo its input.
     pub(crate) fn cursor_blink_start(&self) -> Option<std::time::Instant> {
-        if !self.cursor_blinking || !self.has_text_input_focus() { return None; }
-        let progress = self.focused_text_input_id().is_none()
-            .then(|| self.focused_terminal_index()).flatten()
+        if !self.cursor_blinking || !self.has_text_input_focus() {
+            return None;
+        }
+        let progress = self
+            .focused_text_input_id()
+            .is_none()
+            .then(|| self.focused_terminal_index())
+            .flatten()
             .and_then(|index| self.terminals.get(index)?.terminal_pty.as_ref())
-            .map(|pty| pty.remote_input_progress()).unwrap_or_default();
-        (!progress.pending).then(|| progress.acknowledged.map_or(self.last_blink, |ack| ack.max(self.last_blink)))
+            .map(|pty| pty.remote_input_progress())
+            .unwrap_or_default();
+        (!progress.pending).then(|| {
+            progress
+                .acknowledged
+                .map_or(self.last_blink, |ack| ack.max(self.last_blink))
+        })
     }
 
     /// Returns true if a text input context currently has focus (editor file tab,
     /// palette, search bar, rename dialog, goto-line, terminal, etc.).
     /// Used to decide whether the cursor should blink.
     pub(crate) fn has_text_input_focus(&self) -> bool {
-        if self.status_details.open || self.workspaces.popup.open { return false; }
-        if self.chat.visible && self.active_pane == ActivePane::Chat { return true; }
+        if self.status_details.open || self.workspaces.popup.open {
+            return false;
+        }
+        if self.chat.visible && self.active_pane == ActivePane::Chat {
+            return true;
+        }
         // Overlay text inputs always have focus when active
         if self.palette.active
             || self.search_active
@@ -4815,7 +5665,11 @@ impl App {
         let mut changed = false;
         let mut stale = false;
         let hidden = status.untracked && !self.sc_visibility.untracked;
-        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
+        for tab in self
+            .tabs
+            .iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+        {
             if tab.kind == TabKind::File && tab.editor.file_path.as_deref() == Some(file_path) {
                 if hidden {
                     // A result queued before the setting changed must not
@@ -4942,7 +5796,10 @@ impl App {
                 line_start += line.len_chars();
             }
             match crate::app_lsp_edits::apply_prepared(editor, edits) {
-                Ok(count) => self.notify(format!("Renamed '{old}' → '{new}' ({})", crate::helpers::counted(count, "occurrence", "occurrences"))),
+                Ok(count) => self.notify(format!(
+                    "Renamed '{old}' → '{new}' ({})",
+                    crate::helpers::counted(count, "occurrence", "occurrences")
+                )),
                 Err(error) => self.notify_error(error),
             }
         }
@@ -4997,14 +5854,17 @@ impl App {
         path: &Path,
         restores: &[crate::session::SessionRestore],
     ) -> bool {
-        self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs)).any(|tab| {
-            tab.editor.bg_loading
-                && tab.editor.file_path.as_deref() == Some(path)
-                && match &tab.editor.pending_session_restore {
-                    Some(pending) => restores.iter().any(|restore| restore.id == pending.id),
-                    None => restores.is_empty(),
-                }
-        })
+        self.tabs
+            .iter()
+            .chain(self.groups.iter().flat_map(|group| &group.tabs))
+            .any(|tab| {
+                tab.editor.bg_loading
+                    && tab.editor.file_path.as_deref() == Some(path)
+                    && match &tab.editor.pending_session_restore {
+                        Some(pending) => restores.iter().any(|restore| restore.id == pending.id),
+                        None => restores.is_empty(),
+                    }
+            })
     }
 
     /// Save current session to disk
@@ -5056,7 +5916,11 @@ impl App {
             self.poll_pending_global_search(std::time::Instant::now());
             self.poll_git_watcher_refresh(std::time::Instant::now());
             self.poll_background_results();
-            if ready(self) && self.git_watcher_refresh_wait(std::time::Instant::now()).is_none() {
+            if ready(self)
+                && self
+                    .git_watcher_refresh_wait(std::time::Instant::now())
+                    .is_none()
+            {
                 return;
             }
             assert!(
@@ -5073,13 +5937,17 @@ impl App {
                 let remaining = deadline.saturating_duration_since(std::time::Instant::now());
                 // Reconnect retries use event-loop deadlines rather than a
                 // sleeping worker. Exercise the same wake policy in tests.
-                let wait = self.remote_connection.next_wait().map_or(remaining, |wait| remaining.min(wait));
-                let wait = self.global_search_debounce_wait(std::time::Instant::now()).map_or(wait, |search_wait| wait.min(search_wait));
-                let wait = self.git_watcher_refresh_wait(std::time::Instant::now()).map_or(wait, |git_wait| wait.min(git_wait));
-                wake.wait_for_change(
-                    observed,
-                    Some(wait),
-                );
+                let wait = self
+                    .remote_connection
+                    .next_wait()
+                    .map_or(remaining, |wait| remaining.min(wait));
+                let wait = self
+                    .global_search_debounce_wait(std::time::Instant::now())
+                    .map_or(wait, |search_wait| wait.min(search_wait));
+                let wait = self
+                    .git_watcher_refresh_wait(std::time::Instant::now())
+                    .map_or(wait, |git_wait| wait.min(git_wait));
+                wake.wait_for_change(observed, Some(wait));
             }
         }
     }
@@ -5108,7 +5976,11 @@ mod tests {
     fn watcher_refresh_preserves_explorer_scroll_and_selection_during_coalesced_updates() {
         let workspace = tempfile::tempdir().unwrap();
         for index in 0..100 {
-            std::fs::write(workspace.path().join(format!("file-{index:03}.rs")), "source").unwrap();
+            std::fs::write(
+                workspace.path().join(format!("file-{index:03}.rs")),
+                "source",
+            )
+            .unwrap();
         }
         let mut app = App::test_new();
         app.source_control_enabled = false;
@@ -5117,29 +5989,51 @@ mod tests {
         app.explorer.scroll_down(40);
         let selected = app.explorer.entries[app.explorer.selected].path.clone();
         let generation = app.explorer_refresh_generation;
-        let (canonical_root, entries, matches) = FileExplorer::build_refresh_entries(app.explorer.refresh_request());
+        let (canonical_root, entries, matches) =
+            FileExplorer::build_refresh_entries(app.explorer.refresh_request());
         app.bg_explorer_refresh_running = true;
         app.explorer_refresh_active_generation = Some(generation);
         let added = workspace.path().join("added.rs");
         std::fs::write(&added, "new").unwrap();
-        app.background.sender.send(crate::background::BackgroundResult::FilesChanged {
-            root: workspace.path().to_path_buf(),
-            changes: vec![crate::background::WorkspacePathChange { is_dir: false,
-                observed_at: std::time::Instant::now(), path: added.clone(), exists: true, modified: None, len: None,
-            }],
-            structure_changed: true, rescan: false, git_metadata_changed: false,
-        }).unwrap();
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::FilesChanged {
+                root: workspace.path().to_path_buf(),
+                changes: vec![crate::background::WorkspacePathChange {
+                    is_dir: false,
+                    observed_at: std::time::Instant::now(),
+                    path: added.clone(),
+                    exists: true,
+                    modified: None,
+                    len: None,
+                }],
+                structure_changed: true,
+                rescan: false,
+                git_metadata_changed: false,
+            })
+            .unwrap();
         app.poll_background_results();
         assert!(app.bg_explorer_refresh_pending);
         // Keep browsing while the old request and a newer watcher update are pending.
         app.explorer.scroll_down(15);
         let offset = app.explorer.scroll_offset;
-        let visible: Vec<_> = app.explorer.viewport_indices(10).into_iter()
-            .map(|index| app.explorer.entries[index].path.clone()).collect();
-        app.background.sender.send(crate::background::BackgroundResult::ExplorerRefreshed {
-            generation,
-            snapshot: Box::new(app.explorer.presentation().prepare(canonical_root, entries, matches)),
-        }).unwrap();
+        let visible: Vec<_> = app
+            .explorer
+            .viewport_indices(10)
+            .into_iter()
+            .map(|index| app.explorer.entries[index].path.clone())
+            .collect();
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::ExplorerRefreshed {
+                generation,
+                snapshot: Box::new(app.explorer.presentation().prepare(
+                    canonical_root,
+                    entries,
+                    matches,
+                )),
+            })
+            .unwrap();
         app.poll_background_results();
         app.wait_for_background(std::time::Duration::from_secs(5), |app| {
             !app.bg_explorer_refresh_running && !app.bg_explorer_refresh_pending
@@ -5147,8 +6041,14 @@ mod tests {
         assert!(app.explorer.entries.iter().any(|entry| entry.path == added));
         assert_eq!(app.explorer.scroll_offset, offset + 1);
         assert_eq!(app.explorer.entries[app.explorer.selected].path, selected);
-        assert_eq!(app.explorer.viewport_indices(10).into_iter()
-            .map(|index| app.explorer.entries[index].path.clone()).collect::<Vec<_>>(), visible);
+        assert_eq!(
+            app.explorer
+                .viewport_indices(10)
+                .into_iter()
+                .map(|index| app.explorer.entries[index].path.clone())
+                .collect::<Vec<_>>(),
+            visible
+        );
     }
 
     #[test]
@@ -5185,10 +6085,16 @@ mod tests {
             let mut app = App::test_new();
             app.bg_explorer_refresh_running = true;
             let generation = app.explorer_refresh_generation;
-            app.background.sender.send(crate::background::BackgroundResult::FilesChanged {
-                root: app.explorer.root.clone(), changes: Vec::new(),
-                structure_changed: false, rescan, git_metadata_changed: true,
-            }).unwrap();
+            app.background
+                .sender
+                .send(crate::background::BackgroundResult::FilesChanged {
+                    root: app.explorer.root.clone(),
+                    changes: Vec::new(),
+                    structure_changed: false,
+                    rescan,
+                    git_metadata_changed: true,
+                })
+                .unwrap();
             app.poll_background_results();
             assert!(app.bg_explorer_refresh_pending);
             assert_eq!(app.explorer_refresh_generation, generation + 1);
@@ -5205,10 +6111,17 @@ mod tests {
         let mut app = App::test_new();
         app.explorer = crate::explorer::FileExplorer::new_deferred(root.into());
         app.explorer.set_directory_watcher_active(true);
-        let (canonical, entries, matches) = crate::explorer::FileExplorer::build_refresh_entries(app.explorer.refresh_request());
-        app.explorer.apply_refresh_entries(canonical, entries, matches);
-        assert!(app.explorer.entries.iter().any(|entry| entry.name == "output.tmp"
-            && entry.git_status == crate::explorer::GitStatus::Ignored));
+        let (canonical, entries, matches) =
+            crate::explorer::FileExplorer::build_refresh_entries(app.explorer.refresh_request());
+        app.explorer
+            .apply_refresh_entries(canonical, entries, matches);
+        assert!(
+            app.explorer
+                .entries
+                .iter()
+                .any(|entry| entry.name == "output.tmp"
+                    && entry.git_status == crate::explorer::GitStatus::Ignored)
+        );
         let mut index = repo.index().unwrap();
         index.add_path(std::path::Path::new("output.tmp")).unwrap();
         index.write().unwrap();
@@ -5216,17 +6129,35 @@ mod tests {
         std::fs::write(&path, "new file").unwrap();
         app.bg_explorer_refresh_running = true;
         let generation = app.explorer_refresh_generation;
-        app.background.sender.send(crate::background::BackgroundResult::FilesChanged {
-            root: root.into(), changes: vec![crate::background::WorkspacePathChange { is_dir: false,
-                observed_at: std::time::Instant::now(), path, exists: true, modified: None, len: None,
-            }], structure_changed: true, rescan: false, git_metadata_changed: true,
-        }).unwrap();
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::FilesChanged {
+                root: root.into(),
+                changes: vec![crate::background::WorkspacePathChange {
+                    is_dir: false,
+                    observed_at: std::time::Instant::now(),
+                    path,
+                    exists: true,
+                    modified: None,
+                    len: None,
+                }],
+                structure_changed: true,
+                rescan: false,
+                git_metadata_changed: true,
+            })
+            .unwrap();
         app.poll_background_results();
         assert_eq!(app.explorer_refresh_generation, generation + 1);
-        let (canonical, entries, matches) = crate::explorer::FileExplorer::build_refresh_entries(app.explorer.refresh_request());
-        app.explorer.apply_refresh_entries(canonical, entries, matches);
-        assert!(app.explorer.entries.iter().any(|entry| entry.name == "output.tmp"
-            && !entry.git_status_summary.contains(crate::explorer::GitStatus::Ignored)));
+        let (canonical, entries, matches) =
+            crate::explorer::FileExplorer::build_refresh_entries(app.explorer.refresh_request());
+        app.explorer
+            .apply_refresh_entries(canonical, entries, matches);
+        assert!(app.explorer.entries.iter().any(|entry| {
+            entry.name == "output.tmp"
+                && !entry
+                    .git_status_summary
+                    .contains(crate::explorer::GitStatus::Ignored)
+        }));
     }
 
     #[test]
@@ -5240,10 +6171,14 @@ mod tests {
         app.refresh_source_control_for_navigation();
         assert!(!app.bg_git_status_pending);
         app.refresh_source_control_async();
-        assert!(app.bg_git_status_pending, "explicit invalidations bypass the navigation gate");
+        assert!(
+            app.bg_git_status_pending,
+            "explicit invalidations bypass the navigation gate"
+        );
         app.bg_git_status_pending = false;
         app.bg_git_status_running = false;
-        app.source_control_last_refresh = Some(std::time::Instant::now() - std::time::Duration::from_secs(3));
+        app.source_control_last_refresh =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(3));
         app.refresh_source_control_for_navigation();
         assert!(app.bg_git_status_running);
     }
@@ -5253,7 +6188,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("large.txt");
         let file = std::fs::File::create(&path).unwrap();
-        file.set_len(crate::background::HOVER_LINE_COUNT_MAX_BYTES + 1).unwrap();
+        file.set_len(crate::background::HOVER_LINE_COUNT_MAX_BYTES + 1)
+            .unwrap();
         let metadata = file.metadata().unwrap();
         let mut app = App::test_new();
         // Model an already loaded snapshot: no tooltip read of this large file
@@ -5265,12 +6201,16 @@ mod tests {
         editor.last_disk_modified = metadata.modified().ok();
         app.tabs.push(Tab::new_file(editor));
         app.request_explorer_hover_info(path.clone(), false, true);
-        app.wait_for_background(std::time::Duration::from_secs(5), |app| app.explorer_hover_info_cache.contains_key(&path));
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+            app.explorer_hover_info_cache.contains_key(&path)
+        });
         assert_eq!(app.explorer_hover_info_cache[&path].line_count, Some(3));
         app.tabs.clear();
         app.explorer_hover_info_cache.clear();
         app.request_explorer_hover_info(path.clone(), false, true);
-        app.wait_for_background(std::time::Duration::from_secs(5), |app| app.explorer_hover_info_cache.contains_key(&path));
+        app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+            app.explorer_hover_info_cache.contains_key(&path)
+        });
         assert_eq!(app.explorer_hover_info_cache[&path].line_count, None);
         assert_eq!(app.explorer_hover_info_cache[&path].size, metadata.len());
     }
@@ -5325,9 +6265,8 @@ mod tests {
         std::fs::create_dir(&folder).unwrap();
         let mut app = App::new(workspace.path().to_path_buf());
         let generation = app.explorer_refresh_generation;
-        let (canonical_root, entries, matches) = crate::explorer::FileExplorer::build_refresh_entries(
-            app.explorer.refresh_request(),
-        );
+        let (canonical_root, entries, matches) =
+            crate::explorer::FileExplorer::build_refresh_entries(app.explorer.refresh_request());
         app.bg_explorer_refresh_running = true;
         app.explorer_context_target = Some(folder.clone());
         let action = app
@@ -5342,14 +6281,26 @@ mod tests {
             .sender
             .send(crate::background::BackgroundResult::ExplorerRefreshed {
                 generation,
-                snapshot: Box::new(app.explorer.presentation().prepare(canonical_root, entries, matches)),
+                snapshot: Box::new(app.explorer.presentation().prepare(
+                    canonical_root,
+                    entries,
+                    matches,
+                )),
             })
             .unwrap();
         app.poll_background_results();
 
         assert!(app.rename.active);
-        assert_eq!(app.explorer.entries[app.explorer.selected].path, placeholder);
-        assert!(app.explorer.entries.iter().any(|entry| entry.path == folder && entry.expanded));
+        assert_eq!(
+            app.explorer.entries[app.explorer.selected].path,
+            placeholder
+        );
+        assert!(
+            app.explorer
+                .entries
+                .iter()
+                .any(|entry| entry.path == folder && entry.expanded)
+        );
     }
 
     fn unique_temp_app_root() -> std::path::PathBuf {
@@ -5453,12 +6404,19 @@ mod tests {
         assert!(!app.tabs[0].editor.bg_loading);
         assert!(app.tabs[0].editor.disk_unavailable);
         assert!(app.tabs[0].editor.load_failed);
-        assert!(app.tabs[0].editor.background_save_request(false, false, false).is_none());
-        assert!(app.tabs[0]
-            .editor
-            .rope
-            .to_string()
-            .contains("Error loading file"));
+        assert!(
+            app.tabs[0]
+                .editor
+                .background_save_request(false, false, false)
+                .is_none()
+        );
+        assert!(
+            app.tabs[0]
+                .editor
+                .rope
+                .to_string()
+                .contains("Error loading file")
+        );
     }
 
     #[test]
@@ -5514,7 +6472,8 @@ mod tests {
         app.background
             .sender
             .send(crate::background::BackgroundResult::FileDiskState(
-                crate::background::WorkspacePathChange { is_dir: false,
+                crate::background::WorkspacePathChange {
+                    is_dir: false,
                     observed_at: std::time::Instant::now(),
                     path,
                     exists: false,
@@ -5525,10 +6484,11 @@ mod tests {
             .unwrap();
 
         assert!(app.poll_background_results());
-        assert!(app
-            .notification_history
-            .iter()
-            .all(|(message, _, _)| !message.contains("deleted externally")));
+        assert!(
+            app.notification_history
+                .iter()
+                .all(|(message, _, _)| !message.contains("deleted externally"))
+        );
     }
 
     #[test]
@@ -5544,7 +6504,8 @@ mod tests {
             app.background
                 .sender
                 .send(crate::background::BackgroundResult::FileDiskState(
-                    crate::background::WorkspacePathChange { is_dir: false,
+                    crate::background::WorkspacePathChange {
+                        is_dir: false,
                         observed_at: std::time::Instant::now(),
                         path: path.clone(),
                         exists: false,
@@ -5581,7 +6542,8 @@ mod tests {
         app.background
             .sender
             .send(crate::background::BackgroundResult::FileDiskState(
-                crate::background::WorkspacePathChange { is_dir: false,
+                crate::background::WorkspacePathChange {
+                    is_dir: false,
                     observed_at: std::time::Instant::now(),
                     path: path.clone(),
                     exists: true,
@@ -5660,10 +6622,11 @@ mod tests {
         assert!(app.poll_background_results());
         assert!(!app.bg_external_theme_scan_running);
         assert_eq!(app.theme_key, "deferred-test-theme");
-        assert!(app
-            .loaded_themes
-            .iter()
-            .any(|theme| theme.config_key == "deferred-test-theme"));
+        assert!(
+            app.loaded_themes
+                .iter()
+                .any(|theme| theme.config_key == "deferred-test-theme")
+        );
     }
 
     #[test]
@@ -5696,7 +6659,8 @@ mod tests {
         app.background
             .sender
             .send(crate::background::BackgroundResult::SyntaxAssetsLoaded {
-                root: app.explorer.root.clone(), result: Ok(None),
+                root: app.explorer.root.clone(),
+                result: Ok(None),
             })
             .unwrap();
 
@@ -5719,10 +6683,11 @@ mod tests {
             .unwrap();
 
         assert!(!app.poll_background_results());
-        assert!(!app
-            .notification_history
-            .iter()
-            .any(|(message, _, _)| message.contains("stale scan")));
+        assert!(
+            !app.notification_history
+                .iter()
+                .any(|(message, _, _)| message.contains("stale scan"))
+        );
     }
 
     #[test]
@@ -5743,11 +6708,15 @@ mod tests {
             .unwrap();
 
         assert!(app.poll_background_results());
-        assert!(app
-            .notification_history
-            .iter()
-            .any(|(message, _, _)| message.contains("kept initial activation")));
-        assert!(app.bg_extension_scan_running, "the requested rescan reconciles the kept snapshot");
+        assert!(
+            app.notification_history
+                .iter()
+                .any(|(message, _, _)| message.contains("kept initial activation"))
+        );
+        assert!(
+            app.bg_extension_scan_running,
+            "the requested rescan reconciles the kept snapshot"
+        );
     }
 
     #[test]
@@ -5768,10 +6737,11 @@ mod tests {
             .unwrap();
 
         app.poll_background_results();
-        assert!(!app
-            .notification_history
-            .iter()
-            .any(|(message, _, _)| message.contains("other workspace activation")));
+        assert!(
+            !app.notification_history
+                .iter()
+                .any(|(message, _, _)| message.contains("other workspace activation"))
+        );
     }
 
     #[test]
@@ -5788,11 +6758,7 @@ mod tests {
             .sender
             .send(crate::background::BackgroundResult::GitLineDiff {
                 file_path: path.clone(),
-                status: crate::editor::PreparedGitLineStatus::from_diffs(
-                    line_count,
-                    &[],
-                    &[],
-                ),
+                status: crate::editor::PreparedGitLineStatus::from_diffs(line_count, &[], &[]),
             })
             .unwrap();
 
@@ -5803,11 +6769,7 @@ mod tests {
             .sender
             .send(crate::background::BackgroundResult::GitLineDiff {
                 file_path: path,
-                status: crate::editor::PreparedGitLineStatus::from_diffs(
-                    line_count,
-                    &[],
-                    &['M'],
-                ),
+                status: crate::editor::PreparedGitLineStatus::from_diffs(line_count, &[], &['M']),
             })
             .unwrap();
         assert!(app.poll_background_results());
@@ -5972,11 +6934,13 @@ mod tests {
         app.open_file(&path);
 
         assert!(app.tabs[0].editor.bg_loading);
-        assert!(app.tabs[0]
-            .editor
-            .rope
-            .to_string()
-            .starts_with("Loading file"));
+        assert!(
+            app.tabs[0]
+                .editor
+                .rope
+                .to_string()
+                .starts_with("Loading file")
+        );
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while app.tabs[0].editor.bg_loading && std::time::Instant::now() < deadline {
@@ -6013,7 +6977,11 @@ mod tests {
                 warnings: 3,
                 max_line_width: 7,
                 word_count: 1,
-                unsaved_diff: crate::editor::UnsavedDiff { line_count: 2, changed_ranges: vec![0..1], ..Default::default() },
+                unsaved_diff: crate::editor::UnsavedDiff {
+                    line_count: 2,
+                    changed_ranges: vec![0..1],
+                    ..Default::default()
+                },
                 sticky_scopes: Default::default(),
             })
             .unwrap();
@@ -6085,7 +7053,11 @@ mod tests {
                 warnings: 99,
                 max_line_width: 99,
                 word_count: 99,
-                unsaved_diff: crate::editor::UnsavedDiff { line_count: 1, changed_ranges: vec![0..1], ..Default::default() },
+                unsaved_diff: crate::editor::UnsavedDiff {
+                    line_count: 1,
+                    changed_ranges: vec![0..1],
+                    ..Default::default()
+                },
                 sticky_scopes: Default::default(),
             })
             .unwrap();
@@ -6393,15 +7365,21 @@ mod tests {
         editor.file_path = Some("sample.rs".into());
         app.tabs = vec![Tab::new_file(editor)];
         app.active_tab = 0;
-        app.animation_settings.set(crate::animation_config::AnimationEffect::ScopeConnector, true);
+        app.animation_settings.set(
+            crate::animation_config::AnimationEffect::ScopeConnector,
+            true,
+        );
         let request = StructuralScopeRequest::from_editor(app.editor().unwrap()).unwrap();
         let index = std::sync::Arc::new(request.build(None, || false).unwrap());
         app.pending_structural_scope = Some(request.clone());
         app.animation_settings.scope_disabled_languages = vec!["rust".into()];
-        app.background.sender.send(crate::background::BackgroundResult::StructuralScopes {
-            request,
-            index: Some(index),
-        }).unwrap();
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::StructuralScopes {
+                request,
+                index: Some(index),
+            })
+            .unwrap();
         assert!(!app.poll_background_results());
         assert!(app.pending_structural_scope.is_none());
         assert!(app.cached_structural_scope_index.is_none());
@@ -6453,12 +7431,15 @@ mod tests {
         let token = crate::background::CancellationToken::new();
         app.search_cancel_token = Some(token.clone());
         app.bg_global_search_running = true;
-        app.background.sender.send(crate::background::BackgroundResult::GlobalSearchResults {
-            results: vec![sample_global_search_result(3)],
-            done: false,
-            generation: 7,
-            truncated: false,
-        }).unwrap();
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::GlobalSearchResults {
+                results: vec![sample_global_search_result(3)],
+                done: false,
+                generation: 7,
+                truncated: false,
+            })
+            .unwrap();
 
         app.stop_global_search();
         assert!(token.is_cancelled());
@@ -6467,16 +7448,22 @@ mod tests {
         assert!(app.global_search_stopped);
         assert_eq!(app.search_generation, 8);
 
-        app.background.sender.send(crate::background::BackgroundResult::GlobalSearchResults {
-            results: vec![sample_global_search_result(4)],
-            done: true,
-            generation: 7,
-            truncated: true,
-        }).unwrap();
-        app.background.sender.send(crate::background::BackgroundResult::GlobalSearchFailed {
-            generation: 7,
-            error: "cancelled request failed".into(),
-        }).unwrap();
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::GlobalSearchResults {
+                results: vec![sample_global_search_result(4)],
+                done: true,
+                generation: 7,
+                truncated: true,
+            })
+            .unwrap();
+        app.background
+            .sender
+            .send(crate::background::BackgroundResult::GlobalSearchFailed {
+                generation: 7,
+                error: "cancelled request failed".into(),
+            })
+            .unwrap();
         assert!(!app.poll_background_results());
         assert_eq!(app.global_search_query, "needle");
         assert_eq!(app.global_search_results.len(), 3);
@@ -6489,7 +7476,10 @@ mod tests {
         assert!(app.global_search_error.is_none());
 
         app.stop_global_search();
-        assert_eq!(app.search_generation, 8, "stopping an idle search is a no-op");
+        assert_eq!(
+            app.search_generation, 8,
+            "stopping an idle search is a no-op"
+        );
         app.clear_global_search();
         assert!(!app.global_search_stopped);
         assert!(app.global_search_results.is_empty());
@@ -6581,11 +7571,8 @@ mod tests {
         let mut editor = Editor::new();
         editor.rope = ropey::Rope::from_str("");
 
-        let markers = crate::editor::PreparedGitLineStatus::from_diffs(
-            editor.rope.len_lines(),
-            &['D'],
-            &[],
-        );
+        let markers =
+            crate::editor::PreparedGitLineStatus::from_diffs(editor.rope.len_lines(), &['D'], &[]);
 
         assert_eq!(markers.markers(), ['D']);
     }
@@ -6607,8 +7594,9 @@ mod tests {
         assert!(editor.has_unsaved_change_in_range(0, editor.line_count()));
         app.tabs = vec![Tab::new_file(editor)];
 
-        let late = crate::editor::PreparedGitLineStatus::from_diffs(saved.len_lines(), &[], &[' ', 'A'])
-            .with_index(&path, original, &[], &saved, None);
+        let late =
+            crate::editor::PreparedGitLineStatus::from_diffs(saved.len_lines(), &[], &[' ', 'A'])
+                .with_index(&path, original, &[], &saved, None);
         assert!(app.apply_git_line_status_to_open_editors(&path, &late));
         let editor = app.editor().unwrap();
         assert!(editor.modified);
@@ -6630,11 +7618,13 @@ mod tests {
         app.set_compare_diff_lines(expected.clone());
 
         assert_eq!(app.compare_diff_lines, expected);
-        assert!(app.tabs[0]
-            .editor
-            .git_line_status()
-            .iter()
-            .any(|marker| *marker != ' '));
+        assert!(
+            app.tabs[0]
+                .editor
+                .git_line_status()
+                .iter()
+                .any(|marker| *marker != ' ')
+        );
     }
 
     #[test]

@@ -177,12 +177,19 @@ impl Plan {
     /// that way.
     fn chance_of(&self, output: &str, addition: &str) -> Option<f32> {
         let (at, rest) = self.rest(output)?;
-        rest.starts_with(addition).then(|| self.chance(at, at + addition.len()))
+        rest.starts_with(addition)
+            .then(|| self.chance(at, at + addition.len()))
     }
 
     /// The next lexical token of the written text. `typed_word` is the
     /// start of a word typed before the caret, which the token continues.
-    fn next(&self, output: &str, typed_word: &str, syntax: Syntax, interner: &mut Interner) -> Option<Proposal> {
+    fn next(
+        &self,
+        output: &str,
+        typed_word: &str,
+        syntax: Syntax,
+        interner: &mut Interner,
+    ) -> Option<Proposal> {
         let (at, rest) = self.rest(output)?;
         // The typed word as the model spelled it.
         let word = self.text.get(at.checked_sub(typed_word.len())?..at)?;
@@ -211,8 +218,15 @@ impl Plan {
             return None; // The model ended the typed word where it stands.
         }
         // A token the text stops in the middle of may not be whole.
-        if id != NEWLINE_ID && end == document.text.len() && !document.text.ends_with('\n') && kind(id) != PUNCT {
-            let whole = self.steps.last().is_some_and(|&(_, end, _)| end > self.text.len());
+        if id != NEWLINE_ID
+            && end == document.text.len()
+            && !document.text.ends_with('\n')
+            && kind(id) != PUNCT
+        {
+            let whole = self
+                .steps
+                .last()
+                .is_some_and(|&(_, end, _)| end > self.text.len());
             if !whole && self.steps.len() >= 40 {
                 return None;
             }
@@ -221,7 +235,8 @@ impl Plan {
             return None;
         }
         let end = at + end.max(word.len()) - word.len();
-        let indent = (output.ends_with('\n') && typed_word.is_empty()).then(|| document.text[..start].to_owned());
+        let indent = (output.ends_with('\n') && typed_word.is_empty())
+            .then(|| document.text[..start].to_owned());
         Some(Proposal {
             id,
             text: document.token(0).to_owned(),
@@ -269,15 +284,54 @@ impl Syntax {
     pub(crate) fn for_language(language: &str) -> Self {
         let lower = language.to_ascii_lowercase();
         let hash = [
-            "python", "shell", "bash", "ruby", "perl", "yaml", "toml", "makefile", "dockerfile",
-            "r", "powershell", "elixir", "nim", "julia", "ini", "properties", "cmake", "tcl",
-            "coffeescript", "crystal", "gdscript", "nix", "fish", "zsh", "sh", "awk", "sed",
-            "terraform", "hcl", "graphql", "starlark", "bazel", "meson", "just",
+            "python",
+            "shell",
+            "bash",
+            "ruby",
+            "perl",
+            "yaml",
+            "toml",
+            "makefile",
+            "dockerfile",
+            "r",
+            "powershell",
+            "elixir",
+            "nim",
+            "julia",
+            "ini",
+            "properties",
+            "cmake",
+            "tcl",
+            "coffeescript",
+            "crystal",
+            "gdscript",
+            "nix",
+            "fish",
+            "zsh",
+            "sh",
+            "awk",
+            "sed",
+            "terraform",
+            "hcl",
+            "graphql",
+            "starlark",
+            "bazel",
+            "meson",
+            "just",
         ]
         .contains(&lower.as_str())
             || lower.contains("shell");
-        let dash = ["sql", "lua", "haskell", "ada", "elm", "vhdl", "plsql", "purescript"]
-            .contains(&lower.as_str());
+        let dash = [
+            "sql",
+            "lua",
+            "haskell",
+            "ada",
+            "elm",
+            "vhdl",
+            "plsql",
+            "purescript",
+        ]
+        .contains(&lower.as_str());
         Self {
             slash_comments: !hash && !dash,
             hash_comments: hash,
@@ -327,7 +381,9 @@ pub(crate) fn language_id(language: &str) -> u8 {
         17
     } else if is(&["dart"]) {
         18
-    } else if lower.contains("markdown") || is(&["plain text", "text", "restructuredtext", "asciidoc"]) {
+    } else if lower.contains("markdown")
+        || is(&["plain text", "text", "restructuredtext", "asciidoc"])
+    {
         19
     } else if is(&["html", "xml", "vue", "svelte"]) {
         20
@@ -343,17 +399,108 @@ pub(crate) fn language_id(language: &str) -> u8 {
 }
 
 const KEYWORDS: &[&str] = &[
-    "abstract", "and", "as", "assert", "async", "await", "begin", "break", "case", "catch",
-    "class", "const", "continue", "crate", "def", "default", "defer", "del", "delete", "do",
-    "dyn", "elif", "else", "end", "enum", "except", "export", "extends", "extern", "final",
-    "finally", "fn", "for", "foreach", "from", "func", "function", "global", "go", "goto", "if",
-    "impl", "implements", "import", "in", "include", "instanceof", "interface", "is", "lambda",
-    "let", "local", "loop", "match", "mod", "module", "move", "mut", "namespace", "new", "not",
-    "of", "or", "override", "package", "pass", "private", "protected", "pub", "public", "raise",
-    "ref", "require", "return", "select", "static", "struct", "super", "switch", "template",
-    "then", "throw", "throws", "trait", "try", "type", "typedef", "typeof", "union", "unless",
-    "unsafe", "until", "use", "using", "var", "virtual", "void", "when", "where", "while",
-    "with", "yield",
+    "abstract",
+    "and",
+    "as",
+    "assert",
+    "async",
+    "await",
+    "begin",
+    "break",
+    "case",
+    "catch",
+    "class",
+    "const",
+    "continue",
+    "crate",
+    "def",
+    "default",
+    "defer",
+    "del",
+    "delete",
+    "do",
+    "dyn",
+    "elif",
+    "else",
+    "end",
+    "enum",
+    "except",
+    "export",
+    "extends",
+    "extern",
+    "final",
+    "finally",
+    "fn",
+    "for",
+    "foreach",
+    "from",
+    "func",
+    "function",
+    "global",
+    "go",
+    "goto",
+    "if",
+    "impl",
+    "implements",
+    "import",
+    "in",
+    "include",
+    "instanceof",
+    "interface",
+    "is",
+    "lambda",
+    "let",
+    "local",
+    "loop",
+    "match",
+    "mod",
+    "module",
+    "move",
+    "mut",
+    "namespace",
+    "new",
+    "not",
+    "of",
+    "or",
+    "override",
+    "package",
+    "pass",
+    "private",
+    "protected",
+    "pub",
+    "public",
+    "raise",
+    "ref",
+    "require",
+    "return",
+    "select",
+    "static",
+    "struct",
+    "super",
+    "switch",
+    "template",
+    "then",
+    "throw",
+    "throws",
+    "trait",
+    "try",
+    "type",
+    "typedef",
+    "typeof",
+    "union",
+    "unless",
+    "unsafe",
+    "until",
+    "use",
+    "using",
+    "var",
+    "virtual",
+    "void",
+    "when",
+    "where",
+    "while",
+    "with",
+    "yield",
 ];
 
 #[derive(Default)]
@@ -412,7 +559,11 @@ impl Document {
     }
 
     fn gap(&self, at: usize) -> &str {
-        let from = if at == 0 { 0 } else { self.ends[at - 1] as usize };
+        let from = if at == 0 {
+            0
+        } else {
+            self.ends[at - 1] as usize
+        };
         &self.text[from..self.starts[at] as usize]
     }
 
@@ -534,7 +685,9 @@ fn lex(document: &mut Document, from: usize, syntax: Syntax, interner: &mut Inte
                 && !syntax.plain
                 && !syntax.hash_comments
                 && byte == b'#'
-                && rest.get(1).is_some_and(|&next| next == b' ' || next == b'!'));
+                && rest
+                    .get(1)
+                    .is_some_and(|&next| next == b' ' || next == b'!'));
         if comment {
             at += line_length(rest);
             continue;
@@ -613,13 +766,15 @@ fn lex(document: &mut Document, from: usize, syntax: Syntax, interner: &mut Inte
 /// Operators lexed as one token. Shifts are left apart: `>>` also closes
 /// nested generics.
 const OPERATORS: &[&str] = &[
-    "::", "->", "=>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=", "..", "?.",
-    ":=", "|>", "??",
+    "::", "->", "=>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=", "..", "?.", ":=",
+    "|>", "??",
 ];
 
 /// Further pairs lexed as one token when reading plainly, where comment
 /// signs are tokens too.
-const PLAIN_OPERATORS: &[&str] = &["//", "/*", "*/", "--", "++", "**", "<<", ">>", "</", "/>", "<-"];
+const PLAIN_OPERATORS: &[&str] = &[
+    "//", "/*", "*/", "--", "++", "**", "<<", ">>", "</", "/>", "<-",
+];
 
 fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
@@ -690,10 +845,12 @@ pub(crate) struct Step {
 pub(crate) const FEATURES: usize = 158;
 
 fn neural_level(probability: f32) -> u8 {
-    1 + [0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
-        .iter()
-        .filter(|&&edge| probability >= edge)
-        .count() as u8
+    1 + [
+        0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99,
+    ]
+    .iter()
+    .filter(|&&edge| probability >= edge)
+    .count() as u8
 }
 
 impl Step {
@@ -991,7 +1148,9 @@ impl<'a> Engine<'a> {
 
     #[allow(dead_code)] // Used by the standalone replay benchmark.
     pub(crate) fn has_reference(&self, key: u64) -> bool {
-        self.documents[2..].iter().any(|document| document.key == key)
+        self.documents[2..]
+            .iter()
+            .any(|document| document.key == key)
     }
 
     /// Add or replace the reference document identified by `key`.
@@ -1160,16 +1319,23 @@ impl<'a> Engine<'a> {
             stream.tokens.push(network.subwords().document());
             stream.starts.push(0);
         } else {
-            let keep = stream.starts.partition_point(|&start| (start as usize) < restart).max(1);
+            let keep = stream
+                .starts
+                .partition_point(|&start| (start as usize) < restart)
+                .max(1);
             stream.tokens.truncate(keep);
             stream.starts.truncate(keep);
         }
         stream.text.truncate(restart);
         stream.text.push_str(&before[restart..]);
         let held = stream.tokens.len();
-        stream.last_piece = restart + network
-            .subwords()
-            .encode(&before[restart..], &mut stream.cache, &mut stream.tokens, &mut stream.starts);
+        stream.last_piece = restart
+            + network.subwords().encode(
+                &before[restart..],
+                &mut stream.cache,
+                &mut stream.tokens,
+                &mut stream.starts,
+            );
         for start in &mut stream.starts[held..] {
             *start += restart as u32;
         }
@@ -1181,7 +1347,13 @@ impl<'a> Engine<'a> {
     /// With `renew`, reading ahead while the caret rests, the passage from
     /// elsewhere is chosen again once the caret has gone on some way: the
     /// place most like the caret's context changes as code is written.
-    fn open_window(&mut self, network: &model::Network<'_>, below: &str, line_ends: bool, renew: bool) -> usize {
+    fn open_window(
+        &mut self,
+        network: &model::Network<'_>,
+        below: &str,
+        line_ends: bool,
+        renew: bool,
+    ) -> usize {
         const RENEW: usize = 96;
         let count = self.model_count();
         // Text below that differs from what the window was started above
@@ -1230,13 +1402,25 @@ impl<'a> Engine<'a> {
         self.set_stream(network, key, before);
         let window = self.open_window(network, below, rest.is_empty(), true);
         let (tokens, _) = self.model_state(network, window, "");
-        network.read(&mut self.session, &self.passages, &tokens, window, language, cancelled);
+        network.read(
+            &mut self.session,
+            &self.passages,
+            &tokens,
+            window,
+            language,
+            cancelled,
+        );
     }
 
     /// What the neural model reads to continue `output` after the text
     /// before the caret: the tokens from token `from` of the document up to
     /// the last, unfinished piece, and that piece's bytes.
-    fn model_state(&mut self, network: &model::Network<'_>, from: usize, output: &str) -> (Vec<u16>, Vec<u8>) {
+    fn model_state(
+        &mut self,
+        network: &model::Network<'_>,
+        from: usize,
+        output: &str,
+    ) -> (Vec<u16>, Vec<u8>) {
         if output.is_empty() {
             let end = self.model_count();
             return (
@@ -1246,13 +1430,21 @@ impl<'a> Engine<'a> {
         }
         let stream = &mut self.stream;
         let line = stream.text.rfind('\n').unwrap_or(0);
-        let kept = stream.starts.partition_point(|&start| (start as usize) < line).max(1);
+        let kept = stream
+            .starts
+            .partition_point(|&start| (start as usize) < line)
+            .max(1);
         let tail = format!("{}{output}", &stream.text[line..]);
-        let last = subwords::pieces(&tail).last().map_or(0, |&(start, _)| start);
+        let last = subwords::pieces(&tail)
+            .last()
+            .map_or(0, |&(start, _)| start);
         let mut tokens = stream.tokens[from.min(kept)..kept].to_vec();
-        network
-            .subwords()
-            .encode(&tail[..last], &mut stream.cache, &mut tokens, &mut Vec::new());
+        network.subwords().encode(
+            &tail[..last],
+            &mut stream.cache,
+            &mut tokens,
+            &mut Vec::new(),
+        );
         // The model window can begin partway through the retokenized line.
         let skip = from.saturating_sub(kept).min(tokens.len());
         tokens.drain(..skip);
@@ -1262,7 +1454,10 @@ impl<'a> Engine<'a> {
     /// Tokens before the caret's last, unfinished piece.
     fn model_count(&self) -> usize {
         let stream = &self.stream;
-        stream.starts.partition_point(|&start| (start as usize) < stream.last_piece).max(1)
+        stream
+            .starts
+            .partition_point(|&start| (start as usize) < stream.last_piece)
+            .max(1)
     }
 
     /// The place outside the model's window most like the caret's context:
@@ -1320,7 +1515,12 @@ impl<'a> Engine<'a> {
     /// The passages for a window starting at token `from`: the text below
     /// the caret, and the place elsewhere (above the window, further below,
     /// or in a reference document) most like the caret's surroundings.
-    fn read_passages(&mut self, network: &model::Network<'_>, from: usize, line_ends: bool) -> model::Passages {
+    fn read_passages(
+        &mut self,
+        network: &model::Network<'_>,
+        from: usize,
+        line_ends: bool,
+    ) -> model::Passages {
         let (most_elsewhere, most_below) = network.passage_sizes();
         let subwords = network.subwords();
         let cache = &mut self.stream.cache;
@@ -1338,14 +1538,23 @@ impl<'a> Engine<'a> {
         // Names around the caret, rare ones counting for more.
         let mut wanted: FxHashMap<u32, f32> = FxHashMap::default();
         let head = &self.documents[0];
-        let near = head.ids.iter().rev().take(384).chain(self.documents[1].ids.iter().take(96));
+        let near = head
+            .ids
+            .iter()
+            .rev()
+            .take(384)
+            .chain(self.documents[1].ids.iter().take(96));
         for &id in near {
             if kind(id) == IDENT {
                 let uses = self.counts.get(&id).copied().unwrap_or(1).max(1) as f32;
                 wanted.insert(id, 1. / uses.sqrt());
             }
         }
-        let window_byte = self.stream.starts.get(from).map_or(0, |&start| start as usize);
+        let window_byte = self
+            .stream
+            .starts
+            .get(from)
+            .map_or(0, |&start| start as usize);
         // Best of all: the place the pattern predictor finds most like the
         // caret's context, with what followed it there.
         if analog_passages()
@@ -1353,7 +1562,12 @@ impl<'a> Engine<'a> {
         {
             let mut elsewhere = Vec::new();
             let text = &self.documents[index].text[start..end];
-            subwords.encode(text, &mut self.stream.cache, &mut elsewhere, &mut Vec::new());
+            subwords.encode(
+                text,
+                &mut self.stream.cache,
+                &mut elsewhere,
+                &mut Vec::new(),
+            );
             elsewhere.truncate(most_elsewhere);
             if elsewhere.len() >= 16 {
                 return model::Passages { elsewhere, below };
@@ -1366,8 +1580,17 @@ impl<'a> Engine<'a> {
         let mut best: Option<(f32, usize, usize, usize)> = None;
         for (index, document) in self.documents.iter().enumerate() {
             let range = match index {
-                0 => 0..document.starts.partition_point(|&start| (start as usize) < window_byte),
-                1 => document.starts.partition_point(|&start| (start as usize) < self.passage_below.len())..document.ids.len(),
+                0 => {
+                    0..document
+                        .starts
+                        .partition_point(|&start| (start as usize) < window_byte)
+                }
+                1 => {
+                    document
+                        .starts
+                        .partition_point(|&start| (start as usize) < self.passage_below.len())
+                        ..document.ids.len()
+                }
                 _ => 0..document.ids.len(),
             };
             if range.len() < 8 {
@@ -1379,14 +1602,22 @@ impl<'a> Engine<'a> {
             let mut at = 0;
             loop {
                 if best.is_none_or(|(score, ..)| sum > score + 1e-3) && sum > 0. {
-                    best = Some((sum, index, range.start + at, range.start + (at + span).min(ids.len())));
+                    best = Some((
+                        sum,
+                        index,
+                        range.start + at,
+                        range.start + (at + span).min(ids.len()),
+                    ));
                 }
                 // Step by lines' worth of tokens.
                 let step = 16;
                 if at + span + step > ids.len() {
                     break;
                 }
-                sum += ids[at + span..at + span + step].iter().map(weight).sum::<f32>();
+                sum += ids[at + span..at + span + step]
+                    .iter()
+                    .map(weight)
+                    .sum::<f32>();
                 sum -= ids[at..at + step].iter().map(weight).sum::<f32>();
                 at += step;
             }
@@ -1433,7 +1664,10 @@ impl<'a> Engine<'a> {
             syntax,
             language,
         } = caret;
-        if before.len() > MAX_DOCUMENT_BYTES || rest.len() > MAX_DOCUMENT_BYTES || below.len() > MAX_DOCUMENT_BYTES {
+        if before.len() > MAX_DOCUMENT_BYTES
+            || rest.len() > MAX_DOCUMENT_BYTES
+            || below.len() > MAX_DOCUMENT_BYTES
+        {
             return None;
         }
         // The typed prefix of an unfinished word is matched by spelling.
@@ -1457,9 +1691,7 @@ impl<'a> Engine<'a> {
         let network = self.network;
         let head = &self.documents[0];
         let consumed = head.ends.last().map_or(0, |&end| end as usize);
-        let mut prose = head.text[consumed..]
-            .chars()
-            .any(|ch| !ch.is_whitespace());
+        let mut prose = head.text[consumed..].chars().any(|ch| !ch.is_whitespace());
         {
             // An odd number of unpaired quotes on this line: inside a string.
             let line = head.text.rfind('\n').map_or(0, |at| at + 1);
@@ -1484,7 +1716,12 @@ impl<'a> Engine<'a> {
             text: rest.trim_end().to_owned(),
             ..Document::default()
         };
-        lex(&mut suffix, 0, if prose { Syntax::plain() } else { syntax }, &mut self.interner);
+        lex(
+            &mut suffix,
+            0,
+            if prose { Syntax::plain() } else { syntax },
+            &mut self.interner,
+        );
         if suffix.ids.is_empty() && !rest.trim().is_empty() {
             return None; // The rest of the line is a comment.
         }
@@ -1526,15 +1763,24 @@ impl<'a> Engine<'a> {
         self.subwords.clear();
         // The neural model reads a window of the text before the caret,
         // starting at token `window` of the document.
-        let window = network.map_or(0, |network| self.open_window(network, below, rest.is_empty(), false));
+        let window = network.map_or(0, |network| {
+            self.open_window(network, below, rest.is_empty(), false)
+        });
         // What the model wrote ahead, kept while the prediction follows it.
         let mut plan: Option<Plan> = None;
         // Whether the caret is inside a double-quoted text on its line.
         let mut quoted = {
             let head = &self.documents[0];
             let line = head.text.rfind('\n').map_or(0, |at| at + 1);
-            let first = head.starts.partition_point(|&start| (start as usize) < line);
-            head.ids[first..].iter().filter(|&&id| id == punct('"')).count() % 2 == 1
+            let first = head
+                .starts
+                .partition_point(|&start| (start as usize) < line);
+            head.ids[first..]
+                .iter()
+                .filter(|&&id| id == punct('"'))
+                .count()
+                % 2
+                == 1
         };
 
         let mut output = String::new();
@@ -1546,7 +1792,9 @@ impl<'a> Engine<'a> {
         let mut outer = {
             let head = &self.documents[0];
             let line = head.text.rfind('\n').map_or(0, |at| at + 1);
-            let first = head.starts.partition_point(|&start| (start as usize) < line);
+            let first = head
+                .starts
+                .partition_point(|&start| (start as usize) < line);
             let mut open = 0i32;
             for &id in &head.ids[first..] {
                 if ['(', '[', '{'].iter().any(|&ch| id == punct(ch)) {
@@ -1625,14 +1873,27 @@ impl<'a> Engine<'a> {
             let blocks = multiline_model() && !prose;
             let model_allowed = network.filter(|_| lines == 0 || !after_newline || blocks);
             if let Some(network) = model_allowed
-                && plan.as_ref().is_none_or(|plan| plan.rest(&output).is_none())
+                && plan
+                    .as_ref()
+                    .is_none_or(|plan| plan.rest(&output).is_none())
                 && started.get().elapsed() < options.budget
             {
                 let (tokens, typed) = self.model_state(network, window, &output);
                 plan = None;
-                if network.read(&mut self.session, &self.passages, &tokens, window, language, &limited) {
+                if network.read(
+                    &mut self.session,
+                    &self.passages,
+                    &tokens,
+                    window,
+                    language,
+                    &limited,
+                ) {
                     let mark = self.session.mark();
-                    let open = if blocks && options.multiline { depth.max(0) + outer.max(0) } else { 0 };
+                    let open = if blocks && options.multiline {
+                        depth.max(0) + outer.max(0)
+                    } else {
+                        0
+                    };
                     // The text below the caret line judges the line written:
                     // it must lead into it.
                     let below = if lines == 0 && rest.is_empty() && open == 0 {
@@ -1640,7 +1901,14 @@ impl<'a> Engine<'a> {
                     } else {
                         Vec::new()
                     };
-                    let mut written = network.write_ranked(&mut self.session, &typed, false, open, &below, &limited);
+                    let mut written = network.write_ranked(
+                        &mut self.session,
+                        &typed,
+                        false,
+                        open,
+                        &below,
+                        &limited,
+                    );
                     // Weighing a doubtful line is worth its time; the time
                     // for checking the rest of the prediction is kept.
                     started.set(started.get() + written.ranking);
@@ -1648,10 +1916,19 @@ impl<'a> Engine<'a> {
                     // would leave the word as it stands, it writes again
                     // taking the word to be unfinished.
                     if first && !partial.is_empty() && options.first == 0. {
-                        let ended = written.bytes.get(typed.len()).is_none_or(|&byte| !identifier_char(byte as char));
+                        let ended = written
+                            .bytes
+                            .get(typed.len())
+                            .is_none_or(|&byte| !identifier_char(byte as char));
                         if ended {
                             network.cut(&mut self.session, mark);
-                            written = network.write_block(&mut self.session, &typed, true, open, &limited);
+                            written = network.write_block(
+                                &mut self.session,
+                                &typed,
+                                true,
+                                open,
+                                &limited,
+                            );
                         }
                     }
                     if output.is_empty() && model::recording() {
@@ -1698,7 +1975,9 @@ impl<'a> Engine<'a> {
             // it wrote ahead where that starts the same way, and otherwise
             // asked for.
             let mut level = |votes: &Vote, engine: &mut Self| -> u8 {
-                let (Some(network), Some(plan)) = (network, plan.as_mut()) else { return 0 };
+                let (Some(network), Some(plan)) = (network, plan.as_mut()) else {
+                    return 0;
+                };
                 let addition = if votes.id == NEWLINE_ID {
                     "\n".to_owned()
                 } else if first && !partial.is_empty() {
@@ -1712,7 +1991,11 @@ impl<'a> Engine<'a> {
                 } else if after_newline {
                     format!("{base_indent}{}{}", votes.gap, votes.text)
                 } else {
-                    format!("{}{}", if votes.gap.is_empty() { "" } else { " " }, votes.text)
+                    format!(
+                        "{}{}",
+                        if votes.gap.is_empty() { "" } else { " " },
+                        votes.text
+                    )
                 };
                 if addition.is_empty() {
                     return 0;
@@ -1725,18 +2008,33 @@ impl<'a> Engine<'a> {
                 }
                 // Asked from where the prediction stands now.
                 let (tokens, mut typed) = engine.model_state(network, window, &output);
-                if !network.read(&mut engine.session, &engine.passages, &tokens, window, language, &limited) {
+                if !network.read(
+                    &mut engine.session,
+                    &engine.passages,
+                    &tokens,
+                    window,
+                    language,
+                    &limited,
+                ) {
                     return 0;
                 }
                 if first && !partial.is_empty() {
                     // The typed start as this choice spells it.
                     let shared = partial.len().min(typed.len());
                     let from = typed.len() - shared;
-                    typed[from..].copy_from_slice(&votes.text.as_bytes()[partial.len() - shared..partial.len()]);
+                    typed[from..].copy_from_slice(
+                        &votes.text.as_bytes()[partial.len() - shared..partial.len()],
+                    );
                 }
                 let mark = engine.session.mark();
                 network
-                    .chance(&mut engine.session, mark, &typed, addition.as_bytes(), &limited)
+                    .chance(
+                        &mut engine.session,
+                        mark,
+                        &typed,
+                        addition.as_bytes(),
+                        &limited,
+                    )
                     .map_or(0, neural_level)
             };
             let mut chosen: Option<(Step, Vote)> = match votes {
@@ -1759,7 +2057,9 @@ impl<'a> Engine<'a> {
                     }
                     // A line end proposed inside an open bracket starts a
                     // block, which the model indents only when it writes on.
-                    None if proposal.id == NEWLINE_ID && (depth > 0 || outer > 0) && !blocks => None,
+                    None if proposal.id == NEWLINE_ID && (depth > 0 || outer > 0) && !blocks => {
+                        None
+                    }
                     None => {
                         let mut step = Step {
                             end: 0,
@@ -1806,12 +2106,16 @@ impl<'a> Engine<'a> {
                     }
                 };
                 if let Some(rival) = rival
-                    && chosen.as_ref().is_none_or(|(step, _)| rival.0.estimate > step.estimate)
+                    && chosen
+                        .as_ref()
+                        .is_none_or(|(step, _)| rival.0.estimate > step.estimate)
                 {
                     chosen = Some(rival);
                 }
             }
-            let Some((mut step, votes)) = chosen else { break };
+            let Some((mut step, votes)) = chosen else {
+                break;
+            };
             // A pattern the model had no time left to check is taken only
             // when the text points at it firmly: under load, unchecked
             // patterns run on into confident wrong text.
@@ -1830,7 +2134,13 @@ impl<'a> Engine<'a> {
                 break;
             }
             likelihood *= probability;
-            let Vote { id, text, gap, indent, .. } = votes;
+            let Vote {
+                id,
+                text,
+                gap,
+                indent,
+                ..
+            } = votes;
             if first {
                 confidence = probability;
             }
@@ -1856,7 +2166,9 @@ impl<'a> Engine<'a> {
             }
             let closes = [')', ']', '}'].iter().any(|&ch| id == punct(ch));
             let opens = ['(', '[', '{'].iter().any(|&ch| id == punct(ch));
-            if Some(id) == suffix_first && depth - i32::from(closes) <= 0 && !(first && !partial.is_empty())
+            if Some(id) == suffix_first
+                && depth - i32::from(closes) <= 0
+                && !(first && !partial.is_empty())
             {
                 // The text right of the caret already supplies this token.
                 committed = (output.len(), produced, depth);
@@ -1885,7 +2197,10 @@ impl<'a> Engine<'a> {
                 if context.last() == Some(&NEWLINE_ID) {
                     if let Some(indent) = &indent {
                         output.push_str(indent);
-                        relative = indent.strip_prefix(base_indent.as_str()).unwrap_or("").to_owned();
+                        relative = indent
+                            .strip_prefix(base_indent.as_str())
+                            .unwrap_or("")
+                            .to_owned();
                     } else {
                         output.push_str(&base_indent);
                         output.push_str(&gap);
@@ -1936,7 +2251,8 @@ impl<'a> Engine<'a> {
             if depth <= 0 && id != NEWLINE_ID {
                 committed = (output.len(), produced, depth);
             }
-            if produced >= options.tokens.min(MAX_OUTPUT_TOKENS) || output.len() >= MAX_OUTPUT_BYTES {
+            if produced >= options.tokens.min(MAX_OUTPUT_TOKENS) || output.len() >= MAX_OUTPUT_BYTES
+            {
                 break;
             }
         }
@@ -1956,7 +2272,9 @@ impl<'a> Engine<'a> {
         // prediction runs into it, or it only closes what is already open.
         if !suffix.ids.is_empty() && !met_suffix {
             let closers = suffix.ids.iter().all(|&id| {
-                [')', ']', '}', ';', ',', '"', '\'', '>', ':'].iter().any(|&ch| id == punct(ch))
+                [')', ']', '}', ';', ',', '"', '\'', '>', ':']
+                    .iter()
+                    .any(|&ch| id == punct(ch))
             });
             if !closers {
                 return None;
@@ -2025,7 +2343,11 @@ impl<'a> Engine<'a> {
     }
 
     /// Collect positions whose preceding tokens match the end of `context`.
-    fn retrieve(&mut self, context: &[u32], cancelled: &dyn Fn() -> bool) -> Option<Vec<Candidate>> {
+    fn retrieve(
+        &mut self,
+        context: &[u32],
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<Vec<Candidate>> {
         let length = context.len();
         let last = context[length - 1];
         let previous = if length >= 2 { context[length - 2] } else { 0 };
@@ -2188,56 +2510,55 @@ impl<'a> Engine<'a> {
             let position = voter.position as usize;
             let mut weight = (voter.score / 1.5).min(40.).exp2();
             let mut foreign = false;
-            let (id, text) = if position >= document.ids.len() {
-                (0, String::new())
-            } else {
-                let source = document.ids[position];
-                match kind(source) {
-                    IDENT => {
-                        let name = document.token(position);
-                        if let Some(&(_, to)) =
-                            voter.renames.iter().find(|&&(from, _)| from == source)
-                        {
-                            (to, self.interner.name(to).to_owned())
-                        } else if let Some(derived) = (!voter.renames.is_empty())
-                            .then(|| self.subwords.apply(name))
-                            .flatten()
-                        {
-                            let known = self
-                                .interner
-                                .ids
-                                .get(derived.as_str())
-                                .is_some_and(|&symbol| self.visible((IDENT << KIND_SHIFT) | symbol));
-                            if !known {
-                                weight *= 0.6;
+            let (id, text) =
+                if position >= document.ids.len() {
+                    (0, String::new())
+                } else {
+                    let source = document.ids[position];
+                    match kind(source) {
+                        IDENT => {
+                            let name = document.token(position);
+                            if let Some(&(_, to)) =
+                                voter.renames.iter().find(|&&(from, _)| from == source)
+                            {
+                                (to, self.interner.name(to).to_owned())
+                            } else if let Some(derived) = (!voter.renames.is_empty())
+                                .then(|| self.subwords.apply(name))
+                                .flatten()
+                            {
+                                let known = self.interner.ids.get(derived.as_str()).is_some_and(
+                                    |&symbol| self.visible((IDENT << KIND_SHIFT) | symbol),
+                                );
+                                if !known {
+                                    weight *= 0.6;
+                                }
+                                (source, derived)
+                            } else {
+                                if !self.visible(source) && source & SYMBOL_MASK != 0 {
+                                    // A name the active document never mentions:
+                                    // plausible as an API, unlikely as a variable.
+                                    let previous = position
+                                        .checked_sub(1)
+                                        .map(|at| document.ids[at])
+                                        .unwrap_or(0);
+                                    let next = document.ids.get(position + 1).copied().unwrap_or(0);
+                                    let api = previous == punct('.')
+                                        || previous == punct(':')
+                                        || previous == punct('>')
+                                        || next == punct('(')
+                                        || next == punct(':')
+                                        || next == punct('!')
+                                        || name.chars().next().is_some_and(char::is_uppercase);
+                                    weight *= if api { 0.7 } else { 0.25 };
+                                    foreign = true;
+                                }
+                                (source, name.to_owned())
                             }
-                            (source, derived)
-                        } else {
-                            if !self.visible(source) && source & SYMBOL_MASK != 0 {
-                                // A name the active document never mentions:
-                                // plausible as an API, unlikely as a variable.
-                                let previous = position
-                                    .checked_sub(1)
-                                    .map(|at| document.ids[at])
-                                    .unwrap_or(0);
-                                let next = document.ids.get(position + 1).copied().unwrap_or(0);
-                                let api = previous == punct('.')
-                                    || previous == punct(':')
-                                    || previous == punct('>')
-                                    || next == punct('(')
-                                    || next == punct(':')
-                                    || next == punct('!')
-                                    || name.chars().next().is_some_and(char::is_uppercase);
-                                weight *= if api { 0.7 } else { 0.25 };
-                                foreign = true;
-                            }
-                            (source, name.to_owned())
                         }
+                        NEWLINE => (source, String::new()),
+                        _ => (source, document.token(position).to_owned()),
                     }
-                    NEWLINE => (source, String::new()),
-                    _ => (source, document.token(position).to_owned()),
-                }
-            };
+                };
             if let Some(partial) = partial
                 && !partial.is_empty()
                 && (!begins(&text, partial) || kind(id) > KEYWORD)
@@ -2311,7 +2632,9 @@ impl<'a> Engine<'a> {
         // caret; steps found far apart are more likely separate things.
         const NEAR: u32 = 40;
         let end = self.documents[0].ids.len() as u32;
-        let near = |later: u32, earlier: Option<u32>| earlier.is_some_and(|at| later.saturating_sub(at) <= NEAR);
+        let near = |later: u32, earlier: Option<u32>| {
+            earlier.is_some_and(|at| later.saturating_sub(at) <= NEAR)
+        };
         let mut series = None;
         if let [.., earlier, latest] = steps[..]
             && kind(groups[earlier].id) == kind(groups[latest].id)
@@ -2417,14 +2740,18 @@ fn series_next(earlier: &str, latest: &str) -> Option<String> {
         let next = series_next(&earlier[..earlier.len() - 1], &latest[..latest.len() - 1])?;
         return Some(format!("{next}{quote}"));
     }
-    let digits = |text: &str| text.len() - text.trim_end_matches(|ch: char| ch.is_ascii_digit()).len();
+    let digits =
+        |text: &str| text.len() - text.trim_end_matches(|ch: char| ch.is_ascii_digit()).len();
     let (a, b) = (digits(earlier), digits(latest));
     if a > 0 && b > 0 && a <= 9 && b <= 9 {
         let (stem, number) = latest.split_at(latest.len() - b);
         if earlier[..earlier.len() - a] != *stem {
             return None;
         }
-        let (from, to): (i64, i64) = (earlier[earlier.len() - a..].parse().ok()?, number.parse().ok()?);
+        let (from, to): (i64, i64) = (
+            earlier[earlier.len() - a..].parse().ok()?,
+            number.parse().ok()?,
+        );
         let next = to + (to - from);
         if to == from || next < 0 || (to - from).abs() > 1000 {
             return None;
@@ -2438,7 +2765,10 @@ fn series_next(earlier: &str, latest: &str) -> Option<String> {
     }
     let (from, to) = (earlier.chars().next_back()?, latest.chars().next_back()?);
     let stem = &latest[..latest.len() - to.len_utf8()];
-    let apart = stem.chars().next_back().is_none_or(|ch| !ch.is_alphabetic());
+    let apart = stem
+        .chars()
+        .next_back()
+        .is_none_or(|ch| !ch.is_alphabetic());
     if from.is_ascii_alphabetic()
         && to.is_ascii_alphabetic()
         && apart
@@ -2530,7 +2860,8 @@ fn split_subwords(name: &str) -> Vec<&str> {
             continue;
         }
         let boundary = ch == '_'
-            || (ch.is_uppercase() && previous.is_some_and(|p| p.is_lowercase() || p.is_ascii_digit()))
+            || (ch.is_uppercase()
+                && previous.is_some_and(|p| p.is_lowercase() || p.is_ascii_digit()))
             || (ch.is_ascii_digit() != previous.is_some_and(|p| p.is_ascii_digit()));
         if boundary {
             if at > start {

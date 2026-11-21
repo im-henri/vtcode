@@ -1,7 +1,7 @@
-use crossterm::event;
-use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use crate::app::App;
 use crate::helpers::len_as_u16;
+use crossterm::event;
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::layout::Rect;
 use unicode_width::UnicodeWidthStr;
 
@@ -14,7 +14,12 @@ fn handle_folder_browser_click(app: &mut App, col: u16, row: u16) -> bool {
 
 /// Handle mouse events that target extension overlays.
 /// Returns `true` if the event was consumed by an overlay.
-pub(crate) fn handle_overlay_mouse(app: &mut App, kind: MouseEventKind, col: u16, row: u16) -> bool {
+pub(crate) fn handle_overlay_mouse(
+    app: &mut App,
+    kind: MouseEventKind,
+    col: u16,
+    row: u16,
+) -> bool {
     match kind {
         MouseEventKind::Down(MouseButton::Left) => {
             let overlays = app.extension_manager.overlay_targets();
@@ -127,7 +132,10 @@ pub(crate) fn handle_overlay_mouse(app: &mut App, kind: MouseEventKind, col: u16
     }
 }
 
-fn find_menu_item_at_row(items: &[crate::app::ContextMenuItem], target_row: usize) -> Option<usize> {
+fn find_menu_item_at_row(
+    items: &[crate::app::ContextMenuItem],
+    target_row: usize,
+) -> Option<usize> {
     let mut visual_row = 0;
     for (i, item) in items.iter().enumerate() {
         if visual_row == target_row {
@@ -145,7 +153,9 @@ fn find_menu_item_at_row(items: &[crate::app::ContextMenuItem], target_row: usiz
 /// button and the gap before the rendered menu. Ordinary context menus still
 /// activate on a fresh press and ignore the release that opened them.
 pub(crate) fn capture_context_menu_button(app: &mut App, button: Rect) {
-    if !app.context_menu_active { return; }
+    if !app.context_menu_active {
+        return;
+    }
     app.clear_drag_states();
     app.drag_start_pos = None;
     app.drag_has_moved = false;
@@ -163,17 +173,37 @@ pub(crate) fn handle_context_menu_mouse(app: &mut App, mouse: event::MouseEvent)
     }
     // Dropdowns can flip above the pointer or lose rows when the window is
     // resized. Only the rows actually drawn can select a command.
-    let hit = app.context_menu_inner
+    let hit = app
+        .context_menu_inner
         .filter(|inner| {
-            let rows = app.context_menu_items.len() + app.context_menu_items.iter().filter(|item| item.separator_after).count();
-            let scrollbar = if rows > inner.height as usize { 2.min(inner.width.saturating_sub(1)) } else { 0 };
-            Rect::new(inner.x, inner.y, inner.width - scrollbar, inner.height).contains((col, row).into())
+            let rows = app.context_menu_items.len()
+                + app
+                    .context_menu_items
+                    .iter()
+                    .filter(|item| item.separator_after)
+                    .count();
+            let scrollbar = if rows > inner.height as usize {
+                2.min(inner.width.saturating_sub(1))
+            } else {
+                0
+            };
+            Rect::new(inner.x, inner.y, inner.width - scrollbar, inner.height)
+                .contains((col, row).into())
         })
-        .and_then(|inner| find_menu_item_at_row(&app.context_menu_items, app.context_menu_scroll + (row - inner.y) as usize));
+        .and_then(|inner| {
+            find_menu_item_at_row(
+                &app.context_menu_items,
+                app.context_menu_scroll + (row - inner.y) as usize,
+            )
+        });
     let in_menu = app.context_menu_inner.is_some_and(|inner| {
-        Rect::new(inner.x.saturating_sub(1), inner.y.saturating_sub(1),
-            inner.width.saturating_add(2), inner.height.saturating_add(2))
-            .contains((col, row).into())
+        Rect::new(
+            inner.x.saturating_sub(1),
+            inner.y.saturating_sub(1),
+            inner.width.saturating_add(2),
+            inner.height.saturating_add(2),
+        )
+        .contains((col, row).into())
     });
 
     match mouse.kind {
@@ -216,7 +246,13 @@ pub(crate) fn handle_context_menu_mouse(app: &mut App, mouse: event::MouseEvent)
 }
 
 /// Handle mouse clicks on the settings panel. Returns true if click was consumed.
-pub(crate) fn handle_settings_mouse(app: &mut App, col: u16, row: u16, term_w: u16, term_h: u16) -> bool {
+pub(crate) fn handle_settings_mouse(
+    app: &mut App,
+    col: u16,
+    row: u16,
+    term_w: u16,
+    term_h: u16,
+) -> bool {
     let items = app.settings_items();
     let width = SETTINGS_PANEL_WIDTH.min(term_w.saturating_sub(4));
     let max_visible = (term_h.saturating_sub(6)) as usize;
@@ -260,10 +296,17 @@ fn point_in_rect(area: Rect, col: u16, row: u16) -> bool {
 }
 
 fn handle_completion_popup_click(app: &mut App, col: u16, row: u16, viewport: Rect) -> bool {
-    if crate::ui_lsp_completion::handle_mouse(app, event::MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Left), column: col, row,
-        modifiers: KeyModifiers::NONE,
-    }) { return true; }
+    if crate::ui_lsp_completion::handle_mouse(
+        app,
+        event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        },
+    ) {
+        return true;
+    }
     if app.lsp_completion_active && app.lsp_manager.completion_items.is_empty() {
         app.lsp_completion_active = false;
         app.dispatch_lsp_suggestions();
@@ -271,8 +314,12 @@ fn handle_completion_popup_click(app: &mut App, col: u16, row: u16, viewport: Re
     // LSP completions render last and therefore have mouse priority.
     if app.lsp_completion_active && !app.lsp_manager.completion_items.is_empty() {
         let item_count = app.lsp_manager.completion_items.len();
-        if let Some(geometry) = crate::ui_search_dialog::lsp_completion_popup_geometry(app, viewport) {
-            if let Some(index) = crate::ui_search_dialog::completion_index_at(geometry, col, row, item_count) {
+        if let Some(geometry) =
+            crate::ui_search_dialog::lsp_completion_popup_geometry(app, viewport)
+        {
+            if let Some(index) =
+                crate::ui_search_dialog::completion_index_at(geometry, col, row, item_count)
+            {
                 app.lsp_completion_selected = index;
                 app.apply_lsp_completion();
                 return true;
@@ -285,10 +332,13 @@ fn handle_completion_popup_click(app: &mut App, col: u16, row: u16, viewport: Re
         return false;
     }
 
-    if app.vtcomplete_active && !app.vtcomplete_suggestions.is_empty() && !app.inline_hides_popup() {
+    if app.vtcomplete_active && !app.vtcomplete_suggestions.is_empty() && !app.inline_hides_popup()
+    {
         let item_count = app.vtcomplete_suggestions.len();
         if let Some(geometry) = crate::ui_search_dialog::vtcomplete_popup_geometry(app, viewport) {
-            if let Some(index) = crate::ui_search_dialog::completion_index_at(geometry, col, row, item_count) {
+            if let Some(index) =
+                crate::ui_search_dialog::completion_index_at(geometry, col, row, item_count)
+            {
                 app.vtcomplete_selected = index;
                 app.apply_vtcomplete();
                 return true;
@@ -338,7 +388,9 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
         && !(app.show_explorer && app.sidebar_view == crate::app::SidebarView::Search)
     {
         let max_results = 15u16; // Must match draw_global_search
-        let height = (len_as_u16(app.global_search_results.len()) + 3).min(max_results + 3).max(5);
+        let height = (len_as_u16(app.global_search_results.len()) + 3)
+            .min(max_results + 3)
+            .max(5);
         let width = 70u16.min(term_w.saturating_sub(4));
         let px = (term_w.saturating_sub(width)) / 2;
         let py = 2u16;
@@ -353,12 +405,14 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
         let inner_h = height.saturating_sub(2);
         let results_area_height = inner_h.saturating_sub(1) as usize;
         // Input row is inner_y, results start at inner_y + 1
-        if col >= inner_x && col < inner_x + width.saturating_sub(2)
-            && row > inner_y && row < py + height.saturating_sub(1)
+        if col >= inner_x
+            && col < inner_x + width.saturating_sub(2)
+            && row > inner_y
+            && row < py + height.saturating_sub(1)
         {
-            let scroll = app.global_search_selected.saturating_sub(
-                results_area_height.saturating_sub(1)
-            );
+            let scroll = app
+                .global_search_selected
+                .saturating_sub(results_area_height.saturating_sub(1));
             let clicked = scroll + (row - inner_y - 1) as usize;
             if clicked < app.global_search_results.len() {
                 app.click_global_search_result(clicked, col, row);
@@ -385,7 +439,10 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
             return true;
         }
         crate::ui_search_controls::handle_click(
-            app, crate::ui_search_controls::SearchScope::File, col, row,
+            app,
+            crate::ui_search_controls::SearchScope::File,
+            col,
+            row,
         );
         return true;
     }
@@ -406,7 +463,10 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
     }
 
     // Diff layout and navigation buttons
-    if app.diff_layout_toggle_area.is_some_and(|area| area.contains((col, row).into())) {
+    if app
+        .diff_layout_toggle_area
+        .is_some_and(|area| area.contains((col, row).into()))
+    {
         app.execute_palette_command("toggle_diff_layout");
         return true;
     }
@@ -437,19 +497,29 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
     if app.breadcrumb_dropdown_active {
         // Check if click is on a dropdown item
         if let Some(bc_area) = app.breadcrumb_area {
-            let dropdown_x = app.breadcrumb_segments.get(app.breadcrumb_dropdown_segment)
+            let dropdown_x = app
+                .breadcrumb_segments
+                .get(app.breadcrumb_dropdown_segment)
                 .map_or(bc_area.x, |&(x, _, _)| x);
             let dropdown_y = bc_area.y + 1;
             let items_count = app.breadcrumb_dropdown_items.len();
-            let max_name_len = app.breadcrumb_dropdown_items.iter()
-                .filter_map(|(path, _)| path.file_name().and_then(|n| n.to_str()).map(UnicodeWidthStr::width))
+            let max_name_len = app
+                .breadcrumb_dropdown_items
+                .iter()
+                .filter_map(|(path, _)| {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(UnicodeWidthStr::width)
+                })
                 .max()
                 .unwrap_or(10);
             let dw = (max_name_len + 6) as u16;
             let _dh = (items_count as u16 + 2).min(15);
             let inner_y = dropdown_y + 1;
-            if col >= dropdown_x && col < dropdown_x + dw
-                && row >= inner_y && row < inner_y + items_count as u16
+            if col >= dropdown_x
+                && col < dropdown_x + dw
+                && row >= inner_y
+                && row < inner_y + items_count as u16
                 && (row - inner_y) < items_count as u16
             {
                 let idx = (row - inner_y) as usize;
@@ -474,50 +544,67 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
     if let Some(bc_area) = app.breadcrumb_area {
         if row == bc_area.y && col >= bc_area.x && col < bc_area.x + bc_area.width {
             // Find matching segment without cloning Vec
-            let matched = app.breadcrumb_segments.iter()
+            let matched = app
+                .breadcrumb_segments
+                .iter()
                 .find(|&&(seg_x, seg_w, _)| col >= seg_x && col < seg_x + seg_w)
                 .copied();
             if let Some((_seg_x, _seg_w, seg_take)) = matched {
-                    // Find the index of this segment in breadcrumb_segments for dropdown positioning
-                    let seg_vec_idx = app.breadcrumb_segments.iter()
-                        .position(|s| s.2 == seg_take)
-                        .unwrap_or(0);
-                    // Build the full path up to this segment
-                    if let Some(editor) = app.editor() {
-                        if let Some(file_path) = &editor.file_path {
-                            let rel = file_path.strip_prefix(&app.explorer.root)
-                                .unwrap_or(file_path);
-                            let rel_str = rel.to_string_lossy().into_owned();
-                            let parts: Vec<&str> = rel_str.split(['/', '\\']).collect();
-                            // Build parent directory path for this segment
-                            let mut dir = app.explorer.root.clone();
-                            for part in parts.iter().take(seg_take) {
-                                dir = dir.join(part);
-                            }
-                            app.breadcrumb_dropdown_generation =
-                                app.breadcrumb_dropdown_generation.wrapping_add(1);
-                            let generation = app.breadcrumb_dropdown_generation;
-                            app.breadcrumb_dropdown_items.clear();
-                            app.breadcrumb_dropdown_segment = seg_vec_idx;
-                            app.breadcrumb_dropdown_selected = 0;
-                            app.breadcrumb_dropdown_loading = true;
-                            app.breadcrumb_dropdown_active = true;
+                // Find the index of this segment in breadcrumb_segments for dropdown positioning
+                let seg_vec_idx = app
+                    .breadcrumb_segments
+                    .iter()
+                    .position(|s| s.2 == seg_take)
+                    .unwrap_or(0);
+                // Build the full path up to this segment
+                if let Some(editor) = app.editor() {
+                    if let Some(file_path) = &editor.file_path {
+                        let rel = file_path
+                            .strip_prefix(&app.explorer.root)
+                            .unwrap_or(file_path);
+                        let rel_str = rel.to_string_lossy().into_owned();
+                        let parts: Vec<&str> = rel_str.split(['/', '\\']).collect();
+                        // Build parent directory path for this segment
+                        let mut dir = app.explorer.root.clone();
+                        for part in parts.iter().take(seg_take) {
+                            dir = dir.join(part);
+                        }
+                        app.breadcrumb_dropdown_generation =
+                            app.breadcrumb_dropdown_generation.wrapping_add(1);
+                        let generation = app.breadcrumb_dropdown_generation;
+                        app.breadcrumb_dropdown_items.clear();
+                        app.breadcrumb_dropdown_segment = seg_vec_idx;
+                        app.breadcrumb_dropdown_selected = 0;
+                        app.breadcrumb_dropdown_loading = true;
+                        app.breadcrumb_dropdown_active = true;
 
-                            let sender = app.background.sender.clone();
-                            let remote = app.remote_workspace.clone();
-                            app.background.spawn("breadcrumb-list", move || {
-                                let mut items: Vec<(std::path::PathBuf, bool)> = if let Some(remote) = remote {
-                                    remote.remote_path(&dir).and_then(|path| remote.list(&path)).map(|entries| entries.iter()
-                                        .filter(|entry| !entry.path.name().starts_with('.')).map(|entry| (remote.view_key(&entry.path),entry.is_dir)).collect()).unwrap_or_default()
-                                } else { std::fs::read_dir(&dir)
+                        let sender = app.background.sender.clone();
+                        let remote = app.remote_workspace.clone();
+                        app.background.spawn("breadcrumb-list", move || {
+                            let mut items: Vec<(std::path::PathBuf, bool)> =
+                                if let Some(remote) = remote {
+                                    remote
+                                        .remote_path(&dir)
+                                        .and_then(|path| remote.list(&path))
+                                        .map(|entries| {
+                                            entries
+                                                .iter()
+                                                .filter(|entry| !entry.path.name().starts_with('.'))
+                                                .map(|entry| {
+                                                    (remote.view_key(&entry.path), entry.is_dir)
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default()
+                                } else {
+                                    std::fs::read_dir(&dir)
                                         .into_iter()
                                         .flatten()
                                         .filter_map(Result::ok)
                                         .filter_map(|entry| {
                                             let path = entry.path();
-                                            let name = path
-                                                .file_name()
-                                                .and_then(|name| name.to_str())?;
+                                            let name =
+                                                path.file_name().and_then(|name| name.to_str())?;
                                             if name.starts_with('.') {
                                                 return None;
                                             }
@@ -528,26 +615,27 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
                                             };
                                             Some((path, is_dir))
                                         })
-                                        .collect() };
-                                items.sort_by_cached_key(|(path, is_dir)| {
-                                    let name = path
-                                        .file_name()
-                                        .and_then(|name| name.to_str())
-                                        .unwrap_or("")
-                                        .to_lowercase();
-                                    (!*is_dir, name)
-                                });
-                                let _ = sender.send(
-                                    crate::background::BackgroundResult::BreadcrumbEntries {
-                                        generation,
-                                        segment: seg_vec_idx,
-                                        entries: items,
-                                    },
-                                );
+                                        .collect()
+                                };
+                            items.sort_by_cached_key(|(path, is_dir)| {
+                                let name = path
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or("")
+                                    .to_lowercase();
+                                (!*is_dir, name)
                             });
-                        }
+                            let _ = sender.send(
+                                crate::background::BackgroundResult::BreadcrumbEntries {
+                                    generation,
+                                    segment: seg_vec_idx,
+                                    entries: items,
+                                },
+                            );
+                        });
                     }
-                    return true;
+                }
+                return true;
             }
         }
     }
@@ -596,10 +684,9 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
     }
 
     // Settings panel click
-    if app.settings_active
-        && handle_settings_mouse(app, col, row, term_w, term_h) {
-            return true;
-        }
+    if app.settings_active && handle_settings_mouse(app, col, row, term_w, term_h) {
+        return true;
+    }
 
     // Shortcuts panel click (click outside to dismiss)
     if app.shortcuts_active {
@@ -613,7 +700,7 @@ pub(crate) fn handle_popup_click(app: &mut App, col: u16, row: u16) -> bool {
         return true;
     }
 
-false
+    false
 }
 
 #[cfg(test)]
@@ -663,7 +750,8 @@ mod tests {
         let mut app = completion_app("pr");
         app.vtcomplete_active = true;
         app.vtcomplete_suggestions = vec!["print".to_string(), "println".to_string()];
-        let geometry = crate::ui_search_dialog::vtcomplete_popup_geometry(&mut app, viewport).unwrap();
+        let geometry =
+            crate::ui_search_dialog::vtcomplete_popup_geometry(&mut app, viewport).unwrap();
 
         assert!(handle_completion_popup_click(
             &mut app,
@@ -681,7 +769,8 @@ mod tests {
         let mut app = completion_app("pr");
         app.lsp_completion_active = true;
         app.lsp_manager.completion_items = vec![lsp_completion("print"), lsp_completion("println")];
-        let geometry = crate::ui_search_dialog::lsp_completion_popup_geometry(&mut app, viewport).unwrap();
+        let geometry =
+            crate::ui_search_dialog::lsp_completion_popup_geometry(&mut app, viewport).unwrap();
 
         assert!(handle_completion_popup_click(
             &mut app,
@@ -701,7 +790,8 @@ mod tests {
         app.vtcomplete_active = true;
         app.vtcomplete_selected = 9;
         app.vtcomplete_suggestions = (0..10).map(|i| format!("item{i}")).collect();
-        let geometry = crate::ui_search_dialog::vtcomplete_popup_geometry(&mut app, viewport).unwrap();
+        let geometry =
+            crate::ui_search_dialog::vtcomplete_popup_geometry(&mut app, viewport).unwrap();
 
         assert_eq!(geometry.scroll, 2);
         assert!(geometry.popup_area.y < app.code_area.unwrap().y);
@@ -812,5 +902,4 @@ mod tests {
         let result = handle_settings_mouse(&mut app, 60, 20, 120, 40);
         assert!(result);
     }
-
 }

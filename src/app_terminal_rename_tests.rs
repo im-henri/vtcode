@@ -9,11 +9,14 @@ fn fixture() -> App {
     app.active_tab = 0;
     app.active_pane = ActivePane::Editor;
     app.show_explorer = false;
-    app.terminals = ["First", "Second", "Third"].into_iter().map(|name| {
-        let mut terminal = TerminalTab::new(name.into(), app.explorer.root.clone());
-        terminal.terminal_launch_error = Some("Not launched for rendering tests".into());
-        terminal
-    }).collect();
+    app.terminals = ["First", "Second", "Third"]
+        .into_iter()
+        .map(|name| {
+            let mut terminal = TerminalTab::new(name.into(), app.explorer.root.clone());
+            terminal.terminal_launch_error = Some("Not launched for rendering tests".into());
+            terminal
+        })
+        .collect();
     app.active_terminal = 0;
     app.show_terminal_sidebar = true;
     app.terminal_sidebar_revealed = true;
@@ -32,9 +35,15 @@ fn draw(app: &mut App) -> Terminal<TestBackend> {
 }
 
 fn right_click(app: &mut App, column: u16, row: u16) {
-    crate::mouse::handle_mouse(app, MouseEvent {
-        kind: MouseEventKind::Down(MouseButton::Right), column, row, modifiers: KeyModifiers::NONE,
-    });
+    crate::mouse::handle_mouse(
+        app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
 }
 
 #[test]
@@ -57,14 +66,24 @@ fn terminal_rename_opens_from_palette_menu_and_both_tab_context_menus() {
                 app.active_terminal = 1;
                 app.menu_active = true;
                 app.menu_open = true;
-                app.menu_selected = App::menu_labels().iter().position(|label| *label == "Terminal").unwrap();
-                app.menu_item_selected = app.menu_items(app.menu_selected).iter()
-                    .position(|(_, id)| *id == "rename_terminal").unwrap();
+                app.menu_selected = App::menu_labels()
+                    .iter()
+                    .position(|label| *label == "Terminal")
+                    .unwrap();
+                app.menu_item_selected = app
+                    .menu_items(app.menu_selected)
+                    .iter()
+                    .position(|(_, id)| *id == "rename_terminal")
+                    .unwrap();
                 key(&mut app, KeyCode::Enter);
             }
             2 => {
-                let area = app.terminal_sidebar_tab_areas.iter()
-                    .find(|(_, index)| *index == 1).unwrap().0;
+                let area = app
+                    .terminal_sidebar_tab_areas
+                    .iter()
+                    .find(|(_, index)| *index == 1)
+                    .unwrap()
+                    .0;
                 right_click(&mut app, area.x, area.y);
                 assert!(app.context_menu_active);
                 key(&mut app, KeyCode::Enter);
@@ -72,37 +91,66 @@ fn terminal_rename_opens_from_palette_menu_and_both_tab_context_menus() {
             _ => {
                 let area = app.tab_bar_area.unwrap();
                 let col = (area.x..area.right())
-                    .find(|&col| crate::mouse::find_tab_at_col(&app, col, area) == Some(1)).unwrap();
+                    .find(|&col| crate::mouse::find_tab_at_col(&app, col, area) == Some(1))
+                    .unwrap();
                 right_click(&mut app, col, area.y);
                 assert!(app.tab_context_active);
-                app.tab_context_selected = App::tab_context_items().iter()
-                    .position(|(_, command, _)| *command == "tab_rename_terminal").unwrap();
+                app.tab_context_selected = App::tab_context_items()
+                    .iter()
+                    .position(|(_, command, _)| *command == "tab_rename_terminal")
+                    .unwrap();
                 key(&mut app, KeyCode::Enter);
             }
         }
         assert_eq!(app.terminal_rename.target, Some(1), "route={route}");
-        assert_eq!(app.focused_text_input_id(), Some(TextInputId::TerminalRename));
+        assert_eq!(
+            app.focused_text_input_id(),
+            Some(TextInputId::TerminalRename)
+        );
         assert_eq!(app.terminal_rename.query, "Second");
         assert_eq!(app.terminal_rename.anchor, Some(0));
         assert!(app.paste_into_focused_text_input(" Build – café "));
-        assert_eq!(app.terminals[1].name, "Second", "names change only on confirmation");
+        assert_eq!(
+            app.terminals[1].name, "Second",
+            "names change only on confirmation"
+        );
         key(&mut app, KeyCode::Enter);
         assert_eq!(app.terminals[1].name, "Build – café");
         assert_eq!(app.terminals[0].name, "First");
         assert_eq!(app.tabs[0].editor.rope.to_string(), "unchanged document");
-        assert_eq!(app.terminal_panel_focused, route != 3, "restore focus, route={route}");
-        assert!(app.terminals.iter().all(|terminal| terminal.terminal_pty.is_none()));
+        assert_eq!(
+            app.terminal_panel_focused,
+            route != 3,
+            "restore focus, route={route}"
+        );
+        assert!(
+            app.terminals
+                .iter()
+                .all(|terminal| terminal.terminal_pty.is_none())
+        );
         // Move away from the tab strip so the close button stops covering the label.
         let tab_bar = app.tab_bar_area.unwrap();
-        crate::mouse::handle_mouse(&mut app, MouseEvent {
-            kind: MouseEventKind::Moved,
-            column: tab_bar.x,
-            row: tab_bar.bottom(),
-            modifiers: KeyModifiers::NONE,
-        });
+        crate::mouse::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: tab_bar.x,
+                row: tab_bar.bottom(),
+                modifiers: KeyModifiers::NONE,
+            },
+        );
         let terminal = draw(&mut app);
-        let screen: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
-        assert!(screen.contains("Build – café"), "updated tab label, route={route}");
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            screen.contains("Build – café"),
+            "updated tab label, route={route}"
+        );
     }
 }
 
@@ -160,7 +208,16 @@ fn custom_terminal_names_survive_moves_between_editor_and_dock() {
     app.terminal_rename.query = "Tests".into();
     key(&mut app, KeyCode::Enter);
     assert!(app.detach_terminal_to_group(1, app.active_group));
-    assert!(draw(&mut app).backend().buffer().content.iter().map(|cell| cell.symbol()).collect::<String>().contains("Tests"));
+    assert!(
+        draw(&mut app)
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+            .contains("Tests")
+    );
     assert!(app.move_terminal_to_dock(1, TerminalDock::Right));
     assert_eq!(app.terminals[1].name, "Tests");
     assert!(app.terminals[1].terminal_pty.is_none());

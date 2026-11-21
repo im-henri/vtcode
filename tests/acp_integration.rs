@@ -373,7 +373,11 @@ fn sdk_permissions_edits_plans_tools_and_bounded_terminals() {
     loop {
         assert!(Instant::now() < deadline);
         match next(&client) {
-            Event::Permission { id, ticket, request } => {
+            Event::Permission {
+                id,
+                ticket,
+                request,
+            } => {
                 permissions += 1;
                 assert_eq!(request.options[0].option_id.to_string(), "permit-local-37");
                 client
@@ -384,7 +388,11 @@ fn sdk_permissions_edits_plans_tools_and_bounded_terminals() {
                     })
                     .unwrap();
             }
-            Event::FileRequest { id, ticket, request } => {
+            Event::FileRequest {
+                id,
+                ticket,
+                request,
+            } => {
                 let (result, edit) = match request {
                     FileRequest::Read(request) => (
                         Ok(serde_json::to_value(
@@ -402,7 +410,12 @@ fn sdk_permissions_edits_plans_tools_and_bounded_terminals() {
                     }
                 };
                 client
-                    .send(Command::FileResponse { id, ticket, result, edit })
+                    .send(Command::FileResponse {
+                        id,
+                        ticket,
+                        result,
+                        edit,
+                    })
                     .unwrap();
             }
             Event::FileEdited(edit) => {

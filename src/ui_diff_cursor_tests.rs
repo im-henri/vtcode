@@ -102,11 +102,15 @@ fn wrapped_diffs_keep_the_revisions_aligned_and_copy_source_text() {
         let code = app.code_area.unwrap();
         let original = app.diff_left_code_area.unwrap_or(code);
         let text = |area: ratatui::layout::Rect, y| -> String {
-            (area.x..area.right()).map(|x| buffer[(x, y)].symbol()).collect()
+            (area.x..area.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect()
         };
         assert!((original.y..original.bottom()).any(|y| text(original, y).contains("OLD_TAIL")));
         assert!((code.y..code.bottom()).any(|y| text(code, y).contains("NEW_TAIL")));
-        let context = (code.y..code.bottom()).find(|&y| text(code, y).contains("shared context")).unwrap();
+        let context = (code.y..code.bottom())
+            .find(|&y| text(code, y).contains("shared context"))
+            .unwrap();
         assert!(context > code.y + 1);
         if mode == DiffMode::SideBySide {
             assert!(text(original, context).contains("shared context"));
@@ -139,15 +143,27 @@ fn wrapped_diff_navigation_and_find_reach_a_continuation_of_the_same_line() {
             &mut app,
             crossterm::event::KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
         );
-        assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (0, 15));
+        assert_eq!(
+            (
+                app.editor().unwrap().cursor_line,
+                app.editor().unwrap().cursor_col
+            ),
+            (0, 15)
+        );
         app.search_query = "needle".into();
         app.execute_palette_command("find");
         let buffer = render(&mut app, 100, 9);
         let code = app.code_area.unwrap();
         let tail = (code.y..code.bottom()).find(|&y| {
-            (code.x..code.right()).map(|x| buffer[(x, y)].symbol()).collect::<String>().contains("needle")
+            (code.x..code.right())
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .contains("needle")
         });
-        assert!(tail.is_some(), "find should reveal the match on a continuation");
+        assert!(
+            tail.is_some(),
+            "find should reveal the match on a continuation"
+        );
         assert!(app.diff_inline_scroll.row > 0);
         let scroll = app.diff_inline_scroll.row;
         let column = app.editor().unwrap().cursor_col;
@@ -163,7 +179,13 @@ fn find_keeps_visible_matches_still_and_centers_offscreen_diff_rows() {
     let base: String = (0..100).map(|line| format!("line_{line}\n")).collect();
     let target: String = (0..100)
         .filter(|line| !(20..40).contains(line))
-        .map(|line| if [55, 59, 70, 74].contains(&line) { "needle\n".into() } else { format!("line_{line}\n") })
+        .map(|line| {
+            if [55, 59, 70, 74].contains(&line) {
+                "needle\n".into()
+            } else {
+                format!("line_{line}\n")
+            }
+        })
         .collect();
     for mode in [DiffMode::SideBySide, DiffMode::Inline] {
         let mut app = comparison(&base, &target, mode, false);
@@ -204,10 +226,12 @@ fn find_keeps_visible_matches_still_and_centers_offscreen_diff_rows() {
 fn find_and_cursor_moves_reveal_target_rows_after_a_large_removed_block() {
     let base: String = std::iter::once("before\n".to_string())
         .chain((0..100).map(|line| format!("old_{line};\n")))
-        .chain(std::iter::once("after\n".to_string())).collect();
+        .chain(std::iter::once("after\n".to_string()))
+        .collect();
     let target: String = std::iter::once("before\n".to_string())
         .chain((0..100).map(|line| format!("replacement_{line};\n")))
-        .chain(std::iter::once("after\n".to_string())).collect();
+        .chain(std::iter::once("after\n".to_string()))
+        .collect();
     for compact in [false, true] {
         let mut app = comparison(&base, &target, DiffMode::Inline, compact);
         render(&mut app, 120, 20);
@@ -220,7 +244,11 @@ fn find_and_cursor_moves_reveal_target_rows_after_a_large_removed_block() {
             let (x, y) = target_origin(&app, line + 1);
             let code = app.code_area.unwrap();
             assert_eq!(y, code.y + code.height / 2);
-            assert!(caret_cells(&app, &buffer).iter().any(|position| position.1 == y));
+            assert!(
+                caret_cells(&app, &buffer)
+                    .iter()
+                    .any(|position| position.1 == y)
+            );
             assert_eq!(buffer[(x, y)].symbol(), "r");
         }
         app.editor_mut().unwrap().set_cursor(0, 0);
@@ -230,7 +258,11 @@ fn find_and_cursor_moves_reveal_target_rows_after_a_large_removed_block() {
         assert_eq!(app.editor().unwrap().cursor_line, 1);
         let (x, y) = target_origin(&app, 1);
         assert_eq!(buffer[(x, y)].symbol(), "r");
-        assert!(caret_cells(&app, &buffer).iter().any(|position| position.1 == y));
+        assert!(
+            caret_cells(&app, &buffer)
+                .iter()
+                .any(|position| position.1 == y)
+        );
     }
 }
 
@@ -264,9 +296,21 @@ fn compact_diff_navigation_preserves_screen_column_before_native_selection_is_ac
         app.editor_mut().unwrap().set_cursor(0, 5);
         render(&mut app, 120, 20);
         assert!(app.context_diff_navigation(KeyCode::Down, KeyModifiers::NONE));
-        assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (1, 3));
+        assert_eq!(
+            (
+                app.editor().unwrap().cursor_line,
+                app.editor().unwrap().cursor_col
+            ),
+            (1, 3)
+        );
         assert!(app.context_diff_navigation(KeyCode::Up, KeyModifiers::NONE));
-        assert_eq!((app.editor().unwrap().cursor_line, app.editor().unwrap().cursor_col), (0, 5));
+        assert_eq!(
+            (
+                app.editor().unwrap().cursor_line,
+                app.editor().unwrap().cursor_col
+            ),
+            (0, 5)
+        );
     }
 }
 

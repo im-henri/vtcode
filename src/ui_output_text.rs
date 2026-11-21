@@ -289,7 +289,8 @@ impl Reader {
         self.scroll_to(self.offset().saturating_add_signed(delta));
     }
     fn scrolls_past_end(&self, rows: usize) -> bool {
-        rows > self.total_rows()
+        rows > self
+            .total_rows()
             .saturating_sub(self.text.height as usize)
             .saturating_sub(self.offset())
     }
@@ -838,16 +839,32 @@ impl Reader {
         self.find.viewport = viewport;
     }
     pub(super) fn find_input_state(&mut self) -> (&mut String, &mut usize, &mut Option<usize>) {
-        (&mut self.find.query, &mut self.find.cursor, &mut self.find.anchor)
+        (
+            &mut self.find.query,
+            &mut self.find.cursor,
+            &mut self.find.anchor,
+        )
     }
     pub(super) fn focus_find(&mut self) {
         self.find.focused = true;
         self.cancel_capture();
     }
-    pub(super) fn edit_find_input(&mut self, code: KeyCode, modifiers: KeyModifiers, paste: Option<&str>) -> crate::text_input::TextInputResult {
+    pub(super) fn edit_find_input(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        paste: Option<&str>,
+    ) -> crate::text_input::TextInputResult {
         let find = &mut self.find;
-        let result = find.history.edit(TextInput::new(&mut find.query, &mut find.cursor, &mut find.anchor), code, modifiers, paste);
-        if result.changed { find.update(&self.editor); }
+        let result = find.history.edit(
+            TextInput::new(&mut find.query, &mut find.cursor, &mut find.anchor),
+            code,
+            modifiers,
+            paste,
+        );
+        if result.changed {
+            find.update(&self.editor);
+        }
         result
     }
     pub fn key(&mut self, key: KeyEvent) {
@@ -897,8 +914,12 @@ impl Reader {
             && match key.code {
                 KeyCode::Down if ctrl => self.scrolls_past_end(1),
                 KeyCode::Down if self.wrap => {
-                    self.layout.row_for_position(&self.editor, self.editor.cursor_line, self.editor.cursor_col)
-                        + 1 >= self.total_rows()
+                    self.layout.row_for_position(
+                        &self.editor,
+                        self.editor.cursor_line,
+                        self.editor.cursor_col,
+                    ) + 1
+                        >= self.total_rows()
                 }
                 KeyCode::Down => self.editor.cursor_line + 1 >= self.editor.rope.len_lines(),
                 KeyCode::PageDown => self.scrolls_past_end(self.text.height as usize),

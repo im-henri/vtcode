@@ -77,10 +77,14 @@ fn workbench_symbol_membership_matches_skim_smart_case_and_unicode() {
 
 fn reference_palette(app: &App, query: &str) -> Vec<usize> {
     let query = query.to_ascii_lowercase();
-    let mut ranked: Vec<_> = app.palette.commands
+    let mut ranked: Vec<_> = app
+        .palette
+        .commands
         .iter()
         .enumerate()
-        .filter(|(_, command)| command.id != "workspace_close" || crate::ui_workspaces::can_close(app))
+        .filter(|(_, command)| {
+            command.id != "workspace_close" || crate::ui_workspaces::can_close(app)
+        })
         .filter_map(|(index, command)| {
             SkimMatcherV2::default()
                 .fuzzy_match(&command.name, &query)
@@ -175,12 +179,22 @@ fn workbench_problem_scan_handles_contiguous_and_chunk_split_lines() {
     ];
     assert!(files[0].1.line(0).as_str().is_some());
     assert!(files[1].1.line(0).as_str().is_none());
-    let files = files.into_iter().enumerate().map(|(id, (name, rope))| (name, rope, id as u64)).collect();
+    let files = files
+        .into_iter()
+        .enumerate()
+        .map(|(id, (name, rope))| (name, rope, id as u64))
+        .collect();
     let (items, errors, warnings, info, file_count) = analyze_problem_snapshots(files);
     assert_eq!((errors, warnings, info, file_count), (2, 2, 1, 2));
-    assert_eq!(items.iter().map(|item| item.4).collect::<Vec<_>>(), [0, 1, 0, 0, 0]);
     assert_eq!(
-        items.into_iter().map(|(name, line, marker, text, _)| (name, line, marker, text)).collect::<Vec<_>>(),
+        items.iter().map(|item| item.4).collect::<Vec<_>>(),
+        [0, 1, 0, 0, 0]
+    );
+    assert_eq!(
+        items
+            .into_iter()
+            .map(|(name, line, marker, text, _)| (name, line, marker, text))
+            .collect::<Vec<_>>(),
         vec![
             (
                 "alpha.rs".into(),
@@ -217,7 +231,11 @@ fn workbench_problem_scan_keeps_marker_boundaries_priority_and_result_limit() {
         "markers.rs".into(),
         ropey::Rope::from_str("TODO42\nNOTED\nBUGFIXME\n// TODO: before FIXME\nNOTEé\n// HACK\n"),
     )];
-    let files = files.into_iter().enumerate().map(|(id, (name, rope))| (name, rope, id as u64)).collect();
+    let files = files
+        .into_iter()
+        .enumerate()
+        .map(|(id, (name, rope))| (name, rope, id as u64))
+        .collect();
     let (items, errors, warnings, info, file_count) = analyze_problem_snapshots(files);
     assert_eq!((errors, warnings, info, file_count), (0, 2, 1, 1));
     assert_eq!(
@@ -239,7 +257,11 @@ fn workbench_problem_scan_keeps_marker_boundaries_priority_and_result_limit() {
         ),
         ("ignored.rs".into(), ropey::Rope::from_str("BUG\n")),
     ];
-    let files = files.into_iter().enumerate().map(|(id, (name, rope))| (name, rope, id as u64)).collect();
+    let files = files
+        .into_iter()
+        .enumerate()
+        .map(|(id, (name, rope))| (name, rope, id as u64))
+        .collect();
     let (items, errors, warnings, info, file_count) = analyze_problem_snapshots(files);
     assert_eq!(items.len(), 1_000);
     assert_eq!((errors, warnings, info, file_count), (0, 800, 200, 2));

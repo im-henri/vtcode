@@ -1,14 +1,14 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     widgets::{Clear, Paragraph},
-    Frame,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::{App, TerminalDock};
 use crate::terminal_sidebar::width as responsive_right_dock_width;
-use crate::ui_animation_chrome::{draw as draw_static_chrome, Region as ChromeRegion};
+use crate::ui_animation_chrome::{Region as ChromeRegion, draw as draw_static_chrome};
 use crate::{
     ui_chrome, ui_dialogs, ui_helpers, ui_panels, ui_pickers, ui_search_dialog, ui_settings,
 };
@@ -327,8 +327,16 @@ fn apply_area_gradient(
     // Share the editor's bounded exact-color tiles across workbench surfaces.
     // Resizing/theme changes select new tiles; overlays keep their own colors.
     crate::ui_editor_highlight::apply_editor_gradients(
-        f, area, target_bg, target_bg, gradient,
-        crate::app_theme::ThemeGradientSpec { start: Color::Reset, end: Color::Reset, angle_deg: 0.0 },
+        f,
+        area,
+        target_bg,
+        target_bg,
+        gradient,
+        crate::app_theme::ThemeGradientSpec {
+            start: Color::Reset,
+            end: Color::Reset,
+            angle_deg: 0.0,
+        },
     );
 }
 
@@ -386,7 +394,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     // visibility and the terminal spinner sample until the next normal frame.
     if !app.rendering_animation_frame {
         app.chat.activity.begin_frame();
-        for terminal in &app.terminals { terminal.input_activity.begin_frame(); }
+        for terminal in &app.terminals {
+            terminal.input_activity.begin_frame();
+        }
     }
     app.acknowledge_visible_chat_activity();
     crate::ui_quick_picker::begin_frame(app);
@@ -478,14 +488,15 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
 
     use crate::settings::ActivityBarPosition;
     let show_activity_bar = !detached && !app.zen_mode && app.show_activity_bar;
-    let (activity_area, content_area) = if show_activity_bar && app.activity_bar_position == ActivityBarPosition::Left {
-        // Four-character labels, an active marker, and a separator.
-        let layout = Layout::horizontal([Constraint::Length(6), Constraint::Min(1)])
-            .split(middle_area);
-        (layout[0], layout[1])
-    } else {
-        (Rect::default(), middle_area)
-    };
+    let (activity_area, content_area) =
+        if show_activity_bar && app.activity_bar_position == ActivityBarPosition::Left {
+            // Four-character labels, an active marker, and a separator.
+            let layout =
+                Layout::horizontal([Constraint::Length(6), Constraint::Min(1)]).split(middle_area);
+            (layout[0], layout[1])
+        } else {
+            (Rect::default(), middle_area)
+        };
     let performance_dock = !detached || !app.rendering_background_window;
     let main_area = if performance_dock {
         crate::ui_performance_details::reserve_dock(app, content_area)
@@ -509,7 +520,11 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
 
     // Main layout: body + optional panel
     let panel_height = if !detached && !app.zen_mode && app.show_panel {
-        if app.panel_chrome.maximized { main_area.height.saturating_sub(2) } else { responsive_panel_height(main_area.height, app.panel_height) }
+        if app.panel_chrome.maximized {
+            main_area.height.saturating_sub(2)
+        } else {
+            responsive_panel_height(main_area.height, app.panel_height)
+        }
     } else {
         0
     };
@@ -524,24 +539,43 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
         .split(main_area);
 
     let body_area = outer[0];
-    let (body_area, chat_area) = if !detached && app.chat.visible && app.chat.layout.dock_visible && !app.zen_mode
-        && (body_area.width >= 90 || app.active_pane == crate::app::ActivePane::Chat) {
-        let width = if body_area.width < 90 { body_area.width } else { app.chat.width.min(body_area.width.saturating_sub(36)).max(36) };
-        let split = Layout::default().direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0), Constraint::Length(width)]).split(body_area);
+    let (body_area, chat_area) = if !detached
+        && app.chat.visible
+        && app.chat.layout.dock_visible
+        && !app.zen_mode
+        && (body_area.width >= 90 || app.active_pane == crate::app::ActivePane::Chat)
+    {
+        let width = if body_area.width < 90 {
+            body_area.width
+        } else {
+            app.chat
+                .width
+                .min(body_area.width.saturating_sub(36))
+                .max(36)
+        };
+        let split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(width)])
+            .split(body_area);
         (split[0], Some(split[1]))
-    } else { (body_area, None) };
+    } else {
+        (body_area, None)
+    };
     let panel_separator = outer[1];
     let panel_area = outer[2];
 
     app.workbench_body_area = Some(body_area);
-    let terminal_sidebar_available = !detached && !app.zen_mode
+    let terminal_sidebar_available = !detached
+        && !app.zen_mode
         && app.terminal_sidebar_revealed
         && app.has_terminal_in_dock(TerminalDock::Right)
         && body_area.width > 1;
     let (workbench_area, terminal_sidebar_area) = if terminal_sidebar_available {
-        let side_width =
-            responsive_right_dock_width(body_area.width, app.show_terminal_sidebar, app.terminal_sidebar.width);
+        let side_width = responsive_right_dock_width(
+            body_area.width,
+            app.show_terminal_sidebar,
+            app.terminal_sidebar.width,
+        );
         let body = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(1), Constraint::Length(side_width)])
@@ -552,10 +586,18 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
     };
 
     // Body: sidebar + editor section
-    app.sidebar_auto_hide.edge = (!detached && !workbench_area.is_empty()).then(|| Rect::new(
-        if app.sidebar_right { workbench_area.right() - 1 } else { middle_area.x },
-        workbench_area.y, 1, workbench_area.height,
-    ));
+    app.sidebar_auto_hide.edge = (!detached && !workbench_area.is_empty()).then(|| {
+        Rect::new(
+            if app.sidebar_right {
+                workbench_area.right() - 1
+            } else {
+                middle_area.x
+            },
+            workbench_area.y,
+            1,
+            workbench_area.height,
+        )
+    });
     let sidebar_width = responsive_sidebar_width(workbench_area.width, app.explorer_width);
     if !app.zen_mode && app.sidebar_is_visible() && sidebar_width > 0 {
         let (sidebar_area, editor_area) = if app.sidebar_right {
@@ -572,7 +614,8 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
             (body[0], body[1])
         };
 
-        let top_activity = show_activity_bar && app.activity_bar_position == ActivityBarPosition::Top
+        let top_activity = show_activity_bar
+            && app.activity_bar_position == ActivityBarPosition::Top
             && sidebar_area.height > 1;
         // Reserve a seam outside scrollbar and activity button content.
         let border_col = if app.sidebar_right {
@@ -590,8 +633,12 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
         }
         app.explorer_area = Some(sidebar_content);
         match app.sidebar_view {
-            crate::app::SidebarView::Explorer => draw_static_chrome(f, app, sidebar_content, ChromeRegion::Explorer),
-            crate::app::SidebarView::Search => ui_dialogs::draw_search_panel(f, app, sidebar_content),
+            crate::app::SidebarView::Explorer => {
+                draw_static_chrome(f, app, sidebar_content, ChromeRegion::Explorer)
+            }
+            crate::app::SidebarView::Search => {
+                ui_dialogs::draw_search_panel(f, app, sidebar_content)
+            }
             crate::app::SidebarView::SourceControl => {
                 crate::ui_source_control::draw_source_control_sidebar(f, app, sidebar_content);
             }
@@ -601,7 +648,9 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
             crate::app::SidebarView::Extensions => {
                 ui_helpers::draw_extensions_sidebar(f, app, sidebar_content);
             }
-            crate::app::SidebarView::Remote => crate::ui_remote_targets::draw_sidebar(f, app, sidebar_content),
+            crate::app::SidebarView::Remote => {
+                crate::ui_remote_targets::draw_sidebar(f, app, sidebar_content)
+            }
         }
         if top_activity && let Some(activity_area) = app.activity_bar_area {
             draw_static_chrome(f, app, activity_area, ChromeRegion::Activity);
@@ -640,14 +689,22 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
         let separator_layer = if app.resizing_explorer || is_hovering_border {
             app.colors.ui.sash_hover_border
         } else {
-            app.colors.ui.sidebar_border.or(app.colors.ui.border_sidebar
-                .map(crate::theme_workbench::ColorLayer::opaque).unwrap_or_default())
+            app.colors.ui.sidebar_border.or(app
+                .colors
+                .ui
+                .border_sidebar
+                .map(crate::theme_workbench::ColorLayer::opaque)
+                .unwrap_or_default())
         };
         let buf = f.buffer_mut();
         for y in sidebar_area.y..sidebar_area.y + sidebar_area.height {
             if let Some(cell) = buf.cell_mut((border_col, y)) {
                 let separator_color = separator_layer.border(cell.bg);
-                cell.set_char(if separator_color.is_some() { '│' } else { ' ' });
+                cell.set_char(if separator_color.is_some() {
+                    '│'
+                } else {
+                    ' '
+                });
                 cell.set_fg(separator_color.unwrap_or(cell.bg));
             }
         }
@@ -725,7 +782,11 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
 fn draw_overlays(f: &mut Frame, app: &mut App) {
     app.dismiss_moved_activity_overflow();
     if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Search {
-        crate::ui_search_controls::draw_tooltip(f, app, crate::ui_search_controls::SearchScope::Workspace);
+        crate::ui_search_controls::draw_tooltip(
+            f,
+            app,
+            crate::ui_search_controls::SearchScope::Workspace,
+        );
     }
 
     crate::ui_extensions::draw_tooltip(f, app);
@@ -772,7 +833,8 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
     }
 
     // Global search popup (hidden when sidebar search is active)
-    if app.global_search_active && app.has_open_folder()
+    if app.global_search_active
+        && app.has_open_folder()
         && !(app.show_explorer && app.sidebar_view == crate::app::SidebarView::Search)
     {
         ui_search_dialog::draw_global_search(f, app);
@@ -780,7 +842,8 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
 
     // GPTComplete inline prediction, then the word popup when no prediction is shown
     crate::app_vtcomplete_inline::draw_ghost(f, app);
-    let popup = app.vtcomplete_active && !app.vtcomplete_suggestions.is_empty()
+    let popup = app.vtcomplete_active
+        && !app.vtcomplete_suggestions.is_empty()
         && !crate::ui_lsp_completion::visible(app)
         && !app.inline_hides_popup();
     app.vtcomplete_inline.popup_drawn = popup;
@@ -858,7 +921,10 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
                         let path_str = app.display_path_label(path);
                         if let Some(tab_area) = app.tab_bar_area {
                             let hits = crate::ui_chrome_tabs::TabBarHits::new(app, tab_area);
-                            let tx = hits.tabs.iter().find(|(index, _, _)| *index == tab_idx)
+                            let tx = hits
+                                .tabs
+                                .iter()
+                                .find(|(index, _, _)| *index == tab_idx)
                                 .map_or(tab_area.x, |(_, rect, _)| rect.x);
                             let anchor_y = tab_area.y + tab_area.height;
                             let line = ratatui::text::Line::raw(path_str);
@@ -874,7 +940,8 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
 
     // Explorer hover tooltip (file size + modified date). Filesystem metadata
     // and line counting are worker-backed; rendering only consults snapshots.
-    if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Explorer
+    if app.sidebar_is_visible()
+        && app.sidebar_view == crate::app::SidebarView::Explorer
         && !app.explorer_context_active
     {
         if let Some((entry_path, entry_is_dir)) = app
@@ -922,7 +989,9 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
                     .or(info.line_count)
                     .or_else(|| app.explorer_line_count_cache.get(&entry_path).copied());
                 let line_count_str = (!info.is_dir)
-                    .then(|| line_count.map(|lines| crate::helpers::counted(lines, "line", "lines")))
+                    .then(|| {
+                        line_count.map(|lines| crate::helpers::counted(lines, "line", "lines"))
+                    })
                     .flatten();
                 let tooltip_header = if info.is_dir {
                     format!(" 📁 {modified_str} ")
@@ -948,7 +1017,10 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
                 if tooltip_y + tooltip_height < f.area().height && tooltip_width > 2 {
                     // Styling a Paragraph does not erase characters in its
                     // unused cells. Clear the whole card, including padding.
-                    f.render_widget(Clear, Rect::new(tooltip_x, tooltip_y, tooltip_width, tooltip_height));
+                    f.render_widget(
+                        Clear,
+                        Rect::new(tooltip_x, tooltip_y, tooltip_width, tooltip_height),
+                    );
                     // Path line (dim)
                     let path_area = Rect::new(tooltip_x, tooltip_y, tooltip_width, 1);
                     let path_text: String = path_str.chars().take(max_width).collect();
@@ -991,7 +1063,8 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
             let body = app.workbench_body_area?;
             match dock {
                 TerminalDock::Right => {
-                    let width = responsive_right_dock_width(body.width, true, app.terminal_sidebar.width);
+                    let width =
+                        responsive_right_dock_width(body.width, true, app.terminal_sidebar.width);
                     if width == 0 {
                         return None;
                     }
@@ -1004,38 +1077,37 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
                 }
             }
         });
-        let tab_highlight = if let (Some(zone), Some(ed_area)) =
-            (app.tab_drop_zone, drop_target_area)
-        {
-            Some(match zone {
-                crate::app::TabDropZone::Left => {
-                    Rect::new(ed_area.x, ed_area.y, ed_area.width / 2, ed_area.height)
-                }
-                crate::app::TabDropZone::Right => {
-                    let half = ed_area.width / 2;
-                    Rect::new(
-                        ed_area.x + half,
-                        ed_area.y,
-                        ed_area.width - half,
-                        ed_area.height,
-                    )
-                }
-                crate::app::TabDropZone::Top => {
-                    Rect::new(ed_area.x, ed_area.y, ed_area.width, ed_area.height / 2)
-                }
-                crate::app::TabDropZone::Bottom => {
-                    let half = ed_area.height / 2;
-                    Rect::new(
-                        ed_area.x,
-                        ed_area.y + half,
-                        ed_area.width,
-                        ed_area.height - half,
-                    )
-                }
-            })
-        } else {
-            None
-        };
+        let tab_highlight =
+            if let (Some(zone), Some(ed_area)) = (app.tab_drop_zone, drop_target_area) {
+                Some(match zone {
+                    crate::app::TabDropZone::Left => {
+                        Rect::new(ed_area.x, ed_area.y, ed_area.width / 2, ed_area.height)
+                    }
+                    crate::app::TabDropZone::Right => {
+                        let half = ed_area.width / 2;
+                        Rect::new(
+                            ed_area.x + half,
+                            ed_area.y,
+                            ed_area.width - half,
+                            ed_area.height,
+                        )
+                    }
+                    crate::app::TabDropZone::Top => {
+                        Rect::new(ed_area.x, ed_area.y, ed_area.width, ed_area.height / 2)
+                    }
+                    crate::app::TabDropZone::Bottom => {
+                        let half = ed_area.height / 2;
+                        Rect::new(
+                            ed_area.x,
+                            ed_area.y + half,
+                            ed_area.width,
+                            ed_area.height - half,
+                        )
+                    }
+                })
+            } else {
+                None
+            };
         if let Some(highlight_area) = dock_highlight.or(tab_highlight) {
             // Semi-transparent blue overlay
             for y in highlight_area.y..highlight_area.y + highlight_area.height {
@@ -1063,7 +1135,10 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
                     .map(|t| t.editor.display_name().into_owned())
             }
         } else if let Some(id) = &app.chat.layout.dragging {
-            app.chat.sessions.get(id).map(|session| session.title.clone())
+            app.chat
+                .sessions
+                .get(id)
+                .map(|session| session.title.clone())
         } else if let Some(terminal_index) = app.dragging_terminal_tab {
             app.terminals
                 .get(terminal_index)
@@ -1132,23 +1207,36 @@ pub(crate) use background_window::draw as draw_background_window;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn zen_mode_has_a_visible_exit_button() {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
         let mut app = App::test_new();
         app.show_menu_bar = false;
-        app.tabs = vec![crate::app::Tab::new_file(crate::editor::Editor::test_with_text("original text\n"))];
+        app.tabs = vec![crate::app::Tab::new_file(
+            crate::editor::Editor::test_with_text("original text\n"),
+        )];
         app.active_tab = 0;
         app.editor_mut().unwrap().cursor_col = 3;
-        let before = (app.show_explorer, app.show_minimap, app.show_panel,
-            app.show_tab_bar, app.show_status_bar, app.show_activity_bar);
+        let before = (
+            app.show_explorer,
+            app.show_minimap,
+            app.show_panel,
+            app.show_tab_bar,
+            app.show_status_bar,
+            app.show_activity_bar,
+        );
         app.execute_palette_command("toggle_zen");
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-        let displayed: String = terminal.backend().buffer().content.iter()
-            .map(|cell| cell.symbol()).collect();
+        let displayed: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
         assert!(displayed.contains("Exit Zen Mode"));
         let button = app.zen_exit_area.expect("persistent exit button");
         assert_eq!(button.right(), 80);
@@ -1156,39 +1244,90 @@ mod tests {
         assert!(app.editor_area.unwrap().y >= button.bottom());
         assert!(app.menu_bar_area.is_none());
 
-        let mouse = |kind, column, row| MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE };
-        crate::mouse::handle_mouse(&mut app, mouse(MouseEventKind::Moved, button.x + 2, button.y));
+        let mouse = |kind, column, row| MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        crate::mouse::handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::Moved, button.x + 2, button.y),
+        );
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let hovered = terminal.backend().buffer()[(button.x + 2, button.y)].clone();
-        assert_eq!(hovered.bg, app.colors.ui.secondary_button_hover.over(app.colors.bg_editor).unwrap());
+        assert_eq!(
+            hovered.bg,
+            app.colors
+                .ui
+                .secondary_button_hover
+                .over(app.colors.bg_editor)
+                .unwrap()
+        );
         let code = app.code_area.unwrap();
         app.mouse_hover_changed = false;
         crate::mouse::handle_mouse(&mut app, mouse(MouseEventKind::Moved, code.x, code.y));
-        assert!(app.mouse_hover_changed, "leaving the exit button must repaint its hover state");
+        assert!(
+            app.mouse_hover_changed,
+            "leaving the exit button must repaint its hover state"
+        );
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         let resting = &terminal.backend().buffer()[(button.x + 2, button.y)];
-        assert_eq!(resting.bg, app.colors.ui.secondary_button.background.over(app.colors.bg_editor).unwrap());
+        assert_eq!(
+            resting.bg,
+            app.colors
+                .ui
+                .secondary_button
+                .background
+                .over(app.colors.bg_editor)
+                .unwrap()
+        );
         assert_ne!(resting.bg, hovered.bg);
 
-        crate::mouse::handle_mouse(&mut app, mouse(MouseEventKind::Down(MouseButton::Left), button.x + 2, button.y));
+        crate::mouse::handle_mouse(
+            &mut app,
+            mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                button.x + 2,
+                button.y,
+            ),
+        );
         assert!(!app.zen_mode);
-        assert_eq!((app.show_explorer, app.show_minimap, app.show_panel,
-            app.show_tab_bar, app.show_status_bar, app.show_activity_bar), before);
+        assert_eq!(
+            (
+                app.show_explorer,
+                app.show_minimap,
+                app.show_panel,
+                app.show_tab_bar,
+                app.show_status_bar,
+                app.show_activity_bar
+            ),
+            before
+        );
         assert_eq!(app.editor().unwrap().rope.to_string(), "original text\n");
         assert_eq!(app.editor().unwrap().cursor_col, 3);
         terminal.draw(|frame| draw(frame, &mut app)).unwrap();
         assert!(app.zen_exit_area.is_none());
-        let displayed: String = terminal.backend().buffer().content.iter()
-            .map(|cell| cell.symbol()).collect();
+        let displayed: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
         assert!(!displayed.contains("Exit Zen Mode"));
     }
 
     #[test]
     fn zen_exit_button_survives_narrow_windows_and_terminal_views() {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-        for (width, height, label) in [(80, 24, "Exit Zen Mode"), (17, 8, "Exit Zen Mode"),
-            (12, 6, "Exit Zen"), (8, 4, "Exit"), (4, 2, "Exit")]
-        {
+        for (width, height, label) in [
+            (80, 24, "Exit Zen Mode"),
+            (17, 8, "Exit Zen Mode"),
+            (12, 6, "Exit Zen"),
+            (8, 4, "Exit"),
+            (4, 2, "Exit"),
+        ] {
             let mut app = App::test_new();
             // Restored sessions can start directly in Zen mode with a terminal active.
             app.zen_mode = true;
@@ -1200,18 +1339,33 @@ mod tests {
             tab.terminal_idx = Some(0);
             app.tabs = vec![tab];
             app.active_tab = 0;
-            app.terminals[0].terminal_pty = Some(crate::terminal::TerminalEmulator::test_with_output(80, 24, "shell output\r\n"));
+            app.terminals[0].terminal_pty = Some(
+                crate::terminal::TerminalEmulator::test_with_output(80, 24, "shell output\r\n"),
+            );
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-            let displayed: String = terminal.backend().buffer().content.iter()
-                .map(|cell| cell.symbol()).collect();
-            assert!(displayed.contains(label), "missing exit label at {width}x{height}");
+            let displayed: String = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect();
+            assert!(
+                displayed.contains(label),
+                "missing exit label at {width}x{height}"
+            );
             let button = app.zen_exit_area.unwrap();
             assert_eq!(button.right(), width);
-            crate::mouse::handle_mouse(&mut app, MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left), column: button.x,
-                row: button.y, modifiers: KeyModifiers::NONE,
-            });
+            crate::mouse::handle_mouse(
+                &mut app,
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: button.x,
+                    row: button.y,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
             assert!(!app.zen_mode);
         }
     }
@@ -1232,12 +1386,24 @@ mod tests {
 
         assert_eq!(terminal.backend().buffer(), &before);
         assert_eq!(app.notification_history.len(), 4);
-        terminal.draw(|frame| {
-            crate::ui_panels::draw_panel_notifications(frame, &app, frame.area());
-        }).unwrap();
-        let messages: String = terminal.backend().buffer().content.iter()
-            .map(|cell| cell.symbol()).collect();
-        for expected in ["Saving...", "File saved", "Example warning", "Example error"] {
+        terminal
+            .draw(|frame| {
+                crate::ui_panels::draw_panel_notifications(frame, &app, frame.area());
+            })
+            .unwrap();
+        let messages: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        for expected in [
+            "Saving...",
+            "File saved",
+            "Example warning",
+            "Example error",
+        ] {
             assert!(messages.contains(expected));
         }
     }
@@ -1265,7 +1431,8 @@ mod tests {
         app.show_panel = false;
         app.show_explorer = true;
         app.explorer_width = 34;
-        app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
+        app.tabs
+            .push(crate::app::Tab::new_file(crate::editor::Editor::new()));
         let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
 
         terminal
@@ -1306,15 +1473,23 @@ mod tests {
             app.show_panel = false;
             let activity_bg = Color::Rgb(24, 72, 116);
             app.colors.bg_activitybar = activity_bg;
-            app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
+            app.tabs
+                .push(crate::app::Tab::new_file(crate::editor::Editor::new()));
             for right in [false, true] {
                 app.sidebar_right = right;
-                for view in [SidebarView::Explorer, SidebarView::Search, SidebarView::SourceControl,
-                    SidebarView::Remote, SidebarView::Extensions, SidebarView::Settings]
-                {
+                for view in [
+                    SidebarView::Explorer,
+                    SidebarView::Search,
+                    SidebarView::SourceControl,
+                    SidebarView::Remote,
+                    SidebarView::Extensions,
+                    SidebarView::Settings,
+                ] {
                     app.sidebar_view = view;
                     terminal.draw(|frame| draw(frame, &mut app)).unwrap();
-                    let bar = app.activity_bar_area.expect("activity bar in the sidebar header");
+                    let bar = app
+                        .activity_bar_area
+                        .expect("activity bar in the sidebar header");
                     let sidebar = app.explorer_area.unwrap();
                     let tabs = app.tab_bar_area.unwrap();
                     assert_eq!(bar.bottom(), sidebar.y);
@@ -1322,8 +1497,15 @@ mod tests {
                     assert!(bar.intersection(sidebar).is_empty());
                     assert!(bar.intersection(tabs).is_empty());
                     assert!(bar.x >= sidebar.x && bar.right() <= sidebar.right());
-                    let border_col = if right { sidebar.x } else { sidebar.right() - 1 };
-                    assert_eq!(terminal.backend().buffer()[(border_col, bar.y)].bg, activity_bg);
+                    let border_col = if right {
+                        sidebar.x
+                    } else {
+                        sidebar.right() - 1
+                    };
+                    assert_eq!(
+                        terminal.backend().buffer()[(border_col, bar.y)].bg,
+                        activity_bg
+                    );
                     let overflow = ui_chrome::activity_overflow_button(&app);
                     assert_eq!(overflow.is_some(), width == 42);
                     if view == SidebarView::SourceControl {
@@ -1357,13 +1539,13 @@ mod tests {
     fn source_control_scrollbar_survives_workbench_separator() {
         let mut app = App::test_new();
         app.sidebar_view = crate::app::SidebarView::SourceControl;
-        app.source_control_repository_state =
-            crate::app::SourceControlRepositoryState::Available;
+        app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
         app.explorer_width = 30;
         app.show_panel = false;
         app.sc_graph_collapsed = true;
         app.source_control_files = (0..50)
-            .map(|index| crate::app::GitFileChange { directory: false,
+            .map(|index| crate::app::GitFileChange {
+                directory: false,
                 original_path: None,
                 path: format!("src/file_{index}.rs"),
                 status: 'M',
@@ -1381,19 +1563,26 @@ mod tests {
         let seam_x = sidebar.right() - 1;
         let scrollbar_x = seam_x - 1;
         let buffer = terminal.backend().buffer();
-        let thumb = app.colors.ui.scrollbar_colors(app.colors.bg_sidebar, false, false).1;
+        let thumb = app
+            .colors
+            .ui
+            .scrollbar_colors(app.colors.bg_sidebar, false, false)
+            .1;
         assert!((sidebar.top()..sidebar.bottom()).any(|y| {
             buffer
                 .cell((scrollbar_x, y))
-                .is_some_and(|cell| {
-                    cell.symbol() == "▐" && cell.fg == thumb
-                })
+                .is_some_and(|cell| cell.symbol() == "▐" && cell.fg == thumb)
         }));
         assert!((sidebar.top()..sidebar.bottom()).all(|y| {
-            buffer
-                .cell((seam_x, y))
-                .is_some_and(|cell| cell.bg == app.colors.bg_sidebar
-                    && cell.symbol() == if app.colors.ui.border_sidebar.is_some() { "│" } else { " " })
+            buffer.cell((seam_x, y)).is_some_and(|cell| {
+                cell.bg == app.colors.bg_sidebar
+                    && cell.symbol()
+                        == if app.colors.ui.border_sidebar.is_some() {
+                            "│"
+                        } else {
+                            " "
+                        }
+            })
         }));
     }
 
@@ -1409,24 +1598,40 @@ mod tests {
         app.set_sidebar_auto_hide(false);
         app.show_activity_bar = false;
         app.show_panel = false;
-        app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
+        app.tabs
+            .push(crate::app::Tab::new_file(crate::editor::Editor::new()));
         app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
         app.colors.ui.sidebar_border = ColorLayer::default();
         app.colors.ui.border_sidebar = None;
         let hover = Color::Rgb(77, 214, 221);
         app.colors.ui.sash_hover_border = ColorLayer::opaque(hover);
         let gradient = ThemeGradientSpec {
-            start: Color::Rgb(32, 42, 49), end: Color::Rgb(54, 59, 67), angle_deg: 45.0,
+            start: Color::Rgb(32, 42, 49),
+            end: Color::Rgb(54, 59, 67),
+            angle_deg: 45.0,
         };
         app.colors.gradients.bg_sidebar = gradient;
         let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
         let mouse = |app: &mut App, kind, column, row| {
-            crate::mouse::handle_mouse(app, MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE });
+            crate::mouse::handle_mouse(
+                app,
+                MouseEvent {
+                    kind,
+                    column,
+                    row,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
         };
 
-        for view in [SidebarView::Explorer, SidebarView::Search, SidebarView::SourceControl,
-            SidebarView::Remote, SidebarView::Extensions, SidebarView::Settings]
-        {
+        for view in [
+            SidebarView::Explorer,
+            SidebarView::Search,
+            SidebarView::SourceControl,
+            SidebarView::Remote,
+            SidebarView::Extensions,
+            SidebarView::Settings,
+        ] {
             app.sidebar_view = view;
             for right in [false, true] {
                 app.sidebar_right = right;
@@ -1437,8 +1642,13 @@ mod tests {
                 let area = app.explorer_area.unwrap();
                 let seam = if right { area.x } else { area.right() - 1 };
                 let row = area.y + 10;
-                let position = GradientPrecomputed::new(area.width, area.height, gradient.angle_deg);
-                let expected_bg = lerp_color(gradient.start, gradient.end, position.t_at(seam - area.x, row - area.y));
+                let position =
+                    GradientPrecomputed::new(area.width, area.height, gradient.angle_deg);
+                let expected_bg = lerp_color(
+                    gradient.start,
+                    gradient.end,
+                    position.t_at(seam - area.x, row - area.y),
+                );
                 let cell = &terminal.backend().buffer()[(seam, row)];
                 assert_eq!(cell.symbol(), " ", "{view:?}, right={right}");
                 assert_eq!(cell.bg, expected_bg, "{view:?}, right={right}");
@@ -1455,7 +1665,12 @@ mod tests {
                 mouse(&mut app, MouseEventKind::Down(MouseButton::Left), seam, row);
                 assert!(app.resizing_explorer, "{view:?}, right={right}");
                 let target = if right { seam - 8 } else { seam + 8 };
-                mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), target, 31);
+                mouse(
+                    &mut app,
+                    MouseEventKind::Drag(MouseButton::Left),
+                    target,
+                    31,
+                );
                 assert_eq!(app.explorer_width, 38, "{view:?}, right={right}");
                 mouse(&mut app, MouseEventKind::Up(MouseButton::Left), target, 31);
                 assert!(!app.resizing_explorer);
@@ -1501,9 +1716,14 @@ mod tests {
                 .is_some_and(|cell| cell.symbol() == "▐")
         }));
         assert!((sidebar.top()..sidebar.bottom()).all(|y| {
-            buffer
-                .cell((seam_x, y))
-                .is_some_and(|cell| cell.symbol() == if app.colors.ui.border_sidebar.is_some() { "│" } else { " " })
+            buffer.cell((seam_x, y)).is_some_and(|cell| {
+                cell.symbol()
+                    == if app.colors.ui.border_sidebar.is_some() {
+                        "│"
+                    } else {
+                        " "
+                    }
+            })
         }));
     }
 

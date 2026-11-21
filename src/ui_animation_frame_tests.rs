@@ -44,11 +44,16 @@ fn input_frames_reuse_source_projection_without_reusing_selection_or_theme() {
     use crate::ui_editor_animations::REFERENCE_RETAINED_GEOMETRY;
     let mut app = fixture(false, false);
     app.tabs[0].editor = Editor::test_with_text(&format!(
-        "fn outer() {{\n{}\n}}\n", "    process(value);\n".repeat(80)));
+        "fn outer() {{\n{}\n}}\n",
+        "    process(value);\n".repeat(80)
+    ));
     app.tabs[0].editor.file_path = Some("stable-projection.rs".into());
     app.tabs[0].editor.cursor_line = 5;
     app.tabs[0].editor.cursor_col = 8;
-    for effect in AnimationEffect::ALL { app.animation_settings.set(effect, effect == AnimationEffect::ScopeConnector); }
+    for effect in AnimationEffect::ALL {
+        app.animation_settings
+            .set(effect, effect == AnimationEffect::ScopeConnector);
+    }
     app.show_minimap = false;
     app.sticky_scroll = false;
     let mut terminal = Terminal::new(TestBackend::new(130, 32)).unwrap();
@@ -71,11 +76,22 @@ fn input_frames_reuse_source_projection_without_reusing_selection_or_theme() {
             1 => app.editor_mut().unwrap().undo(),
             2 => app.editor_mut().unwrap().scroll_offset = 10,
             3 => app.editor_mut().unwrap().horizontal_scroll = 7,
-            4 => { app.editor_mut().unwrap().word_wrap = true; }
-            5 => { terminal = Terminal::new(TestBackend::new(56, 24)).unwrap(); }
-            6 => { app.colors = crate::app_theme::EditorTheme::Light.colors(); }
-            7 => { app.editor_mut().unwrap().rope = ropey::Rope::from_str("fn other() {\n\tvalue(界);\n}\n"); }
-            _ => { app.status_details.open = true; }
+            4 => {
+                app.editor_mut().unwrap().word_wrap = true;
+            }
+            5 => {
+                terminal = Terminal::new(TestBackend::new(56, 24)).unwrap();
+            }
+            6 => {
+                app.colors = crate::app_theme::EditorTheme::Light.colors();
+            }
+            7 => {
+                app.editor_mut().unwrap().rope =
+                    ropey::Rope::from_str("fn other() {\n\tvalue(界);\n}\n");
+            }
+            _ => {
+                app.status_details.open = true;
+            }
         }
         settle(&mut app, &mut terminal);
         let actual = render(&mut app, &mut terminal, false);
@@ -297,13 +313,16 @@ fn benchmark_animation_selection_masks_workbench() {
         let mut terminal = Terminal::new(TestBackend::new(180, 60)).unwrap();
         settle(&mut app, &mut terminal);
         let expected = render(&mut app, &mut terminal, true);
-        assert!(app.animation_frame_cache.scenes.iter().any(|scene| {
-            if let Paint::Editor { geometry, .. } = &scene.paint {
-                geometry.clear_protection_cache()
-            } else {
-                false
-            }
-        }), "fixture must exercise retained protection masks");
+        assert!(
+            app.animation_frame_cache.scenes.iter().any(|scene| {
+                if let Paint::Editor { geometry, .. } = &scene.paint {
+                    geometry.clear_protection_cache()
+                } else {
+                    false
+                }
+            }),
+            "fixture must exercise retained protection masks"
+        );
         let mut samples = [Vec::new(), Vec::new()];
         app.rendering_animation_frame = true;
         for round in 0..7 {
@@ -355,8 +374,11 @@ fn recycled_geometry_cannot_reuse_old_scroll_selection_theme_or_source() {
         editor.selection_anchor = (step % 2 == 0).then_some((step * 2, 0));
         editor.word_wrap = step % 3 == 0;
         editor.insert_char('x');
-        app.colors = if step % 2 == 0 { crate::app_theme::EditorTheme::Light.colors() }
-            else { crate::app_theme::EditorTheme::Dark.colors() };
+        app.colors = if step % 2 == 0 {
+            crate::app_theme::EditorTheme::Light.colors()
+        } else {
+            crate::app_theme::EditorTheme::Dark.colors()
+        };
         settle(&mut app, &mut terminal);
         REFERENCE_FRESH_GEOMETRY.set(false);
         let actual = render(&mut app, &mut terminal, false);
@@ -387,6 +409,11 @@ fn benchmark_input_frame_geometry_reuse() {
         }
     }
     REFERENCE_FRESH_GEOMETRY.set(false);
-    for samples in &mut times { samples.sort_unstable(); }
-    eprintln!("180x60 workbench geometry: fresh={:?}, reused={:?}", times[0][3], times[1][3]);
+    for samples in &mut times {
+        samples.sort_unstable();
+    }
+    eprintln!(
+        "180x60 workbench geometry: fresh={:?}, reused={:?}",
+        times[0][3], times[1][3]
+    );
 }

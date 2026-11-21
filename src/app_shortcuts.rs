@@ -78,7 +78,10 @@ struct StrokeIndex {
 
 impl From<Vec<KeyBinding>> for KeyBindings {
     fn from(bindings: Vec<KeyBinding>) -> Self {
-        Self { bindings, index: Default::default() }
+        Self {
+            bindings,
+            index: Default::default(),
+        }
     }
 }
 
@@ -103,11 +106,17 @@ impl KeyBindings {
             let mut index = StrokeIndex::default();
             for (position, binding) in self.bindings.iter().enumerate() {
                 if binding.code != KeyCode::Null {
-                    index.current.entry(normalize((binding.modifiers, binding.code)))
-                        .or_default().push(position);
+                    index
+                        .current
+                        .entry(normalize((binding.modifiers, binding.code)))
+                        .or_default()
+                        .push(position);
                 }
-                index.defaults.entry(normalize((binding.default_modifiers, binding.default_code)))
-                    .or_default().push(position);
+                index
+                    .defaults
+                    .entry(normalize((binding.default_modifiers, binding.default_code)))
+                    .or_default()
+                    .push(position);
             }
             index
         })
@@ -212,7 +221,11 @@ pub(crate) fn append_builtins(bindings: &mut Vec<KeyBinding>) {
             default_chord: chord,
             built_in_handler: !matches!(
                 id,
-                "reopen_closed" | "toggle_zen" | "settings" | "show_explorer" | "quit"
+                "reopen_closed"
+                    | "toggle_zen"
+                    | "settings"
+                    | "show_explorer"
+                    | "quit"
                     | "vtcomplete_inline_accept_word"
             ),
             editor_only: ["Edit:", "Selection:", "Fold:", "Bookmarks:", "Macro:"]
@@ -580,12 +593,13 @@ impl App {
         let context = std::cell::OnceCell::new();
         let index = self.keybindings.index();
         let find = |stroke: Stroke, shifted: bool| {
-            index.current.get(&stroke)?
+            index
+                .current
+                .get(&stroke)?
                 .iter()
                 .map(|&position| (position, &self.keybindings[position]))
                 .filter(|(_, binding)| {
-                    second
-                            .is_none_or(|key| binding.chord.map(normalize) == Some(normalize(key)))
+                    second.is_none_or(|key| binding.chord.map(normalize) == Some(normalize(key)))
                         && (!shifted
                             || (!binding.uses_native_handler()
                                 && binding.when.is_none()
@@ -638,7 +652,9 @@ impl App {
 
     pub(crate) fn shortcut_default_overridden(&self, stroke: Stroke) -> bool {
         let stroke = normalize(stroke);
-        let Some(bindings) = self.keybindings.index().defaults.get(&stroke) else { return false; };
+        let Some(bindings) = self.keybindings.index().defaults.get(&stroke) else {
+            return false;
+        };
         let context = std::cell::OnceCell::new();
         bindings.iter().any(|&position| {
             let binding = &self.keybindings[position];

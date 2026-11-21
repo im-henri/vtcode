@@ -149,14 +149,20 @@ fn assert_sparse_conflict_markers(app: &mut App) {
         assert_eq!(marker.symbol(), if changed { "┃" } else { " " });
         assert_eq!(marker.fg == app.colors.ui.fg_gutter_added, changed);
     }
-    let action = editor.ai_review.merge_hits.iter()
-        .find(|hit| hit.line == start && hit.action == "current").unwrap();
+    let action = editor
+        .ai_review
+        .merge_hits
+        .iter()
+        .find(|hit| hit.line == start && hit.action == "current")
+        .unwrap();
     assert_eq!(buffer[(marker_col, action.area.y)].symbol(), "!");
 
     let minimap = app.minimap_area.unwrap();
     let scrollbar = app.scrollbar_area.unwrap();
     let conflict_rows = |area: ratatui::layout::Rect, x| {
-        (area.y..area.bottom()).filter(|&y| buffer[(x, y)].symbol() == "!").collect::<Vec<_>>()
+        (area.y..area.bottom())
+            .filter(|&y| buffer[(x, y)].symbol() == "!")
+            .collect::<Vec<_>>()
     };
     let minimap_rows = conflict_rows(minimap, minimap.right() - 2);
     let scrollbar_rows = conflict_rows(scrollbar, scrollbar.right() - 1);
@@ -169,12 +175,18 @@ fn assert_sparse_conflict_markers(app: &mut App) {
     for (area, colors, minimap) in [
         (
             app.minimap_area.unwrap(),
-            [app.colors.ui.fg_gutter_added, app.colors.ui.fg_gutter_modified],
+            [
+                app.colors.ui.fg_gutter_added,
+                app.colors.ui.fg_gutter_modified,
+            ],
             true,
         ),
         (
             app.scrollbar_area.unwrap(),
-            [app.colors.ui.fg_overview_added, app.colors.ui.fg_overview_modified],
+            [
+                app.colors.ui.fg_overview_added,
+                app.colors.ui.fg_overview_modified,
+            ],
             false,
         ),
     ] {
@@ -209,17 +221,19 @@ fn check_unmerged_file_markers(remote: bool) {
     let original_index = std::fs::read(repo.path().join("index")).unwrap();
     let text = std::fs::read_to_string(directory.path().join("file.txt")).unwrap();
     let mut app = App::new_deferred(directory.path().to_path_buf());
-    let path = if remote {
-        let workspace = crate::remote::workspace::Workspace::new(
-            crate::remote::tests::connection(directory.path(), Arc::default(), Arc::default()),
-        );
-        let key = workspace.view_key(&crate::remote::RemotePath::new(b"file.txt".to_vec()).unwrap());
-        workspace.client.set_wake(app.background.wake_handle());
-        app.remote_workspace = Some(workspace);
-        key
-    } else {
-        directory.path().join("file.txt")
-    };
+    let path =
+        if remote {
+            let workspace = crate::remote::workspace::Workspace::new(
+                crate::remote::tests::connection(directory.path(), Arc::default(), Arc::default()),
+            );
+            let key =
+                workspace.view_key(&crate::remote::RemotePath::new(b"file.txt".to_vec()).unwrap());
+            workspace.client.set_wake(app.background.wake_handle());
+            app.remote_workspace = Some(workspace);
+            key
+        } else {
+            directory.path().join("file.txt")
+        };
     let mut editor = Editor::test_with_text(&text);
     editor.file_path = Some(path);
     editor.saved_rope = Some(editor.rope.clone());
@@ -325,9 +339,14 @@ fn resolved_unmerged_file_keeps_only_real_changes_before_and_after_staging() {
         refresh(&mut app);
         assert_eq!(
             app.editor().unwrap().git_change_lines(),
-            &[(110, if staged {
-                crate::line_changes::LineChanges::git('M', ' ')
-            } else { 'M'.into() })]
+            &[(
+                110,
+                if staged {
+                    crate::line_changes::LineChanges::git('M', ' ')
+                } else {
+                    'M'.into()
+                }
+            )]
         );
     }
 }

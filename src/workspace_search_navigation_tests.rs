@@ -173,7 +173,10 @@ fn popup_arrows_keep_search_open_and_continue_through_matches() {
         assert_eq!(app.tabs.len(), 1);
     }
     key(&mut app, KeyCode::BackTab);
-    assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(0)));
+    assert_eq!(
+        app.focused_text_input_id(),
+        Some(TextInputId::GlobalSearch(0))
+    );
     key(&mut app, KeyCode::Tab);
     assert!(app.global_search_results_focused);
     key(&mut app, KeyCode::Enter);
@@ -196,7 +199,10 @@ fn enter_focuses_the_editor_and_tab_and_escape_return_to_search_fields() {
             Some(TextInputId::GlobalSearch(0))
         );
         key(&mut app, KeyCode::Down);
-        assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(0)));
+        assert_eq!(
+            app.focused_text_input_id(),
+            Some(TextInputId::GlobalSearch(0))
+        );
         assert_eq!(app.global_search_selected, 1);
         app.focus_text_input(TextInputId::GlobalSearch(3));
         key(&mut app, KeyCode::Tab);
@@ -224,21 +230,40 @@ fn search_fields_browse_history_with_existing_results_without_opening_matches() 
                 app.global_search_replace_visible = true;
                 app.focus_text_input(TextInputId::GlobalSearch(field));
                 *app.global_search_field_state_mut(field).0 = "draft".into();
-                *app.global_search_field_history_mut(field) = crate::search_history::History::restore(
-                    &["older".into(), "recent".into()]);
-                for (code, expected) in [(KeyCode::Up, "recent"), (KeyCode::Up, "older"),
-                    (KeyCode::Down, "recent"), (KeyCode::Down, "draft")] {
-                    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, modifiers));
+                *app.global_search_field_history_mut(field) =
+                    crate::search_history::History::restore(&["older".into(), "recent".into()]);
+                for (code, expected) in [
+                    (KeyCode::Up, "recent"),
+                    (KeyCode::Up, "older"),
+                    (KeyCode::Down, "recent"),
+                    (KeyCode::Down, "draft"),
+                ] {
+                    crate::input_keyboard::handle_keyboard_event(
+                        &mut app,
+                        KeyEvent::new(code, modifiers),
+                    );
                     assert_eq!(app.global_search_field_state_mut(field).0, expected);
-                    assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(field)));
+                    assert_eq!(
+                        app.focused_text_input_id(),
+                        Some(TextInputId::GlobalSearch(field))
+                    );
                     assert!(!app.global_search_results_focused);
                     assert_eq!(app.global_search_selected, 0);
-                    assert!(app.tabs.is_empty(), "history navigation must not open a match");
+                    assert!(
+                        app.tabs.is_empty(),
+                        "history navigation must not open a match"
+                    );
                 }
                 for modifiers in [KeyModifiers::CONTROL, KeyModifiers::SHIFT] {
                     for code in [KeyCode::Up, KeyCode::Down] {
-                        crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, modifiers));
-                        assert_eq!(app.focused_text_input_id(), Some(TextInputId::GlobalSearch(field)));
+                        crate::input_keyboard::handle_keyboard_event(
+                            &mut app,
+                            KeyEvent::new(code, modifiers),
+                        );
+                        assert_eq!(
+                            app.focused_text_input_id(),
+                            Some(TextInputId::GlobalSearch(field))
+                        );
                         assert!(app.tabs.is_empty());
                     }
                 }

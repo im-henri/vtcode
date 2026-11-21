@@ -24,7 +24,9 @@ struct Pending {
 
 impl WatcherRefresh {
     pub(crate) fn pending_for(&self, root: &std::path::Path) -> bool {
-        self.pending.as_ref().is_some_and(|pending| pending.root == root)
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| pending.root == root)
     }
 
     #[cfg(test)]
@@ -33,7 +35,13 @@ impl WatcherRefresh {
         self.queue_with_refs(root, paths, refs_changed, now);
     }
 
-    fn queue_with_refs(&mut self, root: PathBuf, paths: Option<FxHashSet<PathBuf>>, refs_changed: bool, now: Instant) {
+    fn queue_with_refs(
+        &mut self,
+        root: PathBuf,
+        paths: Option<FxHashSet<PathBuf>>,
+        refs_changed: bool,
+        now: Instant,
+    ) {
         if paths.as_ref().is_some_and(FxHashSet::is_empty) {
             return;
         }
@@ -70,9 +78,7 @@ impl WatcherRefresh {
     }
 
     fn take_refresh(&mut self, root: &std::path::Path) -> Option<Pending> {
-        self.pending
-            .take()
-            .filter(|pending| pending.root == root)
+        self.pending.take().filter(|pending| pending.root == root)
     }
 
     #[cfg(test)]
@@ -106,9 +112,14 @@ impl App {
         }
         // Writing the index changes staged rows, not commits or ahead/behind.
         // Unknown metadata and overflows retain the authoritative refs refresh.
-        let refs_changed = metadata && (paths.is_empty() || !paths.iter().all(|path|
-            path.components().any(|part| part.as_os_str() == ".git")
-                && path.file_name().is_some_and(|name| name == "index" || name == "index.lock")));
+        let refs_changed = metadata
+            && (paths.is_empty()
+                || !paths.iter().all(|path| {
+                    path.components().any(|part| part.as_os_str() == ".git")
+                        && path
+                            .file_name()
+                            .is_some_and(|name| name == "index" || name == "index.lock")
+                }));
         self.git_watcher_refresh.queue_with_refs(
             self.explorer.root.clone(),
             (!metadata).then_some(paths),
@@ -118,7 +129,10 @@ impl App {
     }
 
     pub(crate) fn git_watcher_refresh_wait(&self, now: Instant) -> Option<Duration> {
-        if !self.workspace_is_displayed() || !self.source_control_enabled || self.bg_git_status_running {
+        if !self.workspace_is_displayed()
+            || !self.source_control_enabled
+            || self.bg_git_status_running
+        {
             return None;
         }
         let pending = self.git_watcher_refresh.pending.as_ref()?;

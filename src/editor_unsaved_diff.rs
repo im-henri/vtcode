@@ -16,7 +16,11 @@ pub(crate) struct InsertionAnchors {
 
 impl InsertionAnchors {
     pub(crate) fn rows(&self, snapshot: &Rope) -> &[usize] {
-        if self.snapshot.is_instance(snapshot) { &self.rows } else { &[] }
+        if self.snapshot.is_instance(snapshot) {
+            &self.rows
+        } else {
+            &[]
+        }
     }
 
     pub(crate) fn rebase(mut self, current: &Rope) -> Option<Self> {
@@ -32,11 +36,19 @@ impl InsertionAnchors {
                 remaining.set(work.saturating_sub(1));
                 work == 0
             })?;
-            self.rows = self.rows.iter().filter_map(|&row| {
-                if row < old.start { Some(row) }
-                else if row >= old.end { Some(new.end + (row - old.end)) }
-                else { None }
-            }).collect();
+            self.rows = self
+                .rows
+                .iter()
+                .filter_map(|&row| {
+                    if row < old.start {
+                        Some(row)
+                    } else if row >= old.end {
+                        Some(new.end + (row - old.end))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
         }
         if self.rows.is_empty() {
             return None;
@@ -45,7 +57,12 @@ impl InsertionAnchors {
         Some(self)
     }
 
-    pub(crate) fn insert(previous: Option<Self>, before: &Rope, after: &Rope, row: usize) -> Option<Self> {
+    pub(crate) fn insert(
+        previous: Option<Self>,
+        before: &Rope,
+        after: &Rope,
+        row: usize,
+    ) -> Option<Self> {
         let count = after.len_lines().saturating_sub(before.len_lines());
         if count == 0 {
             return previous;
@@ -53,9 +70,16 @@ impl InsertionAnchors {
         let previous = previous.and_then(|anchors| anchors.rebase(before));
         let rows = previous.as_ref().map_or(&[][..], |anchors| &anchors.rows);
         let split = rows.partition_point(|&existing| existing < row);
-        let rows = rows[..split].iter().copied().chain(row..row + count)
-            .chain(rows[split..].iter().map(|&existing| existing + count)).collect();
-        Some(Self { snapshot: after.clone(), rows })
+        let rows = rows[..split]
+            .iter()
+            .copied()
+            .chain(row..row + count)
+            .chain(rows[split..].iter().map(|&existing| existing + count))
+            .collect();
+        Some(Self {
+            snapshot: after.clone(),
+            rows,
+        })
     }
 }
 
@@ -73,7 +97,11 @@ pub(crate) struct UnsavedDiff {
 impl UnsavedDiff {
     #[cfg(test)]
     pub(crate) fn line_status(&self, line: usize) -> char {
-        if self.line_changes(line).unsaved() { 'N' } else { ' ' }
+        if self.line_changes(line).unsaved() {
+            'N'
+        } else {
+            ' '
+        }
     }
 
     pub(crate) fn line_changes(&self, line: usize) -> LineChanges {
@@ -84,7 +112,9 @@ impl UnsavedDiff {
         match (intersects(&self.changed_ranges, line, line + 1), removed) {
             (false, false) => LineChanges::default(),
             (false, true) => LineChanges::UNSAVED_REMOVED,
-            (true, false) if intersects(&self.added_ranges, line, line + 1) => LineChanges::UNSAVED_ADDED,
+            (true, false) if intersects(&self.added_ranges, line, line + 1) => {
+                LineChanges::UNSAVED_ADDED
+            }
             (true, _) => LineChanges::UNSAVED,
         }
     }
@@ -95,7 +125,10 @@ impl UnsavedDiff {
         }
         let removed = self.removed_lines.partition_point(|&line| line < start);
         intersects(&self.changed_ranges, start, end)
-            || self.removed_lines.get(removed).is_some_and(|&line| line < end)
+            || self
+                .removed_lines
+                .get(removed)
+                .is_some_and(|&line| line < end)
     }
 }
 
@@ -108,14 +141,25 @@ fn line_content(line: RopeSlice<'_>) -> RopeSlice<'_> {
     line.slice(..super::Editor::line_content_len(line))
 }
 
-pub(crate) fn compute_live_unsaved_diff(saved: &Rope, current: &Rope, anchors: &[usize]) -> Option<UnsavedDiff> {
+pub(crate) fn compute_live_unsaved_diff(
+    saved: &Rope,
+    current: &Rope,
+    anchors: &[usize],
+) -> Option<UnsavedDiff> {
     // Bound the shared-prefix/suffix walk as well as the changed window.
     let remaining = Cell::new(2_048usize);
-    compute(saved, current, anchors, None, &|| {
-        let work = remaining.get();
-        remaining.set(work.saturating_sub(1));
-        work == 0
-    }, true)
+    compute(
+        saved,
+        current,
+        anchors,
+        None,
+        &|| {
+            let work = remaining.get();
+            remaining.set(work.saturating_sub(1));
+            work == 0
+        },
+        true,
+    )
 }
 
 pub(crate) fn compute_unsaved_diff_markers_cancellable(
@@ -150,9 +194,13 @@ fn compute(
     let mut first = old_range.start.min(common);
     let old_end = old_range.end.min(old_count);
     let new_end = new_range.end.min(new_count);
-    if live && [(saved, old_end), (current, new_end)].iter().any(|&(rope, end)| {
-        end - first > 128 || rope.line_to_byte(end) - rope.line_to_byte(first) > 64 * 1024
-    }) {
+    if live
+        && [(saved, old_end), (current, new_end)]
+            .iter()
+            .any(|&(rope, end)| {
+                end - first > 128 || rope.line_to_byte(end) - rope.line_to_byte(first) > 64 * 1024
+            })
+    {
         return None;
     }
     // A byte difference can be just a terminator or precede identical blank
@@ -166,7 +214,9 @@ fn compute(
         }
         first += 1;
     }
-    let shared_suffix = (old_count - old_end).min(new_count - new_end).min(common - first);
+    let shared_suffix = (old_count - old_end)
+        .min(new_count - new_end)
+        .min(common - first);
     let mut old_end = old_count - shared_suffix;
     let mut new_end = new_count - shared_suffix;
     while first < old_end && first < new_end {
@@ -186,16 +236,30 @@ fn compute(
         // Include the clipped equal rows so insertions can be anchored within
         // identical lines on either side of the changed window.
         if first != 0 {
-            ops.insert(0, DiffOp::Equal { old_index: 0, new_index: 0, len: first });
+            ops.insert(
+                0,
+                DiffOp::Equal {
+                    old_index: 0,
+                    new_index: 0,
+                    len: first,
+                },
+            );
         }
         if new_end < new_count {
-            ops.push(DiffOp::Equal { old_index: old_end, new_index: new_end, len: new_count - new_end });
+            ops.push(DiffOp::Equal {
+                old_index: old_end,
+                new_index: new_end,
+                len: new_count - new_end,
+            });
         }
     }
     let ops = crate::line_changes::anchor_insertions(&ops, anchors, |a, b| {
         (!stop()).then(|| line_content(current.line(a)) == line_content(current.line(b)))
     })?;
-    let mut result = UnsavedDiff { line_count: current.len_lines(), ..Default::default() };
+    let mut result = UnsavedDiff {
+        line_count: current.len_lines(),
+        ..Default::default()
+    };
     for op in ops.iter() {
         if stop() {
             return None;
@@ -243,8 +307,20 @@ fn changed_ops(
     let new_len = new_range.len();
     match (old_len, new_len) {
         (0, 0) => return Some(Vec::new()),
-        (0, _) => return Some(vec![DiffOp::Insert { old_index, new_index, new_len }]),
-        (_, 0) => return Some(vec![DiffOp::Delete { old_index, new_index, old_len }]),
+        (0, _) => {
+            return Some(vec![DiffOp::Insert {
+                old_index,
+                new_index,
+                new_len,
+            }]);
+        }
+        (_, 0) => {
+            return Some(vec![DiffOp::Delete {
+                old_index,
+                new_index,
+                old_len,
+            }]);
+        }
         _ => {}
     }
     fn lines<'a>(
@@ -290,26 +366,70 @@ fn changed_ops(
             }
         }
         if !found {
-            return Some(vec![DiffOp::Replace { old_index, new_index, old_len, new_len }]);
+            return Some(vec![DiffOp::Replace {
+                old_index,
+                new_index,
+                old_len,
+                new_len,
+            }]);
         }
     }
     if stop() {
         return None;
     }
-    let ops = similar::capture_diff_slices_deadline(similar::Algorithm::Myers, &old_lines, &new_lines, deadline);
+    let ops = similar::capture_diff_slices_deadline(
+        similar::Algorithm::Myers,
+        &old_lines,
+        &new_lines,
+        deadline,
+    );
     // A deadline can produce an approximate diff. Never install that as exact
     // change data, or cache a cancelled partial result.
     if stop() {
         return None;
     }
-    Some(ops.into_iter().map(|op| match op {
-        DiffOp::Equal { old_index: old, new_index: new, len } =>
-            DiffOp::Equal { old_index: old_index + old, new_index: new_index + new, len },
-        DiffOp::Delete { old_index: old, new_index: new, old_len } =>
-            DiffOp::Delete { old_index: old_index + old, new_index: new_index + new, old_len },
-        DiffOp::Insert { old_index: old, new_index: new, new_len } =>
-            DiffOp::Insert { old_index: old_index + old, new_index: new_index + new, new_len },
-        DiffOp::Replace { old_index: old, new_index: new, old_len, new_len } =>
-            DiffOp::Replace { old_index: old_index + old, new_index: new_index + new, old_len, new_len },
-    }).collect())
+    Some(
+        ops.into_iter()
+            .map(|op| match op {
+                DiffOp::Equal {
+                    old_index: old,
+                    new_index: new,
+                    len,
+                } => DiffOp::Equal {
+                    old_index: old_index + old,
+                    new_index: new_index + new,
+                    len,
+                },
+                DiffOp::Delete {
+                    old_index: old,
+                    new_index: new,
+                    old_len,
+                } => DiffOp::Delete {
+                    old_index: old_index + old,
+                    new_index: new_index + new,
+                    old_len,
+                },
+                DiffOp::Insert {
+                    old_index: old,
+                    new_index: new,
+                    new_len,
+                } => DiffOp::Insert {
+                    old_index: old_index + old,
+                    new_index: new_index + new,
+                    new_len,
+                },
+                DiffOp::Replace {
+                    old_index: old,
+                    new_index: new,
+                    old_len,
+                    new_len,
+                } => DiffOp::Replace {
+                    old_index: old_index + old,
+                    new_index: new_index + new,
+                    old_len,
+                    new_len,
+                },
+            })
+            .collect(),
+    )
 }

@@ -1,3 +1,8 @@
+use crate::app::{ActivePane, App, SidebarView};
+use crate::text_input::TextInputId;
+use crate::theme_workbench::ColorLayer;
+use crate::ui_search_controls::{SearchControl, SearchScope, draw_button};
+use crate::ui_widgets::{InputField, VerticalScrollbar};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -5,11 +10,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, List, ListItem, Paragraph},
 };
-use crate::app::{ActivePane, App, SidebarView};
-use crate::text_input::TextInputId;
-use crate::theme_workbench::ColorLayer;
-use crate::ui_widgets::{InputField, VerticalScrollbar};
-use crate::ui_search_controls::{SearchControl, SearchScope, draw_button};
 
 const SEARCH_TOGGLE_WIDTH: u16 = 3;
 const SEARCH_TOGGLE_COUNT: u16 = 3;
@@ -22,7 +22,9 @@ pub(crate) fn search_form_left(panel_area: Rect) -> u16 {
 }
 
 pub(crate) fn search_results_start_y(app: &App, panel_area: Rect) -> u16 {
-    panel_area.y.saturating_add(SEARCH_RESULTS_OFFSET - u16::from(!app.global_search_replace_visible))
+    panel_area
+        .y
+        .saturating_add(SEARCH_RESULTS_OFFSET - u16::from(!app.global_search_replace_visible))
 }
 
 /// Click targets for Match Case, Whole Word, and Regex. The final cell before
@@ -78,16 +80,19 @@ pub(crate) fn search_header_action_areas(panel_area: Rect) -> [Rect; 3] {
 }
 
 pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
-    app.search_control_regions.retain(|button| button.scope != SearchScope::Workspace);
+    app.search_control_regions
+        .retain(|button| button.scope != SearchScope::Workspace);
     let bg = app.colors.bg_sidebar;
     let fg = app.colors.ui.sidebar_text_color(bg);
     let dim = app.colors.ui.description_color(bg);
     f.render_widget(Block::default().style(Style::default().bg(bg)), area);
     if !app.has_open_folder() {
         app.remove_text_input_regions(|id| matches!(id, TextInputId::GlobalSearch(_)));
-        f.render_widget(Paragraph::new(" Search").style(Style::default()
-            .fg(fg).bg(bg).add_modifier(Modifier::BOLD)),
-            Rect::new(area.x, area.y, area.width, area.height.min(1)));
+        f.render_widget(
+            Paragraph::new(" Search")
+                .style(Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD)),
+            Rect::new(area.x, area.y, area.width, area.height.min(1)),
+        );
         crate::ui_chrome::draw_empty_folder_state(f, app, area);
         return;
     }
@@ -120,11 +125,28 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let actions = [
         search_action,
-        (SearchControl::Clear, "×", app.global_search_query.is_empty() && app.global_search_results.is_empty()),
-        (SearchControl::CollapseResults, app.global_search_all_files_toggle_label(), app.global_search_results.is_empty()),
+        (
+            SearchControl::Clear,
+            "×",
+            app.global_search_query.is_empty() && app.global_search_results.is_empty(),
+        ),
+        (
+            SearchControl::CollapseResults,
+            app.global_search_all_files_toggle_label(),
+            app.global_search_results.is_empty(),
+        ),
     ];
     for (area, (control, label, disabled)) in header_actions.into_iter().zip(actions) {
-        draw_button(f, app, SearchScope::Workspace, control, area, label, false, disabled);
+        draw_button(
+            f,
+            app,
+            SearchScope::Workspace,
+            control,
+            area,
+            label,
+            false,
+            disabled,
+        );
     }
 
     let inset = |r: Rect| {
@@ -135,9 +157,21 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
             1,
         )
     };
-    let replace_toggle_label = if app.global_search_replace_visible { "▾" } else { "▸" };
-    draw_button(f, app, SearchScope::Workspace, SearchControl::ToggleReplace,
-        Rect::new(area.x.saturating_add(1), row(1).y, 2, 1), replace_toggle_label, false, false);
+    let replace_toggle_label = if app.global_search_replace_visible {
+        "▾"
+    } else {
+        "▸"
+    };
+    draw_button(
+        f,
+        app,
+        SearchScope::Workspace,
+        SearchControl::ToggleReplace,
+        Rect::new(area.x.saturating_add(1), row(1).y, 2, 1),
+        replace_toggle_label,
+        false,
+        false,
+    );
     let search_area = inset(row(1));
     let toggle_areas = search_toggle_areas(area);
     let toggle_start = toggle_areas[0].x.max(search_area.x);
@@ -149,12 +183,25 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
     );
     draw_field(f, app, search_field_area, 0, "Search");
     let toggles = [
-        (SearchControl::MatchCase, "Aa", app.global_search_case_sensitive),
+        (
+            SearchControl::MatchCase,
+            "Aa",
+            app.global_search_case_sensitive,
+        ),
         (SearchControl::WholeWord, "ab", app.global_search_whole_word),
         (SearchControl::Regex, ".*", app.global_search_regex),
     ];
     for (area, (control, label, active)) in toggle_areas.into_iter().zip(toggles) {
-        draw_button(f, app, SearchScope::Workspace, control, area, label, active, false);
+        draw_button(
+            f,
+            app,
+            SearchScope::Workspace,
+            control,
+            area,
+            label,
+            active,
+            false,
+        );
     }
 
     if app.global_search_replace_visible {
@@ -164,7 +211,9 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
         let field_area = Rect::new(
             replace_area.x,
             replace_area.y,
-            replace_area.width.saturating_sub(button_width + preserve_width),
+            replace_area
+                .width
+                .saturating_sub(button_width + preserve_width),
             1,
         );
         let button_area = Rect::new(
@@ -175,12 +224,29 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
         );
         draw_field(f, app, field_area, 1, "Replace");
         let disabled = app.global_search_results.is_empty()
-            || app.bg_global_search_running || app.bg_global_replace_running;
+            || app.bg_global_search_running
+            || app.bg_global_replace_running;
         let preserve_case = app.global_search_preserve_case;
-        draw_button(f, app, SearchScope::Workspace, SearchControl::PreserveCase,
-            Rect::new(field_area.right(), replace_area.y, preserve_width, 1), "AB", preserve_case, false);
-        draw_button(f, app, SearchScope::Workspace, SearchControl::ReplaceAll,
-            button_area, "⇆", false, disabled);
+        draw_button(
+            f,
+            app,
+            SearchScope::Workspace,
+            SearchControl::PreserveCase,
+            Rect::new(field_area.right(), replace_area.y, preserve_width, 1),
+            "AB",
+            preserve_case,
+            false,
+        );
+        draw_button(
+            f,
+            app,
+            SearchScope::Workspace,
+            SearchControl::ReplaceAll,
+            button_area,
+            "⇆",
+            false,
+            disabled,
+        );
     }
 
     let hidden_rows = u16::from(!app.global_search_replace_visible);
@@ -193,7 +259,13 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
         Paragraph::new("files to exclude").style(Style::default().fg(fg).bg(bg)),
         inset(row(5 - hidden_rows)),
     );
-    draw_field(f, app, inset(row(6 - hidden_rows)), 3, "e.g. target, **/*.lock");
+    draw_field(
+        f,
+        app,
+        inset(row(6 - hidden_rows)),
+        3,
+        "e.g. target, **/*.lock",
+    );
 
     let count = app.global_search_results.len();
     let files = app.global_search_results.file_count();
@@ -222,9 +294,15 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
         )
     };
     f.render_widget(
-        Paragraph::new(Span::styled(summary, Style::default().fg(
-            if app.global_search_error.is_some() { app.colors.fg_error } else { dim })))
-            .style(Style::default().bg(bg)),
+        Paragraph::new(Span::styled(
+            summary,
+            Style::default().fg(if app.global_search_error.is_some() {
+                app.colors.fg_error
+            } else {
+                dim
+            }),
+        ))
+        .style(Style::default().bg(bg)),
         row(7 - hidden_rows),
     );
     draw_results(f, app, results_area);
@@ -232,9 +310,19 @@ pub(crate) fn draw_search_panel(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_field(f: &mut Frame, app: &mut App, area: Rect, field: u8, placeholder: &str) {
     let focused = app.global_search_active && app.search_focus_field == field;
-    let input_bg = app.colors.ui.input_style(app.colors.bg_sidebar).bg.unwrap_or(app.colors.bg_sidebar);
-    let edge = (if focused { app.colors.ui.focus_border } else { app.colors.ui.input_colors.border })
-        .border(input_bg).unwrap_or(input_bg);
+    let input_bg = app
+        .colors
+        .ui
+        .input_style(app.colors.bg_sidebar)
+        .bg
+        .unwrap_or(app.colors.bg_sidebar);
+    let edge = (if focused {
+        app.colors.ui.focus_border
+    } else {
+        app.colors.ui.input_colors.border
+    })
+    .border(input_bg)
+    .unwrap_or(input_bg);
     let prefix = if focused { "▏" } else { " " };
     let index = field.min(3) as usize;
     let text = match index {
@@ -257,20 +345,22 @@ fn draw_field(f: &mut Frame, app: &mut App, area: Rect, field: u8, placeholder: 
         .placeholder_text(placeholder)
         .cursor_marker(cursor_glyph)
         .cursor_pos(cursor)
-        .selection_range(
-            if focused {
-                App::inline_selection_range(cursor, anchor)
-            } else {
-                None
-            },
-        )
+        .selection_range(if focused {
+            App::inline_selection_range(cursor, anchor)
+        } else {
+            None
+        })
         .render(f, area);
     app.register_text_input(TextInputId::GlobalSearch(field), hit_map);
 }
 
 fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
-    app.search_control_regions.retain(|button| !matches!(button.control,
-        SearchControl::DismissResult(_, _) | SearchControl::ReplaceResult(_, _)));
+    app.search_control_regions.retain(|button| {
+        !matches!(
+            button.control,
+            SearchControl::DismissResult(_, _) | SearchControl::ReplaceResult(_, _)
+        )
+    });
     if area.height == 0 || app.global_search_results.is_empty() {
         return;
     }
@@ -305,9 +395,17 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
     let action_width = result_area.width.min(3);
     let replace_width = if app.global_search_replace_visible {
         result_area.width.saturating_sub(action_width).min(3)
-    } else { 0 };
-    let text_area = Rect::new(result_area.x, result_area.y,
-        result_area.width.saturating_sub(action_width + replace_width), result_area.height);
+    } else {
+        0
+    };
+    let text_area = Rect::new(
+        result_area.x,
+        result_area.y,
+        result_area
+            .width
+            .saturating_sub(action_width + replace_width),
+        result_area.height,
+    );
     let revision = app.global_search_results.revision();
     let selected_row = app.global_search_selected_row();
     let preview = crate::ui_search_preview::Preview::new(app);
@@ -318,13 +416,27 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
         };
         let result = &app.global_search_results[index];
         if header {
-            let row_area = Rect::new(result_area.x,
-                result_area.y + (visual_row - scroll) as u16, result_area.width, 1);
+            let row_area = Rect::new(
+                result_area.x,
+                result_area.y + (visual_row - scroll) as u16,
+                result_area.width,
+                1,
+            );
             let hovered = row_area.contains((app.mouse_col, app.mouse_row).into());
             let selected = selected_row == Some(hit);
-            let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
-                if hovered { bg } else { header_bg }, selected, active, hovered);
-            actions.push((hit, row_area, row_style, hovered || (selected && active && !app.global_search_active)));
+            let row_style = app.colors.ui.list_row_style(
+                app.colors.ui.sidebar_foreground,
+                if hovered { bg } else { header_bg },
+                selected,
+                active,
+                hovered,
+            );
+            actions.push((
+                hit,
+                row_area,
+                row_style,
+                hovered || (selected && active && !app.global_search_active),
+            ));
             let row_bg = row_style.bg.unwrap_or(bg);
             let dim = app.colors.ui.description_color(row_bg);
             let collapsed = app.is_global_search_file_collapsed(&result.file_path);
@@ -348,10 +460,7 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
                     ),
                     Span::styled(name.to_string(), row_style),
                     Span::raw("  "),
-                    Span::styled(
-                        format!(" {count} "),
-                        app.colors.ui.badge_style(row_bg),
-                    ),
+                    Span::styled(format!(" {count} "), app.colors.ui.badge_style(row_bg)),
                     Span::styled(
                         if dir.is_empty() {
                             String::new()
@@ -366,36 +475,82 @@ fn draw_results(f: &mut Frame, app: &mut App, area: Rect) {
             continue;
         }
         let selected = selected_row == Some(hit);
-        let row_area = Rect::new(result_area.x,
-            result_area.y + (visual_row - scroll) as u16, result_area.width, 1);
-        let hovered = row_area.contains((app.mouse_col, app.mouse_row).into());
-        let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground,
-            bg, selected, active, hovered);
-        actions.push((hit, row_area, row_style, hovered || (selected && active && !app.global_search_active)));
-        let mut spans = vec![Span::raw("   ")];
-        spans.extend(preview.spans(result, text_area.width.saturating_sub(3) as usize, row_style, &app.colors));
-        items.push(
-            ListItem::new(Line::from(spans))
-            .style(row_style),
+        let row_area = Rect::new(
+            result_area.x,
+            result_area.y + (visual_row - scroll) as u16,
+            result_area.width,
+            1,
         );
+        let hovered = row_area.contains((app.mouse_col, app.mouse_row).into());
+        let row_style = app.colors.ui.list_row_style(
+            app.colors.ui.sidebar_foreground,
+            bg,
+            selected,
+            active,
+            hovered,
+        );
+        actions.push((
+            hit,
+            row_area,
+            row_style,
+            hovered || (selected && active && !app.global_search_active),
+        ));
+        let mut spans = vec![Span::raw("   ")];
+        spans.extend(preview.spans(
+            result,
+            text_area.width.saturating_sub(3) as usize,
+            row_style,
+            &app.colors,
+        ));
+        items.push(ListItem::new(Line::from(spans)).style(row_style));
     }
     f.render_widget(List::new(items).style(Style::default().bg(bg)), text_area);
     for (hit, row, style, visible) in actions {
-        let area = Rect::new(row.right().saturating_sub(action_width), row.y, action_width, 1);
-        let replace_area = Rect::new(area.x.saturating_sub(replace_width), row.y, replace_width, 1);
+        let area = Rect::new(
+            row.right().saturating_sub(action_width),
+            row.y,
+            action_width,
+            1,
+        );
+        let replace_area = Rect::new(
+            area.x.saturating_sub(replace_width),
+            row.y,
+            replace_width,
+            1,
+        );
         f.render_widget(Block::default().style(style), replace_area);
-        if replace_width > 0 && let crate::search_results::SearchRow::Result(index) = hit {
+        if replace_width > 0
+            && let crate::search_results::SearchRow::Result(index) = hit
+        {
             let disabled = !app.can_replace_global_search_result(index);
-            draw_button(f, app, SearchScope::Workspace, SearchControl::ReplaceResult(index, revision),
-                replace_area, "↵", false, disabled);
+            draw_button(
+                f,
+                app,
+                SearchScope::Workspace,
+                SearchControl::ReplaceResult(index, revision),
+                replace_area,
+                "↵",
+                false,
+                disabled,
+            );
         }
         f.render_widget(Block::default().style(style), area);
         if visible {
-            draw_button(f, app, SearchScope::Workspace, SearchControl::DismissResult(hit, revision), area, "×", false, false);
+            draw_button(
+                f,
+                app,
+                SearchScope::Workspace,
+                SearchControl::DismissResult(hit, revision),
+                area,
+                "×",
+                false,
+                false,
+            );
         }
     }
     if show_scrollbar {
-        let hovered = app.mouse_col == result_area.right() && (area.y..area.bottom()).contains(&app.mouse_row);
+        let hovered = app.mouse_col == result_area.right()
+            && (area.y..area.bottom()).contains(&app.mouse_row);
         let (track, thumb) = app.colors.ui.scrollbar_colors(bg, hovered, false);
         VerticalScrollbar::new(result_area.right(), area.y, area.height, total_rows, scroll)
             .symbols('▐', '▐')
@@ -413,9 +568,15 @@ mod tests {
 
     #[test]
     fn search_fields_keep_long_text_and_mouse_targets_stable_while_the_cursor_blinks() {
-        for theme in [crate::app_theme::EditorTheme::Dark, crate::app_theme::EditorTheme::Light] {
+        for theme in [
+            crate::app_theme::EditorTheme::Dark,
+            crate::app_theme::EditorTheme::Light,
+        ] {
             for width in [24, 48] {
-                for text in ["abcdefghijklmnopqrstuvwxyz0123456789".repeat(3), "find界e\u{301}👩‍💻".repeat(12)] {
+                for text in [
+                    "abcdefghijklmnopqrstuvwxyz0123456789".repeat(3),
+                    "find界e\u{301}👩‍💻".repeat(12),
+                ] {
                     let mut app = App::test_new();
                     app.colors = theme.colors();
                     app.global_search_active = true;
@@ -432,15 +593,27 @@ mod tests {
                         for visible in [true, false, true, false] {
                             app.cursor_visible = visible;
                             app.text_input_regions.clear();
-                            terminal.draw(|frame| draw_search_panel(frame, &mut app, Rect::new(0, 0, width, 14)))
+                            terminal
+                                .draw(|frame| {
+                                    draw_search_panel(frame, &mut app, Rect::new(0, 0, width, 14))
+                                })
                                 .unwrap();
-                            let symbols: Vec<_> = terminal.backend().buffer().content.iter()
-                                .map(|cell| cell.symbol().to_string()).collect();
+                            let symbols: Vec<_> = terminal
+                                .backend()
+                                .buffer()
+                                .content
+                                .iter()
+                                .map(|cell| cell.symbol().to_string())
+                                .collect();
                             let snapshot = (symbols, app.text_input_regions.clone());
                             if let Some(expected) = &baseline {
-                                assert_eq!(&snapshot, expected,
-                                    "blink moved search field {field} at width {width}");
-                            } else { baseline = Some(snapshot); }
+                                assert_eq!(
+                                    &snapshot, expected,
+                                    "blink moved search field {field} at width {width}"
+                                );
+                            } else {
+                                baseline = Some(snapshot);
+                            }
                         }
                     }
                 }
@@ -466,7 +639,8 @@ mod tests {
                 context_after: None,
             })
             .collect();
-        app.global_search_results.set_collapsed(std::path::Path::new("src/file-1.rs"), true);
+        app.global_search_results
+            .set_collapsed(std::path::Path::new("src/file-1.rs"), true);
         let mut full = Terminal::new(TestBackend::new(60, 40)).unwrap();
         full.draw(|f| draw_results(f, &mut app, Rect::new(0, 0, 60, 40)))
             .unwrap();
@@ -479,7 +653,15 @@ mod tests {
             assert_eq!(app.global_search_scroll, requested_scroll.min(15));
             // A scrollbar shifts the row actions left by one cell. Compare
             // the shared text area; action placement has separate hit tests.
-            let text_width = 60 - 1 - 1 - 3 - if app.global_search_replace_visible { 3 } else { 0 };
+            let text_width = 60
+                - 1
+                - 1
+                - 3
+                - if app.global_search_replace_visible {
+                    3
+                } else {
+                    0
+                };
             for y in 0..8 {
                 for x in 0..text_width {
                     assert_eq!(
@@ -499,31 +681,60 @@ mod tests {
         use crate::theme_workbench::ColorLayer;
         for sidebar_right in [false, true] {
             let mut app = App::test_new();
-            app.colors = crate::ui_control_visibility_tests::theme_with_popup_and_control_roles().to_theme_colors();
+            app.colors = crate::ui_control_visibility_tests::theme_with_popup_and_control_roles()
+                .to_theme_colors();
             app.sidebar_right = sidebar_right;
             app.sidebar_view = SidebarView::Search;
             app.active_pane = ActivePane::Explorer;
-            app.global_search_results = (0..30).map(|index| GlobalSearchResult {
-                file_path: PathBuf::from("src/example.rs"), line_num: index + 1,
-                line_text: format!("row{index} needle").into(), col_start: 5, col_end: 11,
-                context_before: None, context_after: None,
-            }).collect();
+            app.global_search_results = (0..30)
+                .map(|index| GlobalSearchResult {
+                    file_path: PathBuf::from("src/example.rs"),
+                    line_num: index + 1,
+                    line_text: format!("row{index} needle").into(),
+                    col_start: 5,
+                    col_end: 11,
+                    context_before: None,
+                    context_after: None,
+                })
+                .collect();
             app.global_search_scroll = 7;
             app.mouse_col = u16::MAX;
             app.mouse_row = u16::MAX;
             let area = Rect::new(10, 5, 60, 8);
             let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
-            terminal.draw(|frame| draw_results(frame, &mut app, area)).unwrap();
-            let position = crate::ui_control_visibility_tests::find_cell(terminal.backend().buffer(), "row6");
+            terminal
+                .draw(|frame| draw_results(frame, &mut app, area))
+                .unwrap();
+            let position =
+                crate::ui_control_visibility_tests::find_cell(terminal.backend().buffer(), "row6");
             assert_eq!(position.1, area.y);
             (app.mouse_col, app.mouse_row) = position;
-            terminal.draw(|frame| draw_results(frame, &mut app, area)).unwrap();
+            terminal
+                .draw(|frame| draw_results(frame, &mut app, area))
+                .unwrap();
             let cell = &terminal.backend().buffer()[position];
-            assert_eq!(cell.bg, ColorLayer::rgba(80, 56, 72, 192).over(app.colors.bg_sidebar).unwrap());
-            assert_eq!(cell.fg, ColorLayer::rgba(221, 255, 204, 224).over(cell.bg).unwrap());
-            app.mouse_col = if sidebar_right { area.x } else { area.right() - 1 };
-            terminal.draw(|frame| draw_results(frame, &mut app, area)).unwrap();
-            assert_eq!(terminal.backend().buffer()[position].bg, app.colors.bg_sidebar);
+            assert_eq!(
+                cell.bg,
+                ColorLayer::rgba(80, 56, 72, 192)
+                    .over(app.colors.bg_sidebar)
+                    .unwrap()
+            );
+            assert_eq!(
+                cell.fg,
+                ColorLayer::rgba(221, 255, 204, 224).over(cell.bg).unwrap()
+            );
+            app.mouse_col = if sidebar_right {
+                area.x
+            } else {
+                area.right() - 1
+            };
+            terminal
+                .draw(|frame| draw_results(frame, &mut app, area))
+                .unwrap();
+            assert_eq!(
+                terminal.backend().buffer()[position].bg,
+                app.colors.bg_sidebar
+            );
         }
     }
 
@@ -588,7 +799,8 @@ mod tests {
             col_end: 14,
             context_before: None,
             context_after: None,
-        }].into();
+        }]
+        .into();
         let mut terminal = Terminal::new(TestBackend::new(48, 14)).unwrap();
         terminal
             .draw(|frame| draw_search_panel(frame, &mut app, Rect::new(0, 0, 48, 14)))
@@ -613,7 +825,14 @@ mod tests {
         assert!(row(9).contains("needle"));
         assert!(!row(0).contains('┌'));
         assert_eq!(buffer.cell((3, 1)).unwrap().symbol(), "▏");
-        assert_eq!(buffer.cell((3, 1)).unwrap().fg, app.colors.ui.focus_border.over(app.colors.bg_input).unwrap());
+        assert_eq!(
+            buffer.cell((3, 1)).unwrap().fg,
+            app.colors
+                .ui
+                .focus_border
+                .over(app.colors.bg_input)
+                .unwrap()
+        );
         assert_eq!(buffer.cell((20, 1)).unwrap().bg, app.colors.bg_input);
         assert_eq!(buffer.cell((3, 3)).unwrap().fg, app.colors.ui.fg_sidebar);
         assert_eq!(buffer.cell((20, 4)).unwrap().bg, app.colors.bg_input);

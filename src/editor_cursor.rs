@@ -27,8 +27,9 @@ fn occurrence_position(
 
 impl Editor {
     fn vertical_goal_column(&mut self, row_start: usize) -> usize {
-        let column = self.desired_col.unwrap_or_else(||
-            self.cell_at_source_column(self.cursor_line, row_start, self.cursor_col));
+        let column = self.desired_col.unwrap_or_else(|| {
+            self.cell_at_source_column(self.cursor_line, row_start, self.cursor_col)
+        });
         self.desired_col = Some(column);
         column
     }
@@ -47,7 +48,9 @@ impl Editor {
                     self.wrapped_row_for_position(self.cursor_line, self.cursor_col, wrap_width);
                 self.set_wrap_scroll_offset(cursor_row.saturating_sub(center));
             } else {
-                let row = self.visible_row_for_line(self.cursor_line).saturating_sub(center);
+                let row = self
+                    .visible_row_for_line(self.cursor_line)
+                    .saturating_sub(center);
                 self.set_visible_scroll_offset(row);
             }
         }
@@ -70,9 +73,15 @@ impl Editor {
     pub(crate) fn set_cursor_centered_if_offscreen(&mut self, line: usize, col: usize) {
         let (row, first) = if self.word_wrap {
             let width = self.effective_wrap_width();
-            (self.wrapped_row_for_position(line, col, width), self.wrap_scroll_offset)
+            (
+                self.wrapped_row_for_position(line, col, width),
+                self.wrap_scroll_offset,
+            )
         } else {
-            (self.visible_row_for_line(line), self.visible_scroll_offset())
+            (
+                self.visible_row_for_line(line),
+                self.visible_scroll_offset(),
+            )
         };
         if self.is_line_folded(line)
             || !(first..first.saturating_add(self.viewport_height)).contains(&row)
@@ -116,7 +125,9 @@ impl Editor {
             let wrap_width = self.effective_wrap_width();
             let cursor_row =
                 self.wrapped_row_for_position(self.cursor_line, self.cursor_col, wrap_width);
-            let start = self.wrapped_row_at(cursor_row, wrap_width).map_or(0, |row| row.start_col);
+            let start = self
+                .wrapped_row_at(cursor_row, wrap_width)
+                .map_or(0, |row| row.start_col);
             let desired = self.vertical_goal_column(start);
             let target_row = cursor_row.saturating_sub(page);
             if let Some(info) = self.wrapped_row_at(target_row, wrap_width) {
@@ -124,16 +135,22 @@ impl Editor {
                 self.cursor_col = self.column_on_wrapped_row(&info, desired);
             } else {
                 self.cursor_line = 0;
-                self.cursor_col = self.source_column_at_cell(0, 0, self.line_len(0), desired).0;
+                self.cursor_col = self
+                    .source_column_at_cell(0, 0, self.line_len(0), desired)
+                    .0;
             }
             self.set_wrap_scroll_offset(self.wrap_scroll_offset.saturating_sub(page));
         } else {
             let desired = self.vertical_goal_column(0);
-            let row = self.visible_row_for_line(self.cursor_line).saturating_sub(page);
+            let row = self
+                .visible_row_for_line(self.cursor_line)
+                .saturating_sub(page);
             self.cursor_line = self.line_for_visible_row(row);
             self.scroll_up(page);
             let max_col = self.current_line_len();
-            self.cursor_col = self.source_column_at_cell(self.cursor_line, 0, max_col, desired).0;
+            self.cursor_col = self
+                .source_column_at_cell(self.cursor_line, 0, max_col, desired)
+                .0;
         }
     }
 
@@ -144,7 +161,9 @@ impl Editor {
             let wrap_width = self.effective_wrap_width();
             let cursor_row =
                 self.wrapped_row_for_position(self.cursor_line, self.cursor_col, wrap_width);
-            let start = self.wrapped_row_at(cursor_row, wrap_width).map_or(0, |row| row.start_col);
+            let start = self
+                .wrapped_row_at(cursor_row, wrap_width)
+                .map_or(0, |row| row.start_col);
             let desired = self.vertical_goal_column(start);
             let total_rows = self.wrapped_total_rows(wrap_width);
             let target_row = (cursor_row + page).min(total_rows.saturating_sub(1));
@@ -153,17 +172,23 @@ impl Editor {
                 self.cursor_col = self.column_on_wrapped_row(&info, desired);
             } else {
                 self.cursor_line = max_line;
-                self.cursor_col = self.source_column_at_cell(max_line, 0, self.line_len(max_line), desired).0;
+                self.cursor_col = self
+                    .source_column_at_cell(max_line, 0, self.line_len(max_line), desired)
+                    .0;
             }
             self.set_wrap_scroll_offset(self.wrap_scroll_offset.saturating_add(page));
         } else {
             let desired = self.vertical_goal_column(0);
-            let row = self.visible_row_for_line(self.cursor_line).saturating_add(page)
+            let row = self
+                .visible_row_for_line(self.cursor_line)
+                .saturating_add(page)
                 .min(self.visible_line_count().saturating_sub(1));
             self.cursor_line = self.line_for_visible_row(row);
             self.scroll_down(page);
             let max_col = self.current_line_len();
-            self.cursor_col = self.source_column_at_cell(self.cursor_line, 0, max_col, desired).0;
+            self.cursor_col = self
+                .source_column_at_cell(self.cursor_line, 0, max_col, desired)
+                .0;
         }
     }
 
@@ -198,7 +223,9 @@ impl Editor {
             }
             self.cursor_line = target;
             let max_col = self.current_line_len();
-            self.cursor_col = self.source_column_at_cell(self.cursor_line, 0, max_col, desired).0;
+            self.cursor_col = self
+                .source_column_at_cell(self.cursor_line, 0, max_col, desired)
+                .0;
             self.ensure_visible();
         } else if self.cursor_col > 0 {
             self.cursor_col = 0;
@@ -248,7 +275,9 @@ impl Editor {
             if target < self.line_count() {
                 self.cursor_line = target;
                 let max_col = self.current_line_len();
-                self.cursor_col = self.source_column_at_cell(self.cursor_line, 0, max_col, desired).0;
+                self.cursor_col = self
+                    .source_column_at_cell(self.cursor_line, 0, max_col, desired)
+                    .0;
                 self.ensure_visible();
             }
         } else {
@@ -603,7 +632,11 @@ impl Editor {
 
     /// Whitespace run for mouse selection, excluding the line ending. Clicking
     /// past the text can still select trailing whitespace on that line.
-    pub(crate) fn whitespace_boundaries_at(&self, line: usize, col: usize) -> Option<(usize, usize)> {
+    pub(crate) fn whitespace_boundaries_at(
+        &self,
+        line: usize,
+        col: usize,
+    ) -> Option<(usize, usize)> {
         let len = self.line_len(line);
         if len == 0 {
             return None;
@@ -613,10 +646,18 @@ impl Editor {
         if !rope_line.char(col).is_whitespace() {
             return None;
         }
-        let start = col - rope_line.chars_at(col).reversed()
-            .take_while(|ch| ch.is_whitespace()).count();
-        let end = col + rope_line.chars_at(col).take(len - col)
-            .take_while(|ch| ch.is_whitespace()).count();
+        let start = col
+            - rope_line
+                .chars_at(col)
+                .reversed()
+                .take_while(|ch| ch.is_whitespace())
+                .count();
+        let end = col
+            + rope_line
+                .chars_at(col)
+                .take(len - col)
+                .take_while(|ch| ch.is_whitespace())
+                .count();
         Some((start, end))
     }
 
@@ -653,7 +694,12 @@ impl Editor {
     /// Get the word at cursor position without selecting it
     pub(crate) fn word_at_cursor(&self) -> Option<String> {
         let (start, end) = self.word_range_at_cursor()?;
-        Some(self.rope.line(self.cursor_line).slice(start..end).to_string())
+        Some(
+            self.rope
+                .line(self.cursor_line)
+                .slice(start..end)
+                .to_string(),
+        )
     }
 
     pub(crate) fn word_range_at_cursor(&self) -> Option<(usize, usize)> {
@@ -709,7 +755,8 @@ impl Editor {
         if let Some((sl, sc, el, ec)) = self.vim_selection {
             return (sl, sc) != (el, ec) || self.vim_block.is_some();
         }
-        self.selection_anchor.is_some_and(|anchor| anchor != (self.cursor_line, self.cursor_col))
+        self.selection_anchor
+            .is_some_and(|anchor| anchor != (self.cursor_line, self.cursor_col))
     }
 
     /// Returns (start_line, start_col, end_line, end_col) normalized so start <= end
@@ -762,11 +809,15 @@ impl Editor {
     /// first so a rejected multiline selection is never copied in full.
     pub(crate) fn selected_search_text(&self) -> Option<String> {
         if self.markdown_preview_scroll.is_some() {
-            return self.selected_text().filter(|text| !text.is_empty() && !text.contains('\n'));
+            return self
+                .selected_text()
+                .filter(|text| !text.is_empty() && !text.contains('\n'));
         }
         let (start, end, _, _) = self.clamped_selection_indices()?;
         let selection = self.rope.slice(start..end);
-        if selection.chunks().any(|chunk| chunk.contains('\n')) { return None; }
+        if selection.chunks().any(|chunk| chunk.contains('\n')) {
+            return None;
+        }
         Some(selection.to_string())
     }
 
@@ -807,12 +858,16 @@ impl Editor {
         let search = crate::editor::RopeSearch::new(text);
         let needle_len = search.char_len();
         let total = self.rope.len_chars();
-        let Some((start, cursor, _, _)) = self.clamped_selection_indices() else { return; };
+        let Some((start, cursor, _, _)) = self.clamped_selection_indices() else {
+            return;
+        };
         let mut existing = Vec::with_capacity(self.extra_cursors.len() + 1);
         existing.push((start, cursor));
         for (index, &(line, col)) in self.extra_cursors.iter().enumerate() {
             let state = crate::editor_multicursor::MultiCursor {
-                line, col, anchor: self.extra_cursor_anchors.get(index).copied().flatten(),
+                line,
+                col,
+                anchor: self.extra_cursor_anchors.get(index).copied().flatten(),
             };
             if let Some(span) = self.selection_span_for_cursor(state) {
                 existing.push((span.start_idx, span.end_idx));
@@ -836,7 +891,8 @@ impl Editor {
             let end_line = self.rope.char_to_line(end);
             let end_col = end - self.rope.line_to_char(end_line);
             if keep_current {
-                self.extra_cursor_anchors.resize(self.extra_cursors.len(), None);
+                self.extra_cursor_anchors
+                    .resize(self.extra_cursors.len(), None);
                 self.extra_cursors.push((self.cursor_line, self.cursor_col));
                 self.extra_cursor_anchors.push(self.selection_anchor);
             }
@@ -869,7 +925,9 @@ impl Editor {
         let search = crate::editor::RopeSearch::new(&text);
         let needle_len = search.char_len();
         let mut positions = search.matches(&self.rope, 0, self.rope.len_chars());
-        let Some(first) = positions.next() else { return; };
+        let Some(first) = positions.next() else {
+            return;
+        };
 
         self.extra_cursors.clear();
         self.extra_cursor_anchors.clear();
@@ -881,8 +939,16 @@ impl Editor {
             occurrence_position(&self.rope, first + needle_len, &mut end_line);
 
         for pos in positions {
-            self.extra_cursor_anchors.push(Some(occurrence_position(&self.rope, pos, &mut start_line)));
-            self.extra_cursors.push(occurrence_position(&self.rope, pos + needle_len, &mut end_line));
+            self.extra_cursor_anchors.push(Some(occurrence_position(
+                &self.rope,
+                pos,
+                &mut start_line,
+            )));
+            self.extra_cursors.push(occurrence_position(
+                &self.rope,
+                pos + needle_len,
+                &mut end_line,
+            ));
         }
 
         self.ensure_visible();
@@ -906,7 +972,11 @@ impl Editor {
     /// A selection history belongs to exact text, not just a view. Edits,
     /// reloads and changes in another pane must not resurrect stale positions.
     pub(crate) fn remember_selection(&mut self) {
-        if !self.selection_history_source.as_ref().is_some_and(|source| source.is_instance(&self.rope)) {
+        if !self
+            .selection_history_source
+            .as_ref()
+            .is_some_and(|source| source.is_instance(&self.rope))
+        {
             self.selection_history.clear();
             self.selection_history_source = Some(self.rope.clone());
         }
@@ -977,8 +1047,11 @@ impl Editor {
             if let Some(kind) = openers.iter().position(|&open| ch == open) {
                 after[kind] += 1;
             } else if let Some(kind) = closers.iter().position(|&close| ch == close) {
-                if after[kind] == 0 { before[kind] += 1; }
-                else { after[kind] -= 1; }
+                if after[kind] == 0 {
+                    before[kind] += 1;
+                } else {
+                    after[kind] -= 1;
+                }
             }
         }
         let mut matches: [Option<Option<usize>>; 3] = [None; 3];
@@ -995,10 +1068,13 @@ impl Editor {
                 let close = *matches[kind].get_or_insert_with(|| {
                     let mut depth = after[kind] + 1;
                     for (offset, ch) in self.rope.chars_at(end).enumerate() {
-                        if ch == openers[kind] { depth += 1; }
-                        else if ch == closers[kind] {
+                        if ch == openers[kind] {
+                            depth += 1;
+                        } else if ch == closers[kind] {
                             depth -= 1;
-                            if depth == 0 { return Some(end + offset); }
+                            if depth == 0 {
+                                return Some(end + offset);
+                            }
                         }
                     }
                     None
@@ -1013,7 +1089,11 @@ impl Editor {
 
     pub(crate) fn shrink_selection(&mut self) {
         self.desired_col = None;
-        if !self.selection_history_source.as_ref().is_some_and(|source| source.is_instance(&self.rope)) {
+        if !self
+            .selection_history_source
+            .as_ref()
+            .is_some_and(|source| source.is_instance(&self.rope))
+        {
             self.selection_history.clear();
             self.selection_history_source = None;
             return;

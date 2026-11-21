@@ -137,8 +137,11 @@ impl AnimationSettings {
         if !self.enabled(AnimationEffect::ScopeConnector) {
             return false;
         }
-        if editor.scope_bubble_rules.for_editor(editor).is_some_and(|rule|
-            rule.syntax == crate::scope_bubble_config::Syntax::Disabled) {
+        if editor
+            .scope_bubble_rules
+            .for_editor(editor)
+            .is_some_and(|rule| rule.syntax == crate::scope_bubble_config::Syntax::Disabled)
+        {
             return false;
         }
         if self.scope_disabled_languages.is_empty() {
@@ -146,7 +149,10 @@ impl AnimationSettings {
         }
         let language = crate::scope_bubble_config::language(editor);
         let language = scope_language_key(language);
-        !self.scope_disabled_languages.iter().any(|disabled| disabled.eq_ignore_ascii_case(language))
+        !self
+            .scope_disabled_languages
+            .iter()
+            .any(|disabled| disabled.eq_ignore_ascii_case(language))
     }
 
     pub(crate) fn any_enabled(&self) -> bool {
@@ -232,7 +238,9 @@ impl AnimationSettings {
         if let Some(configs) = &settings.animation_scope_bubble_languages {
             let rules = crate::scope_bubble_config::Rules::compile(configs)
                 .with_automatic(self.scope_languages.automatic.clone());
-            if rules != self.scope_languages { self.scope_languages = rules; }
+            if rules != self.scope_languages {
+                self.scope_languages = rules;
+            }
         }
     }
 }
@@ -240,54 +248,87 @@ impl AnimationSettings {
 /// Common display names, syntax tokens and extensions share one preference.
 /// Unknown/custom syntax names remain valid and are compared case-insensitively.
 pub(crate) const SCOPE_LANGUAGE_ALIASES: &[(&str, &[&str])] = &[
-        ("python", &["python 3", "python3", "py", "pyw", "pyi"]),
-        ("rust", &["rs"]),
-        ("cpp", &["c++", "c/c++ header", "cc", "cxx", "c++ header", "h", "hh", "hpp", "hxx"]),
-        ("csharp", &["c#", "cs"]),
-        ("fsharp", &["f#", "fs", "fsx"]),
-        ("objective-c", &["objc", "m"]),
-        ("objective-c++", &["objcpp", "mm"]),
-        ("javascript", &["javascript (babel)", "js", "mjs", "cjs"]),
-        ("javascriptreact", &["javascript react", "jsx"]),
-        ("typescript", &["ts", "mts", "cts"]),
-        ("typescriptreact", &["typescript react", "tsx"]),
-        ("shellscript", &["shell script", "shell", "bash", "zsh", "sh"]),
-        ("fish", &["fish shell"]),
-        ("ruby", &["rb", "erb"]),
-        ("powershell", &["ps1", "psm1", "pwsh"]),
-        ("kotlin", &["kt", "kts"]),
-        ("scala", &["sc"]),
-        ("elixir", &["ex", "exs"]),
-        ("erlang", &["erl", "hrl"]),
-        ("haskell", &["hs", "lhs"]),
-        ("clojure", &["clj", "cljs"]),
-        ("julia", &["jl"]),
-        ("fortran", &["fortran modern", "fortran free form", "f", "f90", "f95", "f03", "f08", "for"]),
-        ("matlab", &["octave"]),
-        ("vim", &["viml", "vimscript", "vim script"]),
-        ("php", &["phtml"]),
-        ("perl", &["pl", "pm"]),
-        ("html", &["htm", "xhtml"]),
-        ("xml", &["xsl", "xslt"]),
-        ("json", &["json with comments", "jsonc", "json5"]),
-        ("glsl", &["vert", "frag"]),
-        ("toml", &["toml (cargo)"]),
-        ("yaml", &["yml"]),
-        ("markdown", &["md", "mdx"]),
-        ("terraform", &["tf", "tfvars"]),
-        ("graphql", &["gql"]),
-        ("protobuf", &["protocol buffers", "proto"]),
-        ("plaintext", &["plain text", "txt"]),
-    ];
+    ("python", &["python 3", "python3", "py", "pyw", "pyi"]),
+    ("rust", &["rs"]),
+    (
+        "cpp",
+        &[
+            "c++",
+            "c/c++ header",
+            "cc",
+            "cxx",
+            "c++ header",
+            "h",
+            "hh",
+            "hpp",
+            "hxx",
+        ],
+    ),
+    ("csharp", &["c#", "cs"]),
+    ("fsharp", &["f#", "fs", "fsx"]),
+    ("objective-c", &["objc", "m"]),
+    ("objective-c++", &["objcpp", "mm"]),
+    ("javascript", &["javascript (babel)", "js", "mjs", "cjs"]),
+    ("javascriptreact", &["javascript react", "jsx"]),
+    ("typescript", &["ts", "mts", "cts"]),
+    ("typescriptreact", &["typescript react", "tsx"]),
+    (
+        "shellscript",
+        &["shell script", "shell", "bash", "zsh", "sh"],
+    ),
+    ("fish", &["fish shell"]),
+    ("ruby", &["rb", "erb"]),
+    ("powershell", &["ps1", "psm1", "pwsh"]),
+    ("kotlin", &["kt", "kts"]),
+    ("scala", &["sc"]),
+    ("elixir", &["ex", "exs"]),
+    ("erlang", &["erl", "hrl"]),
+    ("haskell", &["hs", "lhs"]),
+    ("clojure", &["clj", "cljs"]),
+    ("julia", &["jl"]),
+    (
+        "fortran",
+        &[
+            "fortran modern",
+            "fortran free form",
+            "f",
+            "f90",
+            "f95",
+            "f03",
+            "f08",
+            "for",
+        ],
+    ),
+    ("matlab", &["octave"]),
+    ("vim", &["viml", "vimscript", "vim script"]),
+    ("php", &["phtml"]),
+    ("perl", &["pl", "pm"]),
+    ("html", &["htm", "xhtml"]),
+    ("xml", &["xsl", "xslt"]),
+    ("json", &["json with comments", "jsonc", "json5"]),
+    ("glsl", &["vert", "frag"]),
+    ("toml", &["toml (cargo)"]),
+    ("yaml", &["yml"]),
+    ("markdown", &["md", "mdx"]),
+    ("terraform", &["tf", "tfvars"]),
+    ("graphql", &["gql"]),
+    ("protobuf", &["protocol buffers", "proto"]),
+    ("plaintext", &["plain text", "txt"]),
+];
 
 pub(crate) fn scope_language_key(language: &str) -> &str {
     let language = language.trim();
 
-    SCOPE_LANGUAGE_ALIASES.iter().find_map(|(key, aliases)| {
-        (key.eq_ignore_ascii_case(language)
-            || aliases.iter().any(|alias| alias.eq_ignore_ascii_case(language)))
+    SCOPE_LANGUAGE_ALIASES
+        .iter()
+        .find_map(|(key, aliases)| {
+            (key.eq_ignore_ascii_case(language)
+                || aliases
+                    .iter()
+                    .any(|alias| alias.eq_ignore_ascii_case(language)))
             .then_some(*key)
-    }).unwrap_or(language)
+        })
+        .unwrap_or(language)
 }
 
 #[cfg(test)]
@@ -300,7 +341,11 @@ mod tests {
         settings.apply(&crate::settings::Settings {
             animation_scope_connector: Some(true),
             animation_scope_bubble_disabled_languages: Some(vec![
-                " PYTHON ".into(), "Cpp".into(), "Rust".into(), "python".into(), "".into(),
+                " PYTHON ".into(),
+                "Cpp".into(),
+                "Rust".into(),
+                "python".into(),
+                "".into(),
             ]),
             ..Default::default()
         });
@@ -317,7 +362,9 @@ mod tests {
         assert!(!settings.scope_enabled_for(&editor));
         editor.language_override = None;
         editor.file_path = Some("script.custom".into());
-        editor.language_associations.insert("*.custom".into(), "Python".into());
+        editor
+            .language_associations
+            .insert("*.custom".into(), "Python".into());
         assert!(!settings.scope_enabled_for(&editor));
         editor.language_associations.clear();
         editor.file_path = None;
@@ -337,9 +384,12 @@ mod tests {
         let mut settings = AnimationSettings::default();
         settings.set(AnimationEffect::ScopeConnector, true);
         settings.scope_disabled_languages = vec!["python".into()];
-        let python = crate::editor::Editor::test_with_text("#!/usr/bin/env python3\nif ready:\n    work()\n");
+        let python = crate::editor::Editor::test_with_text(
+            "#!/usr/bin/env python3\nif ready:\n    work()\n",
+        );
         assert!(!settings.scope_enabled_for(&python));
-        let oversized = crate::editor::Editor::test_with_text(&format!("#!{}python", "x".repeat(1024 * 1024)));
+        let oversized =
+            crate::editor::Editor::test_with_text(&format!("#!{}python", "x".repeat(1024 * 1024)));
         assert!(settings.scope_enabled_for(&oversized));
     }
 
@@ -349,7 +399,9 @@ mod tests {
         assert!(settings.enabled(AnimationEffect::TabSlide));
         assert_eq!(settings.duration(AnimationEffect::TabSlide), 250);
         assert!(!settings.editor_effects_enabled());
-        for effect in AnimationEffect::ALL { settings.set(effect, false); }
+        for effect in AnimationEffect::ALL {
+            settings.set(effect, false);
+        }
         assert!(!settings.any_enabled());
         for effect in AnimationEffect::ALL {
             assert!(!settings.enabled(effect));
@@ -464,7 +516,14 @@ mod tests {
             let mut settings = AnimationSettings::default();
             settings.duration_ms = input;
             for effect in AnimationEffect::ALL {
-                assert_eq!(settings.duration(effect), if effect == AnimationEffect::TabSlide { 250 } else { expected });
+                assert_eq!(
+                    settings.duration(effect),
+                    if effect == AnimationEffect::TabSlide {
+                        250
+                    } else {
+                        expected
+                    }
+                );
                 settings.set_duration(effect, input);
                 assert_eq!(settings.duration(effect), expected);
             }

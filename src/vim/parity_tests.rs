@@ -4,10 +4,10 @@
 
 use std::io::Read;
 
+use super::Mode;
 use super::keys;
 use super::register::RegKind;
-use super::tests::{parity_vim, vim_lines, TestHost};
-use super::Mode;
+use super::tests::{TestHost, parity_vim, vim_lines};
 
 #[derive(serde::Deserialize)]
 struct Expect {
@@ -30,7 +30,9 @@ struct Case {
 fn corpus() -> Vec<Case> {
     let gz = include_bytes!("parity_expected.json.gz");
     let mut json = String::new();
-    flate2::read::GzDecoder::new(&gz[..]).read_to_string(&mut json).unwrap();
+    flate2::read::GzDecoder::new(&gz[..])
+        .read_to_string(&mut json)
+        .unwrap();
     serde_json::from_str(&json).unwrap()
 }
 
@@ -48,9 +50,17 @@ pub(crate) fn replay(lines: &[String], eol: bool, cursor: [usize; 2], keys_text:
 }
 
 /// `replay` on text whose lines end in `newline`; also returns the buffer.
-fn replay_with(lines: &[String], eol: bool, cursor: [usize; 2], keys_text: &str, newline: &str) -> (Actual, String) {
+fn replay_with(
+    lines: &[String],
+    eol: bool,
+    cursor: [usize; 2],
+    keys_text: &str,
+    newline: &str,
+) -> (Actual, String) {
     let mut text = lines.join(newline);
-    if eol { text.push_str(newline); }
+    if eol {
+        text.push_str(newline);
+    }
     let mut host = TestHost::new(&text);
     host.ed.detect_line_ending();
     host.ed.cursor_line = cursor[0];
@@ -61,11 +71,19 @@ fn replay_with(lines: &[String], eol: bool, cursor: [usize; 2], keys_text: &str,
         vim.feed(&mut host, key);
     }
     vim.pending.clear();
-    if vim.is_insert() { super::insert::finish(&mut vim, &mut host, true); }
-    if vim.mode == Mode::Cmdline { super::cmdline::cancel(&mut vim, &mut host); }
+    if vim.is_insert() {
+        super::insert::finish(&mut vim, &mut host, true);
+    }
+    if vim.mode == Mode::Cmdline {
+        super::cmdline::cancel(&mut vim, &mut host);
+    }
     // Vim stays in Visual mode after feedkeys(); report its cursor.
-    let visual_cursor = vim.is_visual().then(|| [host.ed.cursor_line, host.ed.cursor_col]);
-    if vim.is_visual() { super::exec::exit_visual(&mut vim, &mut host); }
+    let visual_cursor = vim
+        .is_visual()
+        .then(|| [host.ed.cursor_line, host.ed.cursor_col]);
+    if vim.is_visual() {
+        super::exec::exit_visual(&mut vim, &mut host);
+    }
     let mut clip = super::register::NoClip(None);
     let reg = vim.regs.get('"', &mut clip, None).unwrap_or_default();
     let regtype = match reg.kind {
@@ -93,25 +111,50 @@ fn engine_matches_real_vim_on_crlf_text() {
     let mut failures = Vec::new();
     let mut ran = 0;
     for case in &cases {
-        if !filter.is_empty() && !case.name.contains(&filter) { continue; }
+        if !filter.is_empty() && !case.name.contains(&filter) {
+            continue;
+        }
         // Text containing a carriage return of its own cannot be told apart.
-        if case.lines.iter().any(|l| l.contains('\r')) || case.keys.contains("<C-v><C-m>") || case.keys.contains("<C-m>") { continue; }
+        if case.lines.iter().any(|l| l.contains('\r'))
+            || case.keys.contains("<C-v><C-m>")
+            || case.keys.contains("<C-m>")
+        {
+            continue;
+        }
         ran += 1;
-        let got = std::panic::catch_unwind(|| replay_with(&case.lines, case.eol, case.cursor, &case.keys, "\r\n"));
+        let got = std::panic::catch_unwind(|| {
+            replay_with(&case.lines, case.eol, case.cursor, &case.keys, "\r\n")
+        });
         let (got, raw) = match got {
             Ok(g) => g,
-            Err(_) => { failures.push(format!("{}: PANIC", case.name)); continue; }
+            Err(_) => {
+                failures.push(format!("{}: PANIC", case.name));
+                continue;
+            }
         };
         let e = &case.expect;
         let mut diffs = Vec::new();
         let plain = raw.replace("\r\n", "\n");
-        if plain.contains('\r') { diffs.push(format!("stray \\r in {raw:?}")); }
-        let lines: Vec<String> = got.lines.iter().map(|l| l.trim_end_matches('\r').to_string()).collect();
-        if lines != e.lines { diffs.push(format!("lines {:?} != vim {:?}", lines, e.lines)); }
-        if got.cursor != e.cursor { diffs.push(format!("cursor {:?} != vim {:?}", got.cursor, e.cursor)); }
+        if plain.contains('\r') {
+            diffs.push(format!("stray \\r in {raw:?}"));
+        }
+        let lines: Vec<String> = got
+            .lines
+            .iter()
+            .map(|l| l.trim_end_matches('\r').to_string())
+            .collect();
+        if lines != e.lines {
+            diffs.push(format!("lines {:?} != vim {:?}", lines, e.lines));
+        }
+        if got.cursor != e.cursor {
+            diffs.push(format!("cursor {:?} != vim {:?}", got.cursor, e.cursor));
+        }
         let reg = got.reg.replace("\r\n", "\n");
         if reg != e.reg || (!e.reg.is_empty() && got.regtype != e.regtype) {
-            diffs.push(format!("reg {:?}/{:?} != vim {:?}/{:?}", got.reg, got.regtype, e.reg, e.regtype));
+            diffs.push(format!(
+                "reg {:?}/{:?} != vim {:?}/{:?}",
+                got.reg, got.regtype, e.reg, e.regtype
+            ));
         }
         if !diffs.is_empty() {
             failures.push(format!("{}: {}", case.name, diffs.join("; ")));
@@ -122,7 +165,16 @@ fn engine_matches_real_vim_on_crlf_text() {
         if let Ok(path) = std::env::var("VIM_PARITY_REPORT") {
             let _ = std::fs::write(path, failures.join("\n"));
         }
-        panic!("{} of {} CRLF cases differ from Vim:\n{}", failures.len(), ran, shown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n"));
+        panic!(
+            "{} of {} CRLF cases differ from Vim:\n{}",
+            failures.len(),
+            ran,
+            shown
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 }
 
@@ -133,20 +185,33 @@ fn engine_matches_real_vim() {
     let mut failures = Vec::new();
     let mut ran = 0;
     for case in &cases {
-        if !filter.is_empty() && !case.name.contains(&filter) { continue; }
+        if !filter.is_empty() && !case.name.contains(&filter) {
+            continue;
+        }
         ran += 1;
-        let got = std::panic::catch_unwind(|| replay(&case.lines, case.eol, case.cursor, &case.keys));
+        let got =
+            std::panic::catch_unwind(|| replay(&case.lines, case.eol, case.cursor, &case.keys));
         let got = match got {
             Ok(g) => g,
-            Err(_) => { failures.push(format!("{}: PANIC", case.name)); continue; }
+            Err(_) => {
+                failures.push(format!("{}: PANIC", case.name));
+                continue;
+            }
         };
         let e = &case.expect;
         let mut diffs = Vec::new();
         // Text, cursor and the unnamed register must all match Vim exactly.
-        if got.lines != e.lines { diffs.push(format!("lines {:?} != vim {:?}", got.lines, e.lines)); }
-        if got.cursor != e.cursor { diffs.push(format!("cursor {:?} != vim {:?}", got.cursor, e.cursor)); }
+        if got.lines != e.lines {
+            diffs.push(format!("lines {:?} != vim {:?}", got.lines, e.lines));
+        }
+        if got.cursor != e.cursor {
+            diffs.push(format!("cursor {:?} != vim {:?}", got.cursor, e.cursor));
+        }
         if got.reg != e.reg || (!e.reg.is_empty() && got.regtype != e.regtype) {
-            diffs.push(format!("reg {:?}/{:?} != vim {:?}/{:?}", got.reg, got.regtype, e.reg, e.regtype));
+            diffs.push(format!(
+                "reg {:?}/{:?} != vim {:?}/{:?}",
+                got.reg, got.regtype, e.reg, e.regtype
+            ));
         }
         if !diffs.is_empty() {
             failures.push(format!("{}: {}", case.name, diffs.join("; ")));
@@ -157,6 +222,15 @@ fn engine_matches_real_vim() {
         if let Ok(path) = std::env::var("VIM_PARITY_REPORT") {
             let _ = std::fs::write(path, failures.join("\n"));
         }
-        panic!("{} of {} cases differ from Vim:\n{}", failures.len(), ran, shown.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("\n"));
+        panic!(
+            "{} of {} cases differ from Vim:\n{}",
+            failures.len(),
+            ran,
+            shown
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
     }
 }

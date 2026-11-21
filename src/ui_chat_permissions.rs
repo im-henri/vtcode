@@ -123,11 +123,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(warning))
             .title(" Permission needed ")
-            .style(
-                Style::default()
-                    .fg(foreground)
-                    .bg(background),
-            ),
+            .style(Style::default().fg(foreground).bg(background)),
         area,
     );
     let inside = area.inner(Margin::new(2, 1));
@@ -135,11 +131,8 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     f.render_widget(
-        Paragraph::new(elide(&title, inside.width as usize)).style(
-            Style::default()
-                .fg(warning)
-                .add_modifier(Modifier::BOLD),
-        ),
+        Paragraph::new(elide(&title, inside.width as usize))
+            .style(Style::default().fg(warning).add_modifier(Modifier::BOLD)),
         Rect::new(inside.x, inside.y, inside.width, 1),
     );
     let choices = choice_layout(&request, inside.width);
@@ -148,7 +141,8 @@ pub(super) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let choices_height = if full_choices { rows } else { 1 };
     let detail_height = inside.height.saturating_sub(choices_height + 2);
     f.render_widget(
-        Paragraph::new(detail).style(Style::default().fg(foreground).bg(background))
+        Paragraph::new(detail)
+            .style(Style::default().fg(foreground).bg(background))
             .wrap(ratatui::widgets::Wrap { trim: false }),
         Rect::new(inside.x, inside.y + 1, inside.width, detail_height),
     );

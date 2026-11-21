@@ -8,11 +8,26 @@ impl App {
             return true;
         }
         match id {
-            "git_rebase" => { self.start_git_operation_dialog(crate::git_operation::Kind::Rebase); return true; }
-            "git_cherry_pick" => { self.start_git_operation_dialog(crate::git_operation::Kind::CherryPick); return true; }
-            "git_operation_continue" => { self.continue_git_operation(); return true; }
-            "git_operation_skip" => { self.confirm_git_operation_action(crate::ui_git_operation::Choice::Skip); return true; }
-            "git_operation_abort" => { self.confirm_git_operation_action(crate::ui_git_operation::Choice::Abort); return true; }
+            "git_rebase" => {
+                self.start_git_operation_dialog(crate::git_operation::Kind::Rebase);
+                return true;
+            }
+            "git_cherry_pick" => {
+                self.start_git_operation_dialog(crate::git_operation::Kind::CherryPick);
+                return true;
+            }
+            "git_operation_continue" => {
+                self.continue_git_operation();
+                return true;
+            }
+            "git_operation_skip" => {
+                self.confirm_git_operation_action(crate::ui_git_operation::Choice::Skip);
+                return true;
+            }
+            "git_operation_abort" => {
+                self.confirm_git_operation_action(crate::ui_git_operation::Choice::Abort);
+                return true;
+            }
             _ => {}
         }
         if let Some(action) = id.strip_prefix("merge_conflict_") {
@@ -23,11 +38,27 @@ impl App {
             self.toggle_workspace_source_control();
             return true;
         }
-        if !self.source_control_enabled && matches!(id,
-            "git_refresh" | "git_filter_changes" | "git_show_untracked" | "git_toggle_blame" | "git_stage"
-            | "git_unstage" | "git_stage_all" | "git_unstage_all" | "git_discard_all"
-            | "git_commit" | "git_stash" | "git_stash_pop" | "git_fetch" | "git_pull"
-            | "git_push" | "git_checkout") {
+        if !self.source_control_enabled
+            && matches!(
+                id,
+                "git_refresh"
+                    | "git_filter_changes"
+                    | "git_show_untracked"
+                    | "git_toggle_blame"
+                    | "git_stage"
+                    | "git_unstage"
+                    | "git_stage_all"
+                    | "git_unstage_all"
+                    | "git_discard_all"
+                    | "git_commit"
+                    | "git_stash"
+                    | "git_stash_pop"
+                    | "git_fetch"
+                    | "git_pull"
+                    | "git_push"
+                    | "git_checkout"
+            )
+        {
             self.notify("Source Control is disabled. Enable it in Source Control or Settings.");
             return true;
         }
@@ -52,7 +83,10 @@ impl App {
                     self.execute_palette_command("source_control");
                 }
                 self.source_control_input_mode = false;
-                let area = self.source_control_actions_area.or_else(|| self.source_control_view_area()).unwrap_or_default();
+                let area = self
+                    .source_control_actions_area
+                    .or_else(|| self.source_control_view_area())
+                    .unwrap_or_default();
                 self.open_source_control_filter_menu(area.x, area.y.saturating_add(1));
             }
             "git_show_untracked" => {
@@ -60,7 +94,11 @@ impl App {
                 let selected = self.context_menu_selected;
                 // Follow a workspace override; otherwise remember the User
                 // preference across folders, file launches and SSH workspaces.
-                let scope = if self.settings_workspace.source_control_show_untracked.is_some() {
+                let scope = if self
+                    .settings_workspace
+                    .source_control_show_untracked
+                    .is_some()
+                {
                     crate::settings::SettingsScope::Workspace
                 } else {
                     crate::settings::SettingsScope::Global
@@ -70,7 +108,8 @@ impl App {
                 let (x, y) = self.context_menu_pos;
                 if actions {
                     self.open_source_control_action_menu(x, y);
-                    self.context_menu_selected = selected.min(self.context_menu_items.len().saturating_sub(1));
+                    self.context_menu_selected =
+                        selected.min(self.context_menu_items.len().saturating_sub(1));
                 } else {
                     self.open_source_control_filter_menu(x, y);
                 }

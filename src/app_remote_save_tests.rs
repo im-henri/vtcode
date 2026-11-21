@@ -185,21 +185,28 @@ fn shared_panes_join_the_same_pending_save_and_reuse_the_completed_clean_checkpo
     f.app.save_current_file();
     f.wait_blocked();
     f.app.switch_group(0);
-    for _ in 0..64 { f.app.save_current_file(); }
+    for _ in 0..64 {
+        f.app.save_current_file();
+    }
     assert!(f.app.deferred_file_saves.is_empty());
     f.finish();
     let traffic = f.bytes();
     let jobs = f.app.background.activity.job_count();
     for group in [1, 0, 1] {
         f.app.switch_group(group);
-        for _ in 0..64 { f.app.save_current_file(); }
+        for _ in 0..64 {
+            f.app.save_current_file();
+        }
         assert_eq!(f.app.editor().unwrap().rope, "Asaved\n");
         assert!(!f.app.editor().unwrap().modified);
     }
     assert!(f.app.pending_file_saves.is_empty());
     assert_eq!(f.app.background.activity.job_count(), jobs);
     assert_eq!(f.bytes(), traffic);
-    assert_eq!(std::fs::read_to_string(f.root.path().join("file.txt")).unwrap(), "Asaved\n");
+    assert_eq!(
+        std::fs::read_to_string(f.root.path().join("file.txt")).unwrap(),
+        "Asaved\n"
+    );
 }
 
 #[test]
@@ -346,35 +353,77 @@ fn clean_save_never_overwrites_an_unobserved_external_write_and_dirty_save_still
 fn disk_events_received_during_local_noop_preparation_are_rechecked_after_completion() {
     for deleted in [false, true] {
         let mut f = Saving::new("saved\n");
-        let request = Arc::new(f.app.editor().unwrap().background_save_request(false, false, false).unwrap());
+        let request = Arc::new(
+            f.app
+                .editor()
+                .unwrap()
+                .background_save_request(false, false, false)
+                .unwrap(),
+        );
         let checkpoint = f.app.editor().unwrap().remote_checkpoint.clone().unwrap();
         let modified = f.app.editor().unwrap().last_disk_modified;
-        f.app.pending_file_saves.insert(f.path.clone(), (f.app.workspace_generation, crate::editor::SaveIntent::new(request.clone())));
-        if deleted { std::fs::remove_file(f.root.path().join("file.txt")).unwrap(); }
-        else { std::fs::write(f.root.path().join("file.txt"), "external\n").unwrap(); }
-        f.app.background.sender.send(BackgroundResult::FileDiskState(WorkspacePathChange { is_dir: false,
-            path: f.path.clone(), observed_at: Instant::now(), exists: !deleted,
-            modified: None, len: None,
-        })).unwrap();
+        f.app.pending_file_saves.insert(
+            f.path.clone(),
+            (
+                f.app.workspace_generation,
+                crate::editor::SaveIntent::new(request.clone()),
+            ),
+        );
+        if deleted {
+            std::fs::remove_file(f.root.path().join("file.txt")).unwrap();
+        } else {
+            std::fs::write(f.root.path().join("file.txt"), "external\n").unwrap();
+        }
+        f.app
+            .background
+            .sender
+            .send(BackgroundResult::FileDiskState(WorkspacePathChange {
+                is_dir: false,
+                path: f.path.clone(),
+                observed_at: Instant::now(),
+                exists: !deleted,
+                modified: None,
+                len: None,
+            }))
+            .unwrap();
         f.app.poll_background_results();
         assert!(f.app.remote_changes_deferred.contains(&f.path));
         let generation = f.app.workspace_generation;
-        f.app.background.sender.send(BackgroundResult::RemoteFileResult { checkpoint,
-            result: Box::new(BackgroundResult::FileSaved {
-                source_document_id: request.source_document_id, workspace_generation: generation,
-                path: f.path.clone(), error: None, last_disk_modified: modified,
-                file_size: Some(6), source_content_version: request.source_content_version,
-                source_rope: request.rope.clone(), previous_disk: request.expected_disk.clone(),
-                saved_encoding: request.encoding, transformed_lines: None, disk_written: false,
-                saved_rope: Some(request.rope.clone()),
-            }),
-        }).unwrap();
+        f.app
+            .background
+            .sender
+            .send(BackgroundResult::RemoteFileResult {
+                checkpoint,
+                result: Box::new(BackgroundResult::FileSaved {
+                    source_document_id: request.source_document_id,
+                    workspace_generation: generation,
+                    path: f.path.clone(),
+                    error: None,
+                    last_disk_modified: modified,
+                    file_size: Some(6),
+                    source_content_version: request.source_content_version,
+                    source_rope: request.rope.clone(),
+                    previous_disk: request.expected_disk.clone(),
+                    saved_encoding: request.encoding,
+                    transformed_lines: None,
+                    disk_written: false,
+                    saved_rope: Some(request.rope.clone()),
+                }),
+            })
+            .unwrap();
         f.app.poll_background_results();
         f.app.wait_for_background(Duration::from_secs(10), |app| {
-            if deleted { app.tabs.iter().all(|tab| tab.editor.file_path.as_ref() != Some(&f.path)) }
-            else { app.editor().unwrap().rope == "external\n" }
+            if deleted {
+                app.tabs
+                    .iter()
+                    .all(|tab| tab.editor.file_path.as_ref() != Some(&f.path))
+            } else {
+                app.editor().unwrap().rope == "external\n"
+            }
         });
         assert_eq!(f.root.path().join("file.txt").exists(), !deleted);
-        if !deleted { assert!(!f.app.editor().unwrap().modified); }
+        if !deleted {
+            assert!(!f.app.editor().unwrap().modified);
+        }
     }
 }

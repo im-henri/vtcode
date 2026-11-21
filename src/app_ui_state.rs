@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use crate::app::{ActivePane, App, DiffMode, NotifyLevel, SidebarView};
 #[cfg(test)]
 use crate::app::compute_file_diff;
+use crate::app::{ActivePane, App, DiffMode, NotifyLevel, SidebarView};
 
 pub(crate) const BINARY_DIFF_MESSAGE: &str = "Diff is unavailable for binary files.";
 
@@ -136,7 +136,9 @@ impl App {
             return false;
         }
         let mut files = target.files.iter();
-        for editor in self.tabs.iter()
+        for editor in self
+            .tabs
+            .iter()
             .map(|tab| &tab.editor)
             .filter(|editor| !editor.large_file_mode && !editor.bg_loading)
         {
@@ -161,7 +163,9 @@ impl App {
     /// tree, so requesting analysis does no whole-document work on the UI.
     pub(crate) fn request_problems_analysis(&mut self) {
         if self.bg_problems_analysis_running
-            || self.cached_problems_target.as_ref()
+            || self
+                .cached_problems_target
+                .as_ref()
                 .is_some_and(|target| self.problems_analysis_is_current(target))
         {
             return;
@@ -171,7 +175,13 @@ impl App {
             .tabs
             .iter()
             .filter(|tab| !tab.editor.large_file_mode && !tab.editor.bg_loading)
-            .map(|tab| (tab.editor.file_name().to_string(), tab.editor.rope.clone(), tab.editor.navigation_id))
+            .map(|tab| {
+                (
+                    tab.editor.file_name().to_string(),
+                    tab.editor.rope.clone(),
+                    tab.editor.navigation_id,
+                )
+            })
             .collect();
         let sender = self.background.sender.clone();
         let pool_sender = self.background.pool_sender();
@@ -194,7 +204,9 @@ impl App {
     }
 
     pub(crate) fn clear_drag_states(&mut self) {
-        if let Some(peek) = self.hunk_peek.as_mut() { peek.cancel_drag(); }
+        if let Some(peek) = self.hunk_peek.as_mut() {
+            peek.cancel_drag();
+        }
         crate::ui_extension_info::cancel_drag(self);
         self.context_menu_button_drag = None;
         self.search_bar_layout.resizing = false;
@@ -222,7 +234,9 @@ impl App {
         self.explorer_scrollbar_drag = None;
         self.explorer_context_scrollbar_drag = None;
         self.resizing_panel = false;
-        if self.terminal_sidebar.dragging() { self.drag_start_pos = None; }
+        if self.terminal_sidebar.dragging() {
+            self.drag_start_pos = None;
+        }
         self.terminal_sidebar.cancel_drag();
         self.terminal_scrollbar.cancel_drag();
         self.resizing_sc_graph = false;
@@ -340,21 +354,30 @@ impl App {
 
     pub(crate) fn palette_selected_theme_key(&self) -> Option<String> {
         let &index = self.palette.filtered.get(self.palette.selected)?;
-        if self.extension_palette_action_map.contains_key(&index) { return None; }
+        if self.extension_palette_action_map.contains_key(&index) {
+            return None;
+        }
         let command = self.palette.commands.get(index)?;
         let key = crate::app_theme::config_key_from_command_id(&command.id)?;
-        self.loaded_themes.iter().any(|theme| theme.config_key == key).then_some(key)
+        self.loaded_themes
+            .iter()
+            .any(|theme| theme.config_key == key)
+            .then_some(key)
     }
 
     pub(crate) fn preview_palette_theme(&mut self) {
         let selected = if self.palette.active && !self.theme_install_prompt_visible() {
             self.palette_selected_theme_key()
-        } else { None };
+        } else {
+            None
+        };
         if let Some(key) = selected {
             // Repeated mouse movement and text-cursor keys must not restart
             // syntax highlighting for an unchanged preview.
             if key != self.theme_key {
-                self.palette.theme_preview_original.get_or_insert_with(|| self.theme_key.clone());
+                self.palette
+                    .theme_preview_original
+                    .get_or_insert_with(|| self.theme_key.clone());
                 self.set_theme_by_key(&key);
             }
         } else {
@@ -364,13 +387,17 @@ impl App {
 
     pub(crate) fn restore_palette_theme_preview(&mut self) {
         if let Some(original) = self.palette.theme_preview_original.take() {
-            if self.theme_key != original { self.set_theme_by_key(&original); }
+            if self.theme_key != original {
+                self.set_theme_by_key(&original);
+            }
         }
     }
 
     /// Settings/session snapshots must never commit a highlighted theme preview.
     pub(crate) fn committed_theme_key(&self) -> &str {
-        self.palette.theme_preview_original.as_deref()
+        self.palette
+            .theme_preview_original
+            .as_deref()
             .or_else(|| {
                 if self.settings_dropdown_committed {
                     None
@@ -387,7 +414,10 @@ impl App {
     }
 
     pub(crate) fn filter_palette_commands(&mut self) {
-        if self.theme_install_prompt_visible() { self.palette.filtered.clear(); return; }
+        if self.theme_install_prompt_visible() {
+            self.palette.filtered.clear();
+            return;
+        }
         let query = &self.palette.query;
         if query.is_empty() {
             // Show recently used commands first, then the rest
@@ -427,17 +457,31 @@ impl App {
             self.palette.filtered = scored.into_iter().map(|(i, _)| i).collect();
         }
         if !crate::ui_workspaces::can_close(self) {
-            self.palette.filtered.retain(|&index| self.palette.commands[index].id != "workspace_close");
+            self.palette
+                .filtered
+                .retain(|&index| self.palette.commands[index].id != "workspace_close");
         }
         if self.open_folder_count() == 0 {
-            self.palette.filtered.retain(|&index| !matches!(self.palette.commands[index].id.as_ref(),
-                "workspace_set_save" | "workspace_add" | "workspace_switch"));
+            self.palette.filtered.retain(|&index| {
+                !matches!(
+                    self.palette.commands[index].id.as_ref(),
+                    "workspace_set_save" | "workspace_add" | "workspace_switch"
+                )
+            });
         }
         if !self.has_open_folder() {
             self.palette.filtered.retain(|&index| {
                 let id = self.palette.commands[index].id.as_ref();
-                !id.starts_with("git_") && !matches!(id, "source_control_toggle" | "open_parent"
-                    | "goto_workspace_symbol" | "open_workspace_settings_json" | "new_folder" | "replace_all_in_files")
+                !id.starts_with("git_")
+                    && !matches!(
+                        id,
+                        "source_control_toggle"
+                            | "open_parent"
+                            | "goto_workspace_symbol"
+                            | "open_workspace_settings_json"
+                            | "new_folder"
+                            | "replace_all_in_files"
+                    )
             });
         }
         if self.palette.selected >= self.palette.filtered.len() {
@@ -479,8 +523,8 @@ impl App {
             match id {
                 "save" | "new_file" | "close_tab" => "File",
                 "find" | "find_replace" | "find_next" | "find_prev" | "global_search" => "Search",
-                "go_to_line" | "go_to_definition" | "find_references"
-                | "next_tab" | "prev_tab" | "next_tab_page" | "prev_tab_page" => "Navigation",
+                "go_to_line" | "go_to_definition" | "find_references" | "next_tab" | "prev_tab"
+                | "next_tab_page" | "prev_tab_page" => "Navigation",
                 "toggle_explorer" => "File Explorer",
                 "toggle_panel" | "toggle_menu_bar" | "show_shortcuts" => "View",
                 "toggle_terminal" => "Terminal",
@@ -564,7 +608,11 @@ impl App {
 
         self.keybinding_settings_cache.clear();
         for (idx, kb) in self.keybindings.iter().enumerate() {
-            let group = if kb.built_in_handler { command_group(kb.label, kb.id) } else { binding_group(kb.id) };
+            let group = if kb.built_in_handler {
+                command_group(kb.label, kb.id)
+            } else {
+                binding_group(kb.id)
+            };
             let kb_id = format!("kb_{idx}");
             let label = format!("Shortcut: {}", kb.label);
             let value = kb.display();
@@ -641,38 +689,56 @@ impl App {
     }
 
     pub(crate) fn click_global_search_result(&mut self, index: usize, column: u16, row: u16) {
-        let Some(result) = self.global_search_results.get(index).cloned() else { return; };
+        let Some(result) = self.global_search_results.get(index).cloned() else {
+            return;
+        };
         let time = std::time::Instant::now();
         let position = (column, row);
-        let keep_open = self.global_search_result_click.as_ref().is_some_and(|last| {
-            last.serial.wrapping_add(1) == self.mouse_press_serial
-                && last.position == position
-                && last.workspace == self.workspace_generation
-                && last.search == self.search_generation
-                && time.duration_since(last.time) < std::time::Duration::from_millis(400)
-                && last.result.file_path == result.file_path
-                && last.result.line_num == result.line_num
-                && last.result.col_start == result.col_start
-                && last.result.col_end == result.col_end
-        });
+        let keep_open = self
+            .global_search_result_click
+            .as_ref()
+            .is_some_and(|last| {
+                last.serial.wrapping_add(1) == self.mouse_press_serial
+                    && last.position == position
+                    && last.workspace == self.workspace_generation
+                    && last.search == self.search_generation
+                    && time.duration_since(last.time) < std::time::Duration::from_millis(400)
+                    && last.result.file_path == result.file_path
+                    && last.result.line_num == result.line_num
+                    && last.result.col_start == result.col_start
+                    && last.result.col_end == result.col_end
+            });
         self.global_search_result_click = Some(SearchResultClick {
-            result: result.clone(), position, time, serial: self.mouse_press_serial,
-            workspace: self.workspace_generation, search: self.search_generation,
+            result: result.clone(),
+            position,
+            time,
+            serial: self.mouse_press_serial,
+            workspace: self.workspace_generation,
+            search: self.search_generation,
         });
         self.global_search_selected_header = None;
         self.global_search_selected = index;
         self.preview_global_search_result();
-        if keep_open && self.tabs.get(self.active_tab).is_some_and(|tab| {
-            tab.kind == crate::app::TabKind::File && tab.editor.file_path.as_deref()
-                .is_some_and(|path| Self::same_open_path(path, &result.file_path))
-        }) {
+        if keep_open
+            && self.tabs.get(self.active_tab).is_some_and(|tab| {
+                tab.kind == crate::app::TabKind::File
+                    && tab
+                        .editor
+                        .file_path
+                        .as_deref()
+                        .is_some_and(|path| Self::same_open_path(path, &result.file_path))
+            })
+        {
             self.pin_preview_tab();
         }
     }
 
     /// Show the selected match while keeping keyboard focus in search.
     pub(crate) fn preview_global_search_result(&mut self) {
-        if !matches!(self.global_search_selected_row(), Some(crate::search_results::SearchRow::Header(_))) {
+        if !matches!(
+            self.global_search_selected_row(),
+            Some(crate::search_results::SearchRow::Header(_))
+        ) {
             self.open_global_search_result();
         }
         self.focus_global_search_results();
@@ -691,31 +757,50 @@ impl App {
         let sidebar = self.apply_global_search_collapsed_visibility();
         self.global_search_active = false;
         self.global_search_results_focused = sidebar && self.active_pane == ActivePane::Explorer;
-        if !sidebar { self.active_pane = ActivePane::Editor; }
+        if !sidebar {
+            self.active_pane = ActivePane::Editor;
+        }
     }
 
     pub(crate) fn global_search_selected_row(&self) -> Option<crate::search_results::SearchRow> {
         use crate::search_results::SearchRow;
         if self.apply_global_search_collapsed_visibility() {
-            if let Some(index) = self.global_search_selected_header.as_deref()
-                .and_then(|path| self.global_search_results.file_header_index(path)) {
+            if let Some(index) = self
+                .global_search_selected_header
+                .as_deref()
+                .and_then(|path| self.global_search_results.file_header_index(path))
+            {
                 return Some(SearchRow::Header(index));
             }
-            self.global_search_results.result_row(self.global_search_selected)
+            self.global_search_results
+                .result_row(self.global_search_selected)
                 .map(|_| SearchRow::Result(self.global_search_selected))
         } else {
-            self.global_search_results.get(self.global_search_selected)
+            self.global_search_results
+                .get(self.global_search_selected)
                 .map(|_| SearchRow::Result(self.global_search_selected))
         }
     }
 
     pub(crate) fn set_selected_global_search_file_collapsed(&mut self, collapsed: bool) {
-        let path = self.global_search_selected_header.as_deref()
+        let path = self
+            .global_search_selected_header
+            .as_deref()
             .filter(|path| self.global_search_results.file_header_index(path).is_some())
             .map(Path::to_path_buf)
-            .or_else(|| self.global_search_results.get(self.global_search_selected).map(|result| result.file_path.clone()));
-        let Some(path) = path else { self.global_search_selected_header = None; return; };
-        if collapsed || self.is_global_search_file_collapsed(&path) || self.global_search_selected_header.is_some() {
+            .or_else(|| {
+                self.global_search_results
+                    .get(self.global_search_selected)
+                    .map(|result| result.file_path.clone())
+            });
+        let Some(path) = path else {
+            self.global_search_selected_header = None;
+            return;
+        };
+        if collapsed
+            || self.is_global_search_file_collapsed(&path)
+            || self.global_search_selected_header.is_some()
+        {
             self.global_search_selected_header = Some(path.clone());
         }
         self.global_search_results.set_collapsed(&path, collapsed);
@@ -724,19 +809,28 @@ impl App {
 
     fn move_global_search_header_selection(&mut self, forward: bool) -> bool {
         use crate::search_results::SearchRow;
-        if self.global_search_active { return false; }
-        let Some(SearchRow::Header(index)) = self.global_search_selected_row() else { return false; };
+        if self.global_search_active {
+            return false;
+        }
+        let Some(SearchRow::Header(index)) = self.global_search_selected_row() else {
+            return false;
+        };
         let row = self.global_search_results.header_row(index).unwrap();
-        let target = if forward { row.checked_add(1) } else { row.checked_sub(1) };
+        let target = if forward {
+            row.checked_add(1)
+        } else {
+            row.checked_sub(1)
+        };
         match target.and_then(|row| self.global_search_results.row_at(row)) {
             Some(SearchRow::Header(index)) => {
-                self.global_search_selected_header = Some(self.global_search_results[index].file_path.clone());
+                self.global_search_selected_header =
+                    Some(self.global_search_results[index].file_path.clone());
             }
             Some(SearchRow::Result(index)) => {
                 self.global_search_selected_header = None;
                 self.global_search_selected = index;
             }
-            None => {},
+            None => {}
         }
         true
     }
@@ -782,7 +876,12 @@ impl App {
         };
         let visible_rows = self
             .explorer_area
-            .map(|area| usize::from(area.bottom().saturating_sub(crate::ui_search_panel::search_results_start_y(self, area))))
+            .map(|area| {
+                usize::from(
+                    area.bottom()
+                        .saturating_sub(crate::ui_search_panel::search_results_start_y(self, area)),
+                )
+            })
             .unwrap_or(1)
             .max(1);
         let max_scroll = total_rows.saturating_sub(visible_rows);
@@ -805,21 +904,33 @@ impl App {
             self.global_search_selected = self.global_search_results.len() - 1;
         }
         if self.global_search_selected_header.is_some() {
-            if matches!(self.global_search_selected_row(), Some(crate::search_results::SearchRow::Header(_))) { return; }
+            if matches!(
+                self.global_search_selected_row(),
+                Some(crate::search_results::SearchRow::Header(_))
+            ) {
+                return;
+            }
             self.global_search_selected_header = None;
         }
         if self.is_global_search_result_visible(self.global_search_selected) {
             return;
         }
-        let next = self.global_search_results.first_visible_from(self.global_search_selected + 1)
-            .or_else(|| self.global_search_results.last_visible_before(self.global_search_selected));
+        let next = self
+            .global_search_results
+            .first_visible_from(self.global_search_selected + 1)
+            .or_else(|| {
+                self.global_search_results
+                    .last_visible_before(self.global_search_selected)
+            });
         if let Some(idx) = next.or_else(|| self.first_visible_global_search_result_index()) {
             self.global_search_selected = idx;
         }
     }
 
     pub(crate) fn global_search_select_prev_visible(&mut self) {
-        if self.move_global_search_header_selection(false) { return; }
+        if self.move_global_search_header_selection(false) {
+            return;
+        }
         self.global_search_selected_header = None;
         if self.global_search_selected == 0 {
             if !self.is_global_search_result_visible(self.global_search_selected) {
@@ -828,9 +939,12 @@ impl App {
             return;
         }
         let previous = if self.apply_global_search_collapsed_visibility() {
-            self.global_search_results.last_visible_before(self.global_search_selected)
+            self.global_search_results
+                .last_visible_before(self.global_search_selected)
         } else {
-            self.global_search_selected.min(self.global_search_results.len()).checked_sub(1)
+            self.global_search_selected
+                .min(self.global_search_results.len())
+                .checked_sub(1)
         };
         if let Some(idx) = previous {
             self.global_search_selected = idx;
@@ -840,7 +954,9 @@ impl App {
     }
 
     pub(crate) fn global_search_select_next_visible(&mut self) {
-        if self.move_global_search_header_selection(true) { return; }
+        if self.move_global_search_header_selection(true) {
+            return;
+        }
         self.global_search_selected_header = None;
         let len = self.global_search_results.len();
         if len == 0 || self.global_search_selected >= len.saturating_sub(1) {
@@ -850,8 +966,11 @@ impl App {
             return;
         }
         let next = if self.apply_global_search_collapsed_visibility() {
-            self.global_search_results.first_visible_from(self.global_search_selected + 1)
-        } else { Some(self.global_search_selected + 1) };
+            self.global_search_results
+                .first_visible_from(self.global_search_selected + 1)
+        } else {
+            Some(self.global_search_selected + 1)
+        };
         if let Some(idx) = next {
             self.global_search_selected = idx;
         } else if !self.is_global_search_result_visible(self.global_search_selected) {
@@ -860,7 +979,8 @@ impl App {
     }
 
     pub(crate) fn toggle_global_search_file_collapsed(&mut self, path: &Path) {
-        self.global_search_results.set_collapsed(path, !self.is_global_search_file_collapsed(path));
+        self.global_search_results
+            .set_collapsed(path, !self.is_global_search_file_collapsed(path));
         // Keep selection valid without revealing it: toggling a header must
         // preserve the viewport even when selection is offscreen or hidden.
         self.ensure_global_search_selection_visible();
@@ -882,7 +1002,8 @@ impl App {
         if self.global_search_results.is_empty() {
             return;
         }
-        self.global_search_results.set_all_collapsed(!self.all_global_search_files_collapsed());
+        self.global_search_results
+            .set_all_collapsed(!self.all_global_search_files_collapsed());
         self.ensure_global_search_selection_visible();
     }
 
@@ -904,8 +1025,11 @@ impl App {
         self.save_conflict = None;
         self.modal.kind = None;
         let message = message.into();
-        if self.workspace_visible { self.notify_error(message.clone()); }
-        else { self.record_workspace_event(message.clone(), crate::app_workspaces::Level::Attention); }
+        if self.workspace_visible {
+            self.notify_error(message.clone());
+        } else {
+            self.record_workspace_event(message.clone(), crate::app_workspaces::Level::Attention);
+        }
         self.status_message = "Save failed; your edits remain open.".into();
         self.save_error = Some(message);
     }
@@ -915,7 +1039,9 @@ impl App {
         self.notification_history.push((
             msg,
             level,
-            self.notification_history.last().map_or(0, |(_, _, sequence)| sequence.saturating_add(1)),
+            self.notification_history
+                .last()
+                .map_or(0, |(_, _, sequence)| sequence.saturating_add(1)),
         ));
         if self.notification_history.len() > 200 {
             self.notification_history.remove(0);
@@ -957,7 +1083,9 @@ impl App {
     }
 
     pub(crate) fn refresh_compare_diff(&mut self) {
-        if self.rendering_background_window { return; }
+        if self.rendering_background_window {
+            return;
+        }
         let algorithm = self.diff_algorithm;
         let algorithm_changed = self.diff_render_cache.algorithm != algorithm;
         // Live Source Control tabs refresh both revisions together. Fixed
@@ -979,7 +1107,9 @@ impl App {
         if !self.should_render_diff_for_active_editor() {
             return;
         }
-        if !self.workspace_visible { return; }
+        if !self.workspace_visible {
+            return;
+        }
 
         let Some(editor) = self.editor() else {
             return;
@@ -995,7 +1125,8 @@ impl App {
 
         let target_version = Some(editor.content_version);
         let base_revision = self.compare_base_revision();
-        if !algorithm_changed && self.compare_diff_target_version == target_version
+        if !algorithm_changed
+            && self.compare_diff_target_version == target_version
             && self.compare_diff_base_revision == Some(base_revision)
         {
             return;
@@ -1083,7 +1214,10 @@ impl App {
                     }
                 };
                 Ok(crate::background::PreparedDiffRefresh::new(
-                    base_content, &target_rope.to_string(), target.line_count, algorithm,
+                    base_content,
+                    &target_rope.to_string(),
+                    target.line_count,
+                    algorithm,
                 ))
             })();
             let _ = sender.send(crate::background::BackgroundResult::DiffRefresh {
@@ -1103,11 +1237,20 @@ impl App {
         target_path: std::path::PathBuf,
     ) {
         let base_name = crate::remote::workspace::display_name(&base_path).unwrap_or_else(|| {
-            base_path.file_name().and_then(|name| name.to_str()).unwrap_or("base").to_string()
+            base_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("base")
+                .to_string()
         });
-        let target_name = crate::remote::workspace::display_name(&target_path).unwrap_or_else(|| {
-            target_path.file_name().and_then(|name| name.to_str()).unwrap_or("target").to_string()
-        });
+        let target_name =
+            crate::remote::workspace::display_name(&target_path).unwrap_or_else(|| {
+                target_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("target")
+                    .to_string()
+            });
         self.open_file(&target_path);
         self.clear_diff_state();
         self.diff_labels = Some(crate::app::DiffLabels::new(
@@ -1130,7 +1273,9 @@ impl App {
             return false;
         };
         if base.editor.encoding == "Binary"
-            || self.editor().is_some_and(|editor| editor.encoding == "Binary")
+            || self
+                .editor()
+                .is_some_and(|editor| editor.encoding == "Binary")
         {
             self.reject_binary_diff();
             return false;
@@ -1179,7 +1324,8 @@ impl App {
             &compare_diff_lines,
             self.editor().map_or(0, |editor| editor.rope.len_lines()),
         );
-        let render_cache = crate::app::DiffRenderCache::with_algorithm(&compare_diff_lines, self.diff_algorithm);
+        let render_cache =
+            crate::app::DiffRenderCache::with_algorithm(&compare_diff_lines, self.diff_algorithm);
         self.apply_prepared_compare_diff(compare_diff_lines, render_cache, target_line_markers);
     }
 
@@ -1263,7 +1409,8 @@ impl App {
     }
 
     fn compare_has_binary_editor(&self) -> bool {
-        self.editor().is_some_and(|editor| editor.encoding == "Binary")
+        self.editor()
+            .is_some_and(|editor| editor.encoding == "Binary")
             || self.compare_base_path.as_ref().is_some_and(|base| {
                 self.tabs
                     .iter()
@@ -1309,7 +1456,8 @@ impl App {
     }
 
     pub(crate) fn has_diff_layout_preference(&self) -> bool {
-        self.settings_workspace.diff_side_by_side.is_some() || self.settings_global.diff_side_by_side.is_some()
+        self.settings_workspace.diff_side_by_side.is_some()
+            || self.settings_global.diff_side_by_side.is_some()
     }
 
     pub(crate) fn save_diff_layout_preference(&mut self) {
@@ -1323,17 +1471,22 @@ impl App {
         // overrides it. The currently selected Settings page is unrelated.
         let scope = if self.settings_workspace.diff_side_by_side.is_some() {
             crate::settings::SettingsScope::Workspace
-        } else { crate::settings::SettingsScope::Global };
-        if let Err(error) = self.patch_settings_scope(scope, "diffEditor.renderSideBySide", |settings| {
-            settings.diff_side_by_side = Some(side_by_side);
-        }) {
+        } else {
+            crate::settings::SettingsScope::Global
+        };
+        if let Err(error) =
+            self.patch_settings_scope(scope, "diffEditor.renderSideBySide", |settings| {
+                settings.diff_side_by_side = Some(side_by_side);
+            })
+        {
             self.notify_error(format!("Could not save diff layout: {error}"));
         }
     }
 
     pub(crate) fn clear_diff_state(&mut self) {
         self.clear_diff_selection();
-        self.diff_scope_source.forget_original_view(&mut self.animations);
+        self.diff_scope_source
+            .forget_original_view(&mut self.animations);
         self.diff_scope_source = Default::default();
         let diff_target_path = self.diff_target_path.clone();
         self.git_compare_generation = self.git_compare_generation.wrapping_add(1);
@@ -1392,10 +1545,13 @@ impl App {
             .send(Box::new(move || {
                 let _activity = activity.running();
                 let mut themes = crate::app_theme::load_builtin_themes();
-                crate::app_theme::merge_themes(&mut themes, crate::app_theme::load_external_themes());
-                let _ = sender.send(
-                    crate::background::BackgroundResult::ExternalThemesLoaded(themes),
+                crate::app_theme::merge_themes(
+                    &mut themes,
+                    crate::app_theme::load_external_themes(),
                 );
+                let _ = sender.send(crate::background::BackgroundResult::ExternalThemesLoaded(
+                    themes,
+                ));
             }))
             .is_err()
         {
@@ -1415,21 +1571,29 @@ impl App {
         let mut placeholder_changed = previous_theme != self.theme_key;
         if let Some(key) = self.startup_theme_placeholder.take()
             && !themes.iter().any(|theme| theme.config_key == key)
-            && let Some(placeholder) = self.loaded_themes.iter_mut().find(|theme| theme.config_key == key)
+            && let Some(placeholder) = self
+                .loaded_themes
+                .iter_mut()
+                .find(|theme| theme.config_key == key)
         {
             // Keep an unavailable user's theme choice intact on disk. The
             // fallback stays usable and no loading label remains indefinitely.
             placeholder.name = format!("Unavailable theme: {key}");
-            if self.theme_key == key { self.theme_name = placeholder.name.clone(); }
+            if self.theme_key == key {
+                self.theme_name = placeholder.name.clone();
+            }
             placeholder_changed = true;
         }
         // An unchanged startup theme must not invalidate syntax caches or
         // manufacture another frame when the background catalog arrives.
-        let themes: Vec<_> = themes.into_iter().filter(|incoming| {
-            !self.loaded_themes.iter().any(|loaded| loaded == incoming)
-        }).collect();
+        let themes: Vec<_> = themes
+            .into_iter()
+            .filter(|incoming| !self.loaded_themes.iter().any(|loaded| loaded == incoming))
+            .collect();
         if themes.is_empty() {
-            if placeholder_changed { self.refresh_palette_commands(); }
+            if placeholder_changed {
+                self.refresh_palette_commands();
+            }
             return placeholder_changed;
         }
 
@@ -1438,9 +1602,7 @@ impl App {
             .theme
             .clone()
             .unwrap_or_else(|| self.committed_theme_key().to_string());
-        let requested_arrived = themes
-            .iter()
-            .any(|theme| theme.config_key == requested_key);
+        let requested_arrived = themes.iter().any(|theme| theme.config_key == requested_key);
         let palette_was_active = self.palette.active;
         let previous_generation = self.highlighter.registry_generation();
         for theme in &themes {
@@ -1490,13 +1652,15 @@ impl App {
             .send(Box::new(move || {
                 let _activity = activity.running();
                 let result = refresh.run_with_cached(|loaded| {
-                    let _ = sender.send(crate::background::BackgroundResult::StartupSyntaxCacheLoaded {
-                        root: root.clone(), loaded,
-                    });
+                    let _ = sender.send(
+                        crate::background::BackgroundResult::StartupSyntaxCacheLoaded {
+                            root: root.clone(),
+                            loaded,
+                        },
+                    );
                 });
-                let _ = sender.send(
-                    crate::background::BackgroundResult::SyntaxAssetsLoaded { root, result },
-                );
+                let _ = sender
+                    .send(crate::background::BackgroundResult::SyntaxAssetsLoaded { root, result });
             }))
             .is_err()
         {
@@ -1531,7 +1695,9 @@ impl App {
         let loaded = match result {
             Ok(Some(loaded)) => loaded,
             Ok(None) => {
-                if explicit_reload { self.notify("Syntaxes reloaded"); }
+                if explicit_reload {
+                    self.notify("Syntaxes reloaded");
+                }
                 return was_running;
             }
             Err(error) => {
@@ -1554,7 +1720,10 @@ impl App {
         true
     }
 
-    pub(crate) fn apply_loaded_syntax_assets(&mut self, loaded: crate::highlight::LoadedSyntaxAssets) {
+    pub(crate) fn apply_loaded_syntax_assets(
+        &mut self,
+        loaded: crate::highlight::LoadedSyntaxAssets,
+    ) {
         self.highlighter.install_syntax_assets(loaded);
         self.refresh_scope_bubble_profiles();
         self.invalidate_visible_highlights();
@@ -1563,11 +1732,19 @@ impl App {
     }
 
     pub(crate) fn refresh_scope_bubble_profiles(&mut self) {
-        let rules = self.animation_settings.scope_languages
+        let rules = self
+            .animation_settings
+            .scope_languages
             .with_automatic(self.highlighter.scope_bubble_automatic());
         self.animation_settings.scope_languages = rules.clone();
-        for tab in self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs)) {
-            if tab.editor.scope_bubble_rules != rules { tab.editor.scope_bubble_rules = rules.clone(); }
+        for tab in self
+            .tabs
+            .iter_mut()
+            .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+        {
+            if tab.editor.scope_bubble_rules != rules {
+                tab.editor.scope_bubble_rules = rules.clone();
+            }
         }
     }
 
@@ -1579,11 +1756,14 @@ impl App {
             self.theme_name = tf.name.clone();
             self.syntax_theme = tf.syntax_theme.clone();
             let selected = crate::vscode_theme::customized_theme(
-                tf, &self.settings_effective.workbench_color_customizations,
+                tf,
+                &self.settings_effective.workbench_color_customizations,
             );
             self.colors = selected.to_theme_colors();
             if let Some(syntax) = selected.textmate_theme.clone() {
-                highlights_changed |= self.highlighter.register_theme(&selected.syntax_theme, syntax);
+                highlights_changed |= self
+                    .highlighter
+                    .register_theme(&selected.syntax_theme, syntax);
             }
             self.semantic_theme_colors = selected.semantic_colors.clone();
             // Every window paints from these colors. A preview in one window
@@ -1640,7 +1820,6 @@ impl App {
             self.clipboard_history.pop_front();
         }
     }
-
 }
 
 #[cfg(test)]
@@ -1818,7 +1997,12 @@ mod tests {
         app.palette.query.clear();
         app.update_palette_filter();
         assert_eq!(app.palette.filtered.len(), app.palette.commands.len());
-        assert!(app.palette.filtered.iter().any(|&index| app.palette.commands[index].id == "workspace_close"));
+        assert!(
+            app.palette
+                .filtered
+                .iter()
+                .any(|&index| app.palette.commands[index].id == "workspace_close")
+        );
     }
 
     #[test]
@@ -1963,7 +2147,8 @@ mod tests {
         app.global_search_results = vec![
             sample_global_search_result(0),
             sample_global_search_result(1),
-        ].into();
+        ]
+        .into();
         app.show_explorer = true;
         app.sidebar_view = SidebarView::Search;
 
@@ -1978,7 +2163,8 @@ mod tests {
         app.global_search_results = vec![
             sample_global_search_result(0),
             sample_global_search_result(1),
-        ].into();
+        ]
+        .into();
         // Collapse all first
         app.global_search_results.set_all_collapsed(true);
         assert!(app.all_global_search_files_collapsed());
@@ -1991,7 +2177,8 @@ mod tests {
         let mut app = App::test_new();
         app.global_search_results = vec![sample_global_search_result(0)].into();
         assert_eq!(app.global_search_all_files_toggle_label(), "⊟");
-        app.global_search_results.set_collapsed(Path::new("file-0.txt"), true);
+        app.global_search_results
+            .set_collapsed(Path::new("file-0.txt"), true);
         assert_eq!(app.global_search_all_files_toggle_label(), "⊞");
     }
 
@@ -2011,32 +2198,60 @@ mod tests {
     #[test]
     fn startup_theme_arrival_uses_workspace_choice_and_overrides() {
         let portable_base = tempfile::tempdir().unwrap();
-        let extension = portable_base.path().join(".vtcode/theme-extensions/publisher.theme");
+        let extension = portable_base
+            .path()
+            .join(".vtcode/theme-extensions/publisher.theme");
         std::fs::create_dir_all(&extension).unwrap();
-        std::fs::write(extension.join("package.json"), serde_json::json!({
-            "publisher":"publisher", "name":"theme", "contributes":{"themes":[
-                {"label":"Startup Light","uiTheme":"vs","path":"light.json"},
-                {"label":"Other variant","path":"missing.json"}
-            ]}
-        }).to_string()).unwrap();
-        std::fs::write(extension.join("light.json"), r##"{"colors":{"editor.background":"#ffffff","editor.foreground":"#010203"}}"##).unwrap();
+        std::fs::write(
+            extension.join("package.json"),
+            serde_json::json!({
+                "publisher":"publisher", "name":"theme", "contributes":{"themes":[
+                    {"label":"Startup Light","uiTheme":"vs","path":"light.json"},
+                    {"label":"Other variant","path":"missing.json"}
+                ]}
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            extension.join("light.json"),
+            r##"{"colors":{"editor.background":"#ffffff","editor.foreground":"#010203"}}"##,
+        )
+        .unwrap();
         let mut app = App::test_new();
         app.settings_global.theme = Some("dark".into());
         app.settings_workspace.theme = Some("vscode-publisher-theme-startup-light".into());
-        app.settings_workspace.workbench_color_customizations.insert("editor.background".into(), serde_json::json!("#efeee0"));
+        app.settings_workspace
+            .workbench_color_customizations
+            .insert("editor.background".into(), serde_json::json!("#efeee0"));
         app.apply_effective_settings();
-        let theme = crate::app_theme_loader::load_installed_theme(portable_base.path(), "vscode-publisher-theme-startup-light").unwrap();
+        let theme = crate::app_theme_loader::load_installed_theme(
+            portable_base.path(),
+            "vscode-publisher-theme-startup-light",
+        )
+        .unwrap();
         app.install_external_themes(vec![theme]);
         assert_eq!(app.theme_key, "vscode-publisher-theme-startup-light");
-        let background = ratatui::style::Color::Rgb(239,238,224);
+        let background = ratatui::style::Color::Rgb(239, 238, 224);
         assert_eq!(app.colors.bg_editor, background);
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80,24)).unwrap();
-        terminal.draw(|frame| crate::ui_welcome::draw_startup_screen(frame, frame.area(), &app.colors)).unwrap();
-        assert_eq!(terminal.backend().buffer().cell((0,0)).unwrap().bg, background);
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| crate::ui_welcome::draw_startup_screen(frame, frame.area(), &app.colors))
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer().cell((0, 0)).unwrap().bg,
+            background
+        );
 
         // The catalog arrives later with the original (un-customized) theme.
         // It must neither replace the applied overrides nor reset highlighting.
-        let loaded = app.loaded_themes.iter().find(|t| t.config_key == app.theme_key).unwrap().clone();
+        let loaded = app
+            .loaded_themes
+            .iter()
+            .find(|t| t.config_key == app.theme_key)
+            .unwrap()
+            .clone();
         let (_, before) = app.highlighter.shared_sets();
         assert!(!app.install_external_themes(vec![loaded]));
         let (_, after) = app.highlighter.shared_sets();
@@ -2050,12 +2265,17 @@ mod tests {
         let root = portable_base.path().join(".vtcode/theme-extensions");
         let extension = root.join("publisher.theme");
         std::fs::create_dir_all(&extension).unwrap();
-        std::fs::write(extension.join("package.json"), serde_json::json!({
-            "publisher":"publisher", "name":"theme", "contributes":{"themes":[
-                {"label":"Removed","path":"removed.json"},
-                {"label":"Remaining","path":"remaining.json"}
-            ]}
-        }).to_string()).unwrap();
+        std::fs::write(
+            extension.join("package.json"),
+            serde_json::json!({
+                "publisher":"publisher", "name":"theme", "contributes":{"themes":[
+                    {"label":"Removed","path":"removed.json"},
+                    {"label":"Remaining","path":"remaining.json"}
+                ]}
+            })
+            .to_string(),
+        )
+        .unwrap();
         let content = r##"{"colors":{"editor.background":"#ffffff"}}"##;
         std::fs::write(extension.join("removed.json"), content).unwrap();
         std::fs::write(extension.join("remaining.json"), content).unwrap();
@@ -2063,29 +2283,63 @@ mod tests {
         let mut app = App::test_new();
         app.settings_workspace.theme = Some("vscode-publisher-theme-removed".into());
         app.apply_effective_settings();
-        assert!(crate::app_theme_loader::load_installed_theme(portable_base.path(), "vscode-publisher-theme-removed").is_none());
+        assert!(
+            crate::app_theme_loader::load_installed_theme(
+                portable_base.path(),
+                "vscode-publisher-theme-removed"
+            )
+            .is_none()
+        );
         assert_eq!(app.theme_key, "dark");
         assert!(!app.install_external_themes(Vec::new()));
         assert!(!app.install_external_themes(crate::vscode_theme::load_extension_themes(&root)));
         assert_eq!(app.theme_key, "dark");
-        assert!(app.loaded_themes.iter().any(|theme| theme.config_key == "vscode-publisher-theme-remaining"));
-        assert!(!app.loaded_themes.iter().any(|theme| theme.config_key == "vscode-publisher-theme-removed"));
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
-        terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        assert!(
+            app.loaded_themes
+                .iter()
+                .any(|theme| theme.config_key == "vscode-publisher-theme-remaining")
+        );
+        assert!(
+            !app.loaded_themes
+                .iter()
+                .any(|theme| theme.config_key == "vscode-publisher-theme-removed")
+        );
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
     }
 
     #[test]
     fn theme_customizations_override_only_the_selected_surface() {
         let mut app = App::test_new();
         let mut settings = app.settings_effective.clone();
-        settings.workbench_color_customizations.insert("tab.activeForeground".into(), serde_json::json!("#123456"));
-        settings.workbench_color_customizations.insert("[Dark+]".into(), serde_json::json!({"editorLineNumber.foreground":"#654321"}));
+        settings
+            .workbench_color_customizations
+            .insert("tab.activeForeground".into(), serde_json::json!("#123456"));
+        settings.workbench_color_customizations.insert(
+            "[Dark+]".into(),
+            serde_json::json!({"editorLineNumber.foreground":"#654321"}),
+        );
         app.apply_settings(&settings);
-        assert_eq!(app.colors.ui.fg_tab_active, ratatui::style::Color::Rgb(18,52,86));
-        assert_eq!(app.colors.ui.fg_line_number, ratatui::style::Color::Rgb(101,67,33));
+        assert_eq!(
+            app.colors.ui.fg_tab_active,
+            ratatui::style::Color::Rgb(18, 52, 86)
+        );
+        assert_eq!(
+            app.colors.ui.fg_line_number,
+            ratatui::style::Color::Rgb(101, 67, 33)
+        );
         assert!(app.set_theme_by_key("light"));
-        assert_eq!(app.colors.ui.fg_tab_active, ratatui::style::Color::Rgb(18,52,86));
-        assert_ne!(app.colors.ui.fg_line_number, ratatui::style::Color::Rgb(101,67,33));
+        assert_eq!(
+            app.colors.ui.fg_tab_active,
+            ratatui::style::Color::Rgb(18, 52, 86)
+        );
+        assert_ne!(
+            app.colors.ui.fg_line_number,
+            ratatui::style::Color::Rgb(101, 67, 33)
+        );
     }
 
     #[test]
@@ -2164,8 +2418,16 @@ mod tests {
                 let root = tempfile::tempdir().unwrap();
                 let base = root.path().join("base.dat");
                 let target = root.path().join("target.dat");
-                let base_content: &[u8] = if binary_base { b"base\0data" } else { b"base text\n" };
-                let target_content: &[u8] = if binary_base { b"target text\n" } else { b"target\0data" };
+                let base_content: &[u8] = if binary_base {
+                    b"base\0data"
+                } else {
+                    b"base text\n"
+                };
+                let target_content: &[u8] = if binary_base {
+                    b"target text\n"
+                } else {
+                    b"target\0data"
+                };
                 std::fs::write(&base, base_content).unwrap();
                 std::fs::write(&target, target_content).unwrap();
                 let mut app = App::new(root.path().to_path_buf());
@@ -2189,9 +2451,11 @@ mod tests {
                 assert!(!app.should_render_diff_for_active_editor());
                 assert!(app.diff_mode == DiffMode::Off);
                 assert!(app.compare_diff_lines.is_empty());
-                assert!(app.notification_history.iter().any(|notice| {
-                    notice.0 == BINARY_DIFF_MESSAGE
-                }));
+                assert!(
+                    app.notification_history
+                        .iter()
+                        .any(|notice| { notice.0 == BINARY_DIFF_MESSAGE })
+                );
             }
         }
     }
@@ -2398,7 +2662,10 @@ mod tests {
         assert_eq!(app.diff_labels, None);
         assert_eq!(app.diff_target_path, None);
         assert_eq!(app.compare_base_path, None);
-        assert_eq!(app.selected_compare_path, Some(PathBuf::from("selected.rs")));
+        assert_eq!(
+            app.selected_compare_path,
+            Some(PathBuf::from("selected.rs"))
+        );
         assert_eq!(app.compare_base_content, None);
         assert!(app.compare_diff_lines.is_empty());
         assert!(app.diff_render_cache.rows.is_empty());

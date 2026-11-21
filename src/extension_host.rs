@@ -3,12 +3,11 @@ use std::path::Path;
 use wasmtime::{Caller, Linker};
 
 use crate::extension_manifest::{
-    parse_file_open_extensions, ExtensionDiagnostic, ExtensionTickHandler, TextEditRequest,
+    ExtensionDiagnostic, ExtensionTickHandler, TextEditRequest, parse_file_open_extensions,
 };
 use crate::extension_wasm::{
-    collect_workspace_file_bytes, host_overlay_entry_mut,
-    host_view_entry_mut, load_extension_setting, read_guest_string, save_extension_setting,
-    write_guest_bytes, HostState,
+    HostState, collect_workspace_file_bytes, host_overlay_entry_mut, host_view_entry_mut,
+    load_extension_setting, read_guest_string, save_extension_setting, write_guest_bytes,
 };
 
 /// Clamp a `usize` length to `i32` range for WASM interface boundaries.
@@ -164,16 +163,13 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
                 let id = read_guest_string(&mut caller, id_ptr, id_len);
                 let content = read_guest_string(&mut caller, content_ptr, content_len);
                 if let (Some(id), Some(content)) = (id, content) {
-                    if let Some(existing) =
-                        caller.data_mut().views.get_mut(&id)
-                    {
+                    if let Some(existing) = caller.data_mut().views.get_mut(&id) {
                         existing.content = content;
                     }
                 }
             },
         )
         .map_err(|err| format!("Failed defining host_set_view_content: {err}"))?;
-
 
     linker
         .func_wrap(
@@ -331,10 +327,15 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
             "host_context_target_size",
             |caller: Caller<'_, HostState>| -> i32 {
                 let host = caller.data();
-                host.command_context_bytes.as_ref().map(|bytes| len_as_i32(bytes.len()))
-                    .or_else(|| host.command_context_path.as_ref()
-                        .and_then(|path| std::fs::metadata(path).ok())
-                        .map(|metadata| metadata.len().min(i32::MAX as u64) as i32))
+                host.command_context_bytes
+                    .as_ref()
+                    .map(|bytes| len_as_i32(bytes.len()))
+                    .or_else(|| {
+                        host.command_context_path
+                            .as_ref()
+                            .and_then(|path| std::fs::metadata(path).ok())
+                            .map(|metadata| metadata.len().min(i32::MAX as u64) as i32)
+                    })
                     .unwrap_or(-1)
             },
         )
@@ -348,7 +349,9 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
                 if offset < 0 || ptr < 0 || max_len <= 0 {
                     return -1;
                 }
-                if max_len > 1024 * 1024 { return -1; }
+                if max_len > 1024 * 1024 {
+                    return -1;
+                }
                 let slice = if let Some(bytes) = caller.data().command_context_bytes.as_ref() {
                     let start = offset as usize;
                     if start >= bytes.len() {
@@ -358,11 +361,19 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
                     bytes[start..end].to_vec()
                 } else {
                     use std::io::{Read, Seek, SeekFrom};
-                    let Some(path) = caller.data().command_context_path.as_ref() else { return -1; };
-                    let Ok(mut file) = std::fs::File::open(path) else { return -1; };
-                    if file.seek(SeekFrom::Start(offset as u64)).is_err() { return -1; }
+                    let Some(path) = caller.data().command_context_path.as_ref() else {
+                        return -1;
+                    };
+                    let Ok(mut file) = std::fs::File::open(path) else {
+                        return -1;
+                    };
+                    if file.seek(SeekFrom::Start(offset as u64)).is_err() {
+                        return -1;
+                    }
                     let mut bytes = vec![0; max_len as usize];
-                    let Ok(count) = file.read(&mut bytes) else { return -1; };
+                    let Ok(count) = file.read(&mut bytes) else {
+                        return -1;
+                    };
                     bytes.truncate(count);
                     bytes
                 };
@@ -453,8 +464,12 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
                 let Some(destination_end) = (ptr as usize).checked_add(end - start) else {
                     return -1;
                 };
-                let Some(destination) = memory.data_mut(&mut caller)
-                    .get_mut(ptr as usize..destination_end) else { return -1; };
+                let Some(destination) = memory
+                    .data_mut(&mut caller)
+                    .get_mut(ptr as usize..destination_end)
+                else {
+                    return -1;
+                };
                 buffer.copy_range_into(start, destination);
                 len_as_i32(end - start)
             },
@@ -602,14 +617,18 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
         .map_err(|err| format!("Failed defining host_read_workspace_files: {err}"))?;
 
     linker
-        .func_wrap("vtcode", "host_current_view_event_len", |caller: Caller<'_, HostState>| {
-            caller
-                .data()
-                .current_view_event
-                .as_ref()
-                .map(|value| len_as_i32(value.len()))
-                .unwrap_or(0)
-        })
+        .func_wrap(
+            "vtcode",
+            "host_current_view_event_len",
+            |caller: Caller<'_, HostState>| {
+                caller
+                    .data()
+                    .current_view_event
+                    .as_ref()
+                    .map(|value| len_as_i32(value.len()))
+                    .unwrap_or(0)
+            },
+        )
         .map_err(|err| format!("Failed defining host_current_view_event_len: {err}"))?;
 
     linker
@@ -682,9 +701,7 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
                 let id = read_guest_string(&mut caller, id_ptr, id_len);
                 let content = read_guest_string(&mut caller, content_ptr, content_len);
                 if let (Some(id), Some(content)) = (id, content) {
-                    if let Some(existing) =
-                        caller.data_mut().overlays.get_mut(&id)
-                    {
+                    if let Some(existing) = caller.data_mut().overlays.get_mut(&id) {
                         existing.content = content;
                     }
                 }
@@ -762,8 +779,13 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
                     if export.trim().is_empty() {
                         return;
                     }
-                    caller.data_mut().tick_handlers.retain(|handler| handler.export_name != export);
-                    if interval_ms <= 0 { return; }
+                    caller
+                        .data_mut()
+                        .tick_handlers
+                        .retain(|handler| handler.export_name != export);
+                    if interval_ms <= 0 {
+                        return;
+                    }
                     caller.data_mut().tick_handlers.push(ExtensionTickHandler {
                         export_name: export.trim().to_string(),
                         interval_ms: interval_ms as u32,
@@ -778,15 +800,23 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
         .func_wrap(
             "vtcode",
             "host_insert_text",
-            |mut caller: Caller<'_, HostState>, line: i32, col: i32, text_ptr: i32, text_len: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>,
+             line: i32,
+             col: i32,
+             text_ptr: i32,
+             text_len: i32|
+             -> i32 {
                 let text = read_guest_string(&mut caller, text_ptr, text_len);
                 if let Some(text) = text {
                     if line >= 0 && col >= 0 {
-                        caller.data_mut().text_edit_requests.push(TextEditRequest::InsertText {
-                            line: line as usize,
-                            col: col as usize,
-                            text,
-                        });
+                        caller
+                            .data_mut()
+                            .text_edit_requests
+                            .push(TextEditRequest::InsertText {
+                                line: line as usize,
+                                col: col as usize,
+                                text,
+                            });
                         return 0;
                     }
                 }
@@ -799,14 +829,22 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
         .func_wrap(
             "vtcode",
             "host_delete_range",
-            |mut caller: Caller<'_, HostState>, start_line: i32, start_col: i32, end_line: i32, end_col: i32| -> i32 {
+            |mut caller: Caller<'_, HostState>,
+             start_line: i32,
+             start_col: i32,
+             end_line: i32,
+             end_col: i32|
+             -> i32 {
                 if start_line >= 0 && start_col >= 0 && end_line >= 0 && end_col >= 0 {
-                    caller.data_mut().text_edit_requests.push(TextEditRequest::DeleteRange {
-                        start_line: start_line as usize,
-                        start_col: start_col as usize,
-                        end_line: end_line as usize,
-                        end_col: end_col as usize,
-                    });
+                    caller
+                        .data_mut()
+                        .text_edit_requests
+                        .push(TextEditRequest::DeleteRange {
+                            start_line: start_line as usize,
+                            start_col: start_col as usize,
+                            end_line: end_line as usize,
+                            end_col: end_col as usize,
+                        });
                     0
                 } else {
                     -1
@@ -822,7 +860,10 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
             |mut caller: Caller<'_, HostState>, text_ptr: i32, text_len: i32| -> i32 {
                 let text = read_guest_string(&mut caller, text_ptr, text_len);
                 if let Some(text) = text {
-                    caller.data_mut().text_edit_requests.push(TextEditRequest::ReplaceSelection { text });
+                    caller
+                        .data_mut()
+                        .text_edit_requests
+                        .push(TextEditRequest::ReplaceSelection { text });
                     0
                 } else {
                     -1
@@ -836,23 +877,31 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
             "vtcode",
             "host_publish_diagnostic",
             |mut caller: Caller<'_, HostState>,
-             file_ptr: i32, file_len: i32,
-             line: i32, col: i32,
-             end_line: i32, end_col: i32,
+             file_ptr: i32,
+             file_len: i32,
+             line: i32,
+             col: i32,
+             end_line: i32,
+             end_col: i32,
              severity: i32,
-             message_ptr: i32, message_len: i32| -> i32 {
+             message_ptr: i32,
+             message_len: i32|
+             -> i32 {
                 let file = read_guest_string(&mut caller, file_ptr, file_len);
                 let message = read_guest_string(&mut caller, message_ptr, message_len);
                 if let (Some(file), Some(message)) = (file, message) {
-                    caller.data_mut().extension_diagnostics.push(ExtensionDiagnostic {
-                        file,
-                        line: line.max(0) as usize,
-                        col: col.max(0) as usize,
-                        end_line: end_line.max(0) as usize,
-                        end_col: end_col.max(0) as usize,
-                        severity: (severity.clamp(1, 4)) as u8,
-                        message,
-                    });
+                    caller
+                        .data_mut()
+                        .extension_diagnostics
+                        .push(ExtensionDiagnostic {
+                            file,
+                            line: line.max(0) as usize,
+                            col: col.max(0) as usize,
+                            end_line: end_line.max(0) as usize,
+                            end_col: end_col.max(0) as usize,
+                            severity: (severity.clamp(1, 4)) as u8,
+                            message,
+                        });
                     0
                 } else {
                     -1
@@ -885,7 +934,8 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
              key_ptr: i32,
              key_len: i32,
              value_ptr: i32,
-             value_len: i32| -> i32 {
+             value_len: i32|
+             -> i32 {
                 let key = match read_guest_string(&mut caller, key_ptr, key_len) {
                     Some(k) if !k.trim().is_empty() => k,
                     _ => return -1,
@@ -912,7 +962,8 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
              key_ptr: i32,
              key_len: i32,
              value_ptr: i32,
-             max_len: i32| -> i32 {
+             max_len: i32|
+             -> i32 {
                 let key = match read_guest_string(&mut caller, key_ptr, key_len) {
                     Some(k) if !k.trim().is_empty() => k,
                     _ => return -1,
@@ -929,7 +980,9 @@ pub(crate) fn define_host_functions(linker: &mut Linker<HostState>) -> Result<()
                         }
                         let bytes = value.as_bytes();
                         let write_len = bytes.len().min(max_len as usize);
-                        if write_guest_bytes(&mut caller, value_ptr as usize, &bytes[..write_len]).is_err() {
+                        if write_guest_bytes(&mut caller, value_ptr as usize, &bytes[..write_len])
+                            .is_err()
+                        {
                             return -1;
                         }
                         write_len as i32
@@ -960,7 +1013,9 @@ mod tests {
         ] {
             let module = wasmtime::Module::new(
                 &engine,
-                format!(r#"(module (import "vtcode" "{name}" (func (param {params}) (result i32))))"#),
+                format!(
+                    r#"(module (import "vtcode" "{name}" (func (param {params}) (result i32))))"#
+                ),
             )
             .unwrap();
             let error = linker.instantiate(&mut store, &module).unwrap_err();

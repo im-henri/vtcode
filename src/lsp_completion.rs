@@ -65,8 +65,12 @@ impl LspManager {
             return;
         };
         if let Some(original) = completion.original_item.as_mut() {
-            if item.documentation.is_some() { original.documentation = item.documentation.clone(); }
-            if item.label_details.is_some() { original.label_details = item.label_details.clone(); }
+            if item.documentation.is_some() {
+                original.documentation = item.documentation.clone();
+            }
+            if item.label_details.is_some() {
+                original.label_details = item.label_details.clone();
+            }
         }
         if let Some(documentation) = item.documentation {
             completion.documentation = Some(match documentation {
@@ -99,10 +103,18 @@ pub(crate) fn prepare_completions(
             items.retain(|item| {
                 let mut remaining = query.chars();
                 let mut wanted = remaining.next();
-                for ch in item.filter_text.as_deref().unwrap_or(&item.label).chars().flat_map(char::to_lowercase) {
+                for ch in item
+                    .filter_text
+                    .as_deref()
+                    .unwrap_or(&item.label)
+                    .chars()
+                    .flat_map(char::to_lowercase)
+                {
                     if wanted == Some(ch) {
                         wanted = remaining.next();
-                        if wanted.is_none() { return true; }
+                        if wanted.is_none() {
+                            return true;
+                        }
                     }
                 }
                 false
@@ -211,13 +223,32 @@ mod tests {
 
     #[test]
     fn prepared_completions_filter_unrelated_rows_but_keep_fuzzy_and_unicode_matches() {
-        let items = || vec![
-            CompletionItem { label: "Étoile_buffer".into(), sort_text: Some("1".into()), ..Default::default() },
-            CompletionItem { label: "different label".into(), filter_text: Some("éB".into()), sort_text: Some("0".into()), ..Default::default() },
-            CompletionItem { label: "unrelated".into(), ..Default::default() },
-        ];
-        assert_eq!(prepare_completions(items(), Some("Éb")).iter().map(|item| item.label.as_str()).collect::<Vec<_>>(),
-            ["different label", "Étoile_buffer"]);
+        let items = || {
+            vec![
+                CompletionItem {
+                    label: "Étoile_buffer".into(),
+                    sort_text: Some("1".into()),
+                    ..Default::default()
+                },
+                CompletionItem {
+                    label: "different label".into(),
+                    filter_text: Some("éB".into()),
+                    sort_text: Some("0".into()),
+                    ..Default::default()
+                },
+                CompletionItem {
+                    label: "unrelated".into(),
+                    ..Default::default()
+                },
+            ]
+        };
+        assert_eq!(
+            prepare_completions(items(), Some("Éb"))
+                .iter()
+                .map(|item| item.label.as_str())
+                .collect::<Vec<_>>(),
+            ["different label", "Étoile_buffer"]
+        );
         assert_eq!(prepare_completions(items(), Some("")).len(), 3);
         assert!(prepare_completions(items(), Some("missing")).is_empty());
     }

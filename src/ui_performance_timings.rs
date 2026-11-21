@@ -71,7 +71,10 @@ fn lines(app: &App, width: usize, p: Palette, now: Instant) -> Vec<Line<'static>
         Line::styled("UI RESPONSIVENESS", p.heading),
         Line::styled("Wall time includes OS scheduling delays.", p.dim),
         Line::styled("Input to draw starts at dispatch, not keypress.", p.dim),
-        Line::styled("Terminal diff/output includes console waits, not terminal paint.", p.dim),
+        Line::styled(
+            "Terminal diff/output includes console waits, not terminal paint.",
+            p.dim,
+        ),
         Line::styled("P95: last 120 calls; peak/count: since reset.", p.dim),
     ];
     if width >= 70 {
@@ -101,10 +104,22 @@ fn lines(app: &App, width: usize, p: Palette, now: Instant) -> Vec<Line<'static>
     crate::terminal_input_batch::with_delivery_timings(|delivery| {
         rows.push(Line::raw(""));
         rows.push(Line::styled("WINDOWS INPUT DELIVERY", p.heading));
-        rows.push(Line::styled("Queue age: decoding through first UI dequeue, including batching.", p.dim));
-        rows.push(Line::styled("Drag queue includes samples coalesced by the UI.", p.dim));
-        rows.push(Line::styled("Press delivery: matched physical hook to terminal decoding.", p.dim));
-        rows.push(Line::styled("Press samples do not measure physical drag delivery or screen paint.", p.dim));
+        rows.push(Line::styled(
+            "Queue age: decoding through first UI dequeue, including batching.",
+            p.dim,
+        ));
+        rows.push(Line::styled(
+            "Drag queue includes samples coalesced by the UI.",
+            p.dim,
+        ));
+        rows.push(Line::styled(
+            "Press delivery: matched physical hook to terminal decoding.",
+            p.dim,
+        ));
+        rows.push(Line::styled(
+            "Press samples do not measure physical drag delivery or screen paint.",
+            p.dim,
+        ));
         for (label, timing) in delivery_rows(delivery) {
             timing_row(&mut rows, label, timing, width, p);
         }
@@ -283,9 +298,13 @@ pub(super) fn append_report(text: &mut String, app: &App, now: Instant) {
             if count == 0 {
                 let _ = writeln!(text, "{label}: not measured");
             } else {
-                let _ = writeln!(text,
+                let _ = writeln!(
+                    text,
                     "{label}: {:.3}ms last; {p95:.3}ms P95 ({count} recent); {:.3}ms peak; {} calls",
-                    series.last_ms, series.peak_ms, series.sample_count());
+                    series.last_ms,
+                    series.peak_ms,
+                    series.sample_count()
+                );
             }
         }
     });
@@ -332,7 +351,9 @@ pub(super) fn append_report(text: &mut String, app: &App, now: Instant) {
 }
 
 #[cfg(windows)]
-fn delivery_rows(delivery: &crate::terminal_input_batch::DeliveryTimings) -> [(&'static str, &RenderTiming); 3] {
+fn delivery_rows(
+    delivery: &crate::terminal_input_batch::DeliveryTimings,
+) -> [(&'static str, &RenderTiming); 3] {
     [
         ("Decoded input queue", &delivery.queue),
         ("Decoded drag queue", &delivery.drag_queue),

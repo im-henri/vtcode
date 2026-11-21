@@ -1,14 +1,24 @@
 //! Chronological native-code probes use the active file up to the caret.
 use super::*;
-use std::{collections::BTreeMap, path::PathBuf, time::{Duration, Instant}};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 const FILES: &[&str] = &[
-    "animation_config.rs", "animation_inline_scope_tests.rs",
-    "animation_language_scope_tests.rs", "animation_multicursor_tests.rs",
-    "animation_pacing.rs", "animation_preprocessor_scope_tests.rs",
-    "animation_scope.rs", "animation_scope_blame_tests.rs",
-    "animation_scope_checkpoints.rs", "animation_scope_edit_tests.rs",
-    "animation_scope_edits.rs", "animation_scope_indentation.rs",
+    "animation_config.rs",
+    "animation_inline_scope_tests.rs",
+    "animation_language_scope_tests.rs",
+    "animation_multicursor_tests.rs",
+    "animation_pacing.rs",
+    "animation_preprocessor_scope_tests.rs",
+    "animation_scope.rs",
+    "animation_scope_blame_tests.rs",
+    "animation_scope_checkpoints.rs",
+    "animation_scope_edit_tests.rs",
+    "animation_scope_edits.rs",
+    "animation_scope_indentation.rs",
     "animation_scope_preprocessor.rs",
 ];
 
@@ -21,14 +31,18 @@ fn percentile(samples: &mut [u128], percent: usize) -> f64 {
 #[ignore = "native vtcode editing replay, quality and real interactive-worker latency"]
 fn benchmark_vtcode_editing_replay() {
     use sha2::{Digest, Sha256};
-    let source = std::env::var_os("VTCODE_CAPACITY_SOURCE").map(PathBuf::from)
+    let source = std::env::var_os("VTCODE_CAPACITY_SOURCE")
+        .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src"));
-    let files: Vec<_> = FILES.iter().map(|&name| {
-        (name, std::fs::read_to_string(source.join(name)).unwrap())
-    }).collect();
+    let files: Vec<_> = FILES
+        .iter()
+        .map(|&name| (name, std::fs::read_to_string(source.join(name)).unwrap()))
+        .collect();
     let mut digest = Sha256::new();
     for (name, text) in &files {
-        digest.update(name.as_bytes()); digest.update([0]); digest.update(text.as_bytes());
+        digest.update(name.as_bytes());
+        digest.update([0]);
+        digest.update(text.as_bytes());
     }
     let directory = tempfile::tempdir().unwrap();
     let background = crate::background::BackgroundWorkers::new();
@@ -37,7 +51,8 @@ fn benchmark_vtcode_editing_replay() {
     let mut queued_us = Vec::new();
     let mut cold_us = Vec::new();
     let mut rows = Vec::new();
-    let (mut top1, mut top5, mut recall, mut unwanted, mut negatives, mut limited) = (0,0,0,0,0,0);
+    let (mut top1, mut top5, mut recall, mut unwanted, mut negatives, mut limited) =
+        (0, 0, 0, 0, 0, 0);
     for (document, (name, text)) in files.iter().enumerate() {
         let root = directory.path().join(format!("session{document}"));
         let options = PopupOptions::default();
@@ -52,7 +67,9 @@ fn benchmark_vtcode_editing_replay() {
                     probes.push((offset, token));
                 }
             }
-            if !token.is_empty() { *seen.entry(token).or_default() += 1; }
+            if !token.is_empty() {
+                *seen.entry(token).or_default() += 1;
+            }
             offset += word.len();
         }
         // Evenly spaced, outcome-independent selection over every source file.
@@ -66,16 +83,34 @@ fn benchmark_vtcode_editing_replay() {
             let line = rope.len_lines() - 1;
             let active = VtCompleteSnapshot {
                 source: crate::completion_source::Source::new(Some(&root.join(name)), "Rust"),
-                cursor_line: line, cursor_col: rope.line(line).len_chars(), rope,
+                cursor_line: line,
+                cursor_col: rope.line(line).len_chars(),
+                rope,
                 document_id: document as u64 + 1,
             };
             recall::begin_trace(Some(expected));
             let started = Instant::now();
-            let result = compute_contextual_invoked(&active, prefix, "Rust", &options, &mut cache, false, || false).unwrap();
+            let result = compute_contextual_invoked(
+                &active,
+                prefix,
+                "Rust",
+                &options,
+                &mut cache,
+                false,
+                || false,
+            )
+            .unwrap();
             let elapsed = started.elapsed().as_nanos();
-            if number == 0 { cold_us.push(elapsed); } else { direct_us.push(elapsed); }
+            if number == 0 {
+                cold_us.push(elapsed);
+            } else {
+                direct_us.push(elapsed);
+            }
             let found = recall::candidate_recalled();
-            let rank = result.suggestions.iter().position(|word| word.trim_end_matches("()") == expected);
+            let rank = result
+                .suggestions
+                .iter()
+                .position(|word| word.trim_end_matches("()") == expected);
             top1 += usize::from(rank == Some(0));
             top5 += usize::from(rank.is_some_and(|rank| rank < 5));
             recall += usize::from(found);
@@ -83,22 +118,50 @@ fn benchmark_vtcode_editing_replay() {
             rows.push(serde_json::json!({"file":name,"offset":offset,"expected":expected,"rank":rank,"recalled":found}));
             let generation = rows.len() as u64;
             let started = Instant::now();
-            queue.submit(VtCompleteRequest {
-                edit_baseline: None,
-                active: active.clone(), options: PopupOptions::default(), explicit: false,
-                language: "Rust".into(), generation, active_group: 0, active_tab: 0,
-                content_version: generation, cancel: CancellationToken::new(), sender: background.sender.clone(),
-            }, background.interactive_sender());
-            let result = background.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+            queue.submit(
+                VtCompleteRequest {
+                    edit_baseline: None,
+                    active: active.clone(),
+                    options: PopupOptions::default(),
+                    explicit: false,
+                    language: "Rust".into(),
+                    generation,
+                    active_group: 0,
+                    active_tab: 0,
+                    content_version: generation,
+                    cancel: CancellationToken::new(),
+                    sender: background.sender.clone(),
+                },
+                background.interactive_sender(),
+            );
+            let result = background
+                .receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
             let elapsed = started.elapsed().as_nanos();
-            assert!(matches!(result, BackgroundResult::VtComplete {generation: received, ..} if received == generation));
-            if number != 0 { queued_us.push(elapsed); }
+            assert!(
+                matches!(result, BackgroundResult::VtComplete {generation: received, ..} if received == generation)
+            );
+            if number != 0 {
+                queued_us.push(elapsed);
+            }
             if number % 10 == 0 {
                 let mut negative = active;
-                negative.rope.insert(negative.rope.len_chars(), "zzzznonexistent");
+                negative
+                    .rope
+                    .insert(negative.rope.len_chars(), "zzzznonexistent");
                 negative.cursor_col += "zzzznonexistent".len();
                 let absent = format!("{prefix}zzzznonexistent");
-                let result = compute_contextual_invoked(&negative, &absent, "Rust", &options, &mut cache, false, || false).unwrap();
+                let result = compute_contextual_invoked(
+                    &negative,
+                    &absent,
+                    "Rust",
+                    &options,
+                    &mut cache,
+                    false,
+                    || false,
+                )
+                .unwrap();
                 negatives += 1;
                 unwanted += usize::from(!result.suggestions.is_empty());
             }

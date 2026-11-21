@@ -39,7 +39,14 @@ pub(crate) fn sources(
     repository: Option<RemotePath>,
     staged: bool,
 ) -> io::Result<Sources> {
-    read_sources(root, file, repository, staged, None, Some(MAX_PAYLOAD_BYTES / 4))
+    read_sources(
+        root,
+        file,
+        repository,
+        staged,
+        None,
+        Some(MAX_PAYLOAD_BYTES / 4),
+    )
 }
 
 pub(crate) fn native_sources(
@@ -80,7 +87,11 @@ fn read_sources(
         return Err(io::Error::other("No changes found"));
     }
     let document = if let Some(rope) = live {
-        service::Document { rope: rope.clone(), encoding: "UTF-8", revision: super::revision(rope, "UTF-8") }
+        service::Document {
+            rope: rope.clone(),
+            encoding: "UTF-8",
+            revision: super::revision(rope, "UTF-8"),
+        }
     } else {
         service::read_document(&native)?.0
     };
@@ -102,7 +113,8 @@ fn read_sources(
         // deletion and must not be replaced with another disk read.
         String::new()
     } else {
-        let mut command = crate::git_repositories::git_command(&workdir).map_err(io::Error::other)?;
+        let mut command =
+            crate::git_repositories::git_command(&workdir).map_err(io::Error::other)?;
         command.args([
             "--literal-pathspecs",
             "diff",
@@ -119,7 +131,9 @@ fn read_sources(
         }
         let output = command.arg("--").arg(&relative).output()?;
         if !output.status.success() {
-            return Err(io::Error::other(String::from_utf8_lossy(&output.stderr).into_owned()));
+            return Err(io::Error::other(
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ));
         }
         String::from_utf8(output.stdout).map_err(io::Error::other)?
     };
@@ -134,8 +148,11 @@ fn read_sources(
 }
 
 pub(crate) fn prepare_target(
-    sources: Sources, staged: bool, live: Option<&ropey::Rope>,
-    target: crate::ui_hunk_peek::PeekTarget, tab_size: usize,
+    sources: Sources,
+    staged: bool,
+    live: Option<&ropey::Rope>,
+    target: crate::ui_hunk_peek::PeekTarget,
+    tab_size: usize,
 ) -> Result<Option<crate::ui_hunk_peek::HunkPeek>, String> {
     use crate::ui_hunk_peek::{HunkPeek, PeekTarget};
     let normalize = |text: String| {
@@ -147,57 +164,75 @@ pub(crate) fn prepare_target(
     };
     let index = normalize(sources.index);
     let worktree = normalize(live.map_or(sources.worktree, ropey::Rope::to_string));
-    let mut peek =
-        if !staged && (live.is_some() || (sources.patch.is_empty() && !sources.trackable)) {
-            let Some(peek) = HunkPeek::from_texts_at(&index, &worktree, target, tab_size)? else { return Ok(None); };
-            peek
-        } else {
-            let Some(patch) = parse_git_file_patch(&sources.patch) else { return Ok(None); };
-            let equal: Vec<_> = if staged {
-                similar::TextDiff::from_lines(&index, &worktree)
-                    .ops()
-                    .iter()
-                    .filter_map(|op| match *op {
-                        similar::DiffOp::Equal {
-                            old_index,
-                            new_index,
-                            len,
-                        } => Some((old_index, new_index, len)),
-                        _ => None,
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            let text = if staged { &index } else { &worktree };
-            let mut peek = match target {
-                PeekTarget::Line(line) | PeekTarget::InsertedLine(line) => {
-                    let mapped = equal.iter().find_map(|&(old, new, len)| {
-                        (line >= new && line < new + len).then(|| old + line - new)
-                    });
-                    let mapped = if staged {
-                        let Some(mapped) = mapped.or_else(|| (index == worktree).then_some(line)) else { return Ok(None); };
-                        mapped
-                    } else { line };
-                    let selection = if staged { PeekTarget::Line(mapped) } else { target };
-                    let Some(peek) = HunkPeek::for_target(&patch, text, selection, tab_size)? else { return Ok(None); };
-                    peek
-                }
-                PeekTarget::Hunk(_) => HunkPeek::for_target(&patch, text, target, tab_size)?.unwrap(),
-            };
-            if staged {
-                for hunk in &mut peek.hunks {
-                    hunk.action_line = hunk.action_line.and_then(|line| {
-                        let range = equal.partition_point(|&(old, _, len)| old + len <= line);
-                        equal.get(range).and_then(|&(old, new, _)| (line >= old).then(|| new + line - old))
-                    });
-                }
-            }
-            if staged && let PeekTarget::Line(line) | PeekTarget::InsertedLine(line) = target {
-                peek.hunks[peek.selected].action_line = Some(line);
-            }
-            peek
+    let mut peek = if !staged
+        && (live.is_some() || (sources.patch.is_empty() && !sources.trackable))
+    {
+        let Some(peek) = HunkPeek::from_texts_at(&index, &worktree, target, tab_size)? else {
+            return Ok(None);
         };
+        peek
+    } else {
+        let Some(patch) = parse_git_file_patch(&sources.patch) else {
+            return Ok(None);
+        };
+        let equal: Vec<_> = if staged {
+            similar::TextDiff::from_lines(&index, &worktree)
+                .ops()
+                .iter()
+                .filter_map(|op| match *op {
+                    similar::DiffOp::Equal {
+                        old_index,
+                        new_index,
+                        len,
+                    } => Some((old_index, new_index, len)),
+                    _ => None,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let text = if staged { &index } else { &worktree };
+        let mut peek = match target {
+            PeekTarget::Line(line) | PeekTarget::InsertedLine(line) => {
+                let mapped = equal.iter().find_map(|&(old, new, len)| {
+                    (line >= new && line < new + len).then(|| old + line - new)
+                });
+                let mapped = if staged {
+                    let Some(mapped) = mapped.or_else(|| (index == worktree).then_some(line))
+                    else {
+                        return Ok(None);
+                    };
+                    mapped
+                } else {
+                    line
+                };
+                let selection = if staged {
+                    PeekTarget::Line(mapped)
+                } else {
+                    target
+                };
+                let Some(peek) = HunkPeek::for_target(&patch, text, selection, tab_size)? else {
+                    return Ok(None);
+                };
+                peek
+            }
+            PeekTarget::Hunk(_) => HunkPeek::for_target(&patch, text, target, tab_size)?.unwrap(),
+        };
+        if staged {
+            for hunk in &mut peek.hunks {
+                hunk.action_line = hunk.action_line.and_then(|line| {
+                    let range = equal.partition_point(|&(old, _, len)| old + len <= line);
+                    equal
+                        .get(range)
+                        .and_then(|&(old, new, _)| (line >= old).then(|| new + line - old))
+                });
+            }
+        }
+        if staged && let PeekTarget::Line(line) | PeekTarget::InsertedLine(line) = target {
+            peek.hunks[peek.selected].action_line = Some(line);
+        }
+        peek
+    };
     peek.remote = Some(Snapshot {
         repository: sources.repository,
         revision: sources.revision,

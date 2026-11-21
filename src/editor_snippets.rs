@@ -721,7 +721,8 @@ pub(crate) fn parse_snippet_body(body: &str) -> (String, Vec<(u32, usize, usize)
                 while i < len && chars[i].is_ascii_digit() {
                     i += 1;
                 }
-                let index: u32 = chars[num_start..i].iter()
+                let index: u32 = chars[num_start..i]
+                    .iter()
                     .fold(0u32, |acc, &c| acc * 10 + c.to_digit(10).unwrap_or(0));
                 if i < len && chars[i] == ':' {
                     // ${N:placeholder}
@@ -731,7 +732,10 @@ pub(crate) fn parse_snippet_body(body: &str) -> (String, Vec<(u32, usize, usize)
                     while i < len {
                         if chars[i] == '}' {
                             depth -= 1;
-                            if depth == 0 { i += 1; break; }
+                            if depth == 0 {
+                                i += 1;
+                                break;
+                            }
                         } else if chars[i] == '{' {
                             depth += 1;
                         } else if chars[i] == '\\' && i + 1 < len {
@@ -757,13 +761,17 @@ pub(crate) fn parse_snippet_body(body: &str) -> (String, Vec<(u32, usize, usize)
                     while i < len && chars[i] != '}' {
                         i += 1;
                     }
-                    if i < len { i += 1; } // skip '}'
+                    if i < len {
+                        i += 1;
+                    } // skip '}'
                     result.push_str(&first_choice);
                     let placeholder_len = first_choice.chars().count();
                     tab_stops.push((index, placeholder_start, placeholder_len));
                 } else {
                     // ${N} - no placeholder
-                    if i < len && chars[i] == '}' { i += 1; }
+                    if i < len && chars[i] == '}' {
+                        i += 1;
+                    }
                     tab_stops.push((index, result.chars().count(), 0));
                 }
             } else if chars[i + 1].is_ascii_digit() {
@@ -773,7 +781,8 @@ pub(crate) fn parse_snippet_body(body: &str) -> (String, Vec<(u32, usize, usize)
                 while i < len && chars[i].is_ascii_digit() {
                     i += 1;
                 }
-                let index: u32 = chars[num_start..i].iter()
+                let index: u32 = chars[num_start..i]
+                    .iter()
                     .fold(0u32, |acc, &c| acc * 10 + c.to_digit(10).unwrap_or(0));
                 tab_stops.push((index, result.chars().count(), 0));
             } else {
@@ -834,110 +843,133 @@ impl Editor {
     /// Try to expand a snippet trigger word before the cursor
     pub(crate) fn try_expand_snippet(&mut self) -> bool {
         crate::editor_document::edit!(self, {
-        let line = self.rope.line(self.cursor_line);
-        let end = self.cursor_col.min(line.len_chars());
-        let mut before = line.chars_at(end).reversed().peekable();
-        if !before.peek().is_some_and(|&c| c.is_alphanumeric() || c == '_') { return false; }
-        let lang = self.language_name();
-        let max_bytes = max_snippet_trigger_bytes(lang);
-        if max_bytes == 0 { return false; }
-        // Tab usually has no snippet to expand. Seek directly to its local
-        // trigger instead of copying the logical line and its entire prefix.
-        let mut trigger_chars = 0;
-        let mut trigger_bytes = 0;
-        for c in before.take_while(|&c| c.is_alphanumeric() || c == '_') {
-            trigger_bytes += c.len_utf8();
-            if trigger_bytes > max_bytes { return false; }
-            trigger_chars += 1;
-        }
-        if trigger_chars == 0 { return false; }
-        let word_start_chars = end - trigger_chars;
-        let trigger = line.slice(word_start_chars..end);
-        let trigger: std::borrow::Cow<'_, str> = trigger.as_str()
-            .map(std::borrow::Cow::Borrowed)
-            .unwrap_or_else(|| std::borrow::Cow::Owned(trigger.to_string()));
+            let line = self.rope.line(self.cursor_line);
+            let end = self.cursor_col.min(line.len_chars());
+            let mut before = line.chars_at(end).reversed().peekable();
+            if !before
+                .peek()
+                .is_some_and(|&c| c.is_alphanumeric() || c == '_')
+            {
+                return false;
+            }
+            let lang = self.language_name();
+            let max_bytes = max_snippet_trigger_bytes(lang);
+            if max_bytes == 0 {
+                return false;
+            }
+            // Tab usually has no snippet to expand. Seek directly to its local
+            // trigger instead of copying the logical line and its entire prefix.
+            let mut trigger_chars = 0;
+            let mut trigger_bytes = 0;
+            for c in before.take_while(|&c| c.is_alphanumeric() || c == '_') {
+                trigger_bytes += c.len_utf8();
+                if trigger_bytes > max_bytes {
+                    return false;
+                }
+                trigger_chars += 1;
+            }
+            if trigger_chars == 0 {
+                return false;
+            }
+            let word_start_chars = end - trigger_chars;
+            let trigger = line.slice(word_start_chars..end);
+            let trigger: std::borrow::Cow<'_, str> = trigger
+                .as_str()
+                .map(std::borrow::Cow::Borrowed)
+                .unwrap_or_else(|| std::borrow::Cow::Owned(trigger.to_string()));
 
-        let snippet = get_snippet(&trigger, lang);
+            let snippet = get_snippet(&trigger, lang);
 
-        if let Some(body) = snippet {
-            let expanded = if body.contains('\n') {
-                let indent: String = line.chars()
-                    .take_while(|&c| c.is_whitespace() && c != '\n' && c != '\r').collect();
-                std::borrow::Cow::Owned(body.replace('\n', &format!("\n{indent}")))
-            } else {
-                std::borrow::Cow::Borrowed(body)
-            };
-            self.save_undo();
-            let line_start = self.rope.line_to_char(self.cursor_line);
-            let trigger_start = line_start + word_start_chars;
-            let trigger_end = line_start + self.cursor_col;
-            self.rope.remove(trigger_start..trigger_end);
+            if let Some(body) = snippet {
+                let expanded = if body.contains('\n') {
+                    let indent: String = line
+                        .chars()
+                        .take_while(|&c| c.is_whitespace() && c != '\n' && c != '\r')
+                        .collect();
+                    std::borrow::Cow::Owned(body.replace('\n', &format!("\n{indent}")))
+                } else {
+                    std::borrow::Cow::Borrowed(body)
+                };
+                self.save_undo();
+                let line_start = self.rope.line_to_char(self.cursor_line);
+                let trigger_start = line_start + word_start_chars;
+                let trigger_end = line_start + self.cursor_col;
+                self.rope.remove(trigger_start..trigger_end);
 
-            self.insert_snippet_text(trigger_start, &expanded);
-            return true;
-        }
+                self.insert_snippet_text(trigger_start, &expanded);
+                return true;
+            }
 
-        false
-            })
+            false
+        })
     }
 
     /// Insert snippet text with tab stop parsing at the given char position.
     /// Handles $0, $1, $2, ${1:placeholder} syntax.
     pub(crate) fn insert_snippet_text(&mut self, insert_pos: usize, snippet_body: &str) {
         crate::editor_document::edit!(self, {
-        let (text, stops) = parse_snippet_body(snippet_body);
-        self.insert_parsed_snippet_text(insert_pos, text, stops);
-            })
+            let (text, stops) = parse_snippet_body(snippet_body);
+            self.insert_parsed_snippet_text(insert_pos, text, stops);
+        })
     }
 
-    pub(crate) fn insert_parsed_snippet_text(&mut self, insert_pos: usize, final_text: String,
-        tab_stops: Vec<(u32, usize, usize)>)
-    {
+    pub(crate) fn insert_parsed_snippet_text(
+        &mut self,
+        insert_pos: usize,
+        final_text: String,
+        tab_stops: Vec<(u32, usize, usize)>,
+    ) {
         crate::editor_document::edit!(self, {
-        self.snippet_cancel();
-        let changed_from = self.rope.char_to_line(insert_pos.min(self.rope.len_chars()));
-        let final_chars = final_text.chars().count();
+            self.snippet_cancel();
+            let changed_from = self
+                .rope
+                .char_to_line(insert_pos.min(self.rope.len_chars()));
+            let final_chars = final_text.chars().count();
 
-        self.rope.insert(insert_pos, &final_text);
+            self.rope.insert(insert_pos, &final_text);
 
-        // Convert char offsets to (line, col) positions
-        self.snippet_tab_stops.clear();
-        for (index, offset, placeholder_len) in &tab_stops {
-            let abs_pos = insert_pos + *offset;
-            let line = self.rope.char_to_line(abs_pos.min(self.rope.len_chars()));
-            let col = abs_pos - self.rope.line_to_char(line);
-            self.snippet_tab_stops.push(SnippetTabStop {
-                index: *index,
-                line,
-                col,
-                placeholder_len: *placeholder_len,
-            });
-        }
+            // Convert char offsets to (line, col) positions
+            self.snippet_tab_stops.clear();
+            for (index, offset, placeholder_len) in &tab_stops {
+                let abs_pos = insert_pos + *offset;
+                let line = self.rope.char_to_line(abs_pos.min(self.rope.len_chars()));
+                let col = abs_pos - self.rope.line_to_char(line);
+                self.snippet_tab_stops.push(SnippetTabStop {
+                    index: *index,
+                    line,
+                    col,
+                    placeholder_len: *placeholder_len,
+                });
+            }
 
-        // Sort tab stops by index (put $0 last)
-        self.snippet_tab_stops.sort_by_key(|s| if s.index == 0 { u32::MAX } else { s.index });
+            // Sort tab stops by index (put $0 last)
+            self.snippet_tab_stops
+                .sort_by_key(|s| if s.index == 0 { u32::MAX } else { s.index });
 
-        if !self.snippet_tab_stops.is_empty() {
-            self.snippet_active = true;
-            self.snippet_active_stop = 0;
-            self.snippet_rope = Some(self.rope.clone());
-            self.select_snippet_stop();
-        } else {
-            // No tab stops - just position at end
-            let end_pos = insert_pos + final_chars;
-            let line = self.rope.char_to_line(end_pos.min(self.rope.len_chars()));
-            let col = end_pos - self.rope.line_to_char(line);
-            self.cursor_line = line;
-            self.cursor_col = col;
-            self.clear_selection();
-        }
+            if !self.snippet_tab_stops.is_empty() {
+                self.snippet_active = true;
+                self.snippet_active_stop = 0;
+                self.snippet_rope = Some(self.rope.clone());
+                self.select_snippet_stop();
+            } else {
+                // No tab stops - just position at end
+                let end_pos = insert_pos + final_chars;
+                let line = self.rope.char_to_line(end_pos.min(self.rope.len_chars()));
+                let col = end_pos - self.rope.line_to_char(line);
+                self.cursor_line = line;
+                self.cursor_col = col;
+                self.clear_selection();
+            }
 
-        self.modified = true;
-        self.desired_col = None;
-        self.mark_syntax_dirty_range(changed_from, self.rope.char_to_line(insert_pos + final_chars));
-        self.content_version += 1;
-        self.ensure_visible();
-            })
+            self.modified = true;
+            self.desired_col = None;
+            self.mark_syntax_dirty_range(
+                changed_from,
+                self.rope.char_to_line(insert_pos + final_chars),
+            );
+            self.content_version += 1;
+            self.ensure_visible();
+        })
     }
 
     /// Advance to the next snippet tab stop. Returns true if handled.
@@ -980,7 +1012,9 @@ impl Editor {
     }
 
     fn refresh_snippet_stops(&mut self) -> bool {
-        if !self.snippet_active { return false; }
+        if !self.snippet_active {
+            return false;
+        }
         let Some(previous) = self.snippet_rope.take() else {
             self.snippet_cancel();
             return false;
@@ -989,10 +1023,14 @@ impl Editor {
             self.snippet_rope = Some(previous);
             return true;
         }
-        let mut ranges: Vec<_> = self.snippet_tab_stops.iter().map(|stop| {
-            let start = previous.line_to_char(stop.line) + stop.col;
-            (start, start + stop.placeholder_len)
-        }).collect();
+        let mut ranges: Vec<_> = self
+            .snippet_tab_stops
+            .iter()
+            .map(|stop| {
+                let start = previous.line_to_char(stop.line) + stop.col;
+                (start, start + stop.placeholder_len)
+            })
+            .collect();
         let Some(&(active_start, active_end)) = ranges.get(self.snippet_active_stop) else {
             self.snippet_cancel();
             return false;
@@ -1000,14 +1038,22 @@ impl Editor {
         // Anchor the comparison to this placeholder: a minimal diff can place
         // an inserted repeated character in the identical text just outside it.
         // Only Tab navigation compares shared chunks; typing adds no scan.
-        let Some(new_end) = self.rope.len_chars().checked_sub(previous.len_chars() - active_end)
-            .filter(|end| *end >= active_start) else {
+        let Some(new_end) = self
+            .rope
+            .len_chars()
+            .checked_sub(previous.len_chars() - active_end)
+            .filter(|end| *end >= active_start)
+        else {
             self.snippet_cancel();
             return false;
         };
-        if !crate::rope_changes::equal_slices(previous.slice(..active_start), self.rope.slice(..active_start))
-            || !crate::rope_changes::equal_slices(previous.slice(active_end..), self.rope.slice(new_end..))
-        {
+        if !crate::rope_changes::equal_slices(
+            previous.slice(..active_start),
+            self.rope.slice(..active_start),
+        ) || !crate::rope_changes::equal_slices(
+            previous.slice(active_end..),
+            self.rope.slice(new_end..),
+        ) {
             self.snippet_cancel();
             return false;
         }
@@ -1017,7 +1063,9 @@ impl Editor {
             if index == self.snippet_active_stop {
                 *end = *end - removed + inserted;
             } else if *start >= active_end
-                && (*start > active_end || active_end > active_start || index > self.snippet_active_stop)
+                && (*start > active_end
+                    || active_end > active_start
+                    || index > self.snippet_active_stop)
             {
                 *start = *start - removed + inserted;
                 *end = *end - removed + inserted;

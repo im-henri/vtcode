@@ -19,9 +19,15 @@ const UNCERTAIN_STAT_MIN_ENTRIES: usize = 256;
 thread_local! { static READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
 pub(crate) fn prefer_native(repo: &git2::Repository) -> bool {
-    repo.index().is_ok_and(|index| index.len() >= NATIVE_STATUS_MIN_ENTRIES
-        || index.iter().filter(|entry| entry.file_size == 0)
-            .take(UNCERTAIN_STAT_MIN_ENTRIES).count() >= UNCERTAIN_STAT_MIN_ENTRIES)
+    repo.index().is_ok_and(|index| {
+        index.len() >= NATIVE_STATUS_MIN_ENTRIES
+            || index
+                .iter()
+                .filter(|entry| entry.file_size == 0)
+                .take(UNCERTAIN_STAT_MIN_ENTRIES)
+                .count()
+                >= UNCERTAIN_STAT_MIN_ENTRIES
+    })
 }
 
 /// None means Git is not installed; the caller can use bundled libgit2.
@@ -65,13 +71,25 @@ pub(crate) fn read<P>(
         // Clean/modified repositories need just the single status command.
         // Bound arguments on Windows. A very large set of new directories
         // uses one complete untracked pass instead of exceeding argv limits.
-        let scoped = directories.iter().map(|path| path.as_os_str().as_encoded_bytes().len() + 3).sum::<usize>() <= 8 * 1024;
-        if scoped { command.arg("--").args(&directories); }
+        let scoped = directories
+            .iter()
+            .map(|path| path.as_os_str().as_encoded_bytes().len() + 3)
+            .sum::<usize>()
+            <= 8 * 1024;
+        if scoped {
+            command.arg("--").args(&directories);
+        }
         let Some(output) = run_output(&mut command, cancel).map_err(|error| error.to_string())?
         else {
             return Ok(None);
         };
-        files.retain(|file| if scoped { !file.directory } else { file.status != '?' });
+        files.retain(|file| {
+            if scoped {
+                !file.directory
+            } else {
+                file.status != '?'
+            }
+        });
         for path in records(&output)? {
             if cancel.is_cancelled() {
                 break;

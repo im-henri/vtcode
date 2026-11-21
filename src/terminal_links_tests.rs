@@ -5,7 +5,18 @@ const ERROR: &str = "Error in \"/my/work/path/workplace/directory/file.c\", line
 
 #[test]
 fn directory_paths_include_trailing_separators_roots_and_parent_directory_spelling() {
-    for path in ["src/", "./src", "../src/", "/tmp/project/", "資料/", r"C:\work\", r"C:\", "/", ".", ".."] {
+    for path in [
+        "src/",
+        "./src",
+        "../src/",
+        "/tmp/project/",
+        "資料/",
+        r"C:\work\",
+        r"C:\",
+        "/",
+        ".",
+        "..",
+    ] {
         let parsed = parse(path);
         assert_eq!(parsed.len(), 1, "{path}");
         assert_eq!(parsed[0].location.path, path);
@@ -19,23 +30,71 @@ fn directory_paths_include_trailing_separators_roots_and_parent_directory_spelli
 #[test]
 fn compiler_locations_support_quotes_colons_parentheses_and_plain_paths() {
     for (message, path, line, column) in [
-        (ERROR, "/my/work/path/workplace/directory/file.c", Some(4754), 48),
+        (
+            ERROR,
+            "/my/work/path/workplace/directory/file.c",
+            Some(4754),
+            48,
+        ),
         ("--> src/main.rs:12:7", "src/main.rs", Some(11), 6),
-        ("src/main.rs:12: error: bad call", "src/main.rs", Some(11), 0),
-        (r"C:\work\source.c(12,7): error", r"C:\work\source.c", Some(11), 6),
-        (r"C:\work\source.c(12, 7): error", r"C:\work\source.c", Some(11), 6),
-        (r"C:\work\source.c:12:7: error", r"C:\work\source.c", Some(11), 6),
-        ("File \"my project/source.py\", line 3, in main", "my project/source.py", Some(2), 0),
-        ("Error in 'my file.c', line 17, column 2", "my file.c", Some(16), 1),
+        (
+            "src/main.rs:12: error: bad call",
+            "src/main.rs",
+            Some(11),
+            0,
+        ),
+        (
+            r"C:\work\source.c(12,7): error",
+            r"C:\work\source.c",
+            Some(11),
+            6,
+        ),
+        (
+            r"C:\work\source.c(12, 7): error",
+            r"C:\work\source.c",
+            Some(11),
+            6,
+        ),
+        (
+            r"C:\work\source.c:12:7: error",
+            r"C:\work\source.c",
+            Some(11),
+            6,
+        ),
+        (
+            "File \"my project/source.py\", line 3, in main",
+            "my project/source.py",
+            Some(2),
+            0,
+        ),
+        (
+            "Error in 'my file.c', line 17, column 2",
+            "my file.c",
+            Some(16),
+            1,
+        ),
         ("(../src/file.c:4:9)", "../src/file.c", Some(3), 8),
         ("read src/main.c", "src/main.c", None, 0),
         ("Makefile:7: error", "Makefile", Some(6), 0),
-        ("/tmp/source(12,3).c:14:9", "/tmp/source(12,3).c", Some(13), 8),
+        (
+            "/tmp/source(12,3).c:14:9",
+            "/tmp/source(12,3).c",
+            Some(13),
+            8,
+        ),
         (".env:2:3", ".env", Some(1), 2),
     ] {
         let links = parse(message);
         assert_eq!(links.len(), 1, "{message}");
-        assert_eq!(links[0].location, Location { path: path.into(), line, column }, "{message}");
+        assert_eq!(
+            links[0].location,
+            Location {
+                path: path.into(),
+                line,
+                column
+            },
+            "{message}"
+        );
     }
     assert!(parse("hello 1.2.3 error:14 https://example.com/file.c:12:7").is_empty());
 }
@@ -49,13 +108,21 @@ fn wrapped_colored_errors_and_unicode_use_terminal_cell_coordinates() {
     let plain = format!("界 α {ERROR}");
     let offset = plain[..plain.find("file.c").unwrap()].chars().count();
     let index = cache.hit(&terminal.grid, offset / 40, offset % 40).unwrap();
-    assert_eq!(cache.links[index].location.path, "/my/work/path/workplace/directory/file.c");
+    assert_eq!(
+        cache.links[index].location.path,
+        "/my/work/path/workplace/directory/file.c"
+    );
     assert_eq!(cache.links[index].location.line, Some(4754));
     assert_eq!(cache.links[index].location.column, 48);
     assert!(cache.links[index].end.row > cache.links[index].start.row);
     assert_eq!(cache.scans, 1);
-    for col in 12..30 { cache.hit(&terminal.grid, 0, col); }
-    assert_eq!(cache.scans, 1, "moving along a logical line must reuse detection");
+    for col in 12..30 {
+        cache.hit(&terminal.grid, 0, col);
+    }
+    assert_eq!(
+        cache.scans, 1,
+        "moving along a logical line must reuse detection"
+    );
 }
 
 #[test]
@@ -82,10 +149,16 @@ fn row_stamps_reuse_positive_and_negative_results_despite_unrelated_output() {
             terminal.grid.cells[2][0].ch = 'x';
             cache.hit(&terminal.grid, 0, 5);
         }
-        assert_eq!(cache.scans, 1, "unrelated output must not trigger link parsing");
+        assert_eq!(
+            cache.scans, 1,
+            "unrelated output must not trigger link parsing"
+        );
         terminal.grid.cells[0][4].ch = 'b';
         cache.hit(&terminal.grid, 0, 5);
-        assert_eq!(cache.scans, 2, "overwritten output must invalidate detection");
+        assert_eq!(
+            cache.scans, 2,
+            "overwritten output must invalidate detection"
+        );
     }
 }
 

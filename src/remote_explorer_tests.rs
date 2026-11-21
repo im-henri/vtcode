@@ -12,18 +12,36 @@ use std::{
 #[test]
 fn vscode_ordering_remote_locale_changes_apply_without_an_epoch_change() {
     let root = tempfile::tempdir().unwrap();
-    for name in ["z.h", "õ.h", "system.h", "system_defines.h"] { std::fs::write(root.path().join(name), "needle").unwrap(); }
+    for name in ["z.h", "õ.h", "system.h", "system_defines.h"] {
+        std::fs::write(root.path().join(name), "needle").unwrap();
+    }
     let mut cache = None;
     let read_names = |cache: &mut _, locale| {
         let query = serde_json::from_value(serde_json::json!({
             "epoch": 1, "expanded": [], "sort": "Name", "find": null,
             "source_control": false, "sort_locale": locale
-        })).unwrap();
-        read(root.path(), cache, query, &crate::background::CancellationToken::new()).unwrap()
-            .entries.into_iter().map(|row| row.name).collect::<Vec<_>>()
+        }))
+        .unwrap();
+        read(
+            root.path(),
+            cache,
+            query,
+            &crate::background::CancellationToken::new(),
+        )
+        .unwrap()
+        .entries
+        .into_iter()
+        .map(|row| row.name)
+        .collect::<Vec<_>>()
     };
-    assert_eq!(read_names(&mut cache, "en-US"), ["õ.h", "system_defines.h", "system.h", "z.h"]);
-    assert_eq!(read_names(&mut cache, "et-EE"), ["system_defines.h", "system.h", "z.h", "õ.h"]);
+    assert_eq!(
+        read_names(&mut cache, "en-US"),
+        ["õ.h", "system_defines.h", "system.h", "z.h"]
+    );
+    assert_eq!(
+        read_names(&mut cache, "et-EE"),
+        ["system_defines.h", "system.h", "z.h", "õ.h"]
+    );
 }
 
 #[test]
@@ -31,14 +49,42 @@ fn vscode_ordering_remote_search_uses_native_names_instead_of_opaque_view_keys()
     let fixture = Fixture::new();
     let mut results = crate::search_results::SearchResults::default();
     results.set_remote(Some(fixture.workspace.clone()));
-    for name in ["z.h", "a/file10.h", "system.h", "a/file2.h", "system_defines.h", "a/deep/x.h"] {
+    for name in [
+        "z.h",
+        "a/file10.h",
+        "system.h",
+        "a/file2.h",
+        "system_defines.h",
+        "a/deep/x.h",
+    ] {
         results.extend([crate::app::GlobalSearchResult {
-            file_path: fixture.workspace.target_key(name).unwrap(), line_num: 1, line_text: "needle".into(),
-            col_start: 0, col_end: 6, context_before: None, context_after: None,
+            file_path: fixture.workspace.target_key(name).unwrap(),
+            line_num: 1,
+            line_text: "needle".into(),
+            col_start: 0,
+            col_end: 6,
+            context_before: None,
+            context_after: None,
         }]);
     }
-    assert_eq!(results.iter().map(|row| fixture.workspace.remote_path(&row.file_path).unwrap().display())
-        .collect::<Vec<_>>(), ["system_defines.h", "system.h", "z.h", "a/file2.h", "a/file10.h", "a/deep/x.h"]);
+    assert_eq!(
+        results
+            .iter()
+            .map(|row| fixture
+                .workspace
+                .remote_path(&row.file_path)
+                .unwrap()
+                .display())
+            .collect::<Vec<_>>(),
+        [
+            "system_defines.h",
+            "system.h",
+            "z.h",
+            "a/file2.h",
+            "a/file10.h",
+            "a/deep/x.h"
+        ]
+    );
 }
 
 struct Fixture {
@@ -137,22 +183,36 @@ fn stalled_remote_loading_animates_locally_without_sending_requests_or_losing_th
     let sent = f.sent.load(Ordering::Relaxed);
     let generation = f.app.explorer_refresh_generation;
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut f.app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut f.app))
+        .unwrap();
     let mut now = Instant::now();
     for _ in 0..120 {
-        let wait = f.app.loading.next_wait(true, now).expect("visible Explorer loading");
+        let wait = f
+            .app
+            .loading
+            .next_wait(true, now)
+            .expect("visible Explorer loading");
         now += wait;
         assert!(f.app.loading.advance(true, now));
         f.app.rendering_animation_frame = true;
-        terminal.draw(|frame| crate::ui::draw(frame, &mut f.app)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut f.app))
+            .unwrap();
         f.app.rendering_animation_frame = false;
     }
-    assert_eq!(f.sent.load(Ordering::Relaxed), sent, "painting progress sends no remote requests");
+    assert_eq!(
+        f.sent.load(Ordering::Relaxed),
+        sent,
+        "painting progress sends no remote requests"
+    );
     assert_eq!(f.app.explorer_refresh_generation, generation);
     assert_eq!(f.names(), names);
     f.hold.store(false, Ordering::Release);
     f.wait();
-    terminal.draw(|frame| crate::ui::draw(frame, &mut f.app)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut f.app))
+        .unwrap();
     assert_eq!(f.app.loading.next_wait(true, Instant::now()), None);
 }
 
@@ -162,24 +222,42 @@ fn remote_explorer_delete_key_confirms_and_removes_all_selected_files() {
     let mut f = Fixture::new();
     f.toggle("b");
     f.wait();
-    let paths = [f.workspace.target_key("last.txt").unwrap(),
-        f.workspace.target_key("b/second.txt").unwrap()];
+    let paths = [
+        f.workspace.target_key("last.txt").unwrap(),
+        f.workspace.target_key("b/second.txt").unwrap(),
+    ];
     f.app.active_pane = crate::app::ActivePane::Explorer;
-    f.app.set_explorer_single_selection(f.app.explorer.find_path(&paths[0]).unwrap());
-    f.app.toggle_explorer_selection(f.app.explorer.find_path(&paths[1]).unwrap());
-    assert!(!crate::input_keyboard::handle_keyboard_event(&mut f.app,
-        KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE)));
+    f.app
+        .set_explorer_single_selection(f.app.explorer.find_path(&paths[0]).unwrap());
+    f.app
+        .toggle_explorer_selection(f.app.explorer.find_path(&paths[1]).unwrap());
+    assert!(!crate::input_keyboard::handle_keyboard_event(
+        &mut f.app,
+        KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE)
+    ));
     assert_eq!(f.app.confirm_delete_targets, paths);
     assert!(f.root.path().join("last.txt").exists() && f.root.path().join("b/second.txt").exists());
     let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-    terminal.draw(|frame| crate::ui_modal::draw_active(frame, &mut f.app)).unwrap();
-    let dialog: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+    terminal
+        .draw(|frame| crate::ui_modal::draw_active(frame, &mut f.app))
+        .unwrap();
+    let dialog: String = terminal
+        .backend()
+        .buffer()
+        .content
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect();
     assert!(dialog.contains("Delete these 2 files or folders?"));
     assert!(dialog.contains("last.txt") && dialog.contains("b/second.txt"));
-    assert!(!crate::input_keyboard::handle_keyboard_event(&mut f.app,
-        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+    assert!(!crate::input_keyboard::handle_keyboard_event(
+        &mut f.app,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    ));
     f.app.wait_for_background(Duration::from_secs(10), |app| {
-        !app.bg_filesystem_action_running && !app.bg_explorer_refresh_running && !app.bg_explorer_refresh_pending
+        !app.bg_filesystem_action_running
+            && !app.bg_explorer_refresh_running
+            && !app.bg_explorer_refresh_pending
     });
     assert!(!f.root.path().join("last.txt").exists());
     assert!(!f.root.path().join("b/second.txt").exists());
@@ -227,7 +305,9 @@ fn disconnect_keeps_cached_tree_and_recovers_after_reconnect() {
     f.app.editor_mut().unwrap().insert_char('x');
     f.stall();
     let mut loading_terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
-    loading_terminal.draw(|frame| crate::ui::draw(frame, &mut f.app)).unwrap();
+    loading_terminal
+        .draw(|frame| crate::ui::draw(frame, &mut f.app))
+        .unwrap();
     assert!(f.app.loading.active());
     f.toggle("b");
     assert!(
@@ -247,8 +327,13 @@ fn disconnect_keeps_cached_tree_and_recovers_after_reconnect() {
     assert!(!f.app.bg_explorer_refresh_running);
     assert!(f.app.explorer_expanding.is_empty());
     assert!(f.app.remote_explorer_error.is_some());
-    loading_terminal.draw(|frame| crate::ui::draw(frame, &mut f.app)).unwrap();
-    assert!(!f.app.loading.active(), "offline cached folders are not presented as still loading");
+    loading_terminal
+        .draw(|frame| crate::ui::draw(frame, &mut f.app))
+        .unwrap();
+    assert!(
+        !f.app.loading.active(),
+        "offline cached folders are not presented as still loading"
+    );
     f.toggle("b");
     assert_eq!(f.names(), expected);
     let b = f.workspace.target_key("b").unwrap();
@@ -270,9 +355,17 @@ fn disconnect_keeps_cached_tree_and_recovers_after_reconnect() {
         .unwrap();
     f.app.resume_remote_services(next);
     f.wait();
-    assert_eq!(f.app.logs.editor().unwrap().navigation_id, log_view,
-        "Reconnecting must keep the Output buffer");
-    f.app.active_tab = f.app.tabs.iter().position(|tab| tab.kind == crate::app::TabKind::File).unwrap();
+    assert_eq!(
+        f.app.logs.editor().unwrap().navigation_id,
+        log_view,
+        "Reconnecting must keep the Output buffer"
+    );
+    f.app.active_tab = f
+        .app
+        .tabs
+        .iter()
+        .position(|tab| tab.kind == crate::app::TabKind::File)
+        .unwrap();
     assert_eq!(f.app.editor().unwrap().rope, "x");
     f.app.editor_mut().unwrap().undo();
     assert_eq!(f.app.editor().unwrap().rope, "");
@@ -372,7 +465,8 @@ fn scoped_remote_filename_search_uses_the_selected_directory() {
     assert_eq!(f.app.explorer.find.directory, Some(scope));
     assert_eq!(f.app.explorer.find.results.count, 1);
     assert_eq!(f.names(), ["a", "nested", "deep.txt"]);
-    f.app.open_explorer_find_in(f.workspace.target_key("b").unwrap());
+    f.app
+        .open_explorer_find_in(f.workspace.target_key("b").unwrap());
     f.wait();
     assert_eq!(f.app.explorer.find.results.count, 1);
     assert_eq!(f.names(), ["b", "second.txt"]);
@@ -385,16 +479,21 @@ fn scoped_remote_filename_search_uses_the_selected_directory() {
 #[test]
 fn editable_remote_filename_scope_uses_node_paths_and_preserves_the_query() {
     let mut f = Fixture::new();
-    f.app.open_explorer_find_in(f.workspace.target_key("a/nested").unwrap());
+    f.app
+        .open_explorer_find_in(f.workspace.target_key("a/nested").unwrap());
     f.app.explorer.find.filter = true;
     f.app.explorer.find.query = "txt".into();
     f.app.update_explorer_find();
     f.wait();
     let generation = f.app.explorer_refresh_generation;
     f.app.apply_explorer_find_path();
-    assert_eq!(f.app.explorer_refresh_generation, generation, "the displayed remote path must round-trip");
+    assert_eq!(
+        f.app.explorer_refresh_generation, generation,
+        "the displayed remote path must round-trip"
+    );
     f.app.explorer.find.path = "b".into();
-    f.app.text_input_changed(crate::text_input::TextInputId::ExplorerFindPath);
+    f.app
+        .text_input_changed(crate::text_input::TextInputId::ExplorerFindPath);
     assert_eq!(f.app.explorer_refresh_generation, generation);
     f.app.apply_explorer_find_path();
     f.wait();

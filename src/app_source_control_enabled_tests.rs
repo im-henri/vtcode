@@ -33,7 +33,10 @@ fn assert_no_git_jobs(app: &App) {
 #[test]
 fn disabled_startup_and_session_restore_do_not_schedule_git_work() {
     let (_dir, mut app) = fixture();
-    app.settings_global = Settings { source_control_enabled: Some(false), ..Default::default() };
+    app.settings_global = Settings {
+        source_control_enabled: Some(false),
+        ..Default::default()
+    };
     app.apply_effective_settings();
     app.sidebar_view = SidebarView::SourceControl;
     let session = app.build_session();
@@ -66,26 +69,41 @@ fn queued_and_late_results_cannot_revive_disabled_or_reenabled_state() {
     let (_dir, mut app) = fixture();
     let old = app.source_control_sender();
     let cancel = app.source_control_cancel.clone();
-    old.send(BackgroundResult::GitBranch("obsolete branch".into())).unwrap();
+    old.send(BackgroundResult::GitBranch("obsolete branch".into()))
+        .unwrap();
     old.send(BackgroundResult::GitRepositories {
-        root: app.explorer.root.clone(), workspace_generation: app.workspace_generation,
+        root: app.explorer.root.clone(),
+        workspace_generation: app.workspace_generation,
         repository_generation: app.repositories.membership_generation,
-        complete: true, include_untracked: true,
+        complete: true,
+        include_untracked: true,
         discovery: crate::git_repositories::Discovery {
             errors: Vec::new(),
-            workspace: app.explorer.root.clone(), roots: vec![app.explorer.root.clone()], parent: None,
+            workspace: app.explorer.root.clone(),
+            roots: vec![app.explorer.root.clone()],
+            parent: None,
         },
         scans: vec![crate::git_repositories::Scan {
             operation: None,
-            root: app.explorer.root.clone(), branch: String::new(),
-            files: vec![crate::app::GitFileChange { directory: false, path: "obsolete.txt".into(), status: '?', staged: false, original_path: None }],
-            worktree_paths: None, include_untracked: true,
+            root: app.explorer.root.clone(),
+            branch: String::new(),
+            files: vec![crate::app::GitFileChange {
+                directory: false,
+                path: "obsolete.txt".into(),
+                status: '?',
+                staged: false,
+                original_path: None,
+            }],
+            worktree_paths: None,
+            include_untracked: true,
         }],
-    }).unwrap();
+    })
+    .unwrap();
     old.send(BackgroundResult::GitLineDiff {
         file_path: app.editor().unwrap().file_path.clone().unwrap(),
         status: PreparedGitLineStatus::from_diffs(2, &[], &['U', 'U']),
-    }).unwrap();
+    })
+    .unwrap();
     app.set_source_control_enabled(false);
     app.poll_background_results();
     assert!(app.cached_git_branch.is_empty() && app.source_control_files.is_empty());
@@ -98,30 +116,49 @@ fn queued_and_late_results_cannot_revive_disabled_or_reenabled_state() {
     assert!(!app.source_control_cancel.same_task(&cancel));
     // Model the send/cancel race: cancellation happened after the worker's
     // final check, but before the result reached the receiver.
-    app.background.sender.send(BackgroundResult::SourceControlRead {
-        cancel, result: Box::new(BackgroundResult::GitBranch("obsolete branch".into())),
-    }).unwrap();
-    old.send(BackgroundResult::GitBranch("late branch".into())).unwrap();
-    app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_status_running && !app.bg_git_branch_running);
+    app.background
+        .sender
+        .send(BackgroundResult::SourceControlRead {
+            cancel,
+            result: Box::new(BackgroundResult::GitBranch("obsolete branch".into())),
+        })
+        .unwrap();
+    old.send(BackgroundResult::GitBranch("late branch".into()))
+        .unwrap();
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.bg_git_status_running && !app.bg_git_branch_running
+    });
     assert_eq!(app.source_control_repository_state, State::Available);
     assert!(!app.cached_git_branch.contains("obsolete") && !app.cached_git_branch.contains("late"));
-    assert!(app.source_control_files.iter().any(|file| file.path == "file.txt"));
-    assert!(!app.source_control_files.iter().any(|file| file.path == "obsolete.txt"));
+    assert!(
+        app.source_control_files
+            .iter()
+            .any(|file| file.path == "file.txt")
+    );
+    assert!(
+        !app.source_control_files
+            .iter()
+            .any(|file| file.path == "obsolete.txt")
+    );
 }
 
 #[test]
 fn disabling_keeps_unsaved_hunks_undo_redo_and_saving_intact() {
     let (dir, mut app) = fixture();
-    app.editor_mut().unwrap().set_git_line_status(vec!['U', ' ']);
+    app.editor_mut()
+        .unwrap()
+        .set_git_line_status(vec!['U', ' ']);
     app.editor_mut().unwrap().multi_cursor_insert_char('x');
     assert!(app.editor().unwrap().modified);
     app.set_source_control_enabled(false);
     assert!(app.editor().unwrap().git_line_status().is_empty());
     assert!(app.editor().unwrap().modified);
     let mut terminal = Terminal::new(TestBackend::new(50, 2)).unwrap();
-    terminal.draw(|frame| {
-        crate::editor_blame::header(frame, &mut app, Rect::new(0, 0, 50, 1));
-    }).unwrap();
+    terminal
+        .draw(|frame| {
+            crate::editor_blame::header(frame, &mut app, Rect::new(0, 0, 50, 1));
+        })
+        .unwrap();
     assert!(app.editor().unwrap().blame.button.is_none());
     app.hunk_popup_file = app.editor().unwrap().file_path.clone();
     app.hunk_popup_status = 'N';
@@ -140,8 +177,13 @@ fn disabling_keeps_unsaved_hunks_undo_redo_and_saving_intact() {
     app.editor_mut().unwrap().multi_cursor_insert_char('y');
     let expected = app.editor().unwrap().rope.to_string();
     app.save_current_file();
-    app.wait_for_background(Duration::from_secs(5), |app| app.pending_file_saves.is_empty());
-    assert_eq!(std::fs::read_to_string(dir.path().join("file.txt")).unwrap(), expected);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.pending_file_saves.is_empty()
+    });
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("file.txt")).unwrap(),
+        expected
+    );
     assert!(!app.editor().unwrap().modified);
     assert_no_git_jobs(&app);
 }
@@ -151,10 +193,16 @@ fn git_only_watcher_events_do_not_refresh_explorer_when_disabled() {
     let (_dir, mut app) = fixture();
     app.set_source_control_enabled(false);
     let generation = app.explorer_refresh_generation;
-    app.background.sender.send(BackgroundResult::FilesChanged {
-        root: app.explorer.root.clone(), changes: vec![], structure_changed: false,
-        rescan: false, git_metadata_changed: true,
-    }).unwrap();
+    app.background
+        .sender
+        .send(BackgroundResult::FilesChanged {
+            root: app.explorer.root.clone(),
+            changes: vec![],
+            structure_changed: false,
+            rescan: false,
+            git_metadata_changed: true,
+        })
+        .unwrap();
     app.poll_background_results();
     assert_no_git_jobs(&app);
     assert_eq!(app.explorer_refresh_generation, generation);
@@ -184,7 +232,10 @@ fn settings_persist_scopes_reset_and_restart_without_changing_other_preferences(
     // The User checkbox must still display the User value, even when the
     // Workspace override enables the running integration.
     reopened.settings_scope = SettingsScope::Global;
-    assert_eq!(reopened.selected_scope_settings().source_control_enabled, Some(false));
+    assert_eq!(
+        reopened.selected_scope_settings().source_control_enabled,
+        Some(false)
+    );
     reopened.settings_scope = SettingsScope::Workspace;
     assert!(reopened.reset_setting_in_selected_scope("source_control_enabled"));
     assert!(!reopened.source_control_enabled);
@@ -216,29 +267,54 @@ fn sidebar_toggle_works_during_loading_and_in_narrow_left_and_right_panels() {
             let area = Rect::new(4, 1, width, 16);
             app.explorer_area = Some(area);
             let mut terminal = Terminal::new(TestBackend::new(90, 20)).unwrap();
-            terminal.draw(|frame| crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)).unwrap();
+            terminal
+                .draw(|frame| {
+                    crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)
+                })
+                .unwrap();
             let button = app.source_control_actions_area.unwrap();
             assert!(area.contains((button.x, button.y).into()));
             assert!(button.right() <= area.right());
-            crate::mouse::handle_mouse(&mut app, MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left), column: button.x + 1, row: button.y, modifiers: KeyModifiers::NONE,
-            });
+            crate::mouse::handle_mouse(
+                &mut app,
+                MouseEvent {
+                    kind: MouseEventKind::Down(MouseButton::Left),
+                    column: button.x + 1,
+                    row: button.y,
+                    modifiers: KeyModifiers::NONE,
+                },
+            );
             assert!(app.source_control_action_menu_open());
             crate::input_pickers::handle_context_menu_key(&mut app, KeyCode::End);
             crate::input_pickers::handle_context_menu_key(&mut app, KeyCode::Enter);
-            assert_eq!(app.source_control_repository_state, State::Disabled, "width={width}, right={right}");
+            assert_eq!(
+                app.source_control_repository_state,
+                State::Disabled,
+                "width={width}, right={right}"
+            );
             assert!(!app.source_control_input_mode);
             assert_eq!(app.settings_workspace.source_control_enabled, Some(false));
-            terminal.draw(|frame| crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)).unwrap();
+            terminal
+                .draw(|frame| {
+                    crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)
+                })
+                .unwrap();
             assert!(app.source_control_actions_area.is_some());
             assert!(app.source_control_commit_area.is_none());
             assert!(app.source_control_initialize_area.is_none());
-            crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), &format!("Source control disabled {width} right {right}"));
+            crate::ui_control_visibility_tests::snapshot(
+                terminal.backend().buffer(),
+                &format!("Source control disabled {width} right {right}"),
+            );
             app.active_pane = ActivePane::Explorer;
             crate::ui_source_control::handle_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
             assert!(app.source_control_enabled);
             app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_status_running);
-            terminal.draw(|frame| crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)).unwrap();
+            terminal
+                .draw(|frame| {
+                    crate::ui_source_control::draw_source_control_sidebar(frame, &mut app, area)
+                })
+                .unwrap();
             assert!(app.source_control_toggle_area.is_none());
             let actions = app.source_control_actions_area.unwrap();
             assert!(actions.right() <= area.right());
@@ -250,7 +326,8 @@ fn sidebar_toggle_works_during_loading_and_in_narrow_left_and_right_panels() {
 fn cancelling_a_read_session_also_protects_folder_switches() {
     let (_dir, mut app) = fixture();
     let old = app.source_control_sender();
-    old.send(BackgroundResult::GitBranch("previous workspace".into())).unwrap();
+    old.send(BackgroundResult::GitBranch("previous workspace".into()))
+        .unwrap();
     app.cancel_source_control_reads();
     app.poll_background_results();
     assert!(app.cached_git_branch.is_empty());
@@ -269,7 +346,9 @@ fn reenable_resumes_a_diff_cancelled_before_its_first_result() {
     assert!(!app.bg_git_compare_running);
     assert!(app.pending_git_compare_path.is_some());
     app.set_source_control_enabled(true);
-    app.wait_for_background(Duration::from_secs(5), |app| app.pending_git_compare_path.is_none());
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.pending_git_compare_path.is_none()
+    });
     assert!(app.compare_base_content.is_some());
     assert!(!app.compare_diff_lines.is_empty());
 }
@@ -280,13 +359,28 @@ fn source_control_settings_page_renders_in_compact_and_wide_layouts() {
     app.open_settings_tab();
     let category = App::settings_category_for_id("source_control_enabled");
     app.select_settings_page(category, None);
-    assert!(app.settings_category_visual_rows().iter().any(|&(id, _, label)| id == category && label == "Source Control"));
+    assert!(
+        app.settings_category_visual_rows()
+            .iter()
+            .any(|&(id, _, label)| id == category && label == "Source Control")
+    );
     for width in [48, 110] {
         let mut terminal = Terminal::new(TestBackend::new(width, 25)).unwrap();
-        terminal.draw(|frame| crate::ui_settings::draw_settings_editor(frame, &mut app, frame.area())).unwrap();
-        let text: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+        terminal
+            .draw(|frame| crate::ui_settings::draw_settings_editor(frame, &mut app, frame.area()))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
         assert!(text.contains("Enable Source Control"));
-        crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), &format!("Source control settings {width}"));
+        crate::ui_control_visibility_tests::snapshot(
+            terminal.backend().buffer(),
+            &format!("Source control settings {width}"),
+        );
     }
 }
 
@@ -299,7 +393,8 @@ fn reenable_can_reload_an_interrupted_commit_diff() {
     index.write().unwrap();
     let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
     let author = git2::Signature::now("Test", "test@example.test").unwrap();
-    repo.commit(Some("HEAD"), &author, &author, "Initial", &tree, &[]).unwrap();
+    repo.commit(Some("HEAD"), &author, &author, "Initial", &tree, &[])
+        .unwrap();
     app.refresh_git_log_async();
     app.wait_for_background(Duration::from_secs(5), |app| !app.bg_git_log_running);
     app.open_source_control_commit_details(0);
@@ -314,7 +409,9 @@ fn reenable_can_reload_an_interrupted_commit_diff() {
     app.wait_for_background(Duration::from_secs(5), |app| !app.commit_details.loading);
     app.request_commit_diff();
     assert!(app.commit_details.diff_loading);
-    app.wait_for_background(Duration::from_secs(5), |app| !app.commit_details.diff_loading);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        !app.commit_details.diff_loading
+    });
     assert!(app.commit_details.diff_error.is_none());
     assert!(app.commit_details.diff_full_cache.is_some());
 }

@@ -1,15 +1,15 @@
-use crossterm::event;
-use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
-use ratatui::layout::Rect;
 use crate::app::{ActivePane, App, TerminalDock};
-use unicode_width::UnicodeWidthStr;
 use crate::ui_chrome::{ACTIVITY_OVERFLOW_INDEX, activity_item_at};
 use crate::ui_chrome_tabs::TabBarHits;
-use crate::ui_diff_display::diff_divider_hit;
 #[cfg(test)]
 use crate::ui_chrome_tabs::tab_display_name;
 #[cfg(test)]
 pub(crate) use crate::ui_chrome_tabs::tab_render_width;
+use crate::ui_diff_display::diff_divider_hit;
+use crossterm::event;
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEventKind};
+use ratatui::layout::Rect;
+use unicode_width::UnicodeWidthStr;
 
 #[path = "mouse_explorer_context.rs"]
 mod explorer_context;
@@ -41,7 +41,10 @@ pub(crate) fn handle_mouse(app: &mut App, mouse: event::MouseEvent) {
     handle_mouse_workbench(app, mouse);
     // Clicks and drags keep Vim's mode in step (a drag selects in Visual
     // mode, a click in Normal mode keeps the cursor off the line end).
-    if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Drag(_) | MouseEventKind::Up(_)) {
+    if matches!(
+        mouse.kind,
+        MouseEventKind::Down(_) | MouseEventKind::Drag(_) | MouseEventKind::Up(_)
+    ) {
         crate::vim::app_host::after_mouse(app);
     }
 }
@@ -54,24 +57,39 @@ fn handle_mouse_workbench(app: &mut App, mouse: event::MouseEvent) {
         app.commit_details.message_selection.dragging = false;
         app.commit_details.review.horizontal_drag = None;
     }
-    if app.handle_text_input_context_menu_mouse(mouse) { return; }
-    if crate::ui_workspaces::handle_mouse(app, mouse) { return; }
-    if crate::app_shortcuts::handle_mouse(app, mouse) { return; }
+    if app.handle_text_input_context_menu_mouse(mouse) {
+        return;
+    }
+    if crate::ui_workspaces::handle_mouse(app, mouse) {
+        return;
+    }
+    if crate::app_shortcuts::handle_mouse(app, mouse) {
+        return;
+    }
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
         app.chord_pending = false;
         app.terminal_clicks.press();
         app.context_menu_button_drag = None;
     }
-    if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(MouseButton::Left)) {
+    if matches!(
+        mouse.kind,
+        MouseEventKind::Down(_) | MouseEventKind::Up(MouseButton::Left)
+    ) {
         app.editor_selection_drag = None;
     }
-    if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Drag(_)) {
+    if matches!(
+        mouse.kind,
+        MouseEventKind::Down(_) | MouseEventKind::Drag(_)
+    ) {
         app.copy_animation.clear();
     }
     // A sidebar resize keeps the pointer until release, including over the
     // editor, terminals and the bottom panel.
     if app.resizing_explorer
-        && matches!(mouse.kind, MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left))
+        && matches!(
+            mouse.kind,
+            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
+        )
     {
         app.mouse_col = mouse.column;
         app.mouse_row = mouse.row;
@@ -90,19 +108,46 @@ fn handle_mouse_workbench(app: &mut App, mouse: event::MouseEvent) {
         }
         return;
     }
-    if crate::terminal_sidebar::captured_mouse(app, mouse) { return; }
-    if crate::terminal_scrollbar::captured_mouse(app, mouse) { return; }
-    if crate::ui_panels::captured_mouse(app, mouse) { return; }
-    if crate::ui_minimap_resize::captured_mouse(app, mouse) { return; }
-    if crate::ui_commit_details::captured_scrollbar_mouse(app, mouse) { return; }
-    if crate::ui_side_notice::handle_mouse(app, mouse) { return; }
-    if crate::ui_logs::mouse(app, mouse) { return; }
-    if crate::ui_remote_connection::handle_mouse(app, mouse) { return; }
-    if app.custom_exit_remaining > 0 { return; }
+    if crate::terminal_sidebar::captured_mouse(app, mouse) {
+        return;
+    }
+    if crate::terminal_scrollbar::captured_mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_panels::captured_mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_minimap_resize::captured_mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_commit_details::captured_scrollbar_mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_side_notice::handle_mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_logs::mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_remote_connection::handle_mouse(app, mouse) {
+        return;
+    }
+    if app.custom_exit_remaining > 0 {
+        return;
+    }
     let deletion_hover_changed = mouse.kind == MouseEventKind::Moved
-        && app.file_deletion.as_ref().and_then(|deletion| deletion.area).is_some_and(|area|
-            area.contains((mouse.column, mouse.row).into()) || area.contains((app.mouse_col, app.mouse_row).into()));
-    if crate::ui_file_deletion::handle_mouse(app, mouse) { app.mouse_hover_changed |= deletion_hover_changed; return; }
+        && app
+            .file_deletion
+            .as_ref()
+            .and_then(|deletion| deletion.area)
+            .is_some_and(|area| {
+                area.contains((mouse.column, mouse.row).into())
+                    || area.contains((app.mouse_col, app.mouse_row).into())
+            });
+    if crate::ui_file_deletion::handle_mouse(app, mouse) {
+        app.mouse_hover_changed |= deletion_hover_changed;
+        return;
+    }
     if handle_navigation_mouse(app, mouse) {
         return;
     }
@@ -121,7 +166,8 @@ fn handle_mouse_workbench(app: &mut App, mouse: event::MouseEvent) {
             })
             || diff_divider_hit(app, previous.x, previous.y)
                 != diff_divider_hit(app, app.mouse_col, app.mouse_row)
-            || app.diff_move_at(previous.x, previous.y) != app.diff_move_at(app.mouse_col, app.mouse_row);
+            || app.diff_move_at(previous.x, previous.y)
+                != app.diff_move_at(app.mouse_col, app.mouse_row);
     }
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(_)) {
         app.update_sidebar_auto_hide(mouse);
@@ -160,25 +206,38 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     app.sync_text_input_sessions();
     let col = mouse.column;
     let row = mouse.row;
-    let over_activity_bar = app.activity_bar_area.is_some_and(|area| area.contains((col, row).into()));
+    let over_activity_bar = app
+        .activity_bar_area
+        .is_some_and(|area| area.contains((col, row).into()));
     let prev_mouse_col = app.mouse_col;
     let prev_mouse_row = app.mouse_row;
-    let was_over_performance = app.background.activity.details_open && app.performance_area
-        .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
+    let was_over_performance = app.background.activity.details_open
+        && app
+            .performance_area
+            .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
     let was_over_blame = crate::editor_blame::hovered(app, prev_mouse_col, prev_mouse_row);
-    let was_over_search_control = app.search_control_regions.iter()
-        .any(|button| button.area.contains((prev_mouse_col, prev_mouse_row).into()));
-    let was_over_zen_exit = app.zen_mode && app.zen_exit_area
-        .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
-    let was_over_agent_chat = app.menu_bar_area
+    let was_over_search_control = app.search_control_regions.iter().any(|button| {
+        button
+            .area
+            .contains((prev_mouse_col, prev_mouse_row).into())
+    });
+    let was_over_zen_exit = app.zen_mode
+        && app
+            .zen_exit_area
+            .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
+    let was_over_agent_chat = app
+        .menu_bar_area
         .and_then(crate::ui_chrome::agent_chat_button_area)
         .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
-    let was_over_navigation = crate::ui_chrome::navigation_button_at(app, prev_mouse_col, prev_mouse_row).is_some();
-    let was_over_source_control = app.source_control_view_area()
-        .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into())
-            || area.contains((col, row).into()));
+    let was_over_navigation =
+        crate::ui_chrome::navigation_button_at(app, prev_mouse_col, prev_mouse_row).is_some();
+    let was_over_source_control = app.source_control_view_area().is_some_and(|area| {
+        area.contains((prev_mouse_col, prev_mouse_row).into()) || area.contains((col, row).into())
+    });
 
-    if crate::ui_desks::handle_mouse(app, mouse) { return; }
+    if crate::ui_desks::handle_mouse(app, mouse) {
+        return;
+    }
     // Track mouse position for hover effects during rendering
     app.mouse_row = row;
     app.mouse_col = col;
@@ -186,19 +245,33 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         && crate::ui_empty_folder::button_at(app, prev_mouse_col, prev_mouse_row)
             != crate::ui_empty_folder::button_at(app, col, row);
     app.mouse_hover_changed |= empty_folder_hover_changed;
-    let sidebar_visibility_changed = mouse.kind == MouseEventKind::Moved
-        && app.update_sidebar_auto_hide(mouse);
-    if crate::ui_inline_blame::captured_mouse(app, mouse) { return; }
+    let sidebar_visibility_changed =
+        mouse.kind == MouseEventKind::Moved && app.update_sidebar_auto_hide(mouse);
+    if crate::ui_inline_blame::captured_mouse(app, mouse) {
+        return;
+    }
     crate::ui_inline_blame::leave(app, col, row);
     let modifiers_changed = app.update_link_hover_modifiers(mouse.modifiers);
-    if crate::ui_search_dialog::handle_search_bar_resize(app, mouse) { return; }
+    if crate::ui_search_dialog::handle_search_bar_resize(app, mouse) {
+        return;
+    }
     // Deliver leave before chrome/modal hover handlers can consume the move.
     if mouse.kind == MouseEventKind::Moved
-        && app.code_area.is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into())
-            && !area.contains((col, row).into())) {
-        app.handle_active_extension_view_hover(col, row, (prev_mouse_col, prev_mouse_row), mouse.modifiers);
+        && app.code_area.is_some_and(|area| {
+            area.contains((prev_mouse_col, prev_mouse_row).into())
+                && !area.contains((col, row).into())
+        })
+    {
+        app.handle_active_extension_view_hover(
+            col,
+            row,
+            (prev_mouse_col, prev_mouse_row),
+            mouse.modifiers,
+        );
     }
-    if sidebar_visibility_changed { return; }
+    if sidebar_visibility_changed {
+        return;
+    }
 
     // Alt+click is an edge-triggered cursor toggle. Some terminals emit a
     // left-drag event as part of an otherwise stationary click; never let the
@@ -226,18 +299,24 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     if matches!(mouse.kind, MouseEventKind::Down(_)) {
         app.terminal_mouse_capture = None;
         if let Some(drag) = app.terminal_selection_drag.take() {
-            if let Some(pty) = app.terminals.get_mut(drag.index)
-                .and_then(|terminal| terminal.terminal_pty.as_mut()) {
+            if let Some(pty) = app
+                .terminals
+                .get_mut(drag.index)
+                .and_then(|terminal| terminal.terminal_pty.as_mut())
+            {
                 pty.grid.finish_selection();
             }
         }
     } else if (app.terminal_selection_drag.is_some() || app.terminal_mouse_capture.is_some())
         && matches!(mouse.kind, MouseEventKind::Drag(_) | MouseEventKind::Up(_))
-        && app.handle_terminal_selection_mouse(mouse) {
+        && app.handle_terminal_selection_mouse(mouse)
+    {
         return;
     }
 
-    if app.handle_extension_pointer_capture(mouse) { return; }
+    if app.handle_extension_pointer_capture(mouse) {
+        return;
+    }
 
     // A save error or recovery prompt can appear over the folder browser.
     // Its visible controls must own input before the full-workbench browser.
@@ -266,7 +345,14 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     if app.explorer_scrollbar_drag.is_some() || app.settings_scrollbar_drag.is_some() {
         match mouse.kind {
             MouseEventKind::Drag(MouseButton::Left) => {
-                crate::mouse_drag::handle_left_drag(app, col, row, prev_mouse_col, prev_mouse_row, mouse.modifiers);
+                crate::mouse_drag::handle_left_drag(
+                    app,
+                    col,
+                    row,
+                    prev_mouse_col,
+                    prev_mouse_row,
+                    mouse.modifiers,
+                );
                 return;
             }
             MouseEventKind::Up(MouseButton::Left) => {
@@ -284,14 +370,26 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         }
         return;
     }
-    if crate::ui_status::handle_mouse(app, mouse) { return; }
-    if crate::ui_performance_details::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) { return; }
+    if crate::ui_status::handle_mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_performance_details::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) {
+        return;
+    }
 
     // Wheel input belongs to the open menu, including in a clipped viewport.
-    if app.menu_active && app.menu_open
-        && matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
+    if app.menu_active
+        && app.menu_open
+        && matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        )
     {
-        let code = if mouse.kind == MouseEventKind::ScrollUp { KeyCode::Up } else { KeyCode::Down };
+        let code = if mouse.kind == MouseEventKind::ScrollUp {
+            KeyCode::Up
+        } else {
+            KeyCode::Down
+        };
         crate::input_dialogs::handle_menu_key(app, event::KeyEvent::new(code, KeyModifiers::NONE));
         return;
     }
@@ -311,8 +409,12 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     if crate::mouse_dialogs::handle_mouse_dialogs(app, &mouse, col, row) {
         return;
     }
-    if crate::app_terminal_find::mouse(app, mouse) { return; }
-    if crate::ui_panels::scroll_input(app, mouse) { return; }
+    if crate::app_terminal_find::mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_panels::scroll_input(app, mouse) {
+        return;
+    }
     if mouse.kind == MouseEventKind::Moved
         && (crate::ui_search_dialog::search_bar_resize_hit(app, col, row)
             || crate::ui_search_dialog::search_bar_resize_hit(app, prev_mouse_col, prev_mouse_row))
@@ -320,30 +422,59 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         app.mouse_hover_changed = (col, row) != (prev_mouse_col, prev_mouse_row);
         return;
     }
-    if crate::ui_commit_details::handle_mouse(app, mouse) { return; }
-    if crate::ui_extension_info::handle_mouse(app, mouse) { return; }
+    if crate::ui_commit_details::handle_mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_extension_info::handle_mouse(app, mouse) {
+        return;
+    }
     if crate::ui_lsp_completion::handle_mouse(app, mouse) {
         return;
     }
-    if crate::ui_search_dialog::handle_vtcomplete_mouse(app, mouse) { return; }
-    if crate::ui_git_amend::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) { return; }
-    if crate::ui_inline_blame::handle_mouse(app, mouse) { return; }
-    if crate::terminal_sidebar::begin_resize(app, mouse) { return; }
-    if crate::terminal_scrollbar::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) { return; }
-    if crate::app_terminal_links::mouse(app, mouse) { return; }
-    if app.handle_terminal_selection_mouse(mouse) { return; }
-    if app.handle_chat_mouse(mouse) { return; }
+    if crate::ui_search_dialog::handle_vtcomplete_mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_git_amend::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) {
+        return;
+    }
+    if crate::ui_inline_blame::handle_mouse(app, mouse) {
+        return;
+    }
+    if crate::terminal_sidebar::begin_resize(app, mouse) {
+        return;
+    }
+    if crate::terminal_scrollbar::handle_mouse(app, mouse, (prev_mouse_col, prev_mouse_row)) {
+        return;
+    }
+    if crate::app_terminal_links::mouse(app, mouse) {
+        return;
+    }
+    if app.handle_terminal_selection_mouse(mouse) {
+        return;
+    }
+    if app.handle_chat_mouse(mouse) {
+        return;
+    }
     if mouse.kind == MouseEventKind::Moved
-        && (was_over_blame || crate::editor_blame::hovered(app, col, row)) {
+        && (was_over_blame || crate::editor_blame::hovered(app, col, row))
+    {
         app.mouse_hover_changed = (col, row) != (prev_mouse_col, prev_mouse_row);
         app.hovered_gutter_line = None;
         app.hovered_editor_pos = None;
         return;
     }
-    if crate::editor_blame::handle_mouse(app, mouse) { return; }
-    if app.handle_editor_review_mouse(mouse) { return; }
+    if crate::editor_blame::handle_mouse(app, mouse) {
+        return;
+    }
+    if app.handle_editor_review_mouse(mouse) {
+        return;
+    }
 
-    if app.zen_mode && app.zen_exit_area.is_some_and(|area| area.contains((col, row).into())) {
+    if app.zen_mode
+        && app
+            .zen_exit_area
+            .is_some_and(|area| area.contains((col, row).into()))
+    {
         if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
             app.execute_palette_command("toggle_zen");
         }
@@ -353,15 +484,24 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
 
     // Settings dropdowns can flip above their control in short panes, covering
     // the search field and scope buttons. Resolve their clicks first.
-    if app.settings_editor_active && app.settings_dropdown_open
+    if app.settings_editor_active
+        && app.settings_dropdown_open
         && mouse.kind == MouseEventKind::Down(MouseButton::Left)
     {
-        if let Some((_, row)) = app.theme_management.delete_hits.iter().find(|(area, _)| area.contains((col, row).into())) {
+        if let Some((_, row)) = app
+            .theme_management
+            .delete_hits
+            .iter()
+            .find(|(area, _)| area.contains((col, row).into()))
+        {
             let row = *row;
             app.request_theme_removal(row);
             return;
         }
-        if let Some(area) = app.settings_dropdown_area.filter(|area| area.contains((col, row).into())) {
+        if let Some(area) = app
+            .settings_dropdown_area
+            .filter(|area| area.contains((col, row).into()))
+        {
             app.active_pane = ActivePane::Editor;
             app.terminal_panel_focused = false;
             let option_idx = app.settings_dropdown_scroll + (row - area.y) as usize;
@@ -372,24 +512,39 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         return;
     }
 
-    if app.settings_editor_active && app.settings_dropdown_open
+    if app.settings_editor_active
+        && app.settings_dropdown_open
         && app.settings_dropdown_setting_id.as_deref() == Some("theme")
     {
         if mouse.kind == MouseEventKind::Moved {
-            app.mouse_hover_changed |= app.settings_dropdown_area.is_some_and(|area|
-                area.contains((col, row).into()) || area.contains((prev_mouse_col, prev_mouse_row).into()));
+            app.mouse_hover_changed |= app.settings_dropdown_area.is_some_and(|area| {
+                area.contains((col, row).into())
+                    || area.contains((prev_mouse_col, prev_mouse_row).into())
+            });
             return;
         }
-        if matches!(mouse.kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown)
-            && let Some(area) = app.settings_dropdown_area.filter(|area| area.contains((col, row).into()))
+        if matches!(
+            mouse.kind,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+        ) && let Some(area) = app
+            .settings_dropdown_area
+            .filter(|area| area.contains((col, row).into()))
         {
-            let max = app.settings_dropdown_options.len().saturating_sub(area.height as usize);
+            let max = app
+                .settings_dropdown_options
+                .len()
+                .saturating_sub(area.height as usize);
             app.settings_dropdown_scroll = if mouse.kind == MouseEventKind::ScrollUp {
                 app.settings_dropdown_scroll.saturating_sub(3)
-            } else { app.settings_dropdown_scroll.saturating_add(3).min(max) };
-            let last = (app.settings_dropdown_scroll + area.height as usize).saturating_sub(1)
+            } else {
+                app.settings_dropdown_scroll.saturating_add(3).min(max)
+            };
+            let last = (app.settings_dropdown_scroll + area.height as usize)
+                .saturating_sub(1)
                 .min(app.settings_dropdown_options.len().saturating_sub(1));
-            app.settings_dropdown_selected = app.settings_dropdown_selected.clamp(app.settings_dropdown_scroll, last);
+            app.settings_dropdown_selected = app
+                .settings_dropdown_selected
+                .clamp(app.settings_dropdown_scroll, last);
             app.theme_management.delete_hits.clear();
             return;
         }
@@ -401,8 +556,11 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         return;
     }
     if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-        && !app.zen_mode && app.sidebar_is_visible()
-        && app.explorer_area.is_some_and(|area| explorer_resize_hit(area, app.sidebar_right, col, row))
+        && !app.zen_mode
+        && app.sidebar_is_visible()
+        && app
+            .explorer_area
+            .is_some_and(|area| explorer_resize_hit(area, app.sidebar_right, col, row))
     {
         // When only one column fits, Source Control's Actions button shares
         // the first cell of the seam. The other rows still resize the sidebar.
@@ -416,9 +574,15 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     }
     // Remote consumes mouse events across its entire pane, so give the
     // Activity Bar priority where their hit areas overlap.
-    if !over_activity_bar && crate::ui_remote_targets::handle_mouse(app, mouse) { return; }
-    if crate::ui_remote_targets::connection_mouse(app, mouse) { return; }
-    if crate::ui_explorer_find::handle_mouse(app, mouse) { return; }
+    if !over_activity_bar && crate::ui_remote_targets::handle_mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_remote_targets::connection_mouse(app, mouse) {
+        return;
+    }
+    if crate::ui_explorer_find::handle_mouse(app, mouse) {
+        return;
+    }
 
     // Focus is owned by the terminal only after an explicit click in its panel.
     // Clicking the editor, explorer, status bar, or another panel tab releases it.
@@ -433,17 +597,25 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
 
     if mouse.kind == MouseEventKind::Moved {
         let old_explorer = app.hovered_explorer;
-        let extension_hover = app.code_area.is_some_and(|area| area.contains((col, row).into()))
-            && app.handle_active_extension_view_hover(col, row, (prev_mouse_col, prev_mouse_row), mouse.modifiers);
+        let extension_hover = app
+            .code_area
+            .is_some_and(|area| area.contains((col, row).into()))
+            && app.handle_active_extension_view_hover(
+                col,
+                row,
+                (prev_mouse_col, prev_mouse_row),
+                mouse.modifiers,
+            );
         // Fast path: if mouse is in the editor code area, skip chrome hover checks
         // and only update code-area-specific hover state.
         let in_code_area = app.code_area.is_some_and(|code| {
-            col >= code.x && col < code.x + code.width
-                && row >= code.y && row < code.y + code.height
+            col >= code.x
+                && col < code.x + code.width
+                && row >= code.y
+                && row < code.y + code.height
         });
         let in_gutter = app.gutter_area.is_some_and(|ga| {
-            col >= ga.x && col < ga.x + ga.width
-                && row >= ga.y && row < ga.y + ga.height
+            col >= ga.x && col < ga.x + ga.width && row >= ga.y && row < ga.y + ga.height
         });
         if in_code_area || in_gutter {
             let fold_hover = crate::ui_editor_folds::at(app, col, row);
@@ -453,7 +625,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             let old_editor = app.hovered_editor_pos;
             let had_chrome_hover = app.hovered_tab.is_some()
                 || app.hovered_tab_close_btn
-                || app.hovered_tab_scroll_left || app.hovered_tab_scroll_right
+                || app.hovered_tab_scroll_left
+                || app.hovered_tab_scroll_right
                 || app.hovered_new_tab_button
                 || app.hovered_activity.is_some()
                 || app.hovered_menu.is_some()
@@ -465,7 +638,10 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 || app.hovered_terminal_tab.is_some()
                 || app.hovered_terminal_close.is_some()
                 || app.hovered_terminal_sidebar_toggle
-                || app.terminal_sidebar.handle.is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
+                || app
+                    .terminal_sidebar
+                    .handle
+                    .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
                 || app.hovered_problem_row.is_some()
                 || app.hovered_scrollbar
                 || app.hovered_minimap
@@ -481,14 +657,18 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             } else if in_gutter {
                 if let (Some(ga), Some(editor)) = (app.gutter_area, app.editor_mut()) {
                     let rel_row = (row - ga.y) as usize;
-                    app.hovered_gutter_line = editor.source_line_at_screen(rel_row).map(|(line, _)| line);
+                    app.hovered_gutter_line =
+                        editor.source_line_at_screen(rel_row).map(|(line, _)| line);
                 }
                 app.hovered_editor_pos = None;
             } else {
                 app.hovered_gutter_line = None;
                 // Editor code area hover
-                app.hovered_editor_pos = if fold_hover.is_some() { None }
-                    else { crate::app_lsp_links::editor_position_at(app, col, row) };
+                app.hovered_editor_pos = if fold_hover.is_some() {
+                    None
+                } else {
+                    crate::app_lsp_links::editor_position_at(app, col, row)
+                };
                 if (col, row) != (prev_mouse_col, prev_mouse_row) {
                     // Ignore stationary reports (including modifier changes), but
                     // allow another hover even within the previously hovered word.
@@ -498,33 +678,53 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             // The pointer position also drives delayed LSP requests, but plain
             // source text has no hover paint. Keep tracking it without forcing
             // the entire workbench through preparation, rendering and output.
-            let editor_tooltip = crate::ui_editor_highlight::has_diagnostic_marker_tooltip(app, old_editor)
-                || crate::ui_editor_highlight::has_diagnostic_marker_tooltip(app, app.hovered_editor_pos);
+            let editor_tooltip =
+                crate::ui_editor_highlight::has_diagnostic_marker_tooltip(app, old_editor)
+                    || crate::ui_editor_highlight::has_diagnostic_marker_tooltip(
+                        app,
+                        app.hovered_editor_pos,
+                    );
             let gutter_marker_moved = app.gutter_area.is_some_and(|area| {
                 let column = crate::ui_editor_highlight::change_gutter_column(area);
                 let at_marker = |x, y| column == Some(x) && area.contains((x, y).into());
                 (col, row) != (prev_mouse_col, prev_mouse_row)
                     && (at_marker(col, row) || at_marker(prev_mouse_col, prev_mouse_row))
             });
-            let sticky_hover = app.sticky_scroll && !app.cached_sticky_lines.is_empty()
+            let sticky_hover = app.sticky_scroll
+                && !app.cached_sticky_lines.is_empty()
                 && app.code_area.is_some_and(|area| {
-                    let bottom = area.y.saturating_add(app.cached_sticky_lines.len().min(area.height as usize) as u16);
+                    let bottom = area.y.saturating_add(
+                        app.cached_sticky_lines.len().min(area.height as usize) as u16,
+                    );
                     row < bottom || (prev_mouse_row >= area.y && prev_mouse_row < bottom)
                 });
             // Only redraw if hover state actually changed or a painted tooltip
             // follows the pointer. Modifier/decorated/custom surfaces retain
             // their existing route, including removal of a previous hover.
-            let changed = modifiers_changed || had_chrome_hover || was_over_search_control || was_over_zen_exit || was_over_source_control
-                || was_over_agent_chat || was_over_navigation || empty_folder_hover_changed
+            let changed = modifiers_changed
+                || had_chrome_hover
+                || was_over_search_control
+                || was_over_zen_exit
+                || was_over_source_control
+                || was_over_agent_chat
+                || was_over_navigation
+                || empty_folder_hover_changed
                 || was_over_performance
-                || extension_hover || app.lsp_hover_active
+                || extension_hover
+                || app.lsp_hover_active
                 || mouse.modifiers.contains(KeyModifiers::CONTROL)
-                || editor_tooltip || gutter_marker_moved || sticky_hover
-                || app.chat.area.is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
+                || editor_tooltip
+                || gutter_marker_moved
+                || sticky_hover
+                || app
+                    .chat
+                    .area
+                    .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
                 || app.hovered_gutter_line != old_gutter
                 || fold_hover != old_fold_hover
                 || (fold_hover.is_some() && (col, row) != (prev_mouse_col, prev_mouse_row))
-                || crate::ui_editor_folds::gutter_at(app, col, row) != crate::ui_editor_folds::gutter_at(app, prev_mouse_col, prev_mouse_row)
+                || crate::ui_editor_folds::gutter_at(app, col, row)
+                    != crate::ui_editor_folds::gutter_at(app, prev_mouse_col, prev_mouse_row)
                 || ((app.vtcomplete_active || app.lsp_completion_active)
                     && (col != prev_mouse_col || row != prev_mouse_row));
             app.mouse_hover_changed = changed;
@@ -550,8 +750,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     app.tab_tooltip_shown = false;
                 }
                 // Detect if hovering over the close button area of a tab
-                app.hovered_tab_close_btn = hovered
-                    .is_some_and(|(_, _, close)| TabBarHits::contains(close, col));
+                app.hovered_tab_close_btn =
+                    hovered.is_some_and(|(_, _, close)| TabBarHits::contains(close, col));
                 // Check if hovering over "+" new tab button (right after last visible tab)
                 app.hovered_new_tab_button = TabBarHits::contains(hits.new_tab, col);
                 // Check if hovering scroll arrows
@@ -572,15 +772,10 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         if let Some(menu_area) = app.menu_bar_area {
             if row == menu_area.y {
                 let labels = App::menu_labels();
-                let visible_count =
-                    crate::ui_chrome::visible_menu_label_count(menu_area.width);
+                let visible_count = crate::ui_chrome::visible_menu_label_count(menu_area.width);
                 let mut x = menu_area.x + 3;
                 let mut found = false;
-                for (i, label) in labels
-                    .iter()
-                    .take(visible_count)
-                    .enumerate()
-                {
+                for (i, label) in labels.iter().take(visible_count).enumerate() {
                     let w = UnicodeWidthStr::width(*label) as u16 + 2;
                     if col >= x && col < x + w {
                         app.hovered_menu = Some(i);
@@ -590,14 +785,16 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     x += w;
                 }
                 if !found && crate::ui_chrome::menu_overflow_visible(menu_area.width) {
-                    let width = UnicodeWidthStr::width(crate::ui_chrome::MENU_OVERFLOW_LABEL)
-                        as u16;
+                    let width =
+                        UnicodeWidthStr::width(crate::ui_chrome::MENU_OVERFLOW_LABEL) as u16;
                     if col >= x && col < x.saturating_add(width) {
                         app.hovered_menu = Some(visible_count);
                         found = true;
                     }
                 }
-                if !found { app.hovered_menu = None; }
+                if !found {
+                    app.hovered_menu = None;
+                }
                 // Close button hover (rightmost 3 chars of title bar)
                 let right_edge = menu_area.x + menu_area.width;
                 app.hovered_close_button = col >= right_edge.saturating_sub(3);
@@ -622,21 +819,34 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         }
         // Panel close button hover
         if let Some(panel_area) = app.panel_area {
-            app.hovered_panel_close = row == panel_area.y && col >= panel_area.x + panel_area.width.saturating_sub(3) && col < panel_area.x + panel_area.width;
+            app.hovered_panel_close = row == panel_area.y
+                && col >= panel_area.x + panel_area.width.saturating_sub(3)
+                && col < panel_area.x + panel_area.width;
             // Panel tab hover (OUTPUT/PROBLEMS/TERMINAL/NOTIFICATIONS)
             app.hovered_panel_tab = None;
             if app.show_panel && row == panel_area.y {
-                app.hovered_panel_tab = app.panel_tab_areas.iter().find(|(area, _)| area.contains((col, row).into())).map(|(_, index)| *index);
-                app.mouse_hover_changed |= app.panel_chrome.maximize.contains((col, row).into()) || app.panel_chrome.maximize.contains((prev_mouse_col, prev_mouse_row).into());
+                app.hovered_panel_tab = app
+                    .panel_tab_areas
+                    .iter()
+                    .find(|(area, _)| area.contains((col, row).into()))
+                    .map(|(_, index)| *index);
+                app.mouse_hover_changed |= app.panel_chrome.maximize.contains((col, row).into())
+                    || app
+                        .panel_chrome
+                        .maximize
+                        .contains((prev_mouse_col, prev_mouse_row).into());
             }
 
             // Problem row hover
-            if app.show_panel && app.panel_tab == 1 && row > panel_area.y && row < panel_area.y + panel_area.height {
+            if app.show_panel
+                && app.panel_tab == 1
+                && row > panel_area.y
+                && row < panel_area.y + panel_area.height
+            {
                 app.hovered_problem_row = crate::ui_panels::hovered_problem(app, col, row);
             } else {
                 app.hovered_problem_row = None;
             }
-
         } else {
             app.hovered_panel_close = false;
             app.hovered_panel_tab = None;
@@ -683,22 +893,30 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         }
         // Scrollbar hover
         app.hovered_scrollbar = app.scrollbar_area.is_some_and(|area| {
-            col >= area.x && col < area.x + area.width
-                && row >= area.y && row < area.y + area.height
+            col >= area.x
+                && col < area.x + area.width
+                && row >= area.y
+                && row < area.y + area.height
         });
         // Minimap hover
         app.hovered_minimap = app.minimap_area.is_some_and(|area| {
-            col >= area.x && col < area.x + area.width
-                && row >= area.y && row < area.y + area.height
+            col >= area.x
+                && col < area.x + area.width
+                && row >= area.y
+                && row < area.y + area.height
         });
         app.hovered_h_scrollbar = app.h_scrollbar_area.is_some_and(|area| {
-            col >= area.x && col < area.x + area.width
-                && row >= area.y && row < area.y + area.height
+            col >= area.x
+                && col < area.x + area.width
+                && row >= area.y
+                && row < area.y + area.height
         });
         // Explorer hover
         if let Some(exp_area) = app.explorer_area {
-            if col >= exp_area.x && col < exp_area.x + exp_area.width
-                && row >= exp_area.y && row < exp_area.y + exp_area.height
+            if col >= exp_area.x
+                && col < exp_area.x + exp_area.width
+                && row >= exp_area.y
+                && row < exp_area.y + exp_area.height
                 && app.sidebar_view == crate::app::SidebarView::Explorer
             {
                 let tree_area = crate::ui_chrome::explorer_tree_content_area(app, exp_area);
@@ -716,12 +934,15 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         }
         // Gutter hover - detect line for blame tooltip
         if let Some(gutter) = app.gutter_area {
-            if col >= gutter.x && col < gutter.x + gutter.width
-                && row >= gutter.y && row < gutter.y + gutter.height
+            if col >= gutter.x
+                && col < gutter.x + gutter.width
+                && row >= gutter.y
+                && row < gutter.y + gutter.height
             {
                 let rel_row = (row - gutter.y) as usize;
                 if let Some(editor) = app.editor_mut() {
-                    app.hovered_gutter_line = editor.source_line_at_screen(rel_row).map(|(line, _)| line);
+                    app.hovered_gutter_line =
+                        editor.source_line_at_screen(rel_row).map(|(line, _)| line);
                 }
             } else {
                 app.hovered_gutter_line = None;
@@ -734,11 +955,18 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         // Before metadata is available there is no following tooltip to move.
         // Horizontal motion within the same Explorer row leaves its paint
         // unchanged and must not repaint the editor behind it.
-        if let Some(index) = app.hovered_explorer.filter(|index| Some(*index) == old_explorer)
-            && app.explorer.entries.get(index).is_some_and(|entry| !app.explorer_hover_info_cache.contains_key(&entry.path))
+        if let Some(index) = app
+            .hovered_explorer
+            .filter(|index| Some(*index) == old_explorer)
+            && app
+                .explorer
+                .entries
+                .get(index)
+                .is_some_and(|entry| !app.explorer_hover_info_cache.contains_key(&entry.path))
             && app.explorer_area.is_some_and(|area| {
                 let tree = crate::ui_chrome::explorer_tree_content_area(app, area);
-                tree.contains((col, row).into()) && tree.contains((prev_mouse_col, prev_mouse_row).into())
+                tree.contains((col, row).into())
+                    && tree.contains((prev_mouse_col, prev_mouse_row).into())
             })
         {
             app.mouse_hover_changed = modifiers_changed;
@@ -757,14 +985,20 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             // Click on menu bar?
             if let Some(menu_area) = app.menu_bar_area {
                 if row == menu_area.y {
-                    if let Some((_, forward)) = crate::ui_chrome::navigation_button_at(app, col, row) {
+                    if let Some((_, forward)) =
+                        crate::ui_chrome::navigation_button_at(app, col, row)
+                    {
                         app.menu_active = false;
                         app.menu_open = false;
                         app.hovered_menu = None;
                         app.clear_drag_states();
                         app.drag_start_pos = None;
                         if app.navigation.can_navigate(forward) {
-                            if forward { app.navigate_forward(); } else { app.navigate_back(); }
+                            if forward {
+                                app.navigate_forward();
+                            } else {
+                                app.navigate_back();
+                            }
                         }
                         return;
                     }
@@ -784,14 +1018,9 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         return;
                     }
                     let labels = App::menu_labels();
-                    let visible_count =
-                        crate::ui_chrome::visible_menu_label_count(menu_area.width);
+                    let visible_count = crate::ui_chrome::visible_menu_label_count(menu_area.width);
                     let mut x = menu_area.x + 3; // skip icon
-                    for (i, label) in labels
-                        .iter()
-                        .take(visible_count)
-                        .enumerate()
-                    {
+                    for (i, label) in labels.iter().take(visible_count).enumerate() {
                         let w = UnicodeWidthStr::width(*label) as u16 + 2;
                         if col >= x && col < x + w {
                             if app.menu_active && app.menu_selected == i && app.menu_open {
@@ -808,9 +1037,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         x += w;
                     }
                     if crate::ui_chrome::menu_overflow_visible(menu_area.width) {
-                        let width = UnicodeWidthStr::width(
-                            crate::ui_chrome::MENU_OVERFLOW_LABEL,
-                        ) as u16;
+                        let width =
+                            UnicodeWidthStr::width(crate::ui_chrome::MENU_OVERFLOW_LABEL) as u16;
                         if col >= x && col < x.saturating_add(width) {
                             if app.menu_active
                                 && app.menu_selected == visible_count
@@ -851,17 +1079,30 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             app.menu_active = false;
                             app.menu_open = false;
                             match cmd.as_str() {
-                                "quit_menu" => { app.exit_confirm_active = true; }
-                                "close_tab_menu" => { app.close_tab(app.active_tab); }
-                                "palette_menu" => { app.open_palette(); }
-                                "shortcuts_ref" => { app.shortcuts_active = !app.shortcuts_active; }
-                                other => { app.execute_palette_command(other); }
+                                "quit_menu" => {
+                                    app.exit_confirm_active = true;
+                                }
+                                "close_tab_menu" => {
+                                    app.close_tab(app.active_tab);
+                                }
+                                "palette_menu" => {
+                                    app.open_palette();
+                                }
+                                "shortcuts_ref" => {
+                                    app.shortcuts_active = !app.shortcuts_active;
+                                }
+                                other => {
+                                    app.execute_palette_command(other);
+                                }
                             }
                         }
                     }
                     return;
                 }
-                if app.menu_dropdown_inner.is_some_and(|area| area.contains((col, row).into())) {
+                if app
+                    .menu_dropdown_inner
+                    .is_some_and(|area| area.contains((col, row).into()))
+                {
                     return;
                 }
                 // Click outside dropdown -> close menu
@@ -878,7 +1119,9 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 return;
             }
 
-            if crate::ui_desks::sidebar_toggle_area(app).is_some_and(|area| area.contains((col, row).into())) {
+            if crate::ui_desks::sidebar_toggle_area(app)
+                .is_some_and(|area| area.contains((col, row).into()))
+            {
                 crate::ui_panels::capture_pointer(app, MouseButton::Left);
                 app.toggle_explorer();
                 return;
@@ -919,9 +1162,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     if let Some(index) = close_target {
                         app.close_terminal_tab_at(index);
                         if app.terminal_close.is_none() {
-                            app.terminal_panel_focused = app
-                                .active_terminal_in_dock(TerminalDock::Right)
-                                .is_some();
+                            app.terminal_panel_focused =
+                                app.active_terminal_in_dock(TerminalDock::Right).is_some();
                         }
                     } else if let Some(index) = tab_target {
                         app.active_terminal = index;
@@ -934,9 +1176,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         app.show_terminal_sidebar = true;
                         app.active_pane = ActivePane::Editor;
                         app.terminal_panel_focused = true;
-                    } else if let Some(index) =
-                        app.active_terminal_in_dock(TerminalDock::Right)
-                    {
+                    } else if let Some(index) = app.active_terminal_in_dock(TerminalDock::Right) {
                         app.active_terminal = index;
                         app.active_pane = ActivePane::Editor;
                         app.terminal_panel_focused = true;
@@ -964,18 +1204,29 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             }
 
             // Click on panel?
-            if app.show_panel && let Some(panel_area) = app.panel_area {
-                if row >= panel_area.y && row < panel_area.y + panel_area.height
-                    && col >= panel_area.x && col < panel_area.x + panel_area.width
+            if app.show_panel
+                && let Some(panel_area) = app.panel_area
+            {
+                if row >= panel_area.y
+                    && row < panel_area.y + panel_area.height
+                    && col >= panel_area.x
+                    && col < panel_area.x + panel_area.width
                 {
-                    if crate::ui_panels::scrollbar_press(app, col, row) { return; }
+                    if crate::ui_panels::scrollbar_press(app, col, row) {
+                        return;
+                    }
                     crate::ui_panels::capture_pointer(app, MouseButton::Left);
                     if row == panel_area.y {
                         if app.panel_chrome.close.contains((col, row).into()) {
                             crate::ui_panels::close_panel(app);
                         } else if app.panel_chrome.maximize.contains((col, row).into()) {
                             app.panel_chrome.maximized = !app.panel_chrome.maximized;
-                        } else if let Some((_, index)) = app.panel_tab_areas.iter().find(|(area, _)| area.contains((col, row).into())).copied() {
+                        } else if let Some((_, index)) = app
+                            .panel_tab_areas
+                            .iter()
+                            .find(|(area, _)| area.contains((col, row).into()))
+                            .copied()
+                        {
                             crate::ui_panels::select_tab(app, index);
                         }
                     } else if app.panel_tab == 1 {
@@ -1007,7 +1258,9 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 }
             }
 
-            if crate::ui_minimap_resize::press(app, mouse) { return; }
+            if crate::ui_minimap_resize::press(app, mouse) {
+                return;
+            }
 
             // In split mode, switch focus first so tab drag/click works in non-focused panes.
             crate::mouse_selection::switch_focus_if_split(app, col, row, true);
@@ -1057,12 +1310,18 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 if app.settings_value_editing {
                     app.finish_numeric_setting_edit();
                 }
-                if app.settings_category_picker_area.is_some_and(|area| area.contains((col, row).into())) {
+                if app
+                    .settings_category_picker_area
+                    .is_some_and(|area| area.contains((col, row).into()))
+                {
                     app.active_pane = ActivePane::Editor;
                     app.open_settings_category_dropdown();
                     return;
                 }
-                if app.settings_clear_search_area.is_some_and(|area| area.contains((col, row).into())) {
+                if app
+                    .settings_clear_search_area
+                    .is_some_and(|area| area.contains((col, row).into()))
+                {
                     app.settings_editor_search.clear();
                     app.settings_editor_search_cursor = 0;
                     app.settings_editor_search_selection_anchor = None;
@@ -1073,7 +1332,10 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     app.ensure_settings_selection_visible();
                     return;
                 }
-                if app.settings_json_area.is_some_and(|area| area.contains((col, row).into())) {
+                if app
+                    .settings_json_area
+                    .is_some_and(|area| area.contains((col, row).into()))
+                {
                     app.execute_palette_command("open_settings_json");
                     return;
                 }
@@ -1109,17 +1371,23 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             app.drag_settings_category_scrollbar(row);
                             return;
                         }
-                        let visual_idx = app.settings_category_scroll + (row - category_area.y) as usize;
+                        let visual_idx =
+                            app.settings_category_scroll + (row - category_area.y) as usize;
                         let category_rows = app.settings_category_visual_rows();
                         if let Some(&(idx, is_child, label)) = category_rows.get(visual_idx) {
-                            if !is_child && !App::settings_sections(idx).is_empty()
+                            if !is_child
+                                && !App::settings_sections(idx).is_empty()
                                 && col <= category_area.x + 2
                             {
                                 // A disclosure arrow changes the tree, not the
                                 // current page or an in-progress global search.
-                                app.settings_category_collapsed[idx] = !app.settings_category_collapsed[idx];
+                                app.settings_category_collapsed[idx] =
+                                    !app.settings_category_collapsed[idx];
                                 app.settings_category_scroll = app.settings_category_scroll.min(
-                                    app.settings_category_visual_rows().len().saturating_sub(category_area.height as usize));
+                                    app.settings_category_visual_rows()
+                                        .len()
+                                        .saturating_sub(category_area.height as usize),
+                                );
                                 if idx == app.settings_category_selected {
                                     app.settings_focus_categories = true;
                                     app.settings_focus_control = false;
@@ -1138,8 +1406,10 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     }
                 }
                 if let Some(settings_area) = app.settings_sidebar_area {
-                    if col >= settings_area.x && col < settings_area.x + settings_area.width
-                        && row >= settings_area.y && row < settings_area.y + settings_area.height
+                    if col >= settings_area.x
+                        && col < settings_area.x + settings_area.width
+                        && row >= settings_area.y
+                        && row < settings_area.y + settings_area.height
                     {
                         app.active_pane = ActivePane::Editor;
                         if let Some((track_x, track_h, thumb_h, max_scroll)) =
@@ -1148,22 +1418,35 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             if col == track_x {
                                 let travel = track_h.saturating_sub(thumb_h);
                                 let offset = app.settings_editor_scroll.min(max_scroll);
-                                let top = if travel == 0 { 0 } else { offset * travel / max_scroll };
+                                let top = if travel == 0 {
+                                    0
+                                } else {
+                                    offset * travel / max_scroll
+                                };
                                 let rel_y = row.saturating_sub(settings_area.y) as usize;
-                                let offset = if (top..top + thumb_h).contains(&rel_y) { offset }
-                                    else if travel == 0 { 0 } else {
-                                        (rel_y.saturating_sub(thumb_h / 2).min(travel) as f64
-                                            * max_scroll as f64 / travel as f64).round() as usize
-                                    };
+                                let offset = if (top..top + thumb_h).contains(&rel_y) {
+                                    offset
+                                } else if travel == 0 {
+                                    0
+                                } else {
+                                    (rel_y.saturating_sub(thumb_h / 2).min(travel) as f64
+                                        * max_scroll as f64
+                                        / travel as f64)
+                                        .round() as usize
+                                };
                                 app.clear_drag_states();
                                 app.settings_editor_scroll = offset;
-                                app.settings_scrollbar_drag = Some(crate::settings_layout::Drag { row, offset });
+                                app.settings_scrollbar_drag =
+                                    Some(crate::settings_layout::Drag { row, offset });
                                 return;
                             }
                         }
                         app.settings_focus_categories = false;
-                        let layout = app.settings_line_layout(settings_area.width.saturating_sub(3) as usize);
-                        let scroll = app.settings_editor_scroll.min(layout.max_scroll(settings_area.height as usize));
+                        let layout = app
+                            .settings_line_layout(settings_area.width.saturating_sub(3) as usize);
+                        let scroll = app
+                            .settings_editor_scroll
+                            .min(layout.max_scroll(settings_area.height as usize));
                         let visual_row = scroll + (row - settings_area.y) as usize;
                         let items = app.settings_items();
                         if let Some(item) = layout.row_at(visual_row) {
@@ -1174,35 +1457,57 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             let running_rows = item.start;
                             let kind = App::setting_field_kind(id);
                             let relative_row = visual_row - running_rows;
-                            let gap = if matches!(kind, "heading" | "shortcut") { 0 } else {
+                            let gap = if matches!(kind, "heading" | "shortcut") {
+                                0
+                            } else {
                                 App::setting_row_gap(settings_area.width.saturating_sub(3) as usize)
                             };
                             // Spacing and section headings are not controls.
-                            if kind == "heading" || relative_row >= item_height.saturating_sub(gap) {
+                            if kind == "heading" || relative_row >= item_height.saturating_sub(gap)
+                            {
                                 return;
                             }
                             app.settings_selected = orig_idx;
                             app.settings_focus_control = true;
-                            if relative_row == 0 && !id.starts_with("kb_") && settings_area.width >= 32
+                            if relative_row == 0
+                                && !id.starts_with("kb_")
+                                && settings_area.width >= 32
                                 && col >= settings_area.right().saturating_sub(8)
                                 && col < settings_area.right().saturating_sub(1)
-                                && [crate::settings::SettingsScope::Global.label(), crate::settings::SettingsScope::Workspace.label()]
-                                    .contains(&app.setting_source_label(id))
+                                && [
+                                    crate::settings::SettingsScope::Global.label(),
+                                    crate::settings::SettingsScope::Workspace.label(),
+                                ]
+                                .contains(&app.setting_source_label(id))
                             {
                                 app.reset_setting_in_selected_scope(id);
                                 return;
                             }
-                            if let Some(kb_index) = crate::ui_settings_shortcuts::binding_index(id) {
+                            if let Some(kb_index) = crate::ui_settings_shortcuts::binding_index(id)
+                            {
                                 // One-line table row: buttons and the key cap act
                                 // directly; a double-click anywhere edits.
-                                let row_rect = Rect::new(settings_area.x, row, settings_area.width.saturating_sub(1), 1);
+                                let row_rect = Rect::new(
+                                    settings_area.x,
+                                    row,
+                                    settings_area.width.saturating_sub(1),
+                                    1,
+                                );
                                 let now = std::time::Instant::now();
-                                let double = app.settings_shortcut_click.is_some_and(|(at, index)| {
-                                    index == orig_idx && now.duration_since(at).as_millis() < 400
-                                });
+                                let double =
+                                    app.settings_shortcut_click.is_some_and(|(at, index)| {
+                                        index == orig_idx
+                                            && now.duration_since(at).as_millis() < 400
+                                    });
                                 app.settings_shortcut_click = Some((now, orig_idx));
-                                let action = crate::ui_settings_shortcuts::hit(app, id, &items[orig_idx].1, row_rect, col)
-                                    .or(double.then_some(crate::ui_settings_shortcuts::Action::Edit));
+                                let action = crate::ui_settings_shortcuts::hit(
+                                    app,
+                                    id,
+                                    &items[orig_idx].1,
+                                    row_rect,
+                                    col,
+                                )
+                                .or(double.then_some(crate::ui_settings_shortcuts::Action::Edit));
                                 if let Some(action) = action {
                                     app.settings_shortcut_click = None;
                                     app.run_shortcut_action(kb_index, action);
@@ -1214,10 +1519,18 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             if kind == "exclusions" {
                                 let offset = relative_row.saturating_sub(item.control);
                                 if relative_row >= item.control {
-                                    let patterns = serde_json::from_str::<crate::settings::ExcludePatterns>(&items[orig_idx].1).unwrap_or_default();
+                                    let patterns =
+                                        serde_json::from_str::<crate::settings::ExcludePatterns>(
+                                            &items[orig_idx].1,
+                                        )
+                                        .unwrap_or_default();
                                     if offset <= patterns.len() {
                                         let pattern = patterns.keys().nth(offset).cloned();
-                                        app.open_exclusion_settings(id, pattern, offset == patterns.len());
+                                        app.open_exclusion_settings(
+                                            id,
+                                            pattern,
+                                            offset == patterns.len(),
+                                        );
                                     }
                                 }
                                 return;
@@ -1226,13 +1539,22 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                 "number" => 20,
                                 "language-list" => 60,
                                 "dropdown" => 40,
-                                "action" => UnicodeWidthStr::width(items[orig_idx].1.trim()) as u16 + 2,
+                                "action" => {
+                                    UnicodeWidthStr::width(items[orig_idx].1.trim()) as u16 + 2
+                                }
                                 _ => settings_area.width.saturating_sub(3),
-                            }.min(settings_area.width.saturating_sub(3));
+                            }
+                            .min(settings_area.width.saturating_sub(3));
                             let on_control = if kind == "checkbox" {
-                                relative_row > 0 && relative_row < desc_lines.len()
+                                relative_row > 0
+                                    && relative_row < desc_lines.len()
                                     && col >= settings_area.x + 2
-                                    && col < settings_area.x + 6 + UnicodeWidthStr::width(desc_lines[relative_row].as_str()) as u16
+                                    && col
+                                        < settings_area.x
+                                            + 6
+                                            + UnicodeWidthStr::width(
+                                                desc_lines[relative_row].as_str(),
+                                            ) as u16
                             } else {
                                 relative_row == item.control
                                     && col >= settings_area.x + 2
@@ -1249,7 +1571,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                 app.begin_numeric_setting_edit(id, &current);
                                 // The first click activates the field; keep it in
                                 // the shared gesture so a second click selects its value.
-                                app.text_input_click_id = Some(crate::text_input::TextInputId::SettingsValue);
+                                app.text_input_click_id =
+                                    Some(crate::text_input::TextInputId::SettingsValue);
                                 app.click_count = 1;
                                 app.last_click_time = std::time::Instant::now();
                                 app.last_click_pos = (col, row);
@@ -1267,10 +1590,14 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         return;
                     }
                 }
-            } else if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::Settings {
+            } else if app.sidebar_is_visible()
+                && app.sidebar_view == crate::app::SidebarView::Settings
+            {
                 if let Some(settings_area) = app.settings_sidebar_area {
-                    if col >= settings_area.x && col < settings_area.x + settings_area.width
-                        && row >= settings_area.y && row < settings_area.y + settings_area.height
+                    if col >= settings_area.x
+                        && col < settings_area.x + settings_area.width
+                        && row >= settings_area.y
+                        && row < settings_area.y + settings_area.height
                     {
                         let items = app.settings_items();
                         let visible_items = settings_area.height as usize;
@@ -1290,13 +1617,17 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             }
 
             // Resolve the painted scrollbar before the resize seam and file rows.
-            if app.show_explorer && app.sidebar_view == crate::app::SidebarView::Explorer
+            if app.show_explorer
+                && app.sidebar_view == crate::app::SidebarView::Explorer
                 && let Some(area) = app.explorer_area
-                && let Some(bar) = [crate::ui_chrome::ExplorerSection::OpenEditors, crate::ui_chrome::ExplorerSection::Files,
-                    crate::ui_chrome::ExplorerSection::FilesHorizontal]
-                    .into_iter()
-                    .filter_map(|section| crate::ui_chrome::explorer_scrollbar(app, area, section))
-                    .find(|bar| bar.area.contains((col, row).into()))
+                && let Some(bar) = [
+                    crate::ui_chrome::ExplorerSection::OpenEditors,
+                    crate::ui_chrome::ExplorerSection::Files,
+                    crate::ui_chrome::ExplorerSection::FilesHorizontal,
+                ]
+                .into_iter()
+                .filter_map(|section| crate::ui_chrome::explorer_scrollbar(app, area, section))
+                .find(|bar| bar.area.contains((col, row).into()))
             {
                 app.clear_drag_states();
                 app.drag_start_pos = None;
@@ -1304,24 +1635,32 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 app.hovered_explorer = None;
                 let position = bar.coordinate(col, row);
                 let relative_row = position - bar.coordinate(bar.area.x, bar.area.y);
-                let on_thumb = (bar.thumb_top..bar.thumb_top + bar.thumb_height).contains(&relative_row);
-                let grab = if on_thumb { relative_row - bar.thumb_top } else { bar.thumb_height / 2 };
-                let offset = if on_thumb { bar.offset } else { bar.offset_at(position, grab).unwrap_or(bar.offset) };
+                let on_thumb =
+                    (bar.thumb_top..bar.thumb_top + bar.thumb_height).contains(&relative_row);
+                let grab = if on_thumb {
+                    relative_row - bar.thumb_top
+                } else {
+                    bar.thumb_height / 2
+                };
+                let offset = if on_thumb {
+                    bar.offset
+                } else {
+                    bar.offset_at(position, grab).unwrap_or(bar.offset)
+                };
                 bar.section.scroll_to(app, offset);
                 app.explorer_scrollbar_drag = Some((bar.section, position, offset));
                 return;
             }
 
-            if crate::ui_source_control::click_header(app, col, row) { return; }
+            if crate::ui_source_control::click_header(app, col, row) {
+                return;
+            }
 
             // Internal side-by-side diff divider. It is independent from the
             // editor-group split tree and resizes only the two diff panes.
             if diff_divider_hit(app, col, row) {
                 let now = std::time::Instant::now();
-                let is_double_click = now
-                    .duration_since(app.last_click_time)
-                    .as_millis()
-                    < 400
+                let is_double_click = now.duration_since(app.last_click_time).as_millis() < 400
                     && app.last_click_pos == (col, row);
                 if is_double_click {
                     app.diff_split_ratio = 0.5;
@@ -1363,18 +1702,23 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         // Expand hit area by 1 pixel on each side for easier grabbing
                         let hit = match direction {
                             crate::app::SplitDirection::Horizontal => {
-                                col >= div_rect.x.saturating_sub(1) && col <= div_rect.x + div_rect.width
-                                && row >= div_rect.y && row < div_rect.y + div_rect.height
+                                col >= div_rect.x.saturating_sub(1)
+                                    && col <= div_rect.x + div_rect.width
+                                    && row >= div_rect.y
+                                    && row < div_rect.y + div_rect.height
                             }
                             crate::app::SplitDirection::Vertical => {
-                                row >= div_rect.y.saturating_sub(1) && row <= div_rect.y + div_rect.height
-                                && col >= div_rect.x && col < div_rect.x + div_rect.width
+                                row >= div_rect.y.saturating_sub(1)
+                                    && row <= div_rect.y + div_rect.height
+                                    && col >= div_rect.x
+                                    && col < div_rect.x + div_rect.width
                             }
                         };
                         if hit {
                             let now = std::time::Instant::now();
-                            let is_double_click = now.duration_since(app.last_click_time).as_millis() < 400
-                                && app.last_click_pos == (col, row);
+                            let is_double_click =
+                                now.duration_since(app.last_click_time).as_millis() < 400
+                                    && app.last_click_pos == (col, row);
                             if is_double_click {
                                 // Double-click on divider: reset ratios to equal
                                 if let Some(ref mut tree) = app.split_tree {
@@ -1388,7 +1732,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                 crate::app::SplitDirection::Horizontal => parent_area.width,
                                 crate::app::SplitDirection::Vertical => parent_area.height,
                             };
-                            app.dragging_divider = Some((path.clone(), *child_idx, *direction, total_size));
+                            app.dragging_divider =
+                                Some((path.clone(), *child_idx, *direction, total_size));
                             app.resizing_split = true;
                             app.last_click_time = std::time::Instant::now();
                             app.last_click_pos = (col, row);
@@ -1398,7 +1743,9 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 }
             }
 
-            if crate::ui_source_control::click_body(app, col, row, mouse.modifiers) { return; }
+            if crate::ui_source_control::click_body(app, col, row, mouse.modifiers) {
+                return;
+            }
 
             // Click on sidebar area?
             if let Some(exp_area) = app.explorer_area {
@@ -1407,10 +1754,17 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                     && row >= exp_area.y
                     && row < exp_area.y + exp_area.height
                 {
-                    if crate::ui_empty_folder::click(app, col, row) { return; }
-                    if !app.has_open_folder() && (matches!(app.sidebar_view,
-                        crate::app::SidebarView::Search | crate::app::SidebarView::SourceControl)
-                        || (app.sidebar_view == crate::app::SidebarView::Explorer && app.tabs.is_empty())) {
+                    if crate::ui_empty_folder::click(app, col, row) {
+                        return;
+                    }
+                    if !app.has_open_folder()
+                        && (matches!(
+                            app.sidebar_view,
+                            crate::app::SidebarView::Search
+                                | crate::app::SidebarView::SourceControl
+                        ) || (app.sidebar_view == crate::app::SidebarView::Explorer
+                            && app.tabs.is_empty()))
+                    {
                         app.active_pane = ActivePane::Explorer;
                         return;
                     }
@@ -1421,14 +1775,22 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         let inner_x = crate::ui_search_panel::search_form_left(exp_area);
                         macro_rules! focus_search_field {
                             ($field:expr, $label:expr) => {{
-                                app.focus_text_input(crate::text_input::TextInputId::GlobalSearch($field));
+                                app.focus_text_input(crate::text_input::TextInputId::GlobalSearch(
+                                    $field,
+                                ));
                                 let label_width = UnicodeWidthStr::width($label) as u16;
                                 let text_start = inner_x.saturating_add(label_width);
-                                app.global_search_set_field_cursor_char_index($field, col.saturating_sub(text_start) as usize);
+                                app.global_search_set_field_cursor_char_index(
+                                    $field,
+                                    col.saturating_sub(text_start) as usize,
+                                );
                             }};
                         }
                         if crate::ui_search_controls::handle_click(
-                            app, crate::ui_search_controls::SearchScope::Workspace, col, row,
+                            app,
+                            crate::ui_search_controls::SearchScope::Workspace,
+                            col,
+                            row,
                         ) {
                             return;
                         }
@@ -1463,7 +1825,10 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             }
 
                             use crate::search_results::SearchRow;
-                            let max_scroll = app.global_search_results.row_count().saturating_sub(max_visible);
+                            let max_scroll = app
+                                .global_search_results
+                                .row_count()
+                                .saturating_sub(max_visible);
                             let scroll = app.global_search_scroll.min(max_scroll);
                             let clicked_row = scroll + rel_row;
                             if let Some(hit) = app.global_search_results.row_at(clicked_row) {
@@ -1496,10 +1861,15 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         let header_label_w = UnicodeWidthStr::width(" EXPLORER") as u16;
                         let collapse_w = UnicodeWidthStr::width(" ⤒ ") as u16;
                         let refresh_w = UnicodeWidthStr::width(" ↻ ") as u16;
-                        let fill_w = exp_area
-                            .width
-                            .saturating_sub(header_label_w.saturating_add(collapse_w).saturating_add(refresh_w));
-                        let collapse_x = exp_area.x.saturating_add(header_label_w).saturating_add(fill_w);
+                        let fill_w = exp_area.width.saturating_sub(
+                            header_label_w
+                                .saturating_add(collapse_w)
+                                .saturating_add(refresh_w),
+                        );
+                        let collapse_x = exp_area
+                            .x
+                            .saturating_add(header_label_w)
+                            .saturating_add(fill_w);
                         let refresh_x = collapse_x.saturating_add(collapse_w);
                         if col >= refresh_x && col < refresh_x.saturating_add(refresh_w) {
                             app.refresh_explorer_async();
@@ -1519,7 +1889,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         }
                     }
 
-                    let (oe_area, tree_section) = crate::ui_chrome::explorer_sections(app, exp_area);
+                    let (oe_area, tree_section) =
+                        crate::ui_chrome::explorer_sections(app, exp_area);
                     let oe_count = oe_area.height.saturating_sub(1) as usize;
 
                     // Click on Open Editors header -> toggle
@@ -1559,7 +1930,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
 
                     let inner_row = (row - tree_start) as usize;
                     let visible_height = tree_area.height as usize;
-                    let Some(clicked_idx) = app.explorer.entry_at_row(inner_row, visible_height) else {
+                    let Some(clicked_idx) = app.explorer.entry_at_row(inner_row, visible_height)
+                    else {
                         app.clear_explorer_selection();
                         app.dragging_explorer_path = None;
                         return;
@@ -1582,19 +1954,25 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
                         if shift {
                             app.range_select_explorer(clicked_idx, ctrl);
-                            app.dragging_explorer_path = Some(app.explorer.entries[clicked_idx].path.clone());
+                            app.dragging_explorer_path =
+                                Some(app.explorer.entries[clicked_idx].path.clone());
                             return;
                         }
                         if ctrl {
                             app.toggle_explorer_selection(clicked_idx);
-                            app.dragging_explorer_path = app.explorer_multi_selected.contains(&app.explorer.entries[clicked_idx].path)
+                            app.dragging_explorer_path = app
+                                .explorer_multi_selected
+                                .contains(&app.explorer.entries[clicked_idx].path)
                                 .then(|| app.explorer.entries[clicked_idx].path.clone());
                             return;
                         }
 
                         // Retain the selected file set when starting a drag.
                         // Chat accepts the entire selection as file context.
-                        if app.explorer_multi_selected.contains(&app.explorer.entries[clicked_idx].path) {
+                        if app
+                            .explorer_multi_selected
+                            .contains(&app.explorer.entries[clicked_idx].path)
+                        {
                             app.explorer.selected = clicked_idx;
                         } else {
                             app.set_explorer_single_selection(clicked_idx);
@@ -1634,7 +2012,11 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             crate::mouse_selection::handle_editor_area_left_click(app, col, row, mouse.modifiers);
         }
         MouseEventKind::Down(MouseButton::Middle) => {
-            if app.show_panel && app.panel_area.is_some_and(|area| area.contains((col, row).into())) {
+            if app.show_panel
+                && app
+                    .panel_area
+                    .is_some_and(|area| area.contains((col, row).into()))
+            {
                 crate::ui_panels::capture_pointer(app, MouseButton::Middle);
                 return;
             }
@@ -1646,7 +2028,11 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
             crate::mouse_selection::handle_middle_button_down(app, col, row);
         }
         MouseEventKind::Down(MouseButton::Right) => {
-            if app.show_panel && app.panel_area.is_some_and(|area| area.contains((col, row).into())) {
+            if app.show_panel
+                && app
+                    .panel_area
+                    .is_some_and(|area| area.contains((col, row).into()))
+            {
                 crate::ui_panels::capture_pointer(app, MouseButton::Right);
                 return;
             }
@@ -1671,16 +2057,27 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         }
         // No double-click in this crossterm version
         MouseEventKind::Drag(MouseButton::Left) => {
-            crate::mouse_drag::handle_left_drag(app, col, row, prev_mouse_col, prev_mouse_row, mouse.modifiers);
+            crate::mouse_drag::handle_left_drag(
+                app,
+                col,
+                row,
+                prev_mouse_col,
+                prev_mouse_row,
+                mouse.modifiers,
+            );
         }
         MouseEventKind::Drag(MouseButton::Middle) => {
-            if app.handle_active_extension_view_middle_button("drag", col, row, mouse.modifiers) { return; }
+            if app.handle_active_extension_view_middle_button("drag", col, row, mouse.modifiers) {
+                return;
+            }
             // Middle drag: column/block selection
             crate::mouse_drag::handle_block_drag(app, col, row);
         }
         MouseEventKind::Up(MouseButton::Middle) => {
-            if app.handle_active_extension_view_middle_button("up", col, row, mouse.modifiers) { return; }
-                app.block_drag_cache = None;
+            if app.handle_active_extension_view_middle_button("up", col, row, mouse.modifiers) {
+                return;
+            }
+            app.block_drag_cache = None;
             app.middle_drag_start = None;
         }
         MouseEventKind::Up(MouseButton::Left) => {
@@ -1690,13 +2087,15 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     }
 }
 
-
 pub(crate) fn settings_scrollbar_metrics(
     app: &App,
     settings_area: ratatui::layout::Rect,
 ) -> Option<(u16, usize, usize, usize)> {
-    if settings_area.is_empty() { return None; }
-    app.settings_line_layout(settings_area.width.saturating_sub(3) as usize).scrollbar(settings_area)
+    if settings_area.is_empty() {
+        return None;
+    }
+    app.settings_line_layout(settings_area.width.saturating_sub(3) as usize)
+        .scrollbar(settings_area)
 }
 
 #[cfg(test)]
@@ -1724,10 +2123,20 @@ pub(crate) fn handle_tab_click(app: &mut App, col: u16, tab_area: ratatui::layou
     handle_tab_hit(app, col, tab_area, &hits)
 }
 
-fn handle_tab_hit(app: &mut App, col: u16, tab_area: ratatui::layout::Rect, hits: &TabBarHits) -> bool {
+fn handle_tab_hit(
+    app: &mut App,
+    col: u16,
+    tab_area: ratatui::layout::Rect,
+    hits: &TabBarHits,
+) -> bool {
     if crate::ui_chrome_tabs::strip_scroll_position(app, app.active_group).is_some() {
-        let direction = if TabBarHits::contains(hits.left, col) { Some(-1) }
-            else if TabBarHits::contains(hits.right, col) { Some(1) } else { None };
+        let direction = if TabBarHits::contains(hits.left, col) {
+            Some(-1)
+        } else if TabBarHits::contains(hits.right, col) {
+            Some(1)
+        } else {
+            None
+        };
         if let Some(direction) = direction {
             crate::ui_chrome_tabs::scroll_strip_by(app, tab_area, app.active_group, direction * 3);
             return true;
@@ -1743,7 +2152,9 @@ fn handle_tab_hit(app: &mut App, col: u16, tab_area: ratatui::layout::Rect, hits
         app.tab_scroll_manual_anchor = Some(app.active_tab);
         return true;
     }
-    let Some((index, rect, close)) = hits.tab_at(col) else { return false; };
+    let Some((index, rect, close)) = hits.tab_at(col) else {
+        return false;
+    };
     if TabBarHits::contains(close, col) {
         app.tab_scroll_manual_anchor = None;
         reconcile_dragging_tab_after_close(app, index);
@@ -1752,7 +2163,9 @@ fn handle_tab_hit(app: &mut App, col: u16, tab_area: ratatui::layout::Rect, hits
     } else {
         let scroll = crate::ui_chrome_tabs::strip_scroll_position(app, app.active_group);
         let double_click = std::time::Instant::now()
-            .duration_since(app.last_click_time).as_millis() < 400
+            .duration_since(app.last_click_time)
+            .as_millis()
+            < 400
             && app.last_click_pos.1 == tab_area.y
             && TabBarHits::contains(rect, app.last_click_pos.0)
             && !TabBarHits::contains(close, app.last_click_pos.0)
@@ -1780,8 +2193,14 @@ fn handle_tab_hit(app: &mut App, col: u16, tab_area: ratatui::layout::Rect, hits
     true
 }
 
-pub(crate) fn find_tab_at_col(app: &App, col: u16, tab_area: ratatui::layout::Rect) -> Option<usize> {
-    TabBarHits::new(app, tab_area).tab_at(col).map(|(index, _, _)| index)
+pub(crate) fn find_tab_at_col(
+    app: &App,
+    col: u16,
+    tab_area: ratatui::layout::Rect,
+) -> Option<usize> {
+    TabBarHits::new(app, tab_area)
+        .tab_at(col)
+        .map(|(index, _, _)| index)
 }
 
 #[cfg(test)]

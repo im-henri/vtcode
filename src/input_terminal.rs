@@ -145,74 +145,89 @@ impl App {
 
 /// Shared by integrated terminals and the remote connection's login shell.
 /// Encoding stays independent of App and does not invent editor commands.
-pub(crate) fn write_key(key: KeyEvent, app_cursor: bool, win32: bool, mut write: impl FnMut(&[u8])) {
-        if win32 {
-            if let Some(bytes) = keyboard::win32_key_sequence(key) { write(&bytes); }
-            return;
+pub(crate) fn write_key(
+    key: KeyEvent,
+    app_cursor: bool,
+    win32: bool,
+    mut write: impl FnMut(&[u8]),
+) {
+    if win32 {
+        if let Some(bytes) = keyboard::win32_key_sequence(key) {
+            write(&bytes);
         }
-        if key.kind == crossterm::event::KeyEventKind::Release { return; }
-        let mods = key.modifiers;
-        let mod_param = xterm_modifier_parameter(mods);
-        let mut key_buf = [0u8; 16];
-        let data: Option<&[u8]> = match key.code {
-            KeyCode::Char(c) => {
-                // On Windows, Ctrl+Alt is commonly AltGr. Preserve the printable
-                // character instead of turning it into an unrelated control byte.
-                if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::ALT) {
-                    let encoded = c.encode_utf8(&mut key_buf);
-                    Some(encoded.as_bytes())
-                } else if mods.contains(KeyModifiers::CONTROL) {
-                    control_byte(c).map(|byte| {
-                        key_buf[0] = byte;
-                        &key_buf[..1]
-                    })
-                } else if mods.contains(KeyModifiers::ALT) {
-                    key_buf[0] = 0x1b;
-                    let encoded = c.encode_utf8(&mut key_buf[1..]);
-                    let len = 1 + encoded.len();
-                    Some(&key_buf[..len])
-                } else {
-                    let encoded = c.encode_utf8(&mut key_buf);
-                    Some(encoded.as_bytes())
-                }
+        return;
+    }
+    if key.kind == crossterm::event::KeyEventKind::Release {
+        return;
+    }
+    let mods = key.modifiers;
+    let mod_param = xterm_modifier_parameter(mods);
+    let mut key_buf = [0u8; 16];
+    let data: Option<&[u8]> = match key.code {
+        KeyCode::Char(c) => {
+            // On Windows, Ctrl+Alt is commonly AltGr. Preserve the printable
+            // character instead of turning it into an unrelated control byte.
+            if mods.contains(KeyModifiers::CONTROL) && mods.contains(KeyModifiers::ALT) {
+                let encoded = c.encode_utf8(&mut key_buf);
+                Some(encoded.as_bytes())
+            } else if mods.contains(KeyModifiers::CONTROL) {
+                control_byte(c).map(|byte| {
+                    key_buf[0] = byte;
+                    &key_buf[..1]
+                })
+            } else if mods.contains(KeyModifiers::ALT) {
+                key_buf[0] = 0x1b;
+                let encoded = c.encode_utf8(&mut key_buf[1..]);
+                let len = 1 + encoded.len();
+                Some(&key_buf[..len])
+            } else {
+                let encoded = c.encode_utf8(&mut key_buf);
+                Some(encoded.as_bytes())
             }
-            KeyCode::Enter => Some(b"\r"),
-            KeyCode::Backspace => {
-                if mods.contains(KeyModifiers::ALT) {
-                    key_buf[0] = 0x1b;
-                    key_buf[1] = if mods.contains(KeyModifiers::CONTROL) { 0x08 } else { 0x7f };
-                    Some(&key_buf[..2])
-                } else if mods.contains(KeyModifiers::CONTROL) {
-                    Some(b"\x08")
+        }
+        KeyCode::Enter => Some(b"\r"),
+        KeyCode::Backspace => {
+            if mods.contains(KeyModifiers::ALT) {
+                key_buf[0] = 0x1b;
+                key_buf[1] = if mods.contains(KeyModifiers::CONTROL) {
+                    0x08
                 } else {
-                    Some(b"\x7f")
-                }
+                    0x7f
+                };
+                Some(&key_buf[..2])
+            } else if mods.contains(KeyModifiers::CONTROL) {
+                Some(b"\x08")
+            } else {
+                Some(b"\x7f")
             }
-            KeyCode::Tab => {
-                if mods.contains(KeyModifiers::SHIFT) {
-                    Some(b"\x1b[Z")
-                } else {
-                    // The real shell receives Tab and performs its own completion.
-                    Some(b"\t")
-                }
+        }
+        KeyCode::Tab => {
+            if mods.contains(KeyModifiers::SHIFT) {
+                Some(b"\x1b[Z")
+            } else {
+                // The real shell receives Tab and performs its own completion.
+                Some(b"\t")
             }
-            KeyCode::BackTab => Some(b"\x1b[Z"),
-            KeyCode::Esc => Some(b"\x1b"),
-            KeyCode::Up => modified_cursor_key(&mut key_buf, b'A', mod_param, app_cursor),
-            KeyCode::Down => modified_cursor_key(&mut key_buf, b'B', mod_param, app_cursor),
-            KeyCode::Right => modified_cursor_key(&mut key_buf, b'C', mod_param, app_cursor),
-            KeyCode::Left => modified_cursor_key(&mut key_buf, b'D', mod_param, app_cursor),
-            KeyCode::Home => modified_cursor_key(&mut key_buf, b'H', mod_param, app_cursor),
-            KeyCode::End => modified_cursor_key(&mut key_buf, b'F', mod_param, app_cursor),
-            KeyCode::PageUp => Some(modified_tilde_key(&mut key_buf, 5, mod_param)),
-            KeyCode::PageDown => Some(modified_tilde_key(&mut key_buf, 6, mod_param)),
-            KeyCode::Delete => Some(modified_tilde_key(&mut key_buf, 3, mod_param)),
-            KeyCode::Insert => Some(modified_tilde_key(&mut key_buf, 2, mod_param)),
-            KeyCode::F(number) => function_key_sequence(&mut key_buf, number, mod_param),
-            _ => None,
-        };
+        }
+        KeyCode::BackTab => Some(b"\x1b[Z"),
+        KeyCode::Esc => Some(b"\x1b"),
+        KeyCode::Up => modified_cursor_key(&mut key_buf, b'A', mod_param, app_cursor),
+        KeyCode::Down => modified_cursor_key(&mut key_buf, b'B', mod_param, app_cursor),
+        KeyCode::Right => modified_cursor_key(&mut key_buf, b'C', mod_param, app_cursor),
+        KeyCode::Left => modified_cursor_key(&mut key_buf, b'D', mod_param, app_cursor),
+        KeyCode::Home => modified_cursor_key(&mut key_buf, b'H', mod_param, app_cursor),
+        KeyCode::End => modified_cursor_key(&mut key_buf, b'F', mod_param, app_cursor),
+        KeyCode::PageUp => Some(modified_tilde_key(&mut key_buf, 5, mod_param)),
+        KeyCode::PageDown => Some(modified_tilde_key(&mut key_buf, 6, mod_param)),
+        KeyCode::Delete => Some(modified_tilde_key(&mut key_buf, 3, mod_param)),
+        KeyCode::Insert => Some(modified_tilde_key(&mut key_buf, 2, mod_param)),
+        KeyCode::F(number) => function_key_sequence(&mut key_buf, number, mod_param),
+        _ => None,
+    };
 
-        if let Some(bytes) = data { write(bytes); }
+    if let Some(bytes) = data {
+        write(bytes);
+    }
 }
 
 fn xterm_modifier_parameter(modifiers: KeyModifiers) -> u8 {
@@ -387,7 +402,11 @@ mod tests {
         ] {
             captured.lock().unwrap().clear();
             crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, mods));
-            assert_eq!(&*captured.lock().unwrap(), expected.as_bytes(), "{code:?}, {mods:?}");
+            assert_eq!(
+                &*captured.lock().unwrap(),
+                expected.as_bytes(),
+                "{code:?}, {mods:?}"
+            );
         }
     }
 

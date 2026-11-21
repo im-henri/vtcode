@@ -4,17 +4,25 @@ use std::collections::BTreeMap;
 #[test]
 fn shifted_index_reports_each_discarded_value_once_without_visiting_survivors() {
     let mut index = LineIndex::<usize>::default();
-    for line in 0..1000 { index.insert(line, line * 2); }
+    for line in 0..1000 {
+        index.insert(line, line * 2);
+    }
     let mut removed = Vec::new();
     index.shift_after_with_removed(100, -20, 979, |value| removed.push(value));
     removed.sort_unstable();
-    assert_eq!(removed, (101..=120).map(|line| line * 2).collect::<Vec<_>>());
+    assert_eq!(
+        removed,
+        (101..=120).map(|line| line * 2).collect::<Vec<_>>()
+    );
     assert_eq!(index.len(), 980);
     assert_eq!(index.get(&101), Some(&242));
     removed.clear();
     index.shift_after_with_removed(100, 50, 1020, |value| removed.push(value));
     removed.sort_unstable();
-    assert_eq!(removed, (991..1000).map(|line| line * 2).collect::<Vec<_>>());
+    assert_eq!(
+        removed,
+        (991..1000).map(|line| line * 2).collect::<Vec<_>>()
+    );
     assert_eq!(index.len(), 971);
 }
 

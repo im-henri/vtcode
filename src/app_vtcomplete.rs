@@ -614,9 +614,13 @@ struct InputTarget {
 impl App {
     fn vtcomplete_target(&self) -> Option<InputTarget> {
         let editor = self.editor()?;
-        Some(InputTarget { group: self.active_group, tab: self.active_tab,
-            document: editor.navigation_id, version: editor.content_version,
-            cursor: (editor.cursor_line, editor.cursor_col) })
+        Some(InputTarget {
+            group: self.active_group,
+            tab: self.active_tab,
+            document: editor.navigation_id,
+            version: editor.content_version,
+            cursor: (editor.cursor_line, editor.cursor_col),
+        })
     }
 
     pub(crate) fn begin_vtcomplete_batch(&mut self) {
@@ -661,7 +665,11 @@ impl App {
     }
 
     fn refresh_vtcomplete(&mut self) {
-        if self.tabs.get(self.active_tab).is_none_or(|tab| tab.kind != TabKind::File) {
+        if self
+            .tabs
+            .get(self.active_tab)
+            .is_none_or(|tab| tab.kind != TabKind::File)
+        {
             self.dismiss_vtcomplete();
             return;
         }
@@ -757,9 +765,7 @@ impl App {
             return;
         }
         let settings = self.completion_preferences;
-        if !self.vtcomplete_explicit
-            && !worker::automatic_trigger(editor, &settings)
-        {
+        if !self.vtcomplete_explicit && !worker::automatic_trigger(editor, &settings) {
             self.dismiss_vtcomplete();
             return;
         }
@@ -775,24 +781,34 @@ impl App {
             cursor_line: editor.cursor_line,
             cursor_col: editor.cursor_col,
         };
-        let edit_baseline = settings.use_history
-            .then(|| editor.undo_stack.back().and_then(|state| {
-                (state.rope.len_bytes() <= 1024 * 1024
-                    && state.rope.len_lines() <= 16_384)
-                    .then(|| state.rope.clone())
-            }))
+        let edit_baseline = settings
+            .use_history
+            .then(|| {
+                editor.undo_stack.back().and_then(|state| {
+                    (state.rope.len_bytes() <= 1024 * 1024 && state.rope.len_lines() <= 16_384)
+                        .then(|| state.rope.clone())
+                })
+            })
             .flatten();
         self.completion_history
             .take_if(|(document, _)| *document != active.document_id || !settings.use_history);
-        let history = self.completion_history.as_ref().map(|(_, history)| history.clone());
+        let history = self
+            .completion_history
+            .as_ref()
+            .map(|(_, history)| history.clone());
         #[cfg(test)]
-        { self.vtcomplete_input_batch.submissions += 1; }
+        {
+            self.vtcomplete_input_batch.submissions += 1;
+        }
         let token = crate::background::CancellationToken::new();
         self.vtcomplete_worker.submit(
             worker::VtCompleteRequest {
                 active,
                 edit_baseline,
-                options: worker::PopupOptions { preferences: settings, history },
+                options: worker::PopupOptions {
+                    preferences: settings,
+                    history,
+                },
                 explicit: self.vtcomplete_explicit,
                 language,
                 generation,
@@ -820,7 +836,8 @@ impl App {
             self.dismiss_vtcomplete();
             return;
         }
-        let Some(word) = self.vtcomplete_suggestions
+        let Some(word) = self
+            .vtcomplete_suggestions
             .get(self.vtcomplete_selected)
             .cloned()
         else {
@@ -835,7 +852,9 @@ impl App {
             detail.kind == CompletionKind::Value
                 && matches!(detail.annotation, "number" | "number sequence")
         });
-        if self.completion_preferences.use_history && let Some(editor) = self.editor() {
+        if self.completion_preferences.use_history
+            && let Some(editor) = self.editor()
+        {
             let document = editor.navigation_id;
             let context = self
                 .vtcomplete_details
@@ -856,7 +875,8 @@ impl App {
                 });
             let prefix = worker::popup_prefix(editor).unwrap_or_default();
             self.completion_history.take_if(|(id, _)| *id != document);
-            let (_, history) = self.completion_history
+            let (_, history) = self
+                .completion_history
                 .get_or_insert_with(|| (document, Default::default()));
             std::sync::Arc::make_mut(history).record(
                 word.strip_suffix("()").unwrap_or(&word),
@@ -939,10 +959,14 @@ mod tests {
         let mut app = vtcomplete_app_with_text("set(-1.25, value)", 6);
         app.vtcomplete_active = true;
         app.vtcomplete_suggestions = vec!["-1.75".into()];
-        app.vtcomplete_details.insert("-1.75".into(), super::CompletionDetail {
-            kind: super::CompletionKind::Value, annotation: "number sequence",
-            ..Default::default()
-        });
+        app.vtcomplete_details.insert(
+            "-1.75".into(),
+            super::CompletionDetail {
+                kind: super::CompletionKind::Value,
+                annotation: "number sequence",
+                ..Default::default()
+            },
+        );
         app.apply_vtcomplete();
         assert_eq!(app.editor().unwrap().rope.to_string(), "set(-1.75, value)");
         assert!(!app.vtcomplete_active);

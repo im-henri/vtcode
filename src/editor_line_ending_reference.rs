@@ -9,8 +9,13 @@ impl Editor {
         if converted != source {
             let rope = Rope::from_str(&converted);
             assert_eq!(rope.len_lines(), self.rope.len_lines());
-            let changed: Vec<_> = self.rope.lines().zip(rope.lines()).enumerate()
-                .filter_map(|(line, (before, after))| (before != after).then_some(line)).collect();
+            let changed: Vec<_> = self
+                .rope
+                .lines()
+                .zip(rope.lines())
+                .enumerate()
+                .filter_map(|(line, (before, after))| (before != after).then_some(line))
+                .collect();
             self.save_undo();
             self.rope = rope;
             self.mark_syntax_dirty_range(changed[0], *changed.last().unwrap());

@@ -120,7 +120,13 @@ impl App {
         let matched =
             self.search_active && self.search_matches.iter().any(|hit| Some(hit.0) == cursor);
         let reveal = if matched {
-            cursor.filter(|line| self.diff_render_cache.visible_target_lines.binary_search(line).is_err())
+            cursor
+                .filter(|line| {
+                    self.diff_render_cache
+                        .visible_target_lines
+                        .binary_search(line)
+                        .is_err()
+                })
                 .or(self.commit_details.context_revealed_line)
         } else {
             None
@@ -173,11 +179,16 @@ impl App {
         let index = lines
             .partition_point(|line| *line < editor.cursor_line)
             .min(lines.len() - 1);
-        let row_for_line = |line| self.diff_render_cache.rows
-            .get(self.diff_render_cache.aligned_row_for_target_line(line))
-            .filter(|row| row.right_line == Some(line));
-        let desired = editor.desired_col.unwrap_or_else(|| row_for_line(editor.cursor_line)
-            .map_or(0, |row| row.right_cell_column(editor.cursor_col)));
+        let row_for_line = |line| {
+            self.diff_render_cache
+                .rows
+                .get(self.diff_render_cache.aligned_row_for_target_line(line))
+                .filter(|row| row.right_line == Some(line))
+        };
+        let desired = editor.desired_col.unwrap_or_else(|| {
+            row_for_line(editor.cursor_line)
+                .map_or(0, |row| row.right_cell_column(editor.cursor_col))
+        });
         let (line, col) = match code {
             KeyCode::Up | KeyCode::Down if ctrl => {
                 let blank = |line: &usize| {
@@ -215,13 +226,19 @@ impl App {
                     .saturating_add_signed(if code == KeyCode::Up { -1 } else { 1 })
                     .min(lines.len() - 1);
                 let line = lines[next];
-                (line, row_for_line(line).map_or(0, |row| row.right_column_at_cell(desired)))
+                (
+                    line,
+                    row_for_line(line).map_or(0, |row| row.right_column_at_cell(desired)),
+                )
             }
             KeyCode::PageUp | KeyCode::PageDown if !ctrl => {
                 let amount = editor.viewport_height.max(1) as isize
                     * if code == KeyCode::PageUp { -1 } else { 1 };
                 let line = lines[index.saturating_add_signed(amount).min(lines.len() - 1)];
-                (line, row_for_line(line).map_or(0, |row| row.right_column_at_cell(desired)))
+                (
+                    line,
+                    row_for_line(line).map_or(0, |row| row.right_column_at_cell(desired)),
+                )
             }
             KeyCode::Home if ctrl => (lines[0], 0),
             KeyCode::End if ctrl => (*lines.last().unwrap(), usize::MAX),
@@ -294,7 +311,11 @@ pub(crate) fn map_visible_rows(app: &mut App, aligned: bool) {
     let start = scroll.row;
     let height = app.code_area.map_or(0, |area| area.height as usize);
     let cache = &app.diff_render_cache;
-    let diff_text_inset = if aligned { cache.change_marker_width() } else { 0 };
+    let diff_text_inset = if aligned {
+        cache.change_marker_width()
+    } else {
+        0
+    };
     let rows = (start..start + height)
         .map(|visual| {
             let display = scroll.wrap.row_at(visual);
@@ -302,7 +323,13 @@ pub(crate) fn map_visible_rows(app: &mut App, aligned: bool) {
             let line_idx = row.right_line?;
             let line_len = row.right_char_len();
             let (start_col, end_col) = display.columns(false).unwrap_or((scroll.column, line_len));
-            Some(WrappedRowInfo { line_idx, line_len, start_col, end_col, is_first: display.continuation == 0 })
+            Some(WrappedRowInfo {
+                line_idx,
+                line_len,
+                start_col,
+                end_col,
+                is_first: display.continuation == 0,
+            })
         })
         .collect();
     if let Some(editor) = app.editor_mut() {
@@ -312,7 +339,9 @@ pub(crate) fn map_visible_rows(app: &mut App, aligned: bool) {
 }
 
 pub(crate) fn draw_scrollbar(f: &mut Frame, app: &App) {
-    if crate::commit_review::painting_row(app).is_some() { return; }
+    if crate::commit_review::painting_row(app).is_some() {
+        return;
+    }
     let scroll = &app.diff_inline_scroll;
     f.render_widget(Clear, scroll.vertical_area);
     let Some(editor) = app.editor() else {
@@ -334,7 +363,11 @@ pub(crate) fn draw_scrollbar(f: &mut Frame, app: &App) {
             diagnostic_lines: &app.cached_diag_lines,
             diagnostic_index: Some(&app.cached_diagnostic_index),
             change_rows: &scroll.change_rows,
-            cursor_line: scroll.cursor_row(&app.diff_render_cache, editor.cursor_line, editor.cursor_col),
+            cursor_line: scroll.cursor_row(
+                &app.diff_render_cache,
+                editor.cursor_line,
+                editor.cursor_col,
+            ),
             colors: app.colors,
             hovered: app.hovered_scrollbar,
             active: app.dragging_v_scrollbar,
@@ -373,13 +406,20 @@ pub(crate) fn draw_search_matches(f: &mut Frame, app: &App) {
             continue;
         }
         let display = scroll.wrap.row_at(scroll.row + offset);
-        let Some(row) = display.target(cache, scroll.aligned) else { continue; };
-        let (text, mut column, mut x) = display.window(row, false, scroll.aligned, scroll.column, width);
+        let Some(row) = display.target(cache, scroll.aligned) else {
+            continue;
+        };
+        let (text, mut column, mut x) =
+            display.window(row, false, scroll.aligned, scroll.column, width);
         let y = area.y + offset as u16;
         let hits = &app.search_matches[first_hit..end_hit];
         for glyph in text.graphemes(true) {
             let end = column + glyph.chars().count();
-            let cells = if glyph.contains(char::is_control) { 0 } else { glyph.width() };
+            let cells = if glyph.contains(char::is_control) {
+                0
+            } else {
+                glyph.width()
+            };
             let index = hits.partition_point(|hit| hit.2 <= column);
             if hits.get(index).is_some_and(|hit| hit.1 < end) {
                 for cell_x in x..(x + cells).min(width) {

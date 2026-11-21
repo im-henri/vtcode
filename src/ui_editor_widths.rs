@@ -19,9 +19,10 @@ pub(super) fn content_len(line: ropey::RopeSlice<'_>) -> usize {
     crate::editor::Editor::line_content_len(line)
 }
 
-fn line_widths(rope: &ropey::Rope, lines: std::ops::Range<usize>)
-    -> impl DoubleEndedIterator<Item = usize> + '_
-{
+fn line_widths(
+    rope: &ropey::Rope,
+    lines: std::ops::Range<usize>,
+) -> impl DoubleEndedIterator<Item = usize> + '_ {
     // A line iterator can visit many leaves to cross one giant log record.
     // Widths need only the indexed character counts and each line's tail.
     lines.map(move |line| content_len(rope.line(line)))
@@ -35,7 +36,10 @@ impl VisibleWidths {
     }
 
     pub(super) fn invalidate(&mut self, first: usize, last: usize) {
-        self.dirty = Some(self.dirty.map_or((first, last), |(a, b)| (a.min(first), b.max(last))));
+        self.dirty = Some(
+            self.dirty
+                .map_or((first, last), |(a, b)| (a.min(first), b.max(last))),
+        );
     }
 
     pub(super) fn get(&mut self, rope: &ropey::Rope, first: usize, end: usize) -> (usize, bool) {
@@ -59,7 +63,9 @@ impl VisibleWidths {
                 for width in line_widths(rope, first..self.first).rev() {
                     self.widths.push_front(width);
                     #[cfg(test)]
-                    { self.measured += 1; }
+                    {
+                        self.measured += 1;
+                    }
                 }
                 self.first = first;
             }
@@ -68,7 +74,9 @@ impl VisibleWidths {
         for width in line_widths(rope, append..end) {
             self.widths.push_back(width);
             #[cfg(test)]
-            { self.measured += 1; }
+            {
+                self.measured += 1;
+            }
         }
         if let Some((a, b)) = self.dirty.take() {
             let a = a.max(first);
@@ -77,7 +85,9 @@ impl VisibleWidths {
                 for (offset, width) in line_widths(rope, a..b).enumerate() {
                     self.widths[a - first + offset] = width;
                     #[cfg(test)]
-                    { self.measured += 1; }
+                    {
+                        self.measured += 1;
+                    }
                 }
             }
         }
@@ -92,13 +102,37 @@ mod tests {
     use super::*;
 
     fn source() -> ropey::Rope {
-        ropey::Rope::from_str(&(0..5000).map(|i| format!("{}{}", "é界 x".repeat(i % 73),
-            if i % 3 == 0 { "\r\n" } else if i % 3 == 1 { "\n" } else { "\r" })).collect::<String>())
+        ropey::Rope::from_str(
+            &(0..5000)
+                .map(|i| {
+                    format!(
+                        "{}{}",
+                        "é界 x".repeat(i % 73),
+                        if i % 3 == 0 {
+                            "\r\n"
+                        } else if i % 3 == 1 {
+                            "\n"
+                        } else {
+                            "\r"
+                        }
+                    )
+                })
+                .collect::<String>(),
+        )
     }
 
     fn check(cache: &mut VisibleWidths, rope: &ropey::Rope, first: usize, end: usize) {
-        let expected = rope.lines_at(first).take(end - first).map(content_len).max().unwrap_or(0);
-        assert_eq!(cache.get(rope, first, end).0, expected, "range={first}..{end}");
+        let expected = rope
+            .lines_at(first)
+            .take(end - first)
+            .map(content_len)
+            .max()
+            .unwrap_or(0);
+        assert_eq!(
+            cache.get(rope, first, end).0,
+            expected,
+            "range={first}..{end}"
+        );
         assert!(cache.widths.len() <= MAX_ROWS);
     }
 
@@ -107,8 +141,18 @@ mod tests {
         let rope = source();
         let mut cache = VisibleWidths::default();
         for i in 0..800 {
-            let first = match i % 4 { 0 => 190, 1 => 191, 2 => 187, _ => 180 + i % 75 };
-            check(&mut cache, &rope, first, first + [0, 1, 60, 80, 300, 2000][i % 6]);
+            let first = match i % 4 {
+                0 => 190,
+                1 => 191,
+                2 => 187,
+                _ => 180 + i % 75,
+            };
+            check(
+                &mut cache,
+                &rope,
+                first,
+                first + [0, 1, 60, 80, 300, 2000][i % 6],
+            );
         }
         check(&mut cache, &rope, rope.len_lines(), rope.len_lines());
         check(&mut cache, &rope, 0, rope.len_lines());
@@ -142,7 +186,8 @@ mod tests {
 
     #[test]
     fn long_record_widths_survive_scroll_direction_resize_and_local_edits() {
-        let mut rope = ropey::Rope::from_str(&format!("head\r\n{}界\r\ntail\n", "x".repeat(2_000_000)));
+        let mut rope =
+            ropey::Rope::from_str(&format!("head\r\n{}界\r\ntail\n", "x".repeat(2_000_000)));
         let mut cache = VisibleWidths::default();
         for (start, end) in [(0, 2), (1, 3), (0, 4), (2, 4), (1, 2), (0, 0)] {
             check(&mut cache, &rope, start, end);
@@ -170,7 +215,14 @@ mod tests {
                     let offset = frame % 600;
                     let first = if offset < 300 { offset } else { 599 - offset };
                     if fresh {
-                        black_box(black_box(&rope).lines_at(first).take(60).map(content_len).max().unwrap_or(0));
+                        black_box(
+                            black_box(&rope)
+                                .lines_at(first)
+                                .take(60)
+                                .map(content_len)
+                                .max()
+                                .unwrap_or(0),
+                        );
                     } else {
                         black_box(cache.get(black_box(&rope), first, first + 60));
                     }
@@ -178,7 +230,12 @@ mod tests {
                 samples[usize::from(fresh)].push(start.elapsed() / 5000);
             }
         }
-        for sample in &mut samples { sample.sort(); }
-        eprintln!("scroll viewport widths: before={:?}, after={:?}", samples[1][4], samples[0][4]);
+        for sample in &mut samples {
+            sample.sort();
+        }
+        eprintln!(
+            "scroll viewport widths: before={:?}, after={:?}",
+            samples[1][4], samples[0][4]
+        );
     }
 }

@@ -41,12 +41,16 @@ impl App {
             (pos * max + travel / 2) / travel
         };
         if let Some(picker) = &drag.bar.picker {
-            if self.chat.picker.as_ref() != Some(picker) { return; }
+            if self.chat.picker.as_ref() != Some(picker) {
+                return;
+            }
             let visible = drag.bar.visible.min(self.chat.choices.len()).max(1);
             let first = first.min(self.chat.choices.len().saturating_sub(visible));
             self.chat.picker_scroll = first;
-            self.chat.picker_selected = self.chat.picker_selected.clamp(first,
-                (first + visible).saturating_sub(1));
+            self.chat.picker_selected = self
+                .chat
+                .picker_selected
+                .clamp(first, (first + visible).saturating_sub(1));
         } else if let Some(id) = &drag.bar.terminal {
             if let Some(view) = self.chat.connection.terminal_views.get_mut(id) {
                 view.first = if first == max { None } else { Some(first) };
@@ -69,8 +73,7 @@ impl App {
             }
             return true;
         }
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left)
-            || self.chat.files.popup.is_some()
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) || self.chat.files.popup.is_some()
         {
             return false;
         }
@@ -78,8 +81,10 @@ impl App {
             .chat
             .scrollbars
             .iter()
-            .find(|b| b.picker.as_ref() == self.chat.picker.as_ref()
-                && b.area.contains((mouse.column, mouse.row).into()))
+            .find(|b| {
+                b.picker.as_ref() == self.chat.picker.as_ref()
+                    && b.area.contains((mouse.column, mouse.row).into())
+            })
             .cloned()
         else {
             return false;

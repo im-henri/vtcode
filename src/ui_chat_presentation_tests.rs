@@ -56,7 +56,15 @@ const CONTEXT_REPORT: &str = concat!(
 );
 
 fn row_text(rows: &[ChatRow]) -> Vec<String> {
-    rows.iter().map(|row| row.line.spans.iter().map(|span| span.content.as_ref()).collect()).collect()
+    rows.iter()
+        .map(|row| {
+            row.line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect()
 }
 
 #[test]
@@ -85,21 +93,36 @@ fn presentation_context_report_preserves_columns_and_adapts_to_narrow_panes() {
                 assert!(lines.iter().any(|line| line == original), "{original}");
             }
         } else {
-            let grid_end = lines.iter().position(|line| line == "· · · · · · ◎ ◎ ◎ ◎").unwrap();
-            let legend_start = lines.iter().position(|line| line.starts_with("Auto →")).unwrap();
+            let grid_end = lines
+                .iter()
+                .position(|line| line == "· · · · · · ◎ ◎ ◎ ◎")
+                .unwrap();
+            let legend_start = lines
+                .iter()
+                .position(|line| line.starts_with("Auto →"))
+                .unwrap();
             assert!(grid_end < legend_start);
-            let count_ends: Vec<_> = lines.iter().filter_map(|line| {
-                let percent = line.find('(')?;
-                Some(line[..percent].trim_end().width())
-            }).skip(1).collect();
+            let count_ends: Vec<_> = lines
+                .iter()
+                .filter_map(|line| {
+                    let percent = line.find('(')?;
+                    Some(line[..percent].trim_end().width())
+                })
+                .skip(1)
+                .collect();
             assert!(count_ends.windows(2).all(|pair| pair[0] == pair[1]));
         }
     }
     assert!(matches!(&session.entries[0], ChatEntry::Agent(text) if text == CONTEXT_REPORT));
-    session.push(ChatEntry::Agent(CONTEXT_REPORT.replace("1.1k   (1%)", "56   (<1%)")));
+    session.push(ChatEntry::Agent(
+        CONTEXT_REPORT.replace("1.1k   (1%)", "56   (<1%)"),
+    ));
     let rows = entry_rows(&session, 1, 36, &app.colors, false, "Copilot", None);
     let lines = row_text(&rows);
-    let tools = lines.iter().find(|line| line.contains("MCP Tools")).unwrap();
+    let tools = lines
+        .iter()
+        .find(|line| line.contains("MCP Tools"))
+        .unwrap();
     assert!(tools.contains("56") && tools.contains("(<1%)"));
 }
 
@@ -112,15 +135,24 @@ fn presentation_context_report_streams_replays_and_reflows_with_theme_and_resize
     let mut terminal = Terminal::new(TestBackend::new(118, 38)).unwrap();
     // ACP chunk boundaries need not coincide with report lines or ANSI escapes.
     let report = format!("\x1b[90m{}\x1b[0m", CONTEXT_REPORT.replace('\n', "\r\n"));
-    for chunk in report.char_indices().map(|(index, ch)| &report[index..index + ch.len_utf8()]) {
-        app.chat.session_mut().unwrap().apply(p::SessionUpdate::AgentMessageChunk(
-            p::ContentChunk::new(p::ContentBlock::Text(p::TextContent::new(chunk))),
-        ));
+    for chunk in report
+        .char_indices()
+        .map(|(index, ch)| &report[index..index + ch.len_utf8()])
+    {
+        app.chat
+            .session_mut()
+            .unwrap()
+            .apply(p::SessionUpdate::AgentMessageChunk(p::ContentChunk::new(
+                p::ContentBlock::Text(p::TextContent::new(chunk)),
+            )));
         if chunk == "\n" {
             render(&mut app, &mut terminal);
         }
     }
-    app.chat.session_mut().unwrap().finish(Some(p::StopReason::EndTurn));
+    app.chat
+        .session_mut()
+        .unwrap()
+        .finish(Some(p::StopReason::EndTurn));
     render(&mut app, &mut terminal);
     let streamed = text(&terminal);
     assert!(streamed.contains("○ ○ ○ ◌ ◌ ◌ ● ◎ ◎ ◎    Auto →"));
@@ -144,7 +176,15 @@ fn presentation_context_report_streams_replays_and_reflows_with_theme_and_resize
         terminal.resize(Rect::new(0, 0, width, 38)).unwrap();
         render(&mut app, &mut terminal);
         let rendered = text(&terminal);
-        for label in ["Context Usage", "System Prompt", "System Tools", "MCP Tools", "Messages", "Free Space", "Buffer"] {
+        for label in [
+            "Context Usage",
+            "System Prompt",
+            "System Tools",
+            "MCP Tools",
+            "Messages",
+            "Free Space",
+            "Buffer",
+        ] {
             assert!(rendered.contains(label), "{theme}: {label}");
         }
         assert!(!rendered.contains("[90m"));
@@ -165,11 +205,21 @@ fn presentation_context_detection_does_not_replace_normal_markdown_or_fenced_rep
         assert!(rows.is_empty());
     }
     let mut session = Session::new(p::SessionId::new("markdown"));
-    session.push(ChatEntry::Agent("Context Usage\n\n**Still bold** and\nsoft-wrapped prose.".into()));
+    session.push(ChatEntry::Agent(
+        "Context Usage\n\n**Still bold** and\nsoft-wrapped prose.".into(),
+    ));
     let rows = entry_rows(&session, 0, 120, &app.colors, false, "Copilot", None);
-    assert!(row_text(&rows).iter().any(|line| line == "Still bold and soft-wrapped prose."));
-    assert!(rows.iter().flat_map(|row| &row.line.spans).any(|span|
-        span.content.contains("Still bold") && span.style.add_modifier.contains(Modifier::BOLD)));
+    assert!(
+        row_text(&rows)
+            .iter()
+            .any(|line| line == "Still bold and soft-wrapped prose.")
+    );
+    assert!(
+        rows.iter()
+            .flat_map(|row| &row.line.spans)
+            .any(|span| span.content.contains("Still bold")
+                && span.style.add_modifier.contains(Modifier::BOLD))
+    );
 }
 
 fn command_app() -> App {
@@ -246,7 +296,10 @@ fn presentation_agent_owned_commands_are_terminal_text_and_scroll_without_json()
     assert_eq!(app.chat.scroll, outer_scroll);
     assert!(text(&terminal).contains("line-003"));
     app.chat.focus = Some(ChatAction::FocusTerminal("tool:cursor-shell".into()));
-    app.handle_chat_key(crossterm::event::KeyEvent::new(crossterm::event::KeyCode::End, KeyModifiers::empty()));
+    app.handle_chat_key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::End,
+        KeyModifiers::empty(),
+    ));
     render(&mut app, &mut terminal);
     assert!(text(&terminal).contains("line-149"));
     app.poll_acp();
@@ -276,8 +329,10 @@ fn presentation_command_decoder_preserves_other_tool_shapes() {
         .is_none()
     );
     let unknown = tool_terminals::parse(
-        &make("execute", serde_json::json!({"unknownPayload":"retain me"})), 1,
-    ).unwrap();
+        &make("execute", serde_json::json!({"unknownPayload":"retain me"})),
+        1,
+    )
+    .unwrap();
     assert_eq!(unknown.lines, ["Unknown payload: retain me"]);
     let parsed =
         tool_terminals::parse(&make("execute", serde_json::json!("hello\r\nworld\r\n")), 1)
@@ -285,8 +340,13 @@ fn presentation_command_decoder_preserves_other_tool_shapes() {
     assert_eq!(parsed.lines, ["hello", "world"]);
     let parsed = tool_terminals::parse(&make("execute", serde_json::json!("42")), 1).unwrap();
     assert_eq!(parsed.lines, ["42"], "numeric stdout is still text");
-    let parsed = tool_terminals::parse(&make("execute", serde_json::json!(r#"{"answer":42}"#)), 1).unwrap();
-    assert_eq!(parsed.lines, [r#"{"answer":42}"#], "JSON printed by the process is literal terminal output");
+    let parsed =
+        tool_terminals::parse(&make("execute", serde_json::json!(r#"{"answer":42}"#)), 1).unwrap();
+    assert_eq!(
+        parsed.lines,
+        [r#"{"answer":42}"#],
+        "JSON printed by the process is literal terminal output"
+    );
     let parsed = tool_terminals::parse(
         &make(
             "execute",
@@ -341,10 +401,19 @@ fn presentation_copilot_command_stays_a_terminal_after_completion_and_replay() {
         "rawOutput":{"content":output},
         "content":[{"type":"content","content":{"type":"text","text":output}}]
     });
-    app.chat.session_mut().unwrap().apply(serde_json::from_value(completion).unwrap());
+    app.chat
+        .session_mut()
+        .unwrap()
+        .apply(serde_json::from_value(completion).unwrap());
     render(&mut app, &mut terminal);
     let rendered = text(&terminal);
-    for expected in ["Agent terminal", "$ cargo test -- --nocapture", "Finished `test` profile", "Exit 0", "Read-only"] {
+    for expected in [
+        "Agent terminal",
+        "$ cargo test -- --nocapture",
+        "Finished `test` profile",
+        "Exit 0",
+        "Read-only",
+    ] {
         assert!(rendered.contains(expected), "missing {expected}");
     }
     for unwanted in ["Input:", "Output:", "shellId", "\\n", "content\":"] {
@@ -354,7 +423,9 @@ fn presentation_copilot_command_stays_a_terminal_after_completion_and_replay() {
     assert_eq!(app.chat.terminal_areas[0].1.height, 10);
     assert!(app.chat.terminal_views.contains_key("tool:copilot-shell"));
     capture(&terminal, "copilot-terminal-completed");
-    let ChatEntry::Tool(tool) = &app.chat.session().unwrap().entries[0] else { panic!("tool") };
+    let ChatEntry::Tool(tool) = &app.chat.session().unwrap().entries[0] else {
+        panic!("tool")
+    };
     let replayed = tool.clone();
     let session = app.chat.session_mut().unwrap();
     *session = Session::new(p::SessionId::new("replayed"));
@@ -383,23 +454,45 @@ fn presentation_command_content_arrays_and_commandless_execute_keep_terminal_ide
 #[test]
 fn presentation_read_search_and_edit_tools_render_content_without_protocol_json() {
     let cases = [
-        ("read", serde_json::json!({
-            "sessionUpdate":"tool_call", "toolCallId":"read", "kind":"read", "title":"Viewing src/main.rs", "status":"completed",
-            "rawInput":{"path":"src/main.rs", "view_range":[1120,1205]},
-            "rawOutput":{"content":"fn example() {\n    let message = \"hello\";\n    // source indentation\n}\n"}
-        }), vec!["Lines 1120–1205", "fn example()", "let message", "source indentation"]),
-        ("search", serde_json::json!({
-            "sessionUpdate":"tool_call", "toolCallId":"search", "kind":"search", "title":"Searching for example", "status":"completed",
-            "rawInput":{"path":"C:\\work\\repo", "pattern":"example"},
-            "rawOutput":{"content":"C:\\work\\repo\\src\\main.rs:335:    fn example() {}\nC:\\work\\repo\\docs\\guide.md:46:See example\n"},
-            "locations":[{"path":"C:\\work\\repo"}]
-        }), vec!["Search: example", "main.rs:335:", "guide.md:46:"]),
-        ("edit", serde_json::json!({
-            "sessionUpdate":"tool_call", "toolCallId":"edit", "kind":"edit", "title":"Edit src/main.rs", "status":"completed",
-            "rawInput":{"path":"src/main.rs", "old_str":"let old = 1;", "new_str":"let new = 2;"},
-            "rawOutput":{"content":"Updated src/main.rs"},
-            "content":[{"type":"diff","path":"src/main.rs","oldText":"let old = 1;\n","newText":"let new = 2;\n"}]
-        }), vec!["Review", "let old = 1;", "let new = 2;", "Updated src/main.rs"]),
+        (
+            "read",
+            serde_json::json!({
+                "sessionUpdate":"tool_call", "toolCallId":"read", "kind":"read", "title":"Viewing src/main.rs", "status":"completed",
+                "rawInput":{"path":"src/main.rs", "view_range":[1120,1205]},
+                "rawOutput":{"content":"fn example() {\n    let message = \"hello\";\n    // source indentation\n}\n"}
+            }),
+            vec![
+                "Lines 1120–1205",
+                "fn example()",
+                "let message",
+                "source indentation",
+            ],
+        ),
+        (
+            "search",
+            serde_json::json!({
+                "sessionUpdate":"tool_call", "toolCallId":"search", "kind":"search", "title":"Searching for example", "status":"completed",
+                "rawInput":{"path":"C:\\work\\repo", "pattern":"example"},
+                "rawOutput":{"content":"C:\\work\\repo\\src\\main.rs:335:    fn example() {}\nC:\\work\\repo\\docs\\guide.md:46:See example\n"},
+                "locations":[{"path":"C:\\work\\repo"}]
+            }),
+            vec!["Search: example", "main.rs:335:", "guide.md:46:"],
+        ),
+        (
+            "edit",
+            serde_json::json!({
+                "sessionUpdate":"tool_call", "toolCallId":"edit", "kind":"edit", "title":"Edit src/main.rs", "status":"completed",
+                "rawInput":{"path":"src/main.rs", "old_str":"let old = 1;", "new_str":"let new = 2;"},
+                "rawOutput":{"content":"Updated src/main.rs"},
+                "content":[{"type":"diff","path":"src/main.rs","oldText":"let old = 1;\n","newText":"let new = 2;\n"}]
+            }),
+            vec![
+                "Review",
+                "let old = 1;",
+                "let new = 2;",
+                "Updated src/main.rs",
+            ],
+        ),
     ];
     for (name, tool, expected) in cases {
         let mut app = tool_app(tool);
@@ -409,16 +502,40 @@ fn presentation_read_search_and_edit_tools_render_content_without_protocol_json(
             app.set_theme_by_key(theme);
             render(&mut app, &mut terminal);
             let rendered = text(&terminal);
-            for expected in &expected { assert!(rendered.contains(expected), "{name}: missing {expected}"); }
-            for unwanted in ["Input:", "Output:", "view_range", "old_str", "new_str", "\\n", "\\\""] {
-                assert!(!rendered.contains(unwanted), "{name}: unexpected {unwanted}");
+            for expected in &expected {
+                assert!(rendered.contains(expected), "{name}: missing {expected}");
+            }
+            for unwanted in [
+                "Input:",
+                "Output:",
+                "view_range",
+                "old_str",
+                "new_str",
+                "\\n",
+                "\\\"",
+            ] {
+                assert!(
+                    !rendered.contains(unwanted),
+                    "{name}: unexpected {unwanted}"
+                );
             }
             if name == "search" {
-                assert!(app.chat.hits.iter().any(|h| h.action == ChatAction::OpenFile("C:\\work\\repo\\src\\main.rs".into(), Some(334))));
-                assert!(app.chat.hits.iter().any(|h| h.action == ChatAction::OpenFile("C:\\work\\repo".into(), None)));
+                assert!(app.chat.hits.iter().any(|h| h.action
+                    == ChatAction::OpenFile("C:\\work\\repo\\src\\main.rs".into(), Some(334))));
+                assert!(
+                    app.chat
+                        .hits
+                        .iter()
+                        .any(|h| h.action == ChatAction::OpenFile("C:\\work\\repo".into(), None))
+                );
             }
             if name == "edit" {
-                assert!(app.chat.hits.iter().any(|h| matches!(h.action, ChatAction::Review(_))));
+                assert!(
+                    app.chat
+                        .hits
+                        .iter()
+                        .any(|h| matches!(h.action, ChatAction::Review(_)))
+                );
             }
             capture(&terminal, &format!("tool-{name}-{theme}"));
         }
@@ -433,7 +550,13 @@ fn presentation_unknown_tool_fields_are_readable_and_source_fences_stay_literal(
     }));
     let mut terminal = Terminal::new(TestBackend::new(96, 42)).unwrap();
     click(&mut app, &mut terminal, ChatAction::ToggleEntry(0));
-    for expected in ["Elapsed ms: 42", "Message count: 2", "Available: Yes", "first line", "second line"] {
+    for expected in [
+        "Elapsed ms: 42",
+        "Message count: 2",
+        "Available: Yes",
+        "first line",
+        "second line",
+    ] {
         assert!(text(&terminal).contains(expected), "{expected}");
     }
     let mut app = tool_app(serde_json::json!({
@@ -449,7 +572,10 @@ fn presentation_unknown_tool_fields_are_readable_and_source_fences_stay_literal(
         "content":[{"type":"content","content":{"type":"text","text":"{\n  \"enabled\": true\n}"}}]
     }));
     click(&mut app, &mut terminal, ChatAction::ToggleEntry(0));
-    assert!(text(&terminal).contains("\"enabled\": true"), "JSON source must remain source, including its quotes");
+    assert!(
+        text(&terminal).contains("\"enabled\": true"),
+        "JSON source must remain source, including its quotes"
+    );
 }
 
 #[test]
@@ -458,8 +584,19 @@ fn presentation_collapsed_search_results_stay_bounded_after_wrapping() {
         "sessionUpdate":"tool_call", "toolCallId":"search", "kind":"search", "title":"Search results", "status":"completed",
         "rawOutput":{"content":format!("src/long.rs:1:{}\nsecond result\n", "wide output ".repeat(1000))}
     }));
-    let rows = entry_rows(app.chat.session().unwrap(), 0, 36, &app.colors, false, "Agent", None);
-    assert!(rows.len() <= 8, "collapsed tools must bound displayed rows after wrapping");
+    let rows = entry_rows(
+        app.chat.session().unwrap(),
+        0,
+        36,
+        &app.colors,
+        false,
+        "Agent",
+        None,
+    );
+    assert!(
+        rows.len() <= 8,
+        "collapsed tools must bound displayed rows after wrapping"
+    );
     assert!(rows.iter().any(|r| r.line.to_string() == "…"));
 }
 
@@ -504,8 +641,7 @@ fn presentation_thinking_effort_remains_visible_when_fixed_or_unreported() {
         app.chat
             .choices
             .iter()
-            .any(|c| c.action == ChatAction::Picker(Picker::ThinkingInfo)
-                && c.detail == "Medium")
+            .any(|c| c.action == ChatAction::Picker(Picker::ThinkingInfo) && c.detail == "Medium")
     );
     app.chat_action(ChatAction::Picker(Picker::Values("effort".into())));
     assert!(

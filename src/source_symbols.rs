@@ -271,7 +271,10 @@ impl App {
             && if reply.workspace {
                 self.tabs.len() == reply.keys.len()
             } else {
-                reply.keys.first().is_none_or(|key| key.tab == self.active_tab)
+                reply
+                    .keys
+                    .first()
+                    .is_none_or(|key| key.tab == self.active_tab)
             };
         if !current {
             self.build_symbol_list();

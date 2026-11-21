@@ -381,7 +381,9 @@ fn matches_highlight_the_visible_scrollback_and_manual_selection_takes_precedenc
 fn unchanged_find_frames_skip_the_history_walk_until_the_pty_changes() {
     let mut app = fixture(false);
     app.terminals[0].terminal_pty = Some(TerminalEmulator::test_with_output(
-        80, 24, &"find match\r\n".repeat(3000),
+        80,
+        24,
+        &"find match\r\n".repeat(3000),
     ));
     app.begin_terminal_find(0);
     crate::app_event_loop::handle_paste_input(&mut app, "match");
@@ -389,7 +391,9 @@ fn unchanged_find_frames_skip_the_history_walk_until_the_pty_changes() {
     let builds = app.terminals[0].find.index.stamp_builds;
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
     let redraw = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
-        terminal.draw(|frame| super::draw(frame, app, 0, frame.area())).unwrap();
+        terminal
+            .draw(|frame| super::draw(frame, app, 0, frame.area()))
+            .unwrap();
     };
     for _ in 0..10 {
         redraw(&mut terminal, &mut app);

@@ -145,7 +145,9 @@ mod tests {
             app.execute_palette_command(command);
 
             let tree = app.split_tree.as_ref().unwrap();
-            assert!(matches!(tree, SplitNode::Split { direction: actual, .. } if *actual == direction));
+            assert!(
+                matches!(tree, SplitNode::Split { direction: actual, .. } if *actual == direction)
+            );
             assert_eq!(tree.leaves(), leaves);
             assert_eq!(app.active_group, 1);
             assert!(!app.terminal_panel_focused);
@@ -184,7 +186,10 @@ mod tests {
         let source = &app.groups[0].tabs[0].editor;
         let split = app.editor().unwrap();
         assert!(source.rope.is_instance(&split.rope));
-        assert_eq!((split.cursor_line, split.cursor_col, split.scroll_offset), (2, 2, 1));
+        assert_eq!(
+            (split.cursor_line, split.cursor_col, split.scroll_offset),
+            (2, 2, 1)
+        );
 
         let split = app.editor_mut().unwrap();
         split.set_cursor(0, 0);
@@ -192,7 +197,10 @@ mod tests {
         app.sync_duplicate_file_tabs();
         let source = &app.groups[0].tabs[0].editor;
         assert!(source.rope.is_instance(&app.editor().unwrap().rope));
-        assert_eq!((source.cursor_line, source.cursor_col, source.scroll_offset), (2, 2, 1));
+        assert_eq!(
+            (source.cursor_line, source.cursor_col, source.scroll_offset),
+            (2, 2, 1)
+        );
         assert!(source.modified);
 
         app.switch_group(0);

@@ -77,7 +77,8 @@ pub(super) fn draw_button(
                 style.underline_color = None;
             }
             if style.underline_color.is_none()
-                && let Some(border) = control.border.border(style.bg.unwrap_or(background)) {
+                && let Some(border) = control.border.border(style.bg.unwrap_or(background))
+            {
                 style = style
                     .add_modifier(Modifier::UNDERLINED)
                     .underline_color(border);
@@ -107,10 +108,14 @@ pub(super) fn draw_button(
         }
     }
     if enabled && matches!(action, ChatAction::Stop | ChatAction::StopTerminal(_)) {
-        style = style.fg(c.ui.readable_foreground(c.fg_error, style.bg.unwrap_or(bg), 4.5));
+        style = style.fg(c
+            .ui
+            .readable_foreground(c.fg_error, style.bg.unwrap_or(bg), 4.5));
     }
     if enabled && action == ChatAction::Yolo && app.chat.yolo_enabled() {
-        style = style.fg(c.ui.readable_foreground(c.fg_warning, style.bg.unwrap_or(bg), 4.5));
+        style = style.fg(c
+            .ui
+            .readable_foreground(c.fg_warning, style.bg.unwrap_or(bg), 4.5));
     }
     f.render_widget(
         Paragraph::new(clean(label)).style(style).alignment(
@@ -182,22 +187,25 @@ pub(super) fn draw_yolo_tooltip(f: &mut Frame, app: &App) {
         wrapped(&mut rows, &line, width, Color::Reset, None);
         layers.extend((first..rows.len()).map(|index| (index, color)));
     }
-    let mut tooltip = crate::ui_widgets::Tooltip::hover(
-        rows.into_iter().map(|row| row.line).collect(),
-        c,
-    )
-    .title(
-        if app.chat.yolo_enabled() {
-            "YOLO: On"
-        } else {
-            "YOLO: Off"
-        },
-        Style::default()
-            .add_modifier(Modifier::BOLD),
-    )
-    .prefer_below();
+    let mut tooltip =
+        crate::ui_widgets::Tooltip::hover(rows.into_iter().map(|row| row.line).collect(), c)
+            .title(
+                if app.chat.yolo_enabled() {
+                    "YOLO: On"
+                } else {
+                    "YOLO: Off"
+                },
+                Style::default().add_modifier(Modifier::BOLD),
+            )
+            .prefer_below();
     for (index, foreground) in layers {
-        tooltip = tooltip.line_colors(index, crate::theme_workbench::ControlColors { foreground, ..Default::default() });
+        tooltip = tooltip.line_colors(
+            index,
+            crate::theme_workbench::ControlColors {
+                foreground,
+                ..Default::default()
+            },
+        );
     }
     tooltip.render(f, anchor.x, anchor.y);
 }

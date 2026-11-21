@@ -53,7 +53,9 @@ enum Event {
 
 fn dialect(editor: &Editor) -> Option<Dialect> {
     let rule = editor.scope_bubble_rules.for_editor(editor);
-    if rule.is_some_and(|rule| !rule.language_blocks || rule.syntax == crate::scope_bubble_config::Syntax::Disabled) {
+    if rule.is_some_and(|rule| {
+        !rule.language_blocks || rule.syntax == crate::scope_bubble_config::Syntax::Disabled
+    }) {
         return None;
     }
     let path = editor.syntax_file_path();
@@ -68,7 +70,8 @@ fn dialect(editor: &Editor) -> Option<Dialect> {
         .unwrap_or("")
         .to_ascii_lowercase();
     // Unlike language_name(), this never copies an unbounded shebang line.
-    let language = rule.and_then(|rule| rule.syntax_for(editor).language())
+    let language = rule
+        .and_then(|rule| rule.syntax_for(editor).language())
         .or_else(|| editor.syntax_language_token())
         .unwrap_or("")
         .to_ascii_lowercase();

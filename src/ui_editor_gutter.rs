@@ -19,27 +19,51 @@ mod tests {
 
     fn render(width: u16, direct: bool) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(24, 8)).unwrap();
-        terminal.draw(|frame| {
-            let area = Rect::new(3, 2, width, 4);
-            for cell in &mut frame.buffer_mut().content {
-                cell.set_char('x').set_style(Style::default().fg(Color::Cyan)
-                    .add_modifier(Modifier::ITALIC));
-            }
-            let mut rows = Rows::new(frame, area, Color::Blue);
-            for (index, text) in [" 12345 ", "12e\u{301}45", "  界 🦀", "\t1\r2\0"].iter().enumerate() {
-                let spans = [Span::styled(*text, Style::default().fg(Color::Yellow)),
-                    Span::styled(" ›", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))];
-                if direct { rows.push(frame, spans); }
-                else {
-                    let mut x = area.x;
-                    for span in spans {
-                        if x >= area.right() { break; }
-                        x = frame.buffer_mut().set_stringn(x, area.y + index as u16,
-                            span.content, usize::from(area.right() - x), span.style).0;
+        terminal
+            .draw(|frame| {
+                let area = Rect::new(3, 2, width, 4);
+                for cell in &mut frame.buffer_mut().content {
+                    cell.set_char('x').set_style(
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::ITALIC),
+                    );
+                }
+                let mut rows = Rows::new(frame, area, Color::Blue);
+                for (index, text) in [" 12345 ", "12e\u{301}45", "  界 🦀", "\t1\r2\0"]
+                    .iter()
+                    .enumerate()
+                {
+                    let spans = [
+                        Span::styled(*text, Style::default().fg(Color::Yellow)),
+                        Span::styled(
+                            " ›",
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+                        ),
+                    ];
+                    if direct {
+                        rows.push(frame, spans);
+                    } else {
+                        let mut x = area.x;
+                        for span in spans {
+                            if x >= area.right() {
+                                break;
+                            }
+                            x = frame
+                                .buffer_mut()
+                                .set_stringn(
+                                    x,
+                                    area.y + index as u16,
+                                    span.content,
+                                    usize::from(area.right() - x),
+                                    span.style,
+                                )
+                                .0;
+                        }
                     }
                 }
-            }
-        }).unwrap();
+            })
+            .unwrap();
         terminal.backend().buffer().clone()
     }
 
@@ -110,7 +134,8 @@ impl Rows {
             let bytes = span.content.as_bytes();
             // Numbers and gutter padding need no grapheme segmentation. One
             // byte of lookahead preserves combining marks at the clip edge.
-            if bytes[..bytes.len().min(remaining + 1)].iter()
+            if bytes[..bytes.len().min(remaining + 1)]
+                .iter()
                 .all(|&byte| (b' '..=b'~').contains(&byte))
             {
                 let count = bytes.len().min(remaining);

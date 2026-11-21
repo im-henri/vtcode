@@ -96,14 +96,21 @@ fn open_editors_badge_counts_unsaved_documents_and_uses_theme_colors() {
 
     let buffer = draw(&mut app, area);
     let header = row_text(&buffer, area, header_row);
-    let (before_badge, _) = header.split_once(" 2 unsaved ").expect("two unsaved documents");
+    let (before_badge, _) = header
+        .split_once(" 2 unsaved ")
+        .expect("two unsaved documents");
     let start = area.x + before_badge.width() as u16;
     for x in start..start + " 2 unsaved ".len() as u16 {
         assert_eq!(buffer[(x, header_row)].bg, badge_bg);
         assert_eq!(buffer[(x, header_row)].fg, badge_fg);
     }
-    assert!(header.contains("/18"), "keep the visible range when it fits");
-    assert!((area.y..area.bottom()).all(|row| !row_text(&buffer, area, row).contains("open-17.rs")));
+    assert!(
+        header.contains("/18"),
+        "keep the visible range when it fits"
+    );
+    assert!(
+        (area.y..area.bottom()).all(|row| !row_text(&buffer, area, row).contains("open-17.rs"))
+    );
 
     app.show_open_editors = false;
     assert!(row_text(&draw(&mut app, area), area, header_row).contains("2 unsaved"));
@@ -131,8 +138,11 @@ fn tab_reveal_is_centered_in_the_tree_below_open_editors_and_find_controls() {
             assert!(!app.explorer.reveal_file_centered_deferred(&target));
             let buffer = draw(&mut app, area);
             let content = explorer_tree_content_area(&app, area);
-            assert_eq!(row_for(&buffer, area, "tree-10.rs"), content.y + content.height / 2,
-                "open editors={open_editors}, find={find}");
+            assert_eq!(
+                row_for(&buffer, area, "tree-10.rs"),
+                content.y + content.height / 2,
+                "open editors={open_editors}, find={find}"
+            );
             app.explorer.scroll_down(2);
             let manual = app.explorer.scroll_offset;
             draw(&mut app, area);
@@ -145,7 +155,11 @@ fn tab_reveal_is_centered_in_the_tree_below_open_editors_and_find_controls() {
 fn explorer_preview_keeps_the_clicked_file_in_place_for_the_second_click() {
     let workspace = tempfile::tempdir().unwrap();
     for index in 0..40 {
-        std::fs::write(workspace.path().join(format!("tree-{index:02}.rs")), "source").unwrap();
+        std::fs::write(
+            workspace.path().join(format!("tree-{index:02}.rs")),
+            "source",
+        )
+        .unwrap();
     }
     let area = Rect::new(5, 2, 40, 20);
     let mut app = fixture(0);
@@ -158,8 +172,18 @@ fn explorer_preview_keeps_the_clicked_file_in_place_for_the_second_click() {
     let target = app.explorer.entries[5].path.clone();
 
     for preview in [true, false] {
-        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), area.x + 8, row);
-        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), area.x + 8, row);
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            area.x + 8,
+            row,
+        );
+        mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            area.x + 8,
+            row,
+        );
         // Match the event loop's active-file reveal before the next paint.
         assert!(!app.explorer.reveal_file_centered_deferred(&target));
         let buffer = draw(&mut app, area);

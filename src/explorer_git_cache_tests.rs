@@ -34,7 +34,10 @@ fn superseded_worker_cannot_replace_a_newer_snapshot() {
     let new = cache.checkout().unwrap();
     cache.checkin(new.ticket, snapshot("new"), Metrics::default());
     cache.checkin(old.ticket, snapshot("old"), Metrics::default());
-    assert_eq!(cache.checkout().unwrap().snapshot.unwrap().root, Path::new("new"));
+    assert_eq!(
+        cache.checkout().unwrap().snapshot.unwrap().root,
+        Path::new("new")
+    );
 }
 
 #[test]

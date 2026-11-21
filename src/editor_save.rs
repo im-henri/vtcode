@@ -396,7 +396,9 @@ pub(crate) struct DiskSaveBaseline {
 #[derive(Debug)]
 struct ExternalChange(String);
 impl std::fmt::Display for ExternalChange {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
 }
 impl std::error::Error for ExternalChange {}
 
@@ -404,11 +406,14 @@ pub(crate) fn conflict_message(message: String) -> io::Error {
     io::Error::other(ExternalChange(message))
 }
 pub(crate) fn is_conflict(error: &io::Error) -> bool {
-    error.get_ref().is_some_and(|error| error.is::<ExternalChange>())
+    error
+        .get_ref()
+        .is_some_and(|error| error.is::<ExternalChange>())
 }
 pub(crate) fn conflict(path: &Path) -> io::Error {
     conflict_message(format!(
-        "{} changed on disk. Saving would overwrite changes made outside VTCode. Your unsaved edits remain open.", path.display()
+        "{} changed on disk. Saving would overwrite changes made outside VTCode. Your unsaved edits remain open.",
+        path.display()
     ))
 }
 
@@ -421,12 +426,22 @@ impl DiskSaveBaseline {
         self.validate_inner(path, None)
     }
 
-    pub(crate) fn validate_cancellable(&self, path: &Path, cancel: &crate::background::CancellationToken) -> io::Result<fs::Metadata> {
+    pub(crate) fn validate_cancellable(
+        &self,
+        path: &Path,
+        cancel: &crate::background::CancellationToken,
+    ) -> io::Result<fs::Metadata> {
         self.validate_inner(path, Some(cancel))
     }
 
-    fn validate_inner(&self, path: &Path, cancel: Option<&crate::background::CancellationToken>) -> io::Result<fs::Metadata> {
-        if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err(io::ErrorKind::Interrupted.into()); }
+    fn validate_inner(
+        &self,
+        path: &Path,
+        cancel: Option<&crate::background::CancellationToken>,
+    ) -> io::Result<fs::Metadata> {
+        if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
         let source_error = |error: io::Error| {
             if matches!(
                 error.kind(),
@@ -437,7 +452,8 @@ impl DiskSaveBaseline {
                 error
             }
         };
-        let (file, before) = crate::fs_ops::open_document_source(path, false).map_err(source_error)?;
+        let (file, before) =
+            crate::fs_ops::open_document_source(path, false).map_err(source_error)?;
         let encoded_len = match self.encoding {
             "UTF-16 LE" | "UTF-16 BE" => self.rope.len_utf16_cu() * 2 + 2,
             "ISO-8859-1" => self.rope.len_chars(),
@@ -458,12 +474,15 @@ impl DiskSaveBaseline {
         // Use the same encoder as Save, without save-time newline conversion.
         // Comparison streams bytes; it never allocates another document Rope.
         write_encoded(&self.rope, self.encoding, &mut comparison)?;
-        if cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err(io::ErrorKind::Interrupted.into()); }
+        if cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
         if !comparison.reader.fill_buf()?.is_empty() {
             return Err(conflict(path));
         }
         #[cfg(windows)]
-        let after = windows_source_after_read(path, comparison.reader.get_ref()).map_err(source_error)?;
+        let after =
+            windows_source_after_read(path, comparison.reader.get_ref()).map_err(source_error)?;
         #[cfg(not(windows))]
         let after = std::fs::metadata(path).map_err(source_error)?;
         if !same_source_metadata(&before, &after) {
@@ -503,18 +522,24 @@ fn windows_external_replacement_conflicts_even_with_equal_size_and_mtime() {
         .unwrap();
     let after = fs::metadata(&path).unwrap();
     assert!(same_source_metadata(&before, &after));
-    assert!(is_conflict(&windows_source_after_read(&path, &original).unwrap_err()));
+    assert!(is_conflict(
+        &windows_source_after_read(&path, &original).unwrap_err()
+    ));
 }
 
 fn same_source_metadata(before: &fs::Metadata, after: &fs::Metadata) -> bool {
-    if before.len() != after.len() || before.modified().ok() != after.modified().ok() { return false; }
+    if before.len() != after.len() || before.modified().ok() != after.modified().ok() {
+        return false;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         // An atomic replacement or a writer restoring mtime must not pass the
         // post-read guard merely because size and mtime happen to match.
-        before.dev() == after.dev() && before.ino() == after.ino()
-            && before.ctime() == after.ctime() && before.ctime_nsec() == after.ctime_nsec()
+        before.dev() == after.dev()
+            && before.ino() == after.ino()
+            && before.ctime() == after.ctime()
+            && before.ctime_nsec() == after.ctime_nsec()
     }
     #[cfg(not(unix))]
     true
@@ -529,7 +554,12 @@ fn external_replacement_cannot_reuse_equal_size_and_mtime_after_baseline_read() 
     let before = std::fs::metadata(&path).unwrap();
     std::fs::rename(&path, root.path().join("old.txt")).unwrap();
     std::fs::write(&path, "AFTER!").unwrap();
-    std::fs::File::options().write(true).open(&path).unwrap().set_times(std::fs::FileTimes::new().set_modified(before.modified().unwrap())).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(before.modified().unwrap()))
+        .unwrap();
     let after = std::fs::metadata(&path).unwrap();
     assert_eq!(before.len(), after.len());
     assert_eq!(before.modified().unwrap(), after.modified().unwrap());
@@ -546,7 +576,9 @@ impl Write for CompareBytes<'_> {
     fn write(&mut self, mut bytes: &[u8]) -> io::Result<usize> {
         let length = bytes.len();
         while !bytes.is_empty() {
-            if self.cancel.is_some_and(|cancel| cancel.is_cancelled()) { return Err(io::ErrorKind::Interrupted.into()); }
+            if self.cancel.is_some_and(|cancel| cancel.is_cancelled()) {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
             let actual = self.reader.fill_buf()?;
             let count = actual.len().min(bytes.len());
             if count == 0 || actual[..count] != bytes[..count] {

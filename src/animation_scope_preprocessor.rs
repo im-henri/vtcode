@@ -89,7 +89,8 @@ pub(crate) fn keyword_regions(
     let source = &editor.rope;
     let limit = source.try_line_to_char(end).unwrap_or(source.len_chars());
     let input = CharInput::prefix(source, limit);
-    let dialect = super::dialect(editor, editor.scope_bubble_rules.for_editor(editor)).unwrap_or(Dialect::Cpp);
+    let dialect = super::dialect(editor, editor.scope_bubble_rules.for_editor(editor))
+        .unwrap_or(Dialect::Cpp);
     let mut lexer = Lexer::new(&input, dialect, source.line_to_char(first));
     let mut stack: Vec<KeywordFrame> = Vec::new();
     let mut result = KeywordRegions {
@@ -196,8 +197,11 @@ impl Frame {
             super::check_work(control)?;
             self.compatible &= nodes[base].uncertain_from == NO_NODE;
             if self.outcome.is_some() {
-                self.compatible &= expected != NO_NODE && nodes[expected].delimiter == nodes[base].delimiter;
-                if expected != NO_NODE { expected = nodes[expected].parent; }
+                self.compatible &=
+                    expected != NO_NODE && nodes[expected].delimiter == nodes[base].delimiter;
+                if expected != NO_NODE {
+                    expected = nodes[expected].parent;
+                }
             }
             base = nodes[base].parent;
             depth += 1;

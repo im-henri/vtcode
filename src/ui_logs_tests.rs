@@ -79,7 +79,10 @@ fn reconnect_notice_log_action_selects_ssh_output_and_retains_its_full_history()
     assert_eq!(app.editor().unwrap().rope, editor);
     app.remote_connection.attempt = 5;
     app.publish_remote_connection_notice(false);
-    assert!(!app.side_notice.visible(), "viewing the log dismisses this incident's notice");
+    assert!(
+        !app.side_notice.visible(),
+        "viewing the log dismisses this incident's notice"
+    );
 }
 
 #[test]
@@ -147,7 +150,14 @@ fn git_output_switches_by_mouse_and_keyboard_and_keeps_each_channels_view() {
     assert_eq!(app.logs.source, Source::Git);
     let screen = draw(&mut app, 140, 35);
     assert!(screen.contains("Git-only event recorded while hidden"));
-    assert!(!app.logs.editor().unwrap().rope.to_string().contains("SSH-only event"));
+    assert!(
+        !app.logs
+            .editor()
+            .unwrap()
+            .rope
+            .to_string()
+            .contains("SSH-only event")
+    );
     let git_reader = app.logs.editor().unwrap().navigation_id;
     assert_ne!(git_reader, ssh_reader);
     app.logs.reader().view.autoscroll = false;
@@ -207,11 +217,25 @@ fn only_the_visible_output_channel_subscribes_to_wakeups() {
     app.show_output();
     draw(&mut app, 140, 35);
     assert_eq!(app.logs.source, Source::Git);
-    assert!(app.logs.editor().unwrap().rope.to_string().contains("Git continues while closed"));
+    assert!(
+        app.logs
+            .editor()
+            .unwrap()
+            .rope
+            .to_string()
+            .contains("Git continues while closed")
+    );
     app.show_remote_diagnostics();
     draw(&mut app, 140, 35);
     assert_eq!(app.logs.source, Source::RemoteSsh);
-    assert!(app.logs.editor().unwrap().rope.to_string().contains("SSH continues while closed"));
+    assert!(
+        app.logs
+            .editor()
+            .unwrap()
+            .rope
+            .to_string()
+            .contains("SSH continues while closed")
+    );
 }
 
 #[test]
@@ -929,7 +953,10 @@ fn output_visual_layout_snapshot() {
         "src/main.rs · 1 changed range · completed in 1 ms",
     );
     log.event("Disconnected", "The SSH transport stopped responding. Retrying the connection while preserving local edits and undo history. Open the connection log to inspect the transport and operation details.");
-    log.event("Launch failed", "The remote command could not start; see the transport output for details.");
+    log.event(
+        "Launch failed",
+        "The remote command could not start; see the transport output for details.",
+    );
     let mut app = app(log);
     app.tabs[0].editor.rope =
         ropey::Rope::from_str("fn main() {\n    println!(\"Hello, world!\");\n}\n");
@@ -969,7 +996,11 @@ fn output_wrap_uses_the_wrap_binding_and_remembers_each_channels_preference() {
     assert!(app.logs.reader().wrap);
     app.logs.select_source(Source::RemoteSsh);
     assert!(!app.logs.reader().wrap);
-    assert!(menu_actions(&app, Control::More).iter().any(|(label, kind)| *label == "Wrap lines" && *kind == Control::Wrap));
+    assert!(
+        menu_actions(&app, Control::More)
+            .iter()
+            .any(|(label, kind)| *label == "Wrap lines" && *kind == Control::Wrap)
+    );
     action(&mut app, Control::Wrap);
     assert!(app.logs.reader().wrap);
 }
@@ -1073,7 +1104,8 @@ fn live_transport_logs_stay_available_after_disconnect_without_extra_rpc_logging
     crate::ui_panels::close_panel(&mut app);
     app.remote_workspace = None;
     app.show_output();
-    app.side_notice.dismiss(crate::app_remote_connection::NOTICE_ID);
+    app.side_notice
+        .dismiss(crate::app_remote_connection::NOTICE_ID);
     assert!(draw(&mut app, 160, 30).contains("Disconnected"));
     assert!(log.report().contains("Capture stopped"));
     remote.client.disconnect();

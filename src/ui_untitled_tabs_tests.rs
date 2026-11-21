@@ -1,7 +1,7 @@
 use super::*;
 use crate::{app::Tab, editor::Editor};
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
+use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 
 fn contents(buffer: &Buffer) -> String {
     buffer.content.iter().map(|cell| cell.symbol()).collect()
@@ -11,46 +11,81 @@ fn contents(buffer: &Buffer) -> String {
 fn untitled_names_update_rendering_and_mouse_targets_in_plain_and_grouped_tab_bars() {
     for grouped in [false, true] {
         let mut app = App::test_new();
-        app.animation_settings.set(crate::animation_config::AnimationEffect::TabSlide, false);
+        app.animation_settings
+            .set(crate::animation_config::AnimationEffect::TabSlide, false);
         let mut neighbor = Editor::test_with_text("saved\n");
         neighbor.file_path = Some("neighbor.rs".into());
         app.tabs = vec![Tab::new_file(Editor::new()), Tab::new_file(neighbor)];
         if grouped {
-            app.desks.selected_tabs.extend(app.tabs.iter().map(|tab| tab.editor.navigation_id));
+            app.desks
+                .selected_tabs
+                .extend(app.tabs.iter().map(|tab| tab.editor.navigation_id));
             app.group_selected_tabs("Feature", None);
         }
         let area = Rect::new(0, 0, 160, 1);
         app.tab_bar_area = Some(area);
         let mut terminal = Terminal::new(TestBackend::new(160, 1)).unwrap();
         for (step, expected) in [
-            "[NoFile]", "hello worl… [NoFile]", "[NoFile]", "hello worl… [NoFile]",
-        ].into_iter().enumerate() {
+            "[NoFile]",
+            "hello worl… [NoFile]",
+            "[NoFile]",
+            "hello worl… [NoFile]",
+        ]
+        .into_iter()
+        .enumerate()
+        {
             match step {
-                1 => app.tabs[0].editor.paste_with_text("hello world\nnot the title"),
+                1 => app.tabs[0]
+                    .editor
+                    .paste_with_text("hello world\nnot the title"),
                 2 => app.tabs[0].editor.undo(),
                 3 => app.tabs[0].editor.redo(),
                 _ => {}
             }
             app.mouse_position_known = false;
-            terminal.draw(|frame| draw_tab_bar(frame, &app, area)).unwrap();
+            terminal
+                .draw(|frame| draw_tab_bar(frame, &app, area))
+                .unwrap();
             assert!(contents(terminal.backend().buffer()).contains(expected));
             assert!(!contents(terminal.backend().buffer()).contains('·'));
             let hits = TabBarHits::new(&app, area);
             assert_eq!(hits.tabs.len(), 2);
-            let modified_width = if app.tabs[0].has_unsaved_changes() { 2 } else { 0 };
-            assert_eq!(usize::from(hits.tabs[0].1.width), 1 + modified_width + expected.width() + 3);
+            let modified_width = if app.tabs[0].has_unsaved_changes() {
+                2
+            } else {
+                0
+            };
+            assert_eq!(
+                usize::from(hits.tabs[0].1.width),
+                1 + modified_width + expected.width() + 3
+            );
             for &(index, rect, close) in &hits.tabs {
                 assert_eq!(hits.tab_at(rect.x + 3).unwrap().0, index);
                 assert_eq!(rect.width, tab_render_width(&app, index, &app.tabs[index]));
-                assert_eq!(terminal.backend().buffer()[(close.x, close.y)].symbol(), "×");
+                assert_eq!(
+                    terminal.backend().buffer()[(close.x, close.y)].symbol(),
+                    "×"
+                );
             }
             let (_, neighbor, _) = hits.tabs[1];
-            for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
-                crate::mouse::handle_mouse(&mut app, MouseEvent {
-                    kind, column: neighbor.x + 3, row: area.y, modifiers: KeyModifiers::NONE,
-                });
+            for kind in [
+                MouseEventKind::Down(MouseButton::Left),
+                MouseEventKind::Up(MouseButton::Left),
+            ] {
+                crate::mouse::handle_mouse(
+                    &mut app,
+                    MouseEvent {
+                        kind,
+                        column: neighbor.x + 3,
+                        row: area.y,
+                        modifiers: KeyModifiers::NONE,
+                    },
+                );
             }
-            assert_eq!(app.active_tab, 1, "the neighbor remains clickable after a title change");
+            assert_eq!(
+                app.active_tab, 1,
+                "the neighbor remains clickable after a title change"
+            );
             app.active_tab = 0;
         }
     }
@@ -59,15 +94,21 @@ fn untitled_names_update_rendering_and_mouse_targets_in_plain_and_grouped_tab_ba
 #[test]
 fn untitled_names_are_consistent_in_open_editors_and_the_tab_strip() {
     let mut app = App::test_new();
-    app.tabs = ["one\nsecond line", "two\nother line"].into_iter()
-        .map(|text| Tab::new_file(Editor::test_with_text(text))).collect();
+    app.tabs = ["one\nsecond line", "two\nother line"]
+        .into_iter()
+        .map(|text| Tab::new_file(Editor::test_with_text(text)))
+        .collect();
     app.show_open_editors = true;
     let mut terminal = Terminal::new(TestBackend::new(110, 30)).unwrap();
-    terminal.draw(|frame| {
-        crate::ui_chrome::draw_explorer(frame, &mut app, Rect::new(0, 0, 60, 30));
-    }).unwrap();
+    terminal
+        .draw(|frame| {
+            crate::ui_chrome::draw_explorer(frame, &mut app, Rect::new(0, 0, 60, 30));
+        })
+        .unwrap();
     let explorer = contents(terminal.backend().buffer());
-    terminal.draw(|frame| draw_tab_bar(frame, &app, Rect::new(0, 0, 110, 1))).unwrap();
+    terminal
+        .draw(|frame| draw_tab_bar(frame, &app, Rect::new(0, 0, 110, 1)))
+        .unwrap();
     let strip = contents(terminal.backend().buffer());
     for (index, expected) in ["one [NoFile]", "two [NoFile]"].into_iter().enumerate() {
         assert_eq!(tab_display_name(&app, index, &app.tabs[index]), expected);
@@ -79,9 +120,13 @@ fn untitled_names_are_consistent_in_open_editors_and_the_tab_strip() {
 #[test]
 fn untitled_names_reveal_the_correct_tab_in_narrow_strips() {
     let mut app = App::test_new();
-    app.tabs = (0..8).map(|i| {
-        Tab::new_file(Editor::test_with_text(&format!("note {i} with a longer title")))
-    }).collect();
+    app.tabs = (0..8)
+        .map(|i| {
+            Tab::new_file(Editor::test_with_text(&format!(
+                "note {i} with a longer title"
+            )))
+        })
+        .collect();
     for width in [30, 60, 100] {
         let area = Rect::new(0, 0, width, 1);
         app.tab_bar_area = Some(area);
@@ -89,7 +134,10 @@ fn untitled_names_reveal_the_correct_tab_in_narrow_strips() {
             app.active_tab = active;
             app.ensure_active_tab_visible();
             let hits = TabBarHits::new(&app, area);
-            assert!(hits.tabs.iter().any(|(i, _, _)| *i == active), "width={width}, active={active}");
+            assert!(
+                hits.tabs.iter().any(|(i, _, _)| *i == active),
+                "width={width}, active={active}"
+            );
         }
     }
 }

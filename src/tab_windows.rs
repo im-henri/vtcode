@@ -727,7 +727,9 @@ impl Windows {
             ));
         }
         if !window.source.is_valid(owner) {
-            return Err(io::Error::other("the source changed before the terminal opened"));
+            return Err(io::Error::other(
+                "the source changed before the terminal opened",
+            ));
         }
         let opened = match &window.source {
             WindowSource::Tab { view, .. } => owner.open_detached_window(id, *view),
@@ -754,7 +756,12 @@ impl Windows {
         Ok(true)
     }
 
-    fn launch_window(&mut self, app: &mut App, source: WindowSource, point: Option<ScreenPoint>) -> bool {
+    fn launch_window(
+        &mut self,
+        app: &mut App,
+        source: WindowSource,
+        point: Option<ScreenPoint>,
+    ) -> bool {
         let workspace = app.workspaces.active;
         if self.windows.values().any(|window| {
             window.surface.is_none() && window.workspace == workspace && window.source == source
@@ -777,7 +784,15 @@ impl Windows {
         };
         match frontend::start(self.wake.clone(), notify, point) {
             Ok(launch) => {
-                self.windows.insert(id, Window { workspace, source, surface: None, launch: Some(launch) });
+                self.windows.insert(
+                    id,
+                    Window {
+                        workspace,
+                        source,
+                        surface: None,
+                        launch: Some(launch),
+                    },
+                );
             }
             Err(error) => app.notify_warn(format!("Could not {}: {error}", source.operation())),
         }
@@ -799,7 +814,9 @@ impl Windows {
                 true
             }
             Request::Open { view, point } => {
-                let Some(window) = app.tab_window(view) else { return false; };
+                let Some(window) = app.tab_window(view) else {
+                    return false;
+                };
                 self.launch_window(app, WindowSource::Tab { view, window }, point)
             }
             Request::Move { view, window } => {
@@ -820,7 +837,10 @@ impl Windows {
                 let generation = app.workspace_generation;
                 self.launch_window(app, WindowSource::File { path, generation }, None)
             }
-            Request::OpenFile { path, window: Some(window) } => {
+            Request::OpenFile {
+                path,
+                window: Some(window),
+            } => {
                 if app.open_file_in_window(window, &path) {
                     self.invalidate_workspace(app.workspaces.active);
                 } else {
@@ -848,7 +868,10 @@ impl Windows {
                 frontend::Notice::Ready(ready) => match self.attach(app, id, ready) {
                     Ok(attached) => changed |= attached,
                     Err(error) => {
-                        let operation = self.windows.get(&id).map_or("open window", |window| window.source.operation());
+                        let operation = self
+                            .windows
+                            .get(&id)
+                            .map_or("open window", |window| window.source.operation());
                         self.close(app, id);
                         app.notify_warn(format!("Could not {operation}: {error}"));
                         changed = true;
@@ -896,9 +919,8 @@ impl Windows {
                 let still_open = if window.surface.is_some() {
                     self.populated.contains(&id)
                 } else {
-                    workspace(app, window.workspace).is_some_and(|owner| {
-                        window.source.is_valid(owner)
-                    })
+                    workspace(app, window.workspace)
+                        .is_some_and(|owner| window.source.is_valid(owner))
                 };
                 (!still_open).then_some(id)
             }));

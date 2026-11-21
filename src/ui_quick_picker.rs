@@ -2,11 +2,11 @@
 use crate::{app::App, text_input::TextInputId, ui_widgets::InputField};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -251,7 +251,11 @@ fn items(app: &App, kind: Kind, range: std::ops::Range<usize>) -> Vec<Item> {
                 icon: "×".into(),
                 color: app.colors.fg_dim,
             });
-            choices.into_iter().skip(range.start).take(range.len()).collect()
+            choices
+                .into_iter()
+                .skip(range.start)
+                .take(range.len())
+                .collect()
         }
         Kind::Commands => app
             .palette
@@ -316,44 +320,46 @@ fn items(app: &App, kind: Kind, range: std::ops::Range<usize>) -> Vec<Item> {
                     detail: format!("{} · {location}:{}", symbol.kind, symbol.line + 1),
                     badge: format!("Line {}", symbol.line + 1),
                     icon: icon.into(),
-                    color: app.colors.ui.symbol_color(symbol.kind, app.colors.ui.bg_quick_input),
+                    color: app
+                        .colors
+                        .ui
+                        .symbol_color(symbol.kind, app.colors.ui.bg_quick_input),
                 }
             })
             .collect(),
-        Kind::Branches => {
-            app
-                .git_branch_picker_filtered_iter()
-                .skip(range.start)
-                .take(range.len())
-                .map(|branch| {
-                    let current = Some(branch.target_branch_name()) == app.cached_git_branch.split_whitespace().next()
-                        && branch.remote_ref().is_none();
-                    Item {
-                        name: branch
-                            .remote_ref()
-                            .unwrap_or_else(|| branch.target_branch_name())
-                            .into(),
-                        detail: branch
-                            .remote_ref()
-                            .unwrap_or_else(|| branch.target_branch_name())
-                            .into(),
-                        badge: if current {
-                            "Current".into()
-                        } else if branch.remote_ref().is_some() {
-                            "Remote".into()
-                        } else {
-                            "Local".into()
-                        },
-                        icon: "↳".into(),
-                        color: if current {
-                            app.colors.fg_success
-                        } else {
-                            accent
-                        },
-                    }
-                })
-                .collect()
-        }
+        Kind::Branches => app
+            .git_branch_picker_filtered_iter()
+            .skip(range.start)
+            .take(range.len())
+            .map(|branch| {
+                let current = Some(branch.target_branch_name())
+                    == app.cached_git_branch.split_whitespace().next()
+                    && branch.remote_ref().is_none();
+                Item {
+                    name: branch
+                        .remote_ref()
+                        .unwrap_or_else(|| branch.target_branch_name())
+                        .into(),
+                    detail: branch
+                        .remote_ref()
+                        .unwrap_or_else(|| branch.target_branch_name())
+                        .into(),
+                    badge: if current {
+                        "Current".into()
+                    } else if branch.remote_ref().is_some() {
+                        "Remote".into()
+                    } else {
+                        "Local".into()
+                    },
+                    icon: "↳".into(),
+                    color: if current {
+                        app.colors.fg_success
+                    } else {
+                        accent
+                    },
+                }
+            })
+            .collect(),
     }
 }
 
@@ -391,8 +397,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
     }
     let count = item_count(app, kind);
     let selection = selected(app, kind).min(count.saturating_sub(1));
-    let theme_preview = kind == Kind::Commands && app.palette.active
-        && !app.theme_install_prompt_visible() && app.palette_selected_theme_key().is_some();
+    let theme_preview = kind == Kind::Commands
+        && app.palette.active
+        && !app.theme_install_prompt_visible()
+        && app.palette_selected_theme_key().is_some();
     let empty = String::new();
     let (title, placeholder, caption, id, query, cursor, anchor) = match kind {
         Kind::OpenWith => (
@@ -407,7 +415,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         Kind::Commands => (
             "Command Palette",
             "Search commands by name…",
-            if theme_preview { "THEME PREVIEW" } else { "COMMANDS" }.into(),
+            if theme_preview {
+                "THEME PREVIEW"
+            } else {
+                "COMMANDS"
+            }
+            .into(),
             TextInputId::CommandPalette,
             &app.palette.query,
             app.palette.cursor,
@@ -472,10 +485,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
     let max_height = viewport
         .height
         .saturating_sub(if viewport.height >= 16 { 4 } else { 0 });
-    let height = (11
-        + count
-            .clamp(3, crate::ui_pickers::PALETTE_MAX_ITEMS as usize) as u16)
-        .min(max_height);
+    let height =
+        (11 + count.clamp(3, crate::ui_pickers::PALETTE_MAX_ITEMS as usize) as u16).min(max_height);
     let area = Rect::new(
         viewport.x + (viewport.width - width) / 2,
         viewport.y + if viewport.height >= 16 { 2 } else { 0 },
@@ -547,8 +558,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         close,
         " × ",
         colors.ui.toolbar_style(
-            colors.ui.quick_text_color(title_bg, false), title_bg,
-            close.contains((app.mouse_col, app.mouse_row).into()), false, false,
+            colors.ui.quick_text_color(title_bg, false),
+            title_bg,
+            close.contains((app.mouse_col, app.mouse_row).into()),
+            false,
+            false,
         ),
     );
     let hit = if kind == Kind::OpenWith {
@@ -557,18 +571,12 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             .as_deref()
             .unwrap_or_else(|| std::path::Path::new("File"));
         let filename = path.file_name().unwrap_or_default().to_string_lossy();
-        f.render_widget(
-            Block::default().style(Style::default().bg(bg)),
-            rows[1],
-        );
+        f.render_widget(Block::default().style(Style::default().bg(bg)), rows[1]);
         text(
             f,
             Rect::new(rows[1].x, rows[1].y, rows[1].width, rows[1].height.min(1)),
             ellipsis(&filename, rows[1].width as usize),
-            Style::default()
-                .fg(fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
         );
         if rows[1].height > 1 {
             text(
@@ -588,7 +596,9 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             } else {
                 Borders::NONE
             })
-            .border_style(Style::default().fg(colors.ui.focus_border.border(input_bg).unwrap_or(input_bg)))
+            .border_style(
+                Style::default().fg(colors.ui.focus_border.border(input_bg).unwrap_or(input_bg)),
+            )
             .style(input_style);
         let input_inner = input.inner(rows[1]);
         f.render_widget(input, rows[1]);
@@ -600,9 +610,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
                 .placeholder_text(placeholder)
                 .cursor_marker("│")
                 .cursor_pos(cursor)
-                .selection_range(
-                    App::inline_selection_range(cursor, anchor),
-                )
+                .selection_range(App::inline_selection_range(cursor, anchor))
                 .bg(input_bg)
                 .render(f, input_inner),
         )
@@ -614,7 +622,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         rows[2].height.min(1),
     );
     let count_label = if (kind == Kind::Symbols && app.source_symbol_work.picker_pending())
-        || (kind == Kind::Files && count == 0 && app.bg_quick_open_running) {
+        || (kind == Kind::Files && count == 0 && app.bg_quick_open_running)
+    {
         "Loading…".into()
     } else if count == 0 {
         "0 results".into()
@@ -651,10 +660,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         app.quick_picker.last_selection = None;
     }
     let visible = list.height.max(1) as usize;
-    let mut scroll = app
-        .quick_picker
-        .scroll
-        .min(count.saturating_sub(visible));
+    let mut scroll = app.quick_picker.scroll.min(count.saturating_sub(visible));
     if app.quick_picker.last_selection != Some(selection) || resized {
         if selection < scroll {
             scroll = selection;
@@ -671,7 +677,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
     if kind == Kind::Branches {
         app.git_branch_picker_scroll_offset = scroll;
     }
-    let items = items(app, kind, scroll..scroll.saturating_add(list.height as usize));
+    let items = items(
+        app,
+        kind,
+        scroll..scroll.saturating_add(list.height as usize),
+    );
     // Highlight with the same case handling used when filtering commands.
     let match_query = if kind == Kind::Commands {
         std::borrow::Cow::Owned(query.to_ascii_lowercase())
@@ -715,28 +725,45 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         let mut matches = matches.into_iter().peekable();
         let icon_color = match kind {
             Kind::Files => item.color,
-            Kind::Symbols => app.symbol_list_filtered.get(index).and_then(|&i| app.symbol_list_items.get(i))
-                .map_or(item.color, |symbol| colors.ui.symbol_color(symbol.kind, row_bg)),
+            Kind::Symbols => app
+                .symbol_list_filtered
+                .get(index)
+                .and_then(|&i| app.symbol_list_items.get(i))
+                .map_or(item.color, |symbol| {
+                    colors.ui.symbol_color(symbol.kind, row_bg)
+                }),
             _ => item.color,
         };
-        let icon_color = if kind == Kind::Files { icon_color }
-            else { colors.ui.quick_icon_color(icon_color, row_bg, chosen) };
+        let icon_color = if kind == Kind::Files {
+            icon_color
+        } else {
+            colors.ui.quick_icon_color(icon_color, row_bg, chosen)
+        };
         let mut spans = vec![Span::styled(prefix, style.fg(icon_color))];
-        let match_style = style.fg(colors.ui.quick_match_color(row_bg, chosen))
+        let match_style = style
+            .fg(colors.ui.quick_match_color(row_bg, chosen))
             .add_modifier(Modifier::BOLD);
         let mut run_start = 0;
         let mut run_highlighted = false;
         for (index, (byte, _)) in name.char_indices().enumerate() {
             let highlighted = matches.peek() == Some(&index);
-            if highlighted { matches.next(); }
+            if highlighted {
+                matches.next();
+            }
             if byte > run_start && highlighted != run_highlighted {
-                spans.push(Span::styled(&name[run_start..byte], if run_highlighted { match_style } else { style }));
+                spans.push(Span::styled(
+                    &name[run_start..byte],
+                    if run_highlighted { match_style } else { style },
+                ));
                 run_start = byte;
             }
             run_highlighted = highlighted;
         }
         if run_start < name.len() {
-            spans.push(Span::styled(&name[run_start..], if run_highlighted { match_style } else { style }));
+            spans.push(Span::styled(
+                &name[run_start..],
+                if run_highlighted { match_style } else { style },
+            ));
         }
         text(f, rect, Line::from(spans), style);
         if badge_w > 0 {
@@ -754,7 +781,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
                     colors.ui.keybinding_label_style(row_bg)
                 } else {
                     Style::default()
-                        .fg(if chosen { fg } else { colors.ui.description_color(row_bg) })
+                        .fg(if chosen {
+                            fg
+                        } else {
+                            colors.ui.description_color(row_bg)
+                        })
                         .bg(row_bg)
                 },
             );
@@ -765,9 +796,15 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         let (message, help) = if kind == Kind::Branches && app.bg_git_branch_picker_running {
             ("Loading branches…", "Reading the repository")
         } else if kind == Kind::Symbols && app.source_symbol_work.picker_pending() {
-            ("Reading source symbols…", "You can keep typing while the list loads")
+            (
+                "Reading source symbols…",
+                "You can keep typing while the list loads",
+            )
         } else if kind == Kind::Files && app.bg_quick_open_running {
-            ("Searching files…", "You can keep typing while the list loads")
+            (
+                "Searching files…",
+                "You can keep typing while the list loads",
+            )
         } else if query.is_empty() {
             match kind {
                 Kind::Files => (
@@ -789,10 +826,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             f,
             Rect::new(list.x, y, list.width, list.height.min(1)),
             ellipsis(message, list.width as usize),
-            Style::default()
-                .fg(fg)
-                .bg(bg)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
         );
         if list.height >= 3 {
             text(
@@ -806,8 +840,11 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
         let x = list.right().saturating_sub(1);
         let thumb = ((visible * visible) / count).max(1);
         let offset = scroll * (visible - thumb) / count.saturating_sub(visible).max(1);
-        let (track, slider) = colors.ui.scrollbar_colors(bg, app.mouse_col == x
-            && app.mouse_row >= list.y && app.mouse_row < list.bottom(), false);
+        let (track, slider) = colors.ui.scrollbar_colors(
+            bg,
+            app.mouse_col == x && app.mouse_row >= list.y && app.mouse_row < list.bottom(),
+            false,
+        );
         for row in 0..visible {
             text(
                 f,
@@ -817,7 +854,13 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
                 } else {
                     "│"
                 },
-                Style::default().fg(if row >= offset && row < offset + thumb { slider } else { track }).bg(track),
+                Style::default()
+                    .fg(if row >= offset && row < offset + thumb {
+                        slider
+                    } else {
+                        track
+                    })
+                    .bg(track),
             );
         }
     }
@@ -829,11 +872,14 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
             Style::default().fg(border).bg(bg),
         );
         let selected_item = selection.checked_sub(scroll).and_then(|row| items.get(row));
-        let offscreen_item = selected_item.is_none().then(|| self::items(app, kind, selection..selection + 1));
+        let offscreen_item = selected_item
+            .is_none()
+            .then(|| self::items(app, kind, selection..selection + 1));
         let detail = if theme_preview {
             "↑↓ Preview   Enter Apply   Esc Cancel"
         } else {
-            selected_item.or_else(|| offscreen_item.as_ref().and_then(|items| items.first()))
+            selected_item
+                .or_else(|| offscreen_item.as_ref().and_then(|items| items.first()))
                 .map_or("Search above to get started", |item| item.detail.as_str())
         };
         text(
@@ -852,7 +898,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, kind: Kind) {
 mod tests {
     use super::*;
     use crate::app::{GitBranchPickerItem, PaletteCommand, SymbolItem, Tab};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn example(kind: Kind) -> App {
         let mut app = App::test_new();
@@ -926,11 +972,20 @@ mod tests {
         app.quick_open_results.clear();
         let screen = |app: &mut App| {
             let terminal = render(app, Kind::Files, 90, 24);
-            terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect::<String>()
+            terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>()
         };
         app.bg_quick_open_running = true;
         let pending = screen(&mut app);
-        assert!(pending.contains("Searching files…") && pending.contains("Loading…"), "{pending}");
+        assert!(
+            pending.contains("Searching files…") && pending.contains("Loading…"),
+            "{pending}"
+        );
         assert!(!pending.contains("No matching results"));
         app.bg_quick_open_running = false;
         let finished = screen(&mut app);
@@ -946,11 +1001,22 @@ mod tests {
             app.filter_palette_commands();
             let terminal = render(&mut app, Kind::Commands, 100, 30);
             let buffer = terminal.backend().buffer();
-            let rows: Vec<Vec<_>> = app.quick_picker.rows.iter().map(|(rect, _)| {
-                (rect.x..rect.right()).map(|x| buffer[(x, rect.y)].clone()).collect()
-            }).collect();
+            let rows: Vec<Vec<_>> = app
+                .quick_picker
+                .rows
+                .iter()
+                .map(|(rect, _)| {
+                    (rect.x..rect.right())
+                        .map(|x| buffer[(x, rect.y)].clone())
+                        .collect()
+                })
+                .collect();
             assert!(!rows.is_empty(), "query {query:?}");
-            assert!(rows[0].iter().any(|cell| cell.modifier.contains(Modifier::BOLD)));
+            assert!(
+                rows[0]
+                    .iter()
+                    .any(|cell| cell.modifier.contains(Modifier::BOLD))
+            );
             if let Some(expected) = &expected {
                 assert_eq!(&rows, expected, "query {query:?}");
             } else {
@@ -968,7 +1034,10 @@ mod tests {
             let visible = items(&app, kind, 23..30);
             assert_eq!(visible.len(), 7, "{kind:?}");
             for (row, expected) in visible.iter().zip(&all[23..30]) {
-                assert_eq!((&row.name, &row.detail, &row.badge), (&expected.name, &expected.detail, &expected.badge));
+                assert_eq!(
+                    (&row.name, &row.detail, &row.badge),
+                    (&expected.name, &expected.detail, &expected.badge)
+                );
             }
         }
         let mut app = example(Kind::Branches);
@@ -983,11 +1052,13 @@ mod tests {
     #[ignore = "manual release benchmark"]
     fn benchmark_picker_visible_rows() {
         let mut app = example(Kind::Commands);
-        app.palette.commands = (0..20_000).map(|index| PaletteCommand {
-            name: format!("Workspace: command {index}"),
-            shortcut: "Ctrl+Alt+O".into(),
-            id: "unknown-command".into(),
-        }).collect();
+        app.palette.commands = (0..20_000)
+            .map(|index| PaletteCommand {
+                name: format!("Workspace: command {index}"),
+                shortcut: "Ctrl+Alt+O".into(),
+                id: "unknown-command".into(),
+            })
+            .collect();
         app.palette.filtered = (0..20_000).collect();
         let mut eager = Vec::new();
         let mut viewport = Vec::new();
@@ -1002,38 +1073,66 @@ mod tests {
             eager.push(started.elapsed());
             let started = std::time::Instant::now();
             for _ in 0..50 {
-                std::hint::black_box(items(std::hint::black_box(&app), Kind::Commands, 15_000..15_012));
+                std::hint::black_box(items(
+                    std::hint::black_box(&app),
+                    Kind::Commands,
+                    15_000..15_012,
+                ));
             }
             viewport.push(started.elapsed());
         }
         eager.sort();
         viewport.sort();
-        eprintln!("picker format 20,000 results, 50 redraws: eager={:?}, visible={:?}", eager[3], viewport[3]);
+        eprintln!(
+            "picker format 20,000 results, 50 redraws: eager={:?}, visible={:?}",
+            eager[3], viewport[3]
+        );
     }
 
     #[test]
     fn picker_labels_and_descriptions_are_readable_across_loaded_palettes() {
-        use crate::ui_control_visibility_tests::{audit_themes, assert_readable, check_region};
+        use crate::ui_control_visibility_tests::{assert_readable, audit_themes, check_region};
         let mut failures = Vec::new();
         for theme in audit_themes() {
-            for kind in [Kind::OpenWith, Kind::Commands, Kind::Files, Kind::Symbols, Kind::Branches] {
+            for kind in [
+                Kind::OpenWith,
+                Kind::Commands,
+                Kind::Files,
+                Kind::Symbols,
+                Kind::Branches,
+            ] {
                 let mut app = example(kind);
                 app.colors = theme.to_theme_colors();
                 for size in [(100, 30), (42, 14)] {
                     let terminal = render(&mut app, kind, size.0, size.1);
                     let buffer = terminal.backend().buffer();
                     let area = app.quick_picker.area;
-                    check_region(buffer, Rect::new(area.x + 1, area.y + 1, area.width - 2, 1),
-                        &format!("{}: {kind:?} heading", theme.name), &mut failures, &app.colors.ui);
+                    check_region(
+                        buffer,
+                        Rect::new(area.x + 1, area.y + 1, area.width - 2, 1),
+                        &format!("{}: {kind:?} heading", theme.name),
+                        &mut failures,
+                        &app.colors.ui,
+                    );
                     for &(row, _) in &app.quick_picker.rows {
                         // The file/symbol glyph has the icon contrast floor;
                         // labels and result badges have the text contrast floor.
-                        check_region(buffer, Rect::new(row.x + 4, row.y, row.width.saturating_sub(5), row.height),
-                            &format!("{}: {kind:?} result", theme.name), &mut failures, &app.colors.ui);
+                        check_region(
+                            buffer,
+                            Rect::new(row.x + 4, row.y, row.width.saturating_sub(5), row.height),
+                            &format!("{}: {kind:?} result", theme.name),
+                            &mut failures,
+                            &app.colors.ui,
+                        );
                     }
                     if size.0 == 100 {
-                        check_region(buffer, Rect::new(area.x + 3, area.bottom() - 2, area.width - 6, 1),
-                            &format!("{}: {kind:?} description", theme.name), &mut failures, &app.colors.ui);
+                        check_region(
+                            buffer,
+                            Rect::new(area.x + 3, area.bottom() - 2, area.width - 6, 1),
+                            &format!("{}: {kind:?} description", theme.name),
+                            &mut failures,
+                            &app.colors.ui,
+                        );
                     }
                 }
             }
@@ -1167,12 +1266,7 @@ mod tests {
 
     #[test]
     fn polished_picker_empty_states_are_visible_and_non_actionable() {
-        for kind in [
-            Kind::Commands,
-            Kind::Files,
-            Kind::Symbols,
-            Kind::Branches,
-        ] {
+        for kind in [Kind::Commands, Kind::Files, Kind::Symbols, Kind::Branches] {
             let mut app = example(kind);
             app.palette.filtered.clear();
             app.quick_open_results.clear();

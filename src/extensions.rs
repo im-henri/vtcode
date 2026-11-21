@@ -85,11 +85,13 @@ pub(crate) struct ExtensionManager {
 impl ExtensionManager {
     pub(crate) fn new(project_root: &Path) -> Self {
         let mut search_roots = vec![crate::portable::data_dir().join("extensions")];
-        if !project_root.as_os_str().is_empty() { search_roots.extend([
-            crate::portable::workspace_dir(project_root).join("extensions"),
-            project_root.join("extensions"),
-            project_root.join(".vtcode").join("extensions"),
-        ]); }
+        if !project_root.as_os_str().is_empty() {
+            search_roots.extend([
+                crate::portable::workspace_dir(project_root).join("extensions"),
+                project_root.join("extensions"),
+                project_root.join(".vtcode").join("extensions"),
+            ]);
+        }
         let settings_file =
             crate::portable::workspace_dir(project_root).join("extension-settings.json");
         Self::with_paths(search_roots, settings_file)
@@ -440,21 +442,40 @@ impl ExtensionManager {
 
     #[cfg(test)]
     pub(crate) fn all_overlays(&self) -> Vec<(String, ExtensionOverlay)> {
-        self.overlays().map(|(id, overlay)| (id.to_owned(), overlay.clone())).collect()
+        self.overlays()
+            .map(|(id, overlay)| (id.to_owned(), overlay.clone()))
+            .collect()
     }
 
     pub(crate) fn overlays(&self) -> impl Iterator<Item = (&str, &ExtensionOverlay)> {
-        self.records.iter().filter(|record| record.state == ExtensionState::Loaded)
-            .flat_map(|record| record.overlays.values().map(|overlay| (record.manifest.id.as_str(), overlay)))
+        self.records
+            .iter()
+            .filter(|record| record.state == ExtensionState::Loaded)
+            .flat_map(|record| {
+                record
+                    .overlays
+                    .values()
+                    .map(|overlay| (record.manifest.id.as_str(), overlay))
+            })
     }
 
     pub(crate) fn overlay_targets(&self) -> Vec<(String, OverlayTarget)> {
-        self.overlays().map(|(id, overlay)| (id.to_owned(), OverlayTarget {
-            id: overlay.id.clone(), x: overlay.x, y: overlay.y,
-            width: overlay.width, height: overlay.height,
-            mouse_handler: overlay.mouse_handler.is_some(),
-            key_handler: overlay.key_handler.is_some(),
-        })).collect()
+        self.overlays()
+            .map(|(id, overlay)| {
+                (
+                    id.to_owned(),
+                    OverlayTarget {
+                        id: overlay.id.clone(),
+                        x: overlay.x,
+                        y: overlay.y,
+                        width: overlay.width,
+                        height: overlay.height,
+                        mouse_handler: overlay.mouse_handler.is_some(),
+                        key_handler: overlay.key_handler.is_some(),
+                    },
+                )
+            })
+            .collect()
     }
 
     /// Borrow handlers and consult open tabs only for extensions with cosmetic
@@ -463,13 +484,22 @@ impl ExtensionManager {
         &'a self,
         mut has_open_view: impl FnMut(&str) -> bool + 'a,
     ) -> impl Iterator<Item = (&'a str, &'a ExtensionTickHandler)> + 'a {
-        self.records.iter()
-            .filter(|record| record.state == ExtensionState::Loaded && !record.tick_handlers.is_empty())
+        self.records
+            .iter()
+            .filter(|record| {
+                record.state == ExtensionState::Loaded && !record.tick_handlers.is_empty()
+            })
             .flat_map(move |record| {
                 let visible = record.views.is_empty()
-                    || record.tick_handlers.iter().all(|handler| handler.background)
+                    || record
+                        .tick_handlers
+                        .iter()
+                        .all(|handler| handler.background)
                     || has_open_view(&record.manifest.id);
-                record.tick_handlers.iter().filter(move |handler| handler.background || visible)
+                record
+                    .tick_handlers
+                    .iter()
+                    .filter(move |handler| handler.background || visible)
                     .map(|handler| (record.manifest.id.as_str(), handler))
             })
     }

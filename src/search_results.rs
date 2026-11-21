@@ -51,23 +51,50 @@ impl SearchResults {
         self.remote = remote;
     }
 
-    fn compare(files: &FxHashMap<PathBuf, FileInfo>, order: &crate::file_order::FileOrder,
-        a: &GlobalSearchResult, b: &GlobalSearchResult) -> std::cmp::Ordering {
-        let position = || a.line_num.cmp(&b.line_num).then(a.col_start.cmp(&b.col_start)).then(a.col_end.cmp(&b.col_end));
-        if a.file_path == b.file_path { return position(); }
-        order.paths(files[&a.file_path].sort_key.as_ref().unwrap(), files[&b.file_path].sort_key.as_ref().unwrap())
+    fn compare(
+        files: &FxHashMap<PathBuf, FileInfo>,
+        order: &crate::file_order::FileOrder,
+        a: &GlobalSearchResult,
+        b: &GlobalSearchResult,
+    ) -> std::cmp::Ordering {
+        let position = || {
+            a.line_num
+                .cmp(&b.line_num)
+                .then(a.col_start.cmp(&b.col_start))
+                .then(a.col_end.cmp(&b.col_end))
+        };
+        if a.file_path == b.file_path {
+            return position();
+        }
+        order
+            .paths(
+                files[&a.file_path].sort_key.as_ref().unwrap(),
+                files[&b.file_path].sort_key.as_ref().unwrap(),
+            )
             // Distinct files with equivalent display paths must not interleave.
             .then_with(|| a.file_path.cmp(&b.file_path))
             .then_with(position)
     }
 
     pub(crate) fn index_of(&self, result: &GlobalSearchResult) -> Option<usize> {
-        if self.files.get(&result.file_path).is_none_or(|file| file.matches == 0) { return None; }
-        self.results.binary_search_by(|other| Self::compare(&self.files, self.ordering.as_ref().unwrap(), other, result)).ok()
+        if self
+            .files
+            .get(&result.file_path)
+            .is_none_or(|file| file.matches == 0)
+        {
+            return None;
+        }
+        self.results
+            .binary_search_by(|other| {
+                Self::compare(&self.files, self.ordering.as_ref().unwrap(), other, result)
+            })
+            .ok()
     }
 
     pub(crate) fn header_row(&self, index: usize) -> Option<usize> {
-        if index >= self.results.len() { return None; }
+        if index >= self.results.len() {
+            return None;
+        }
         Some(self.groups[self.groups.partition_point(|group| group.start <= index) - 1].row)
     }
     pub(crate) fn file_header_index(&self, path: &Path) -> Option<usize> {
@@ -84,14 +111,18 @@ impl SearchResults {
         self.revision = self.revision.wrapping_add(1);
     }
 
-    pub(crate) fn revision(&self) -> u64 { self.revision }
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
 
     pub(crate) fn tracks_file(&self, path: &Path) -> bool {
         self.files.contains_key(path)
     }
 
     pub(crate) fn mark_file_edited(&mut self, path: &Path) -> bool {
-        let Some(file) = self.files.get_mut(path) else { return false; };
+        let Some(file) = self.files.get_mut(path) else {
+            return false;
+        };
         file.edited = true;
         true
     }
@@ -106,15 +137,22 @@ impl SearchResults {
 
     fn accepts_result(&self, result: &GlobalSearchResult, refreshed: bool) -> bool {
         self.files.get(&result.file_path).is_none_or(|file| {
-            (refreshed || !file.edited) && !file.dismissed
-                && !file.dismissed_matches.contains(&(result.line_num, result.col_start, result.col_end))
+            (refreshed || !file.edited)
+                && !file.dismissed
+                && !file.dismissed_matches.contains(&(
+                    result.line_num,
+                    result.col_start,
+                    result.col_end,
+                ))
         })
     }
 
     /// Replace one open model without resetting other files, collapsed groups,
     /// or explicit dismissals. Original search batches for this file are stale.
     pub(crate) fn replace_file(&mut self, path: &Path, results: Vec<GlobalSearchResult>) {
-        let Some(file) = self.files.get_mut(path) else { return; };
+        let Some(file) = self.files.get_mut(path) else {
+            return;
+        };
         if file.matches > 0 {
             self.file_count -= 1;
             file.matches = 0;
@@ -137,16 +175,20 @@ impl SearchResults {
         let range = match row {
             SearchRow::Header(_) => {
                 file.dismissed = true;
-                let group = &self.groups[self.groups.partition_point(|group| group.start <= index) - 1];
+                let group =
+                    &self.groups[self.groups.partition_point(|group| group.start <= index) - 1];
                 group.start..group.end
             }
             SearchRow::Result(_) => {
-                file.dismissed_matches.insert((result.line_num, result.col_start, result.col_end));
+                file.dismissed_matches
+                    .insert((result.line_num, result.col_start, result.col_end));
                 index..index + 1
             }
         };
         file.matches -= range.len();
-        if file.matches == 0 { self.file_count -= 1; }
+        if file.matches == 0 {
+            self.file_count -= 1;
+        }
         self.results.drain(range.clone());
         self.groups.clear();
         self.rows = 0;
@@ -159,13 +201,24 @@ impl SearchResults {
         for index in start..self.results.len() {
             let result = &self.results[index];
             let collapsed = self.files[&result.file_path].collapsed;
-            if self.groups.last().is_none_or(|last| self.results[last.start].file_path != result.file_path) {
+            if self
+                .groups
+                .last()
+                .is_none_or(|last| self.results[last.start].file_path != result.file_path)
+            {
                 self.files.get_mut(&result.file_path).unwrap().first_result = index;
-                self.groups.push(Group { start: index, end: index, row: self.rows, collapsed });
+                self.groups.push(Group {
+                    start: index,
+                    end: index,
+                    row: self.rows,
+                    collapsed,
+                });
                 self.rows += 1;
             }
             self.groups.last_mut().unwrap().end = index + 1;
-            if !collapsed { self.rows += 1; }
+            if !collapsed {
+                self.rows += 1;
+            }
         }
     }
 
@@ -265,23 +318,47 @@ impl SearchResults {
 }
 
 impl SearchResults {
-    fn extend_results<T: IntoIterator<Item = GlobalSearchResult>>(&mut self, values: T, refreshed: bool) {
-        let mut values: Vec<_> = values.into_iter()
-            .filter(|result| self.accepts_result(result, refreshed)).collect();
-        if values.is_empty() { return; }
-        let order = self.ordering.get_or_insert_with(crate::file_order::FileOrder::system).clone();
+    fn extend_results<T: IntoIterator<Item = GlobalSearchResult>>(
+        &mut self,
+        values: T,
+        refreshed: bool,
+    ) {
+        let mut values: Vec<_> = values
+            .into_iter()
+            .filter(|result| self.accepts_result(result, refreshed))
+            .collect();
+        if values.is_empty() {
+            return;
+        }
+        let order = self
+            .ordering
+            .get_or_insert_with(crate::file_order::FileOrder::system)
+            .clone();
         for result in &values {
             let file = self.files.entry(result.file_path.clone()).or_default();
-            if file.matches == 0 { self.file_count += 1; }
+            if file.matches == 0 {
+                self.file_count += 1;
+            }
             file.matches += 1;
             if file.sort_key.is_none() {
-                file.sort_key = Some(self.remote.as_ref().and_then(|remote| remote.search_sort_key(&result.file_path))
-                    .unwrap_or_else(|| crate::file_order::SearchPathKey::local(&result.file_path)));
+                file.sort_key = Some(
+                    self.remote
+                        .as_ref()
+                        .and_then(|remote| remote.search_sort_key(&result.file_path))
+                        .unwrap_or_else(|| {
+                            crate::file_order::SearchPathKey::local(&result.file_path)
+                        }),
+                );
             }
         }
-        let compare = |a: &GlobalSearchResult, b: &GlobalSearchResult| Self::compare(&self.files, &order, a, b);
+        let compare = |a: &GlobalSearchResult, b: &GlobalSearchResult| {
+            Self::compare(&self.files, &order, a, b)
+        };
         values.sort_by(compare);
-        let append = self.results.last().is_none_or(|last| compare(last, &values[0]).is_le());
+        let append = self
+            .results
+            .last()
+            .is_none_or(|last| compare(last, &values[0]).is_le());
         let start = if append {
             let start = self.results.len();
             self.results.extend(values);
@@ -292,18 +369,27 @@ impl SearchResults {
             let mut new = values.into_iter().peekable();
             while let (Some(a), Some(b)) = (old.peek(), new.peek()) {
                 let same_file = a.file_path == b.file_path;
-                let stream = if compare(a, b).is_le() { &mut old } else { &mut new };
+                let stream = if compare(a, b).is_le() {
+                    &mut old
+                } else {
+                    &mut new
+                };
                 merged.push(stream.next().unwrap());
                 if !same_file {
                     // A file group precedes every match in the other file.
-                    while stream.peek().is_some_and(|next| next.file_path == merged.last().unwrap().file_path) {
+                    while stream
+                        .peek()
+                        .is_some_and(|next| next.file_path == merged.last().unwrap().file_path)
+                    {
                         merged.push(stream.next().unwrap());
                     }
                 }
             }
-            merged.extend(old); merged.extend(new);
+            merged.extend(old);
+            merged.extend(new);
             self.results = merged;
-            self.groups.clear(); self.rows = 0;
+            self.groups.clear();
+            self.rows = 0;
             0
         };
         self.append_groups(start);
@@ -401,7 +487,9 @@ mod tests {
 
     #[test]
     fn edited_file_replacement_keeps_indexes_and_rejects_original_streamed_matches() {
-        let mut results: SearchResults = [result("a"), result("b"), result("c")].into_iter().collect();
+        let mut results: SearchResults = [result("a"), result("b"), result("c")]
+            .into_iter()
+            .collect();
         results.set_collapsed(Path::new("b"), true);
         results.mark_file_edited(Path::new("a"));
         results.extend([result("a")]);
@@ -429,8 +517,14 @@ mod tests {
             found.col_end = start + 1;
             found
         };
-        let mut results: SearchResults = [found("a", 1, 0), found("a", 1, 2), found("b", 2, 0), found("c", 1, 0)]
-            .into_iter().collect();
+        let mut results: SearchResults = [
+            found("a", 1, 0),
+            found("a", 1, 2),
+            found("b", 2, 0),
+            found("c", 1, 0),
+        ]
+        .into_iter()
+        .collect();
         results.set_collapsed(Path::new("b"), true);
         let revision = results.revision();
         assert_eq!(results.dismiss(SearchRow::Result(0)), Some(0..1));
@@ -440,7 +534,10 @@ mod tests {
         results.extend([found("a", 1, 0), found("a", 3, 0)]);
         assert_eq!(results.file_matches(Path::new("a")), 2);
         assert_matches_scan(&results);
-        let b = results.iter().position(|found| found.file_path == Path::new("b")).unwrap();
+        let b = results
+            .iter()
+            .position(|found| found.file_path == Path::new("b"))
+            .unwrap();
         results.dismiss(SearchRow::Header(b));
         results.extend([found("b", 4, 0), found("d", 1, 0)]);
         assert_eq!(results.file_matches(Path::new("b")), 0);
@@ -482,7 +579,11 @@ mod tests {
         assert_matches_scan(&results);
         results.extend([result("c"), result("a"), result("a")]);
         assert_matches_scan(&results);
-        for (index, result) in results.iter().enumerate().filter(|(_, result)| result.file_path == Path::new("a")) {
+        for (index, result) in results
+            .iter()
+            .enumerate()
+            .filter(|(_, result)| result.file_path == Path::new("a"))
+        {
             assert_eq!(results.result_row(index), None, "{:?}", result.file_path);
         }
         results.set_all_collapsed(true);
@@ -511,24 +612,48 @@ mod tests {
 
     #[test]
     fn streamed_search_ordering_is_independent_of_batches_and_groups_split_files_once() {
-        let files = ["system_defines.h", "system.h", "z.h", "a/file2.h", "a/file10.h",
-            "a/deep/x.h", "folder10/x.h", "folder2/x.h"];
+        let files = [
+            "system_defines.h",
+            "system.h",
+            "z.h",
+            "a/file2.h",
+            "a/file10.h",
+            "a/deep/x.h",
+            "folder10/x.h",
+            "folder2/x.h",
+        ];
         let mut expected = Vec::new();
         for file in files {
             for (line, col) in [(1, 2), (1, 10), (3, 1)] {
-                let mut found = result(file); found.line_num = line; found.col_start = col; found.col_end = col + 1;
+                let mut found = result(file);
+                found.line_num = line;
+                found.col_start = col;
+                found.col_end = col + 1;
                 expected.push(found);
             }
         }
-        let positions = |values: &SearchResults| values.iter()
-            .map(|row| (row.file_path.clone(), row.line_num, row.col_start)).collect::<Vec<_>>();
-        let expected_positions = expected.iter().map(|row| (row.file_path.clone(), row.line_num, row.col_start)).collect::<Vec<_>>();
+        let positions = |values: &SearchResults| {
+            values
+                .iter()
+                .map(|row| (row.file_path.clone(), row.line_num, row.col_start))
+                .collect::<Vec<_>>()
+        };
+        let expected_positions = expected
+            .iter()
+            .map(|row| (row.file_path.clone(), row.line_num, row.col_start))
+            .collect::<Vec<_>>();
         for rotation in 0..expected.len() {
             let mut input = expected.clone();
             input.rotate_left(rotation);
-            if rotation % 2 == 0 { input.reverse(); }
-            let mut results = SearchResults { ordering: Some(std::sync::Arc::new(crate::file_order::FileOrder::new("en-US").unwrap())),
-                ..Default::default() };
+            if rotation % 2 == 0 {
+                input.reverse();
+            }
+            let mut results = SearchResults {
+                ordering: Some(std::sync::Arc::new(
+                    crate::file_order::FileOrder::new("en-US").unwrap(),
+                )),
+                ..Default::default()
+            };
             results.set_collapsed(Path::new("a/file2.h"), true);
             for chunk in input.chunks(1 + rotation % 7) {
                 results.extend(chunk.iter().cloned());
@@ -552,7 +677,9 @@ mod tests {
                 found.line_num = line;
                 batch.push(found);
             }
-            if batch.len() >= 260 { results.extend(std::mem::take(&mut batch)); }
+            if batch.len() >= 260 {
+                results.extend(std::mem::take(&mut batch));
+            }
         }
         results.extend(batch);
         assert_eq!(results.len(), 20_000);
@@ -560,7 +687,15 @@ mod tests {
         assert_eq!(results.groups.len(), 1000);
         assert_matches_scan(&results);
         let order = results.ordering.as_ref().unwrap();
-        assert!(results.windows(2).all(|pair| SearchResults::compare(&results.files, order, &pair[0], &pair[1]).is_le()));
+        assert!(
+            results.windows(2).all(|pair| SearchResults::compare(
+                &results.files,
+                order,
+                &pair[0],
+                &pair[1]
+            )
+            .is_le())
+        );
         println!("20,000 shuffled streamed matches: {:?}", started.elapsed());
     }
 }

@@ -1,12 +1,12 @@
+#[cfg(test)]
+use ratatui::text::Line;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::Span,
     widgets::Paragraph,
-    Frame,
 };
-#[cfg(test)]
-use ratatui::text::Line;
 use std::{fmt::Write as FmtWrite, ops::Range};
 
 use crate::app::App;
@@ -122,8 +122,13 @@ pub(crate) fn merged_diagnostics_from(
     if let Some(fp) = file_path {
         if let Some(lsp_diags) = lsp_manager.get_diagnostics(fp) {
             result.extend(lsp_diags.iter().cloned().map(|mut diagnostic| {
-                diagnostic.col = crate::lsp_positions::from_utf16(rope, diagnostic.line, diagnostic.col as u32);
-                diagnostic.end_col = crate::lsp_positions::from_utf16(rope, diagnostic.end_line, diagnostic.end_col as u32);
+                diagnostic.col =
+                    crate::lsp_positions::from_utf16(rope, diagnostic.line, diagnostic.col as u32);
+                diagnostic.end_col = crate::lsp_positions::from_utf16(
+                    rope,
+                    diagnostic.end_line,
+                    diagnostic.end_col as u32,
+                );
                 diagnostic
             }));
         }
@@ -224,17 +229,32 @@ impl<'a> LineWhitespace<'a> {
         is_cursor_line: bool,
     ) -> Self {
         Self {
-            mode, comment_mode, comments: OccurrenceCursor::new(comments, start),
-            boundary, is_cursor_line,
+            mode,
+            comment_mode,
+            comments: OccurrenceCursor::new(comments, start),
+            boundary,
+            is_cursor_line,
         }
     }
 
-    pub(crate) fn needs_boundary(mode: WhitespaceMode, comment_mode: Option<WhitespaceMode>) -> bool {
+    pub(crate) fn needs_boundary(
+        mode: WhitespaceMode,
+        comment_mode: Option<WhitespaceMode>,
+    ) -> bool {
         matches!(mode, WhitespaceMode::Boundary | WhitespaceMode::Trailing)
-            || matches!(comment_mode, Some(WhitespaceMode::Boundary | WhitespaceMode::Trailing))
+            || matches!(
+                comment_mode,
+                Some(WhitespaceMode::Boundary | WhitespaceMode::Trailing)
+            )
     }
 
-    pub(crate) fn shows(&mut self, ch: char, col: usize, adjacent_space: bool, selected: bool) -> bool {
+    pub(crate) fn shows(
+        &mut self,
+        ch: char,
+        col: usize,
+        adjacent_space: bool,
+        selected: bool,
+    ) -> bool {
         if !matches!(ch, ' ' | '\t') {
             return false;
         }
@@ -244,10 +264,16 @@ impl<'a> LineWhitespace<'a> {
             self.mode
         };
         match mode {
-            WhitespaceMode::Boundary => ch == '\t' || adjacent_space || self.boundary
-                .is_some_and(|b| col < b.leading_end || col >= b.trailing_start),
-            WhitespaceMode::Trailing => !self.is_cursor_line && self.boundary
-                .is_some_and(|b| col >= b.trailing_start),
+            WhitespaceMode::Boundary => {
+                ch == '\t'
+                    || adjacent_space
+                    || self
+                        .boundary
+                        .is_some_and(|b| col < b.leading_end || col >= b.trailing_start)
+            }
+            WhitespaceMode::Trailing => {
+                !self.is_cursor_line && self.boundary.is_some_and(|b| col >= b.trailing_start)
+            }
             _ => should_show_whitespace(mode, ch, col, "", selected),
         }
     }
@@ -279,11 +305,17 @@ pub(crate) fn gutter_diff_indicator(
     // The right half-block uses the foreground for its right stripe and the
     // background for its left stripe, so both stripes fit in one column.
     let (symbol, fg, bg) = match (working, staged) {
-        (Some(working), Some(staged)) => {
-            (GUTTER_SPLIT_CHANGE_BAR, color(working, false), color(staged, true))
-        }
+        (Some(working), Some(staged)) => (
+            GUTTER_SPLIT_CHANGE_BAR,
+            color(working, false),
+            color(staged, true),
+        ),
         _ => (
-            if kind == ChangeKind::Removed { GUTTER_REMOVAL_WEDGE } else { GUTTER_CHANGE_BAR },
+            if kind == ChangeKind::Removed {
+                GUTTER_REMOVAL_WEDGE
+            } else {
+                GUTTER_CHANGE_BAR
+            },
             color(kind, staged.is_some()),
             bg,
         ),
@@ -305,21 +337,33 @@ pub(crate) fn matches_for_line(
     result: &mut Vec<(usize, usize, bool)>,
 ) {
     result.clear();
-    if search_matches.is_empty() || line >= rope.len_lines() { return; }
+    if search_matches.is_empty() || line >= rope.len_lines() {
+        return;
+    }
     let line_start = rope.line_to_char(line);
     let line_text = rope.line(line);
     let mut line_len = line_text.len_chars();
-    while line_len > 0 && matches!(line_text.char(line_len - 1), '\r' | '\n') { line_len -= 1; }
+    while line_len > 0 && matches!(line_text.char(line_len - 1), '\r' | '\n') {
+        line_len -= 1;
+    }
     let first = search_matches.partition_point(|&(l, _, _)| l < line);
     // Regex hits do not overlap, so only the preceding hit can continue from
     // an earlier line. Literal hits are confined to their starting line.
     let start = first.saturating_sub(1);
     for (idx, &(row, cs, ce)) in search_matches[start..].iter().enumerate() {
-        if row > line { break; }
-        let origin = if row == line { line_start } else { rope.line_to_char(row) };
+        if row > line {
+            break;
+        }
+        let origin = if row == line {
+            line_start
+        } else {
+            rope.line_to_char(row)
+        };
         let begin = origin + cs;
         let end = origin + ce;
-        if row < line && end <= line_start { continue; }
+        if row < line && end <= line_start {
+            continue;
+        }
         let col = begin.saturating_sub(line_start).min(line_len);
         let end_col = end.saturating_sub(line_start).min(line_len);
         // A one-cell marker makes an empty match or a matched newline visible.
@@ -367,9 +411,7 @@ impl<'a> HighlightedLine<'a> {
         self
     }
 
-    pub(crate) fn iter(
-        &self,
-    ) -> impl Iterator<Item = (crate::textmate::Style, &'a str)> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (crate::textmate::Style, &'a str)> + '_ {
         self.iter_from_span(0)
     }
 
@@ -427,15 +469,22 @@ pub(crate) struct RenderLineGlyphs {
 
 impl RenderLineGlyphs {
     pub(crate) fn visual_column(&self, column: usize) -> usize {
-        let before = self.tab_columns.partition_point(|&(source, _)| source <= column);
-        column + before.checked_sub(1).map_or(0, |index| {
-            let (source, visual) = self.tab_columns[index];
-            visual - source
-        })
+        let before = self
+            .tab_columns
+            .partition_point(|&(source, _)| source <= column);
+        column
+            + before.checked_sub(1).map_or(0, |index| {
+                let (source, visual) = self.tab_columns[index];
+                visual - source
+            })
     }
 
     pub(crate) fn cell_column(&self, column: usize) -> usize {
-        if self.cell_columns.is_empty() { self.visual_column(column) } else { self.cell_columns[column] }
+        if self.cell_columns.is_empty() {
+            self.visual_column(column)
+        } else {
+            self.cell_columns[column]
+        }
     }
 
     pub(crate) fn source_at_cell(&self, start: usize, end: usize, cell: usize) -> (usize, bool) {
@@ -444,8 +493,12 @@ impl RenderLineGlyphs {
                 return (start + cell.min(end - start), cell < end - start);
             }
             let target = self.visual_column(start).saturating_add(cell);
-            if target >= self.visual_column(end) { return (end, false); }
-            let before = self.tab_columns.partition_point(|&(_, visual)| visual <= target);
+            if target >= self.visual_column(end) {
+                return (end, false);
+            }
+            let before = self
+                .tab_columns
+                .partition_point(|&(_, visual)| visual <= target);
             let excess = before.checked_sub(1).map_or(0, |index| {
                 let (source, visual) = self.tab_columns[index];
                 visual - source
@@ -453,14 +506,23 @@ impl RenderLineGlyphs {
             let column = target - excess;
             // Until the next tab has ended, every cell in its expansion still
             // belongs to that tab's source character.
-            return (self.tab_columns.get(before).map_or(column, |&(source, _)| column.min(source - 1)), true);
+            return (
+                self.tab_columns
+                    .get(before)
+                    .map_or(column, |&(source, _)| column.min(source - 1)),
+                true,
+            );
         }
         let columns = &self.cell_columns;
         let target = columns[start].saturating_add(cell);
-        if target >= columns[end] { return (end, false); }
+        if target >= columns[end] {
+            return (end, false);
+        }
         // Equal offsets skip combining/zero-width scalars, matching the cold
         // Rope walker. A cell inside a tab or wide glyph selects that glyph.
-        let offset = columns[start..=end].partition_point(|&column| column <= target).saturating_sub(1);
+        let offset = columns[start..=end]
+            .partition_point(|&column| column <= target)
+            .saturating_sub(1);
         (start + offset, true)
     }
 }
@@ -544,12 +606,22 @@ impl From<Vec<(usize, usize, usize, i32)>> for BracketGuides {
 }
 
 impl BracketGuides {
-    pub(crate) fn as_slice(&self) -> &[(usize, usize, usize, i32)] { &self.source }
+    pub(crate) fn as_slice(&self) -> &[(usize, usize, usize, i32)] {
+        &self.source
+    }
     #[cfg(test)]
-    pub(crate) fn is_empty(&self) -> bool { self.source.is_empty() }
-    pub(crate) fn clear(&mut self) { self.source.clear(); self.columns.clear(); }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.source.is_empty()
+    }
+    pub(crate) fn clear(&mut self) {
+        self.source.clear();
+        self.columns.clear();
+    }
     pub(crate) fn at(&self, line: usize, column: usize) -> Option<&(usize, usize, i32)> {
-        self.columns.get(&column)?.iter().find(|&&(start, end, _)| line >= start && line < end)
+        self.columns
+            .get(&column)?
+            .iter()
+            .find(|&&(start, end, _)| line >= start && line < end)
     }
 }
 
@@ -932,7 +1004,9 @@ impl BracketColorCursor<'_> {
 
 impl LineDecorations {
     fn bytes(&self) -> usize {
-        self.occurrences.as_ref().map_or(0, |(_, value)| value.bytes())
+        self.occurrences
+            .as_ref()
+            .map_or(0, |(_, value)| value.bytes())
             + self.todos.as_ref().map_or(0, |value| {
                 value.0.capacity() * std::mem::size_of::<TodoMarker>()
             })
@@ -1090,7 +1164,9 @@ impl RenderLineCache {
                     }
                 }
             }
-            self.decoration_bytes -= self.occurrence_query.as_ref()
+            self.decoration_bytes -= self
+                .occurrence_query
+                .as_ref()
                 .map_or(0, |(word, _, _, _)| word.capacity());
             let word = query.to_owned();
             self.decoration_bytes += word.capacity();
@@ -1124,7 +1200,8 @@ impl RenderLineCache {
             .occurrence_query
             .as_ref()
             .expect("occurrence query must be prepared before drawing");
-        let (query_chars, case_sensitive, whole_word) = (*query_chars, *case_sensitive, *whole_word);
+        let (query_chars, case_sensitive, whole_word) =
+            (*query_chars, *case_sensitive, *whole_word);
         #[cfg(test)]
         if reference {
             return std::rc::Rc::new(LineOccurrences::reference(
@@ -1136,7 +1213,11 @@ impl RenderLineCache {
             ));
         }
         let result = std::rc::Rc::new(LineOccurrences::build(
-            text, query, query_chars, case_sensitive, whole_word,
+            text,
+            query,
+            query_chars,
+            case_sensitive,
+            whole_word,
         ));
         let mut entry = self.remove_decorations(line);
         entry.occurrences = Some((self.occurrence_generation, std::rc::Rc::clone(&result)));
@@ -1266,7 +1347,9 @@ impl RenderLineCache {
             .map_or(cached_wrap, |dirty| dirty.wrap_revision);
         let invalid = !(version == previous_version || version == previous_version.wrapping_add(1))
             || wrap_revision != previous_wrap.wrapping_add(1);
-        let line_count_changed = self.snapshot.as_ref()
+        let line_count_changed = self
+            .snapshot
+            .as_ref()
             .is_none_or(|snapshot| snapshot.len_lines() != rope.len_lines());
         let dirty = self.dirty.get_or_insert(RenderLineDirty {
             from: start,
@@ -1294,11 +1377,18 @@ impl RenderLineCache {
     }
 
     /// Pointer hit testing uses the same bounded glyph snapshot as painting.
-    pub(crate) fn pointer_glyphs(&self, line: usize, revision: (u64, u64, usize), rope: &ropey::Rope)
-        -> Option<std::rc::Rc<RenderLineGlyphs>>
-    {
-        if self.revision != Some(revision) || self.dirty.is_some()
-            || !self.snapshot.as_ref().is_some_and(|snapshot| snapshot.is_instance(rope))
+    pub(crate) fn pointer_glyphs(
+        &self,
+        line: usize,
+        revision: (u64, u64, usize),
+        rope: &ropey::Rope,
+    ) -> Option<std::rc::Rc<RenderLineGlyphs>> {
+        if self.revision != Some(revision)
+            || self.dirty.is_some()
+            || !self
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.is_instance(rope))
         {
             return None;
         }
@@ -1328,22 +1418,30 @@ impl RenderLineCache {
                 // Newlines can renumber every suffix entry, but the prefix
                 // above the earliest edit is still valid. Track intermediate
                 // line-count changes too (insert then delete before a draw).
-                let renumbered = dirty.line_count_changed || self.snapshot.as_ref()
-                    .is_none_or(|snapshot| snapshot.len_lines() != rope.len_lines());
+                let renumbered = dirty.line_count_changed
+                    || self
+                        .snapshot
+                        .as_ref()
+                        .is_none_or(|snapshot| snapshot.len_lines() != rope.len_lines());
                 if renumbered {
                     self.visible_width.clear();
                     self.entries.retain(|(line, entry)| {
-                        if *line < from { return true; }
+                        if *line < from {
+                            return true;
+                        }
                         self.storage_bytes -= entry.storage_bytes;
                         false
                     });
                     self.decorations.retain(|line, entry| {
-                        if *line < from { return true; }
+                        if *line < from {
+                            return true;
+                        }
                         self.decoration_bytes -= entry.bytes();
                         false
                     });
                 } else {
-                    self.visible_width.invalidate(from, dirty.through.saturating_add(1));
+                    self.visible_width
+                        .invalidate(from, dirty.through.saturating_add(1));
                     // A local edit invalidates at most 66 adjacent rows. Use
                     // the index and update byte counts only for removed data;
                     // don't walk and recount the whole LRU for each keystroke.
@@ -1370,17 +1468,29 @@ impl RenderLineCache {
     /// Width metadata depends on the viewport and text, not the cursor or its
     /// selection. Warm navigation frames need no per-row Rope tree searches.
     pub(crate) fn visible_line_width(
-        &mut self, revision: (u64, u64, usize), rope: &ropey::Rope,
-        first: usize, end: usize, cursor: usize,
+        &mut self,
+        revision: (u64, u64, usize),
+        rope: &ropey::Rope,
+        first: usize,
+        end: usize,
+        cursor: usize,
     ) -> usize {
         self.synchronize(revision, rope);
         let first = first.min(rope.len_lines());
         let end = end.max(first).min(rope.len_lines());
         let (width, _updated) = self.visible_width.get(rope, first, end);
         #[cfg(test)]
-        { self.width_builds += usize::from(_updated); }
-        if (first..end).contains(&cursor) { width }
-        else { width.max(rope.get_line(cursor).map_or(0, viewport_widths::content_len)) }
+        {
+            self.width_builds += usize::from(_updated);
+        }
+        if (first..end).contains(&cursor) {
+            width
+        } else {
+            width.max(
+                rope.get_line(cursor)
+                    .map_or(0, viewport_widths::content_len),
+            )
+        }
     }
 
     pub(crate) fn line_text<'a>(
@@ -1480,7 +1590,9 @@ impl RenderLineCache {
                 .chars()
                 .take(requested_end - chars.len())
             {
-                if ascii_prefix == chars.len() && ch.is_ascii() { ascii_prefix += 1; }
+                if ascii_prefix == chars.len() && ch.is_ascii() {
+                    ascii_prefix += 1;
+                }
                 let column = chars.len();
                 chars.push(ch);
                 let visual_width = if ch == '\t' {
@@ -1488,8 +1600,11 @@ impl RenderLineCache {
                 } else {
                     1
                 };
-                let cell_width = if ch == '\t' { visual_width }
-                    else { unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) };
+                let cell_width = if ch == '\t' {
+                    visual_width
+                } else {
+                    unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
+                };
                 if cell_width != visual_width && cell_columns.is_empty() {
                     cell_columns.reserve(requested_end.saturating_add(1));
                     if tab_columns.is_empty() {
@@ -1513,10 +1628,14 @@ impl RenderLineCache {
                 }
                 visual_col += visual_width;
                 cell_col += cell_width;
-                if visual_width != 1 { tab_columns.push((column + 1, visual_col)); }
+                if visual_width != 1 {
+                    tab_columns.push((column + 1, visual_col));
+                }
             }
         }
-        if !cell_columns.is_empty() { cell_columns.push(cell_col); }
+        if !cell_columns.is_empty() {
+            cell_columns.push(cell_col);
+        }
         let mut source_spaces = Vec::new();
         let mut leading_end = 0usize;
         let mut trailing_start = 0usize;
@@ -1547,7 +1666,8 @@ impl RenderLineCache {
                     .count();
         }
         let storage_bytes = chars.capacity() * std::mem::size_of::<char>()
-            + (tab_columns.capacity() * 2 + cell_columns.capacity() + span_ends.capacity()) * std::mem::size_of::<usize>()
+            + (tab_columns.capacity() * 2 + cell_columns.capacity() + span_ends.capacity())
+                * std::mem::size_of::<usize>()
             + source_spaces.capacity()
             + highlighted
                 .owned_text
@@ -1555,8 +1675,7 @@ impl RenderLineCache {
                 .map_or(0, |text| text.capacity())
             + source.map_or(0, |(spans, _)| {
                 spans.iter().map(|(_, text)| text.capacity()).sum::<usize>()
-                    + spans.capacity()
-                        * std::mem::size_of::<(crate::textmate::Style, String)>()
+                    + spans.capacity() * std::mem::size_of::<(crate::textmate::Style, String)>()
             });
         let entry = std::rc::Rc::new(RenderLineGlyphs {
             source: source.map(|(spans, _)| std::rc::Rc::clone(spans)),
@@ -1671,9 +1790,14 @@ pub(crate) fn word_occurrences_for_line(
     output: &mut Vec<(usize, usize)>,
 ) {
     output.clear();
-    visit_word_occurrences(text, word, word_char_len, case_sensitive, whole_word, |start, end| {
-        output.push((start, end))
-    });
+    visit_word_occurrences(
+        text,
+        word,
+        word_char_len,
+        case_sensitive,
+        whole_word,
+        |start, end| output.push((start, end)),
+    );
 }
 
 enum OccurrenceStarts {
@@ -1689,7 +1813,13 @@ pub(crate) struct LineOccurrences {
 }
 
 impl LineOccurrences {
-    fn build(text: &str, query: &str, word_len: usize, case_sensitive: bool, whole_word: bool) -> Self {
+    fn build(
+        text: &str,
+        query: &str,
+        word_len: usize,
+        case_sensitive: bool,
+        whole_word: bool,
+    ) -> Self {
         let mut starts = OccurrenceStarts::Compact(Vec::new());
         visit_word_occurrences(
             text,
@@ -1717,9 +1847,22 @@ impl LineOccurrences {
     }
 
     #[cfg(test)]
-    fn reference(text: &str, query: &str, word_len: usize, case_sensitive: bool, whole_word: bool) -> Self {
+    fn reference(
+        text: &str,
+        query: &str,
+        word_len: usize,
+        case_sensitive: bool,
+        whole_word: bool,
+    ) -> Self {
         let mut ranges = Vec::new();
-        word_occurrences_for_line(text, query, word_len, case_sensitive, whole_word, &mut ranges);
+        word_occurrences_for_line(
+            text,
+            query,
+            word_len,
+            case_sensitive,
+            whole_word,
+            &mut ranges,
+        );
         Self {
             starts: OccurrenceStarts::Reference(ranges),
             word_len,
@@ -1922,11 +2065,17 @@ impl<'a> TodoCursor<'a> {
         {
             self.next += 1;
         }
-        self.markers.0.get(self.next).map_or((None, usize::MAX), |marker| {
-            let start = marker.column as usize;
-            if start > column { (None, start) }
-            else { (Some(marker.kind), start + marker.kind.word().len()) }
-        })
+        self.markers
+            .0
+            .get(self.next)
+            .map_or((None, usize::MAX), |marker| {
+                let start = marker.column as usize;
+                if start > column {
+                    (None, start)
+                } else {
+                    (Some(marker.kind), start + marker.kind.word().len())
+                }
+            })
     }
 }
 
@@ -1947,7 +2096,12 @@ pub(crate) fn flatten_priority_ranges<T: Copy + PartialEq>(
 ) {
     output.clear();
     if ranges.len() <= 1 {
-        output.extend(ranges.iter().copied().filter(|&(start, end, _)| start < end));
+        output.extend(
+            ranges
+                .iter()
+                .copied()
+                .filter(|&(start, end, _)| start < end),
+        );
         return;
     }
     // Most providers already publish disjoint, ordered intervals.
@@ -1957,7 +2111,9 @@ pub(crate) fn flatten_priority_ranges<T: Copy + PartialEq>(
         output.extend_from_slice(ranges);
         return;
     }
-    let mut starts: Vec<_> = ranges.iter().enumerate()
+    let mut starts: Vec<_> = ranges
+        .iter()
+        .enumerate()
         .filter(|(_, (start, end, _))| start < end)
         .map(|(index, &(start, _, _))| (start, index))
         .collect();
@@ -1970,17 +2126,23 @@ pub(crate) fn flatten_priority_ranges<T: Copy + PartialEq>(
             active.push(std::cmp::Reverse(starts[next].1));
             next += 1;
         }
-        while active.peek().is_some_and(|&std::cmp::Reverse(index)| ranges[index].1 <= col) {
+        while active
+            .peek()
+            .is_some_and(|&std::cmp::Reverse(index)| ranges[index].1 <= col)
+        {
             active.pop();
         }
         let Some(&std::cmp::Reverse(index)) = active.peek() else {
-            if let Some(&(start, _)) = starts.get(next) { col = start; }
+            if let Some(&(start, _)) = starts.get(next) {
+                col = start;
+            }
             continue;
         };
         let (_, end, value) = ranges[index];
         let next_col = starts.get(next).map_or(end, |&(start, _)| end.min(start));
         if let Some((_, previous_end, previous_value)) = output.last_mut()
-            && *previous_end == col && *previous_value == value
+            && *previous_end == col
+            && *previous_value == value
         {
             *previous_end = next_col;
         } else {
@@ -2015,7 +2177,10 @@ pub(crate) struct ValueRangeCursor<'a, T> {
 
 impl<'a, T: Copy> ValueRangeCursor<'a, T> {
     pub(crate) fn new(ranges: &'a [(usize, usize, T)], start: usize) -> Self {
-        Self { ranges, next: ranges.partition_point(|&(_, end, _)| end <= start) }
+        Self {
+            ranges,
+            next: ranges.partition_point(|&(_, end, _)| end <= start),
+        }
     }
 
     pub(crate) fn at(&mut self, col: usize) -> Option<T> {
@@ -2023,12 +2188,21 @@ impl<'a, T: Copy> ValueRangeCursor<'a, T> {
     }
 
     pub(crate) fn run(&mut self, col: usize) -> (Option<T>, usize) {
-        while self.ranges.get(self.next).is_some_and(|&(_, end, _)| end <= col) {
+        while self
+            .ranges
+            .get(self.next)
+            .is_some_and(|&(_, end, _)| end <= col)
+        {
             self.next += 1;
         }
-        self.ranges.get(self.next)
+        self.ranges
+            .get(self.next)
             .map_or((None, usize::MAX), |&(start, end, value)| {
-                if start > col { (None, start) } else { (Some(value), end) }
+                if start > col {
+                    (None, start)
+                } else {
+                    (Some(value), end)
+                }
             })
     }
 }
@@ -2042,11 +2216,18 @@ pub(crate) struct InlineColorCursor<'a> {
 
 impl<'a> InlineColorCursor<'a> {
     pub(crate) fn new(colors: &'a [(usize, u8, u8, u8)], start: usize) -> Self {
-        Self { colors, next: colors.partition_point(|&(col, _, _, _)| col < start) }
+        Self {
+            colors,
+            next: colors.partition_point(|&(col, _, _, _)| col < start),
+        }
     }
 
     pub(crate) fn at(&mut self, col: usize) -> Option<Color> {
-        while self.colors.get(self.next).is_some_and(|&(start, _, _, _)| start < col) {
+        while self
+            .colors
+            .get(self.next)
+            .is_some_and(|&(start, _, _, _)| start < col)
+        {
             self.next += 1;
         }
         let &(start, r, g, b) = self.colors.get(self.next)?;
@@ -2318,21 +2499,36 @@ pub(crate) fn draw_column_rulers(
     foreground: crate::theme_workbench::ColorLayer,
 ) {
     for &ruler_col in rulers {
-        let Some(screen_col) = usize::from(ruler_col).checked_sub(h_scroll) else { continue; };
+        let Some(screen_col) = usize::from(ruler_col).checked_sub(h_scroll) else {
+            continue;
+        };
         if screen_col < usize::from(code_area.width) {
             let x = code_area.x + screen_col as u16;
             let buf = f.buffer_mut();
             for y in code_area.y..code_area.y + code_area.height {
-                let Some(cell) = buf.cell((x, y)) else { continue; };
-                if cell.symbol() != " " { continue; }
-                let Some(color) = foreground.border(cell.bg) else { continue; };
+                let Some(cell) = buf.cell((x, y)) else {
+                    continue;
+                };
+                if cell.symbol() != " " {
+                    continue;
+                }
+                let Some(color) = foreground.border(cell.bg) else {
+                    continue;
+                };
                 // Blank continuation cells belong to a wide grapheme. Do not
                 // put a ruler through them, or overwrite any existing text.
-                let continuation = (code_area.x..x).rev()
+                let continuation = (code_area.x..x)
+                    .rev()
                     .find(|&left| buf.cell((left, y)).is_some_and(|cell| cell.symbol() != " "))
-                    .is_some_and(|left| buf.cell((left, y)).is_some_and(|cell|
-                        unicode_width::UnicodeWidthStr::width(cell.symbol()) > usize::from(x - left)));
-                if continuation { continue; }
+                    .is_some_and(|left| {
+                        buf.cell((left, y)).is_some_and(|cell| {
+                            unicode_width::UnicodeWidthStr::width(cell.symbol())
+                                > usize::from(x - left)
+                        })
+                    });
+                if continuation {
+                    continue;
+                }
                 if let Some(cell) = buf.cell_mut((x, y)) {
                     cell.set_char('│');
                     cell.set_fg(color);
@@ -2357,7 +2553,9 @@ pub(crate) fn draw_minimap_separator(f: &mut Frame, area: Rect, fg: Color, bg: C
     }
     let buffer = f.buffer_mut();
     let clipped = Rect::new(area.x, area.y, 1, area.height).intersection(buffer.area);
-    if clipped.width == 0 { return; }
+    if clipped.width == 0 {
+        return;
+    }
     for y in clipped.y..clipped.bottom() {
         buffer[(area.x, y)].set_symbol("│").set_style(style);
     }
@@ -2383,38 +2581,76 @@ pub(crate) fn draw_text_drag_indicator(
     }
 }
 
-
 pub(crate) fn draw_gutter_tooltip(f: &mut Frame, app: &App, gutter_area: Rect) {
-    let (Some(hover_line), Some(editor)) = (app.hovered_gutter_line, app.editor()) else { return; };
+    let (Some(hover_line), Some(editor)) = (app.hovered_gutter_line, app.editor()) else {
+        return;
+    };
     let change_tooltip = if change_gutter_column(gutter_area) == Some(app.mouse_col)
         && gutter_area.contains((app.mouse_col, app.mouse_row).into())
-        && !app.rendering_inactive_editor && !app.should_render_diff_for_active_editor()
+        && !app.rendering_inactive_editor
+        && !app.should_render_diff_for_active_editor()
     {
         let changes = editor.line_changes(hover_line);
-        changes.primary().filter(|_| f.buffer_mut().cell((app.mouse_col, app.mouse_row))
-            .is_some_and(|cell| matches!(cell.symbol(), GUTTER_CHANGE_BAR | GUTTER_SPLIT_CHANGE_BAR | GUTTER_REMOVAL_WEDGE))).map(|_| {
-            let labels = [
-                changes.staged().map(|kind| format!("Staged {}", kind.description())),
-                changes.unstaged().map(|kind| format!("Unstaged {}", kind.description())),
-                changes.unsaved().then(|| "Unsaved changes".into()),
-            ];
-            labels.into_iter().flatten().collect::<Vec<_>>().join("  ·  ")
-        })
-    } else { None };
+        changes
+            .primary()
+            .filter(|_| {
+                f.buffer_mut()
+                    .cell((app.mouse_col, app.mouse_row))
+                    .is_some_and(|cell| {
+                        matches!(
+                            cell.symbol(),
+                            GUTTER_CHANGE_BAR | GUTTER_SPLIT_CHANGE_BAR | GUTTER_REMOVAL_WEDGE
+                        )
+                    })
+            })
+            .map(|_| {
+                let labels = [
+                    changes
+                        .staged()
+                        .map(|kind| format!("Staged {}", kind.description())),
+                    changes
+                        .unstaged()
+                        .map(|kind| format!("Unstaged {}", kind.description())),
+                    changes.unsaved().then(|| "Unsaved changes".into()),
+                ];
+                labels
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("  ·  ")
+            })
+    } else {
+        None
+    };
     let (text, y) = if let Some(text) = change_tooltip {
         (text, app.mouse_row)
     } else if let Some(text) = get_cached_blame_line(app, editor, hover_line) {
         let offset = hover_line.saturating_sub(editor.scroll_offset);
-        (text, gutter_area.y + (offset as u16).min(gutter_area.height.saturating_sub(1)))
+        (
+            text,
+            gutter_area.y + (offset as u16).min(gutter_area.height.saturating_sub(1)),
+        )
     } else {
         return;
     };
     let text = format!(" {text} ");
     let width = crate::helpers::len_as_u16(unicode_width::UnicodeWidthStr::width(text.as_str()))
         .min(f.area().width);
-    let area = Rect::new(gutter_area.right().min(f.area().right().saturating_sub(width)), y, width, 1);
+    let area = Rect::new(
+        gutter_area
+            .right()
+            .min(f.area().right().saturating_sub(width)),
+        y,
+        width,
+        1,
+    );
     f.render_widget(
-        Paragraph::new(Span::styled(text, Style::default().fg(app.colors.fg_text).bg(app.colors.bg_dark))),
+        Paragraph::new(Span::styled(
+            text,
+            Style::default()
+                .fg(app.colors.fg_text)
+                .bg(app.colors.bg_dark),
+        )),
         area,
     );
 }
@@ -2564,7 +2800,12 @@ mod tests {
             true,
         );
         assert_eq!(first.chars, text.chars().collect::<Vec<_>>());
-        assert_eq!((0..=first.chars.len()).map(|column| first.visual_column(column)).collect::<Vec<_>>(), [0, 1, 4, 5, 6, 7, 8, 9, 10, 11]);
+        assert_eq!(
+            (0..=first.chars.len())
+                .map(|column| first.visual_column(column))
+                .collect::<Vec<_>>(),
+            [0, 1, 4, 5, 6, 7, 8, 9, 10, 11]
+        );
         assert_eq!(first.span_ends, [3, 9]);
         assert!(Rc::ptr_eq(
             &first,
@@ -2795,7 +3036,13 @@ mod tests {
     #[test]
     fn matches_for_line_empty() {
         let mut buf = Vec::new();
-        matches_for_line(&[], &ropey::Rope::from_str(&"0123456789\n".repeat(8)), 5, 0, &mut buf);
+        matches_for_line(
+            &[],
+            &ropey::Rope::from_str(&"0123456789\n".repeat(8)),
+            5,
+            0,
+            &mut buf,
+        );
         assert!(buf.is_empty());
     }
 
@@ -2803,7 +3050,13 @@ mod tests {
     fn matches_for_line_finds_matches() {
         let matches = vec![(2, 0, 3), (2, 5, 8), (5, 0, 2)];
         let mut buf = Vec::new();
-        matches_for_line(&matches, &ropey::Rope::from_str(&"0123456789\n".repeat(8)), 2, 1, &mut buf);
+        matches_for_line(
+            &matches,
+            &ropey::Rope::from_str(&"0123456789\n".repeat(8)),
+            2,
+            1,
+            &mut buf,
+        );
         assert_eq!(buf.len(), 2);
         assert_eq!(buf[0], (0, 3, false));
         assert_eq!(buf[1], (5, 8, true));
@@ -2813,7 +3066,13 @@ mod tests {
     fn matches_for_line_no_match_on_line() {
         let matches = vec![(1, 0, 3), (3, 0, 2)];
         let mut buf = Vec::new();
-        matches_for_line(&matches, &ropey::Rope::from_str(&"0123456789\n".repeat(8)), 2, 0, &mut buf);
+        matches_for_line(
+            &matches,
+            &ropey::Rope::from_str(&"0123456789\n".repeat(8)),
+            2,
+            0,
+            &mut buf,
+        );
         assert!(buf.is_empty());
     }
 
@@ -2843,8 +3102,8 @@ mod tests {
 
     #[test]
     fn rulers_preserve_text_selections_and_wide_graphemes_and_blend_on_each_cell() {
-        use ratatui::{Terminal, backend::TestBackend, widgets::Block};
         use crate::theme_workbench::ColorLayer;
+        use ratatui::{Terminal, backend::TestBackend, widgets::Block};
         let area = Rect::new(3, 2, 16, 3);
         let surface = Color::Rgb(20, 30, 40);
         let selection = Color::Rgb(60, 20, 40);
@@ -2852,16 +3111,37 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(24, 8)).unwrap();
         let mut original_text = None;
         let mut original_wide = None;
-        terminal.draw(|frame| {
-            frame.render_widget(Block::default().style(Style::default().fg(Color::Rgb(220, 230, 240)).bg(surface)), area);
-            frame.render_widget(Span::styled("X", Style::default().fg(Color::Rgb(240, 200, 220)).bg(selection)
-                .add_modifier(ratatui::style::Modifier::UNDERLINED).underline_color(Color::Rgb(200, 150, 180))), Rect::new(7, 2, 1, 1));
-            frame.render_widget(Span::styled("界", Style::default().fg(Color::Rgb(230, 220, 240)).bg(selection)), Rect::new(6, 3, 2, 1));
-            frame.buffer_mut()[(7, 4)].set_bg(selection);
-            original_text = Some(frame.buffer_mut()[(7, 2)].clone());
-            original_wide = Some(frame.buffer_mut()[(7, 3)].clone());
-            draw_column_rulers(frame, area, &[4, 12], 0, foreground);
-        }).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(
+                    Block::default()
+                        .style(Style::default().fg(Color::Rgb(220, 230, 240)).bg(surface)),
+                    area,
+                );
+                frame.render_widget(
+                    Span::styled(
+                        "X",
+                        Style::default()
+                            .fg(Color::Rgb(240, 200, 220))
+                            .bg(selection)
+                            .add_modifier(ratatui::style::Modifier::UNDERLINED)
+                            .underline_color(Color::Rgb(200, 150, 180)),
+                    ),
+                    Rect::new(7, 2, 1, 1),
+                );
+                frame.render_widget(
+                    Span::styled(
+                        "界",
+                        Style::default().fg(Color::Rgb(230, 220, 240)).bg(selection),
+                    ),
+                    Rect::new(6, 3, 2, 1),
+                );
+                frame.buffer_mut()[(7, 4)].set_bg(selection);
+                original_text = Some(frame.buffer_mut()[(7, 2)].clone());
+                original_wide = Some(frame.buffer_mut()[(7, 3)].clone());
+                draw_column_rulers(frame, area, &[4, 12], 0, foreground);
+            })
+            .unwrap();
         let buffer = terminal.backend().buffer();
         assert_eq!(buffer[(7, 2)], original_text.unwrap());
         assert_eq!(buffer[(7, 3)], original_wide.unwrap());
@@ -2870,22 +3150,37 @@ mod tests {
         assert_eq!(buffer[(7, 4)].fg, foreground.over(selection).unwrap());
         assert_eq!(buffer[(15, 4)].bg, surface);
         assert_eq!(buffer[(15, 4)].fg, foreground.over(surface).unwrap());
-        crate::ui_control_visibility_tests::snapshot(buffer, "ruler selection and wide grapheme roles");
+        crate::ui_control_visibility_tests::snapshot(
+            buffer,
+            "ruler selection and wide grapheme roles",
+        );
     }
 
     #[test]
     fn transparent_and_offscreen_rulers_leave_the_buffer_unchanged() {
-        use ratatui::{Terminal, backend::TestBackend, widgets::Block};
         use crate::theme_workbench::ColorLayer;
-        for (scroll, foreground) in [(0, ColorLayer::rgba(153, 187, 221, 0)), (100_000, ColorLayer::rgba(153, 187, 221, 255))] {
+        use ratatui::{Terminal, backend::TestBackend, widgets::Block};
+        for (scroll, foreground) in [
+            (0, ColorLayer::rgba(153, 187, 221, 0)),
+            (100_000, ColorLayer::rgba(153, 187, 221, 255)),
+        ] {
             let area = Rect::new(3, 2, 16, 3);
             let mut terminal = Terminal::new(TestBackend::new(24, 8)).unwrap();
             let mut original = None;
-            terminal.draw(|frame| {
-                frame.render_widget(Block::default().style(Style::default().fg(Color::Rgb(220, 230, 240)).bg(Color::Rgb(20, 30, 40))), area);
-                original = Some(frame.buffer_mut().clone());
-                draw_column_rulers(frame, area, &[4, 12], scroll, foreground);
-            }).unwrap();
+            terminal
+                .draw(|frame| {
+                    frame.render_widget(
+                        Block::default().style(
+                            Style::default()
+                                .fg(Color::Rgb(220, 230, 240))
+                                .bg(Color::Rgb(20, 30, 40)),
+                        ),
+                        area,
+                    );
+                    original = Some(frame.buffer_mut().clone());
+                    draw_column_rulers(frame, area, &[4, 12], scroll, foreground);
+                })
+                .unwrap();
             assert_eq!(terminal.backend().buffer(), &original.unwrap());
         }
     }

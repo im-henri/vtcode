@@ -81,7 +81,12 @@ impl SourceShape {
             let old_line = previous_lines.as_mut().and_then(Iterator::next);
             let start = previous_row;
             if let Some(previous) = previous {
-                while previous.shape.rows.get(previous_row).is_some_and(|row| row.line <= line_index) {
+                while previous
+                    .shape
+                    .rows
+                    .get(previous_row)
+                    .is_some_and(|row| row.line <= line_index)
+                {
                     previous_row += 1;
                 }
             }
@@ -93,7 +98,9 @@ impl SourceShape {
             {
                 let end = previous_row;
                 if start < end {
-                    if rows.len() + end - start > MAX_SOURCE_ROWS { return None; }
+                    if rows.len() + end - start > MAX_SOURCE_ROWS {
+                        return None;
+                    }
                     rows.extend_from_slice(&previous.shape.rows[start..end]);
                     profiles.extend_from_slice(&previous.shape.profiles[start..end]);
                     continue;
@@ -145,7 +152,9 @@ impl SourceShape {
             if !previews.is_empty() {
                 let mut count = 0;
                 for (col, x) in visual.iter_mut().enumerate() {
-                    while previews.get(count).is_some_and(|&preview| preview <= col) { count += 1; }
+                    while previews.get(count).is_some_and(|&preview| preview <= col) {
+                        count += 1;
+                    }
                     *x += count as i64;
                 }
             }
@@ -362,11 +371,17 @@ impl View {
                 self.shape_builds += 1;
             }
             let previous = self.shapes.iter().find(|entry| {
-                entry.pair == pair && entry.wrap == mode.wrap && entry.bounded == mode.bounded
-                    && entry.diff == mode.diff && entry.preview == mode.preview
-                    && entry.tab_size == mode.tab_size && entry.tight == mode.tight
+                entry.pair == pair
+                    && entry.wrap == mode.wrap
+                    && entry.bounded == mode.bounded
+                    && entry.diff == mode.diff
+                    && entry.preview == mode.preview
+                    && entry.tab_size == mode.tab_size
+                    && entry.tight == mode.tight
             });
-            let Some(shape) = SourceShape::new(editor, geometry, pair, previous, &mut self.shape_work) else {
+            let Some(shape) =
+                SourceShape::new(editor, geometry, pair, previous, &mut self.shape_work)
+            else {
                 self.remember_failed_shape(editor, pair, mode);
                 return None;
             };
