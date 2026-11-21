@@ -394,6 +394,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     // below register hit maps using their exact rendered viewport.
     app.begin_text_input_frame();
     app.source_control_file_hover.hit = None;
+    app.source_control_tab_area = None;
     app.settings_scroll_areas.clear();
     crate::ui_minimap_resize::begin_frame(app);
     app.settings_category_area = None;
@@ -446,6 +447,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
 }
 
 fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
+    app.avoid_duplicate_source_control_sidebar();
     // Top-level layout: menu bar + middle + status bar
     let detached = app.detached_window_id().is_some();
     let menu_bar_height: u16 = u16::from(!detached && (app.zen_mode || app.show_menu_bar));

@@ -19,6 +19,7 @@ impl App {
                 .is_none_or(|index| !self.terminal_is_open(index)),
             "tab_group_edit" | "tab_group_remove" => self.tabs.get(self.tab_context_tab).is_none_or(|t| self.tab_group(t).is_none()),
             "duplicate_tab" => !self.can_duplicate_tab(self.tab_context_tab),
+            "tab_copy_desk" => self.tabs.get(self.tab_context_tab).is_some_and(|tab| tab.kind == crate::app::TabKind::SourceControl),
             "tab_split_right" | "tab_split_down" | "tab_split_left" | "tab_split_up" => {
                 !self.can_split_editor_tab(self.tab_context_tab)
             }
@@ -338,6 +339,19 @@ impl App {
             if self.repositories.active.is_some() { add("Close Repository", "git_close_repository"); }
             if self.repositories.closed_roots().next().is_some() { add("Reopen Repository…", "git_open_repository"); }
         }
+        let placement = if self.source_control_tab_surface().is_some() {
+            if self.detached_window_id().is_some() {
+                &[("Move to Main Window", "source_control_main_window")][..]
+            } else {
+                &[("Move to Sidebar", "source_control_move_sidebar"), ("Move to New Window", "source_control_new_window")][..]
+            }
+        } else {
+            &[("Open in Editor", "source_control_open_editor"), ("Open in New Window", "source_control_new_window")][..]
+        };
+        let insertion = self.context_menu_items.iter().position(|item| item.id == "git_show_untracked").unwrap_or(0);
+        self.context_menu_items.splice(insertion..insertion, placement.iter().enumerate().map(|(index, &(label, id))| ContextMenuItem {
+            label: label.into(), shortcut: String::new(), id, separator_after: index + 1 == placement.len(),
+        }));
         self.context_menu_pos = (x, y);
         self.context_menu_inner = None;
         self.context_menu_selected = 0;
@@ -778,13 +792,15 @@ mod tests {
         let mut app = make_app();
         app.open_source_control_action_menu(5, 5);
         assert!(app.source_control_action_menu_open());
-        assert_eq!(app.context_menu_items.len(), 9);
+        assert_eq!(app.context_menu_items.len(), 11);
         assert_eq!(app.context_menu_items[0].id, "git_refresh");
         assert_eq!(app.context_menu_items[4].id, "git_checkout");
         assert_eq!(app.context_menu_items[5].id, "git_rebase");
         assert_eq!(app.context_menu_items[6].id, "git_cherry_pick");
-        assert_eq!(app.context_menu_items[7].id, "git_show_untracked");
-        assert_eq!(app.context_menu_items[8].id, "source_control_toggle");
+        assert_eq!(app.context_menu_items[7].id, "source_control_open_editor");
+        assert_eq!(app.context_menu_items[8].id, "source_control_new_window");
+        assert_eq!(app.context_menu_items[9].id, "git_show_untracked");
+        assert_eq!(app.context_menu_items[10].id, "source_control_toggle");
     }
 
     // --- source_control_context_menu_items ---

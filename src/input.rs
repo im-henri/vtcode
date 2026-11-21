@@ -409,6 +409,10 @@ pub(crate) fn handle_explorer_key(app: &mut App, code: KeyCode, modifiers: KeyMo
 }
 
 pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    if app.source_control_tab_active() {
+        crate::ui_source_control::handle_key(app, code, modifiers);
+        return;
+    }
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     let shift = modifiers.contains(KeyModifiers::SHIFT);
     let alt = modifiers.contains(KeyModifiers::ALT);

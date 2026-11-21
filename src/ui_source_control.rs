@@ -26,6 +26,10 @@ const SC_INITIALIZE_BUTTON_LABEL: &str = "Initialize Repository";
 #[path = "ui_source_control_actions_tests.rs"]
 mod actions_tests;
 
+#[path = "ui_source_control_mouse.rs"]
+mod mouse;
+pub(crate) use mouse::{click_body, click_header, drag_graph_header, release_graph_header, right_click, scroll};
+
 pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode, modifiers: crossterm::event::KeyModifiers) {
     use crossterm::event::{KeyCode, KeyModifiers};
     if !app.has_open_folder() {
@@ -134,9 +138,8 @@ pub(crate) fn handle_key(app: &mut App, code: crossterm::event::KeyCode, modifie
         }
         KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown => {
             let old_selection = app.source_control_selected;
-            let (changes_height, graph_height) = source_control_split_heights(
-                app.source_control_detail_area().map_or(24, |area| area.height), app.sc_graph_collapsed, app.sc_graph_height,
-            );
+            let panels = Panels::visible(app).unwrap_or_else(|| Panels::new(app, Rect::new(0, 0, 1, 24)));
+            let (changes_height, graph_height) = (panels.changes.height, panels.graph.height);
             let visible = if app.sc_graph_focused { graph_height.saturating_sub(1).max(1) as usize }
                 else { source_control_file_list_visible_rows(changes_height).max(1) };
             let layout = app.source_control_layout();
@@ -223,10 +226,11 @@ pub(crate) fn sc_actions_area(area: Rect) -> Option<Rect> {
 }
 
 fn draw_sc_actions(f: &mut Frame, app: &mut App, area: Rect) {
-    let refresh_width = if app.source_control_enabled && area.width >= 2 {
+    let refresh_width = if app.source_control_enabled && app.has_open_folder() && area.width >= 2 {
         if area.width >= 6 { 3 } else { 1 }
     } else { 0 };
-    let controls = Rect::new(area.x, area.y, area.width.saturating_sub(refresh_width), area.height);
+    let placement_width = if area.width >= 20 { 3 } else { 0 };
+    let controls = Rect::new(area.x, area.y, area.width - refresh_width - placement_width, area.height);
     let Some(button) = sc_actions_area(controls) else { return; };
     let label = if button.width >= UnicodeWidthStr::width(SC_ACTIONS_LABEL) as u16 {
         SC_ACTIONS_LABEL
@@ -237,6 +241,14 @@ fn draw_sc_actions(f: &mut Frame, app: &mut App, area: Rect) {
         app.colors.ui.sidebar_foreground, app.colors.bg_sidebar, hovered || open, false,
         open || app.sc_visibility != Default::default())), button);
     app.source_control_actions_area = Some(button);
+    if placement_width > 0 {
+        let placement = Rect::new(controls.right(), area.y, placement_width, 1);
+        let icon = if app.detached_window_id().is_some() { " ↙ " } else { " ↗ " };
+        f.render_widget(Paragraph::new(icon).style(app.colors.ui.toolbar_layer_style(
+            app.colors.ui.sidebar_foreground, app.colors.bg_sidebar,
+            placement.contains((app.mouse_col, app.mouse_row).into()), false, false)), placement);
+        app.source_control_placement_area = Some(placement);
+    }
     if !app.source_control_enabled { return; }
     if refresh_width > 0 {
         let refresh = Rect::new(area.right() - refresh_width, area.y, refresh_width, 1);
@@ -289,11 +301,46 @@ pub(crate) fn source_control_split_heights(
     (total_h.saturating_sub(graph_h), graph_h)
 }
 
-pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
-    app.git_operation_ui.buttons.clear();
-    let bg = app.colors.bg_sidebar;
-    f.render_widget(Paragraph::new("").style(Style::default().bg(bg)), area);
+pub(crate) struct Panels {
+    pub changes: Rect,
+    pub graph: Rect,
+    pub side_by_side: bool,
+}
 
+impl Panels {
+    fn new(app: &App, area: Rect) -> Self {
+        if app.source_control_tab_area.is_some() && area.width >= 96 && !app.sc_graph_collapsed {
+            let changes_width = (u32::from(area.width) * 2 / 5) as u16;
+            return Self {
+                changes: Rect::new(area.x, area.y, changes_width, area.height),
+                graph: Rect::new(area.x + changes_width + 1, area.y.saturating_add(1), area.width - changes_width - 1, area.height.saturating_sub(1)),
+                side_by_side: true,
+            };
+        }
+        let (changes, graph) = source_control_split_heights(area.height, app.sc_graph_collapsed, app.sc_graph_height);
+        Self {
+            changes: Rect::new(area.x, area.y, area.width, changes),
+            graph: Rect::new(area.x, area.y + changes, area.width, graph),
+            side_by_side: false,
+        }
+    }
+
+    pub(crate) fn visible(app: &App) -> Option<Self> {
+        Some(Self::new(app, app.source_control_detail_area()?))
+    }
+}
+
+pub(crate) fn draw_tab(f: &mut Frame, app: &mut App, area: Rect) {
+    app.code_area = None;
+    app.gutter_area = None;
+    app.minimap_area = None;
+    app.scrollbar_area = None;
+    app.h_scrollbar_area = None;
+    app.source_control_tab_area = app.tabs.get(app.active_tab).map(|tab| (tab.editor.navigation_id, area));
+    draw(f, app, area);
+}
+
+pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Rect) {
     // The workbench paints the sidebar/editor seam after panel contents. Keep
     // that edge out of the Source Control layout so its scrollbar is not
     // overwritten by the separator on the following render pass.
@@ -306,7 +353,17 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
     } else {
         area
     };
+    draw(f, app, content_area);
+    if app.source_control_repository_state == crate::app::SourceControlRepositoryState::NoFolder {
+        crate::ui_chrome::draw_empty_folder_state(f, app, area);
+    }
+}
 
+fn draw(f: &mut Frame, app: &mut App, content_area: Rect) {
+    app.git_operation_ui.buttons.clear();
+    let bg = app.colors.bg_sidebar;
+    f.render_widget(Paragraph::new("").style(Style::default().bg(bg)), content_area);
+    let is_tab = app.source_control_tab_area.is_some();
     app.source_control_initialize_area = None;
     app.source_control_toggle_area = None;
     app.source_control_commit_area = None;
@@ -317,6 +374,7 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
     app.source_control_untracked_stage_area = None;
     app.source_control_untracked_discard_area = None;
     app.source_control_actions_area = None;
+    app.source_control_placement_area = None;
     app.source_control_refresh_area = None;
     app.source_control_file_actions.clear();
     app.source_control_file_hover.hit = None;
@@ -327,15 +385,18 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
     app.repositories.detail_area = None;
     app.repositories.recovery_buttons.clear();
     app.repositories.recovery_root = None;
-    if app.source_control_repository_state != crate::app::SourceControlRepositoryState::NoFolder {
+    if is_tab || app.source_control_repository_state != crate::app::SourceControlRepositoryState::NoFolder {
         draw_sc_actions(f, app, content_area);
     }
     match app.source_control_repository_state {
         crate::app::SourceControlRepositoryState::NoFolder => {
-            f.render_widget(Paragraph::new(" Source Control").style(Style::default()
-                .fg(app.colors.ui.sidebar_text_color(bg)).bg(bg).add_modifier(Modifier::BOLD)),
-                Rect::new(content_area.x, content_area.y, content_area.width, content_area.height.min(1)));
-            crate::ui_chrome::draw_empty_folder_state(f, app, area);
+            if is_tab {
+                crate::ui_empty_folder::draw_source_control_tab(f, app, content_area);
+            } else {
+                f.render_widget(Paragraph::new(" Source Control").style(Style::default()
+                    .fg(app.colors.ui.sidebar_text_color(bg)).bg(bg).add_modifier(Modifier::BOLD)),
+                    Rect::new(content_area.x, content_area.y, content_area.width, content_area.height.min(1)));
+            }
             return;
         }
         crate::app::SourceControlRepositoryState::Disabled => {
@@ -362,26 +423,16 @@ pub(crate) fn draw_source_control_sidebar(f: &mut Frame, app: &mut App, area: Re
         return;
     }
     if content_area.is_empty() || (app.repositories.discovered && !app.repositories.expanded) { return; }
-    let total_h = content_area.height;
-    let (changes_h, graph_h) =
-        source_control_split_heights(total_h, app.sc_graph_collapsed, app.sc_graph_height);
-
-    let changes_area = Rect::new(
-        content_area.x,
-        content_area.y,
-        content_area.width,
-        changes_h,
-    );
-    draw_sc_changes_panel(f, app, changes_area);
-
-    if graph_h > 0 {
-        let graph_area = Rect::new(
-            content_area.x,
-            content_area.y + changes_h,
-            content_area.width,
-            graph_h,
-        );
-        draw_sc_graph_panel(f, app, graph_area);
+    let panels = Panels::new(app, content_area);
+    draw_sc_changes_panel(f, app, panels.changes);
+    if !panels.graph.is_empty() {
+        draw_sc_graph_panel(f, app, panels.graph);
+    }
+    if panels.side_by_side {
+        let color = app.colors.ui.sidebar_border.border(bg).unwrap_or(app.colors.fg_dim);
+        for y in panels.graph.y..panels.graph.bottom() {
+            f.buffer_mut()[(panels.changes.right(), y)].set_char('│').set_fg(color);
+        }
     }
 }
 
@@ -671,7 +722,7 @@ fn draw_sc_repository_state(f: &mut Frame, app: &mut App, area: Rect, missing: b
 /// Render the commit message input box with cursor and selection.
 fn draw_sc_commit_input(f: &mut Frame, app: &mut App, input_area: Rect) {
     use unicode_segmentation::UnicodeSegmentation;
-    let active = app.source_control_input_mode;
+    let active = app.source_control_input_mode && !app.rendering_inactive_editor && !app.rendering_background_window;
     let base = app.colors.ui.input_style(app.colors.bg_sidebar);
     let input_bg = base.bg.unwrap_or(app.colors.bg_sidebar);
     let border = if active { app.colors.ui.focus_border } else { app.colors.ui.input_colors.border };
@@ -754,6 +805,14 @@ fn draw_sc_commit_input(f: &mut Frame, app: &mut App, input_area: Rect) {
         let dragging = app.commit_input.scrollbar_drag.is_some();
         let (track, thumb) = app.colors.ui.scrollbar_colors(input_bg, false, dragging);
         bar.symbols('▐', '▐').colors(thumb, track, track).render(f);
+    }
+}
+
+fn paint_focused(app: &App) -> bool {
+    if app.source_control_tab_area.is_some() {
+        app.source_control_has_focus()
+    } else {
+        app.active_pane == crate::app::ActivePane::Explorer
     }
 }
 
@@ -893,7 +952,7 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
         );
         let is_selected = app.source_control_file_selected(i);
         let is_hovered = row_area.contains((app.mouse_col, app.mouse_row).into());
-        let active = app.active_pane == crate::app::ActivePane::Explorer && !app.source_control_input_mode && !app.sc_graph_focused;
+        let active = paint_focused(app) && !app.source_control_input_mode && !app.sc_graph_focused;
         let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground, bg, is_selected, active, is_hovered);
         let row_bg = row_style.bg.unwrap_or(bg);
         let description = if is_selected || is_hovered && app.colors.ui.list_hover_foreground.over(row_bg).is_some() {
@@ -1065,7 +1124,7 @@ fn draw_sc_changes_panel(f: &mut Frame, app: &mut App, area: Rect) {
 }
 
 pub(crate) fn draw_action_tooltip(f: &mut Frame, app: &App) {
-    if !app.sidebar_is_visible() || app.sidebar_view != crate::app::SidebarView::SourceControl
+    if (!app.source_control_sidebar_visible() && app.source_control_tab_surface().is_none())
         || app.sc_context_active || app.context_menu_active || app.menu_active || app.palette.active
         || crate::ui_modal::active(app).is_some() { return; }
     let point = (app.mouse_col, app.mouse_row).into();
@@ -1110,7 +1169,15 @@ pub(crate) fn draw_action_tooltip(f: &mut Frame, app: &App) {
         return;
     }
     file_actions::draw_tooltip(f, app);
+    let placement_label = if app.detached_window_id().is_some() {
+        "Move to Main Window"
+    } else if app.source_control_tab_surface().is_some() {
+        "Move to New Window"
+    } else {
+        "Open Source Control in Editor"
+    };
     for (area, label) in [
+        (app.source_control_placement_area, placement_label),
         (app.source_control_refresh_area, "Refresh Source Control"),
         (app.source_control_toggle_area, if app.source_control_enabled { "Disable Source Control for this folder" } else { "Enable Source Control for this folder" }),
         (app.source_control_stage_all_area, "Stage All Unstaged Changes"),
@@ -1157,14 +1224,13 @@ fn graph_error_row(app: &App) -> Option<Rect> {
     {
         return None;
     }
-    let area = app.source_control_detail_area()?;
-    let (changes, graph) = source_control_split_heights(area.height, false, app.sc_graph_height);
+    let graph = Panels::visible(app)?.graph;
     let row = app.git_log.len().checked_sub(app.git_log_scroll)?;
-    let visible = usize::from(graph.saturating_sub(1));
+    let visible = usize::from(graph.height.saturating_sub(1));
     (row < visible).then(|| Rect::new(
-        area.x,
-        area.y + changes + 1 + row as u16,
-        area.width.saturating_sub(u16::from(app.git_log.len() + 1 > visible)),
+        graph.x,
+        graph.y + 1 + row as u16,
+        graph.width.saturating_sub(u16::from(app.git_log.len() + 1 > visible)),
         1,
     ))
 }
@@ -1181,7 +1247,7 @@ fn draw_sc_graph_panel(f: &mut Frame, app: &mut App, area: Rect) {
     let header_area = Rect::new(area.x, area.y, area.width, 1);
     let collapsed = app.sc_graph_collapsed;
     let mut header = sc_section_header(app, "Graph", collapsed, None, area.width);
-    if app.sc_graph_focused && app.active_pane == crate::app::ActivePane::Explorer {
+    if app.sc_graph_focused && paint_focused(app) {
         for span in &mut header.spans { span.style = span.style.add_modifier(Modifier::UNDERLINED); }
     }
     if app.resizing_sc_graph {
@@ -1238,7 +1304,7 @@ fn draw_sc_graph_panel(f: &mut Frame, app: &mut App, area: Rect) {
             let is_hovered = app.mouse_row == list_area.y + len_as_u16(lines.len())
                 && app.mouse_col >= content_area.x
                 && app.mouse_col < content_area.x + content_area.width;
-            let active = app.active_pane == crate::app::ActivePane::Explorer && !app.source_control_input_mode && app.sc_graph_focused;
+            let active = paint_focused(app) && !app.source_control_input_mode && app.sc_graph_focused;
             let row_style = app.colors.ui.list_row_style(app.colors.ui.sidebar_foreground, bg, is_selected, active, is_hovered);
             let row_bg = row_style.bg.unwrap_or(bg);
             let description = if is_selected || is_hovered && app.colors.ui.list_hover_foreground.over(row_bg).is_some() {

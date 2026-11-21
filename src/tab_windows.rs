@@ -44,6 +44,10 @@ pub(crate) type WindowId = u64;
 pub(crate) const MAIN_WINDOW: WindowId = 0;
 
 pub(crate) enum Request {
+    FocusSourceControl {
+        view: u64,
+        window: WindowId,
+    },
     Open {
         view: u64,
         point: Option<ScreenPoint>,
@@ -785,6 +789,15 @@ impl Windows {
             return false;
         }
         match request {
+            Request::FocusSourceControl { view, window } => {
+                if app.tab_window(view) != Some(window) || !self.activate(app, window, false) {
+                    return false;
+                }
+                app.open_source_control_tab(false);
+                self.focus(window);
+                self.invalidate_workspace(app.workspaces.active);
+                true
+            }
             Request::Open { view, point } => {
                 let Some(window) = app.tab_window(view) else { return false; };
                 self.launch_window(app, WindowSource::Tab { view, window }, point)

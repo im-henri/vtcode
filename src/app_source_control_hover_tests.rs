@@ -1,4 +1,5 @@
 use super::*;
+use crate::app::SidebarView;
 use ratatui::{Terminal, backend::TestBackend, buffer::Buffer};
 use std::fs;
 

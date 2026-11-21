@@ -148,16 +148,9 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         .and_then(crate::ui_chrome::agent_chat_button_area)
         .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()));
     let was_over_navigation = crate::ui_chrome::navigation_button_at(app, prev_mouse_col, prev_mouse_row).is_some();
-    let was_over_source_control = app.show_explorer
-        && app.sidebar_view == crate::app::SidebarView::SourceControl
-        && (app.source_control_detail_area().is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into()))
-            || [app.source_control_toggle_area, app.source_control_commit_area, app.source_control_amend_area,
-            app.source_control_stage_all_area, app.source_control_unstage_all_area, app.source_control_discard_all_area,
-            app.source_control_untracked_stage_area, app.source_control_untracked_discard_area,
-            app.source_control_actions_area, app.source_control_refresh_area, app.repositories.reopen_button]
-            .into_iter()
-            .flatten()
-            .any(|area| area.contains((prev_mouse_col, prev_mouse_row).into())));
+    let was_over_source_control = app.source_control_view_area()
+        .is_some_and(|area| area.contains((prev_mouse_col, prev_mouse_row).into())
+            || area.contains((col, row).into()));
 
     if crate::ui_desks::handle_mouse(app, mouse) { return; }
     // Track mouse position for hover effects during rendering
@@ -920,34 +913,11 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                         && col >= panel_area.x
                         && col < panel_area.x + panel_area.width
                     {
-                        let over_sc_graph_header = if app.sidebar_view == crate::app::SidebarView::SourceControl {
-                            if let Some(exp_area) = app.source_control_detail_area() {
-                                if col >= exp_area.x
-                                    && col < exp_area.x + exp_area.width
-                                    && row >= exp_area.y
-                                    && row < exp_area.y + exp_area.height
-                                {
-                                    let rel_y = row.saturating_sub(exp_area.y);
-                                    let (changes_h, graph_h) = crate::ui_source_control::source_control_split_heights(
-                                        exp_area.height,
-                                        app.sc_graph_collapsed,
-                                        app.sc_graph_height,
-                                    );
-                                    graph_h > 0 && rel_y == changes_h
-                                } else {
-                                    false
-                                }
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        };
-                        if over_sc_graph_header {
-                            // Let source-control graph header clicks win over panel-border resize.
-                        } else {
-                        app.resizing_panel = true;
-                        return;
+                        if !crate::ui_source_control::Panels::visible(app).is_some_and(|panels| {
+                            panels.graph.contains((col, row).into()) && row == panels.graph.y
+                        }) {
+                            app.resizing_panel = true;
+                            return;
                         }
                     }
                 }
@@ -1345,42 +1315,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 return;
             }
 
-            // Keep Source Control header actions ahead of the resize
-            // seam, including a sidebar reduced to a single terminal cell.
-            if app.sidebar_is_visible() && app.sidebar_view == crate::app::SidebarView::SourceControl
-            {
-                if app.source_control_enabled && app.source_control_refresh_area.is_some_and(|area| area.contains((col, row).into())) {
-                    app.active_pane = ActivePane::Explorer;
-                    app.source_control_input_mode = false;
-                    app.execute_git_command("git_refresh");
-                    return;
-                }
-                if let Some(button) = app.repositories.reopen_button.filter(|area| area.contains((col, row).into())) {
-                    app.active_pane = ActivePane::Explorer;
-                    app.source_control_input_mode = false;
-                    app.context_menu_pos = (button.x, button.bottom());
-                    app.open_repository_picker();
-                    crate::mouse_overlay::capture_context_menu_button(app, button);
-                    return;
-                }
-                if let Some(button) = app.source_control_actions_area.filter(|area| area.contains((col, row).into())) {
-                    app.active_pane = ActivePane::Explorer;
-                    app.source_control_input_mode = false;
-                    app.open_source_control_action_menu(button.x, button.bottom());
-                    crate::mouse_overlay::capture_context_menu_button(app, button);
-                    return;
-                }
-            }
-
-            // Click on explorer resize border?
-            if app.show_explorer {
-                if let Some(exp_area) = app.explorer_area {
-                    if explorer_resize_hit(exp_area, app.sidebar_right, col, row) {
-                        app.resizing_explorer = true;
-                        return;
-                    }
-                }
-            }
+            if crate::ui_source_control::click_header(app, col, row) { return; }
 
             // Internal side-by-side diff divider. It is independent from the
             // editor-group split tree and resizes only the two diff panes.
@@ -1466,6 +1401,8 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                 }
             }
 
+            if crate::ui_source_control::click_body(app, col, row, mouse.modifiers) { return; }
+
             // Click on sidebar area?
             if let Some(exp_area) = app.explorer_area {
                 if col >= exp_area.x
@@ -1542,189 +1479,6 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                     }
                                     SearchRow::Result(idx) => {
                                         app.click_global_search_result(idx, col, row);
-                                    }
-                                }
-                            }
-                        }
-                        return;
-                    }
-
-                    // Handle source control panel clicks
-                    if app.sidebar_view == crate::app::SidebarView::SourceControl {
-                        app.active_pane = ActivePane::Explorer;
-                        if app.source_control_toggle_area.is_some_and(|area| area.contains((col, row).into())) {
-                            app.toggle_workspace_source_control();
-                            return;
-                        }
-                        if app.repositories.parent_button.is_some_and(|area| area.contains((col, row).into())) {
-                            if app.repositories.parent.is_some() { app.open_parent_repository(); }
-                            else { app.reopen_source_control_repositories(); }
-                            return;
-                        }
-                        if let Some((_, root)) = app.repositories.closes.iter().find(|(area, _)| area.contains((col, row).into())).cloned() {
-                            app.close_source_control_repository(&root);
-                            return;
-                        }
-                        if let Some((_, root)) = app.repositories.headers.iter().find(|(area, _)| area.contains((col, row).into())).cloned() {
-                            app.select_source_control_repository(&root);
-                            return;
-                        }
-                        if app.source_control_repository_state
-                            != crate::app::SourceControlRepositoryState::Available
-                        {
-                            if let Some((_, action)) = app.repositories.recovery_buttons.iter()
-                                .find(|(area, _)| area.contains((col, row).into())).copied()
-                            {
-                                action.run(app);
-                                return;
-                            }
-                            if app.source_control_repository_state
-                                == crate::app::SourceControlRepositoryState::Missing
-                                && app.source_control_initialize_area.is_some_and(|area| {
-                                    col >= area.x
-                                        && col < area.x.saturating_add(area.width)
-                                        && row >= area.y
-                                        && row < area.y.saturating_add(area.height)
-                                })
-                            {
-                                app.git_initialize_repository();
-                            }
-                            return;
-                        }
-                        if app.repositories.discovered && !app.repositories.expanded { return; }
-                        if crate::ui_git_operation::click(app, col, row) { return; }
-                        let hits = |area: Rect| {
-                            col >= area.x
-                                && col < area.x.saturating_add(area.width)
-                                && row >= area.y
-                                && row < area.y.saturating_add(area.height)
-                        };
-                        let commit = app.source_control_commit_area.is_some_and(hits);
-                        let amend = app.source_control_amend_area.is_some_and(hits);
-                        if commit || amend {
-                            if app.bg_git_action_running || app.bg_git_remote_running {
-                                return;
-                            }
-                            if amend {
-                                app.git_amend_commit();
-                            } else {
-                                app.git_commit();
-                            }
-                            return;
-                        }
-                        if app.source_control_stage_all_area.is_some_and(hits) || app.source_control_untracked_stage_area.is_some_and(hits) {
-                            let group = if app.source_control_untracked_stage_area.is_some_and(hits) {
-                                crate::source_control_rows::Group::Untracked
-                            } else { crate::source_control_rows::Group::Unstaged };
-                            app.git_stage_changes(app.source_control_group_changes(group));
-                            return;
-                        }
-                        if app.source_control_unstage_all_area.is_some_and(hits) {
-                            app.git_unstage_changes(app.source_control_group_changes(crate::source_control_rows::Group::Staged));
-                            return;
-                        }
-                        if app.source_control_discard_all_area.is_some_and(hits) || app.source_control_untracked_discard_area.is_some_and(hits) {
-                            let group = if app.source_control_untracked_discard_area.is_some_and(hits) {
-                                crate::source_control_rows::Group::Untracked
-                            } else { crate::source_control_rows::Group::Unstaged };
-                            app.request_source_control_discard(app.source_control_group_changes(group), false);
-                            return;
-                        }
-                        if crate::ui_source_control::handle_file_action_click(app, col, row, mouse.modifiers) { return; }
-                        if let Some(exp_area) = app.source_control_detail_area() {
-                            let rel_y = row.saturating_sub(exp_area.y);
-                            let total_h = exp_area.height;
-                            let (changes_h, graph_h) = crate::ui_source_control::source_control_split_heights(
-                                total_h,
-                                app.sc_graph_collapsed,
-                                app.sc_graph_height,
-                            );
-
-                            if graph_h > 0
-                                && !app.sc_graph_collapsed
-                                && rel_y == changes_h
-                                && col > exp_area.x.saturating_add(3)
-                            {
-                                app.sc_graph_click_start = Some((col, row));
-                                return;
-                            }
-
-                            if rel_y < changes_h {
-                                // Inside CHANGES section
-                                // Row 0: header action buttons
-                                // Rows 1-4: commit message input box
-                                // Row 5: Commit button
-                                // Rows 6+: file list
-                                if rel_y == 0 {
-                                    return;
-                                } else if (1..=4).contains(&rel_y) {
-                                    app.sc_graph_focused = false;
-                                    app.source_control_input_mode = true;
-                                    let visible_lines = 2usize;
-                                    app.prepare_commit_input(exp_area.width.saturating_sub(2) as usize, visible_lines);
-                                    let scroll_line = app.commit_input.scroll;
-                                    let view_line = if rel_y <= 1 {
-                                        0usize
-                                    } else if rel_y >= 4 {
-                                        visible_lines.saturating_sub(1)
-                                    } else {
-                                        (rel_y - 2) as usize
-                                    };
-                                    let line = scroll_line + view_line;
-                                    let col_in_line = col.saturating_sub(exp_area.x.saturating_add(1)) as usize;
-                                    app.source_control_commit_cursor = app.commit_input.byte_at_column(line, col_in_line);
-                                    app.source_control_commit_selection_anchor = None;
-                                    app.break_commit_input_group();
-                                } else if rel_y == 5 {
-                                    // The gap between actions is not a button.
-                                    return;
-                                } else if rel_y >= 6 {
-                                    let list_row = (rel_y - 6) as usize;
-                                    let layout = app.source_control_layout();
-
-                                    // Read-only pass: determine what was clicked
-                                    enum ClickAction {
-                                        ToggleGroup(crate::source_control_rows::Group),
-                                        SelectAndDiff(usize),
-                                    }
-                                    let action = layout.rows(app.source_control_scroll).nth(list_row).map(|row| {
-                                        match row {
-                                            crate::source_control_rows::Row::Section(group) => ClickAction::ToggleGroup(group),
-                                            crate::source_control_rows::Row::File(i) => {
-                                                ClickAction::SelectAndDiff(i)
-                                            }
-                                        }
-                                    });
-
-                                    // Apply the action
-                                    app.sc_graph_focused = false;
-                                    let ctrl = mouse.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER);
-                                    let shift = mouse.modifiers.contains(KeyModifiers::SHIFT);
-                                    match action {
-                                        Some(ClickAction::ToggleGroup(group)) => app.set_source_control_group_collapsed(group, !app.source_control_group_collapsed(group)),
-                                        Some(ClickAction::SelectAndDiff(i))
-                                            if ctrl || shift => { app.select_source_control_file(i, ctrl, shift); }
-                                        Some(ClickAction::SelectAndDiff(i)) => {
-                                            app.click_source_control_file(i, col, row);
-                                        }
-                                        None => {}
-                                    }
-                                }
-                            } else if graph_h > 0 {
-                                // Inside GRAPH section
-                                let graph_rel_y = rel_y - changes_h;
-                                if graph_rel_y == 0 {
-                                    // GRAPH header click: collapse/expand on mouse release.
-                                    app.sc_graph_click_start = Some((col, row));
-                                } else if !app.sc_graph_collapsed {
-                                    let commit_idx = app.git_log_scroll + (graph_rel_y - 1) as usize;
-                                    if commit_idx == app.git_log.len() && app.git_history.error.is_some() {
-                                        app.refresh_git_log_async();
-                                        return;
-                                    }
-                                    if commit_idx < app.git_log.len() {
-                                        app.git_log_selected = commit_idx;
-                                        app.open_source_control_commit_details(commit_idx);
                                     }
                                 }
                             }

@@ -48,12 +48,11 @@ impl App {
                 self.refresh_git_branch_async();
             }
             "git_filter_changes" => {
-                if self.sidebar_view != crate::app::SidebarView::SourceControl || !self.show_explorer {
+                if !self.source_control_tab_active() && !self.source_control_sidebar_visible() {
                     self.execute_palette_command("source_control");
                 }
-                self.active_pane = crate::app::ActivePane::Explorer;
                 self.source_control_input_mode = false;
-                let area = self.source_control_actions_area.or(self.explorer_area).unwrap_or_default();
+                let area = self.source_control_actions_area.or_else(|| self.source_control_view_area()).unwrap_or_default();
                 self.open_source_control_filter_menu(area.x, area.y.saturating_add(1));
             }
             "git_show_untracked" => {

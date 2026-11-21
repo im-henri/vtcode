@@ -62,8 +62,7 @@ impl App {
                 && (self.focused_text_input_id() == Some(menu.id)
                     || (menu.id == TextInputId::SourceControlCommit
                         && self.source_control_input_mode
-                        && self.active_pane == crate::app::ActivePane::Explorer
-                        && self.sidebar_view == crate::app::SidebarView::SourceControl
+                        && self.source_control_has_focus()
                         && crate::ui_modal::active(self).is_none()))
                 && self.text_input_area(menu.id).is_some()
                 && (!matches!(

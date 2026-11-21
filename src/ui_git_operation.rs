@@ -102,11 +102,9 @@ impl App {
             self.notify("Continue or abort the current Git operation first.");
             return;
         }
-        if self.sidebar_view != crate::app::SidebarView::SourceControl || !self.sidebar_is_visible()
-        {
+        if !self.source_control_tab_active() && !self.source_control_sidebar_visible() {
             self.execute_palette_command("source_control");
         }
-        self.active_pane = crate::app::ActivePane::Explorer;
         let root = self.source_control_root().to_owned();
         self.git_operation_ui.target = if kind == Kind::CherryPick && !self.sc_graph_collapsed {
             self.git_log

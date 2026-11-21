@@ -1540,7 +1540,8 @@ impl App {
             .collect();
         let save_desks = self.desks.items.len() > 1 || !self.desks.membership.is_empty()
             || self.tabs.iter().chain(self.groups.iter().flat_map(|group| &group.tabs))
-                .any(|tab| tab.kind == TabKind::File && tab.editor.document_has_other_views());
+                .any(|tab| tab.kind == TabKind::SourceControl
+                    || (tab.kind == TabKind::File && tab.editor.document_has_other_views()));
         // Serialize theme name
         let theme_str = self.committed_theme_key().to_string();
         let sidebar_str = match self.sidebar_view {

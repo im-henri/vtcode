@@ -108,6 +108,143 @@ impl SourceControlSelection {
 }
 
 impl App {
+    pub(crate) fn source_control_tab_active(&self) -> bool {
+        self.tabs.get(self.active_tab).is_some_and(|tab| tab.kind == crate::app::TabKind::SourceControl)
+    }
+
+    pub(crate) fn source_control_sidebar_visible(&self) -> bool {
+        self.sidebar_view == crate::app::SidebarView::SourceControl && self.sidebar_is_visible()
+    }
+
+    pub(crate) fn source_control_has_focus(&self) -> bool {
+        if self.rendering_inactive_editor { return false; }
+        match self.active_pane {
+            crate::app::ActivePane::Editor => self.source_control_tab_active() && !self.docked_terminal_has_focus(),
+            crate::app::ActivePane::Explorer => self.source_control_sidebar_visible(),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn source_control_view_area(&self) -> Option<ratatui::layout::Rect> {
+        self.source_control_tab_surface().map(|(_, area)| area)
+            .or_else(|| self.explorer_area.filter(|_| self.source_control_sidebar_visible()))
+    }
+
+    pub(crate) fn source_control_tab_surface(&self) -> Option<(usize, ratatui::layout::Rect)> {
+        let (view, area) = self.source_control_tab_area?;
+        Some((self.visible_tab_group(view, crate::app::TabKind::SourceControl)?, area))
+    }
+
+    pub(crate) fn focus_source_control_surface(&mut self) {
+        if let Some((group, _)) = self.source_control_tab_surface() {
+            self.switch_group(group);
+            self.active_pane = crate::app::ActivePane::Editor;
+        } else {
+            self.active_pane = crate::app::ActivePane::Explorer;
+        }
+        self.terminal_panel_focused = false;
+    }
+
+    fn source_control_tab(&self) -> Option<(usize, usize)> {
+        use crate::app::TabKind;
+        let index = |tabs: &[crate::app::Tab]| tabs.iter().position(|tab| tab.kind == TabKind::SourceControl);
+        index(&self.tabs).map(|index| (self.active_group, index)).or_else(|| {
+            self.groups.iter().enumerate().filter(|(group, _)| *group != self.active_group)
+                .find_map(|(group, pane)| index(&pane.tabs).map(|index| (group, index)))
+        })
+    }
+
+    pub(crate) fn avoid_duplicate_source_control_sidebar(&mut self) {
+        if self.sidebar_view == crate::app::SidebarView::SourceControl
+            && self.source_control_tab().is_some_and(|(group, _)| self.group_in_current_desk(group))
+        {
+            self.sidebar_view = crate::app::SidebarView::Explorer;
+            self.activity_bar_selected = 0;
+        }
+    }
+
+    pub(crate) fn toggle_source_control_view(&mut self) {
+        if self.source_control_tab().is_some() || self.detached_window_id().is_some() {
+            self.open_source_control_tab(false);
+        } else if self.source_control_sidebar_visible() {
+            self.show_explorer = false;
+            if self.active_pane == crate::app::ActivePane::Explorer {
+                self.active_pane = crate::app::ActivePane::Editor;
+            }
+        } else {
+            self.show_source_control_sidebar();
+        }
+    }
+
+    fn show_source_control_sidebar(&mut self) {
+        self.sidebar_view = crate::app::SidebarView::SourceControl;
+        self.activity_bar_selected = 2;
+        self.global_search_active = false;
+        self.reveal_sidebar();
+        self.active_pane = crate::app::ActivePane::Explorer;
+        self.terminal_panel_focused = false;
+        self.source_control_input_mode = false;
+        self.refresh_source_control_async();
+        self.refresh_git_log_async();
+    }
+
+    pub(crate) fn open_source_control_tab(&mut self, detach: bool) {
+        use crate::app::{ActivePane, Tab};
+        use crate::tab_windows::{MAIN_WINDOW, Request};
+
+        let (group, index) = if let Some((group, index)) = self.source_control_tab() {
+            let tabs = if group == self.active_group { &self.tabs } else { &self.groups[group].tabs };
+            let view = tabs[index].editor.navigation_id;
+            let window = self.tab_window(view).unwrap_or(MAIN_WINDOW);
+            if detach && window == MAIN_WINDOW {
+                self.tab_window_request = Some(Request::Open { view, point: None });
+            }
+            if window != self.detached_window_id().unwrap_or(MAIN_WINDOW) {
+                if !detach || window != MAIN_WINDOW {
+                    self.tab_window_request = Some(Request::FocusSourceControl { view, window });
+                }
+                return;
+            }
+            let in_closed_desk = !self.group_in_current_desk(group)
+                && self.desks.items.iter().any(|desk| desk.id == self.groups[group].desk && desk.closed);
+            if in_closed_desk {
+                if !self.move_tab_between_groups(group, index, self.active_group) { return; }
+                let Some(location) = self.tab_location(view) else { return; };
+                location
+            } else {
+                (group, index)
+            }
+        } else {
+            let tab = Tab::new_source_control(self.new_editor());
+            let view = tab.editor.navigation_id;
+            let index = self.insert_tab_after_active(tab);
+            if detach {
+                self.tab_window_request = Some(Request::Open { view, point: None });
+            }
+            (self.active_group, index)
+        };
+        self.switch_group(group);
+        self.clear_transient_editor_state();
+        self.active_tab = index;
+        self.active_pane = ActivePane::Editor;
+        self.terminal_panel_focused = false;
+        self.source_control_input_mode = false;
+        self.avoid_duplicate_source_control_sidebar();
+        self.touch_tab_mru(index);
+        self.validate_diff_state_for_active_tab();
+        self.tab_scroll_manual_anchor = None;
+        self.ensure_active_tab_visible();
+        self.refresh_source_control_async();
+        self.refresh_git_log_async();
+    }
+
+    pub(crate) fn move_source_control_to_sidebar(&mut self) {
+        if self.detached_window_id().is_none() && self.source_control_tab_active() {
+            self.force_close_tab(self.active_tab);
+            self.show_source_control_sidebar();
+        }
+    }
+
     pub(crate) fn source_control_sender(&self) -> SourceControlSender {
         SourceControlSender {
             sender: self.background.sender.clone(),
@@ -440,7 +577,7 @@ impl App {
         } else {
             self.source_control_selected = index;
         }
-        self.active_pane = crate::app::ActivePane::Explorer;
+        self.focus_source_control_surface();
         self.source_control_input_mode = false;
         self.sc_graph_focused = false;
     }

@@ -83,19 +83,6 @@ fn scroll_settings_at(app: &mut App, col: u16, row: u16, down: bool) -> bool {
     true
 }
 
-fn scroll_repositories_at(app: &mut App, col: u16, row: u16, down: bool) -> bool {
-    if !app.sidebar_is_visible() || app.sidebar_view != crate::app::SidebarView::SourceControl { return false; }
-    if !app.repositories.headers.iter().any(|(area, _)| area.contains((col, row).into())) {
-        return app.repositories.discovered && !app.repositories.expanded
-            && app.explorer_area.is_some_and(|area| area.contains((col, row).into()));
-    }
-    let count = app.repositories.entries.iter().filter(|repo| !app.repositories.closed.contains(&repo.root)).count();
-    let max = count.saturating_sub(app.repositories.headers.len());
-    app.repositories.header_scroll = if down { app.repositories.header_scroll.saturating_add(1).min(max) }
-        else { app.repositories.header_scroll.saturating_sub(1) };
-    true
-}
-
 fn scroll_split_editor_at(app: &mut App, col: u16, row: u16, delta: isize) -> bool {
     if !app.split_active() {
         return false;
@@ -140,7 +127,7 @@ pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: Key
     if scroll_settings_at(app, col, row, false) {
         return;
     }
-    if scroll_repositories_at(app, col, row, false) { return; }
+    if crate::ui_source_control::scroll(app, col, row, false) { return; }
     if scroll_tabs_at(app, col, row, false, shift_scroll) { return; }
     if app.handle_extension_view_scroll_input(
         col,
@@ -180,30 +167,6 @@ pub(crate) fn handle_scroll_up(app: &mut App, col: u16, row: u16, modifiers: Key
                 if row >= results_y {
                     app.global_search_scroll = app.global_search_scroll.saturating_sub(spd);
                 }
-            } else if app.sidebar_view == crate::app::SidebarView::SourceControl
-                && app.source_control_repository_state
-                    == crate::app::SourceControlRepositoryState::Available
-            {
-                if let Some(exp_area) = app.source_control_detail_area() {
-                    let (changes_h, _) = crate::ui_source_control::source_control_split_heights(
-                        exp_area.height,
-                        app.sc_graph_collapsed,
-                        app.sc_graph_height,
-                    );
-                    let rel_y = row.saturating_sub(exp_area.y);
-                    if rel_y >= changes_h {
-                        app.git_log_scroll = app.git_log_scroll.saturating_sub(spd);
-                    } else {
-                        let max = app.source_control_layout().max_scroll(
-                            crate::ui_source_control::source_control_file_list_visible_rows(changes_h));
-                        app.source_control_scroll = app
-                            .source_control_scroll
-                            .saturating_sub(spd)
-                            .min(max);
-                    }
-                } else {
-                    app.source_control_scroll = 0;
-                }
             } else if app.sidebar_view == crate::app::SidebarView::Extensions {
                 app.extensions_scroll = app.extensions_scroll.saturating_sub(spd);
             } else if !crate::ui_chrome::scroll_open_editors(app, exp_area, row, false) {
@@ -237,7 +200,7 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
     if scroll_settings_at(app, col, row, true) {
         return;
     }
-    if scroll_repositories_at(app, col, row, true) { return; }
+    if crate::ui_source_control::scroll(app, col, row, true) { return; }
     if scroll_tabs_at(app, col, row, true, shift_scroll) { return; }
     if app.handle_extension_view_scroll_input(
         col,
@@ -281,28 +244,6 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
                     crate::ui_search_panel::search_results_start_y(app, exp_area);
                 if row >= results_y {
                     app.global_search_scroll = app.global_search_scroll.saturating_add(spd);
-                }
-            } else if app.sidebar_view == crate::app::SidebarView::SourceControl
-                && app.source_control_repository_state
-                    == crate::app::SourceControlRepositoryState::Available
-            {
-                if let Some(exp_area) = app.source_control_detail_area() {
-                    let (changes_h, _) = crate::ui_source_control::source_control_split_heights(
-                        exp_area.height,
-                        app.sc_graph_collapsed,
-                        app.sc_graph_height,
-                    );
-                    let rel_y = row.saturating_sub(exp_area.y);
-                    if rel_y >= changes_h {
-                        let max = (app.git_log.len() + usize::from(app.git_history_has_footer())).saturating_sub(1);
-                        app.git_log_scroll = (app.git_log_scroll + spd).min(max);
-                    } else {
-                        let max = app.source_control_layout().max_scroll(
-                            crate::ui_source_control::source_control_file_list_visible_rows(changes_h));
-                        app.source_control_scroll = (app.source_control_scroll + spd).min(max);
-                    }
-                } else {
-                    app.source_control_scroll = 0;
                 }
             } else if app.sidebar_view == crate::app::SidebarView::Extensions {
                 let visible = usize::from(app.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT).max(1);

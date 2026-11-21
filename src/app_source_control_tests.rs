@@ -59,6 +59,7 @@ fn status_refresh_prunes_selection_when_a_file_moves_into_a_hidden_group() {
 #[test]
 fn filtered_keyboard_navigation_keeps_selected_rows_in_view_across_collapsed_groups() {
     let mut app = App::test_new();
+    app.sidebar_view = SidebarView::SourceControl;
     app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
     app.sc_graph_collapsed = true;
     app.explorer_area = Some(Rect::new(0, 0, 40, 16));

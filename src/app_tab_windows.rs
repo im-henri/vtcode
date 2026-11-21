@@ -341,7 +341,6 @@ impl App {
             "show_explorer"
             | "toggle_explorer"
             | "toggle_sidebar"
-            | "source_control"
             | "extensions"
             | "global_search"
             | "toggle_panel"

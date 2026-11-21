@@ -509,37 +509,7 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
             return;
         }
     }
-    // Right-click on source-control changed file opens source-control context menu
-    if let Some(exp_area) = app.source_control_detail_area() {
-        if app.sidebar_view == crate::app::SidebarView::SourceControl
-            && app.source_control_repository_state
-                == crate::app::SourceControlRepositoryState::Available
-            && col >= exp_area.x
-            && col < exp_area.x + exp_area.width
-            && row >= exp_area.y
-            && row < exp_area.y + exp_area.height
-        {
-            let rel_y = row.saturating_sub(exp_area.y);
-            let (changes_h, _) = crate::ui_source_control::source_control_split_heights(
-                exp_area.height,
-                app.sc_graph_collapsed,
-                app.sc_graph_height,
-            );
-            if rel_y >= 6 && rel_y < changes_h {
-                let list_row = (rel_y - 6) as usize;
-                let layout = app.source_control_layout();
-                if let Some(crate::source_control_rows::Row::File(file_idx)) =
-                    layout.rows(app.source_control_scroll).nth(list_row)
-                {
-                    app.preserve_source_control_selection(file_idx);
-                    if let Some(change) = app.source_control_files.get(file_idx).cloned() {
-                        app.open_source_control_context_menu(col, row, change);
-                    }
-                    return;
-                }
-            }
-        }
-    }
+    if crate::ui_source_control::right_click(app, col, row) { return; }
     // Right-click in explorer opens explorer context menu
     if let Some(exp_area) = app.explorer_area {
         if app.sidebar_view == crate::app::SidebarView::Explorer

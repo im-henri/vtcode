@@ -59,6 +59,118 @@ fn moving_between_windows_retains_the_edited_view() {
 }
 
 #[test]
+fn source_control_tab_keeps_its_draft_when_detached_and_returned() {
+    let root = tempfile::tempdir().unwrap();
+    let mut app = app_with_tabs(&["one.txt"]);
+    app.explorer = crate::explorer::FileExplorer::new_deferred(root.path().to_owned());
+    app.show_explorer = true;
+    app.sidebar_view = SidebarView::SourceControl;
+    app.explorer_width = 30;
+    app.source_control_repository_state = SourceControlRepositoryState::Available;
+    app.source_control_commit_msg = "draft".into();
+    app.source_control_commit_cursor = 5;
+    let mut terminal = Terminal::new(TestBackend::new(125, 32)).unwrap();
+    let draw = |terminal: &mut Terminal<TestBackend>, app: &mut App| {
+        terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+    };
+    let click = |app: &mut App, area: Rect| {
+        for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
+            crate::mouse::handle_mouse(app, MouseEvent { kind, column: area.x, row: area.y, modifiers: KeyModifiers::NONE });
+        }
+    };
+
+    draw(&mut terminal, &mut app);
+    let open = app.source_control_placement_area.unwrap();
+    click(&mut app, open);
+    let view = app.editor().unwrap().navigation_id;
+    assert!(app.source_control_tab_active());
+    assert_eq!(app.sidebar_view, SidebarView::Explorer);
+    draw(&mut terminal, &mut app);
+    let detach = app.source_control_placement_area.unwrap();
+    click(&mut app, detach);
+    assert!(matches!(app.tab_window_request.take(), Some(Request::Open { view: id, .. }) if id == view));
+    assert!(app.open_detached_window(1, view));
+
+    // The same activity shortcut finds the existing view, even in a different window.
+    app.activate_activity_item(2);
+    assert!(matches!(app.tab_window_request.take(), Some(Request::FocusSourceControl { view: id, window: 1 }) if id == view));
+    assert!(app.activate_window(1));
+    app.source_control_repository_state = SourceControlRepositoryState::Available;
+    draw(&mut terminal, &mut app);
+    assert!(screen_text(&terminal).contains("⑂ Source Control"));
+    let panels = crate::ui_source_control::Panels::visible(&app).unwrap();
+    assert!(panels.side_by_side);
+    assert!(panels.changes.right() < panels.graph.x);
+    assert!(app.explorer_area.is_none());
+    assert!(app.code_area.is_none());
+    for code in [KeyCode::Char('m'), KeyCode::End, KeyCode::Char('!')] {
+        crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+    assert_eq!(app.source_control_commit_msg, "draft!");
+    let reattach = app.source_control_placement_area.unwrap();
+    click(&mut app, reattach);
+    assert!(matches!(app.tab_window_request.take(), Some(Request::Move { view: id, window: MAIN_WINDOW }) if id == view));
+
+    assert!(app.return_detached_tabs(1));
+    assert_eq!(app.tab_window(view), Some(MAIN_WINDOW));
+    app.open_source_control_tab(false);
+    assert_eq!(app.editor().unwrap().navigation_id, view);
+    draw(&mut terminal, &mut app);
+    let actions = app.source_control_actions_area.unwrap();
+    click(&mut app, actions);
+    assert!(app.context_menu_items.iter().any(|item| item.id == "source_control_move_sidebar"));
+    app.execute_palette_command("source_control_move_sidebar");
+    assert!(app.source_control_sidebar_visible());
+    assert!(app.tab_location(view).is_none());
+    assert_eq!(app.source_control_commit_msg, "draft!");
+}
+
+#[test]
+fn source_control_tab_is_restored_in_the_workbench_session() {
+    let root = tempfile::tempdir().unwrap();
+    let mut app = App::new(root.path().to_owned());
+    app.open_source_control_tab(false);
+    let session = app.build_session();
+    let mut restored = App::new(root.path().to_owned());
+    restored.restore_session(&session);
+    assert!(restored.source_control_tab_active());
+    assert_eq!(restored.editor().unwrap().display_name(), "Source Control");
+    assert!(restored.editor().unwrap().file_path.is_none());
+}
+
+#[test]
+fn source_control_tab_in_an_inactive_split_accepts_commit_input() {
+    use crate::text_input::TextInputId;
+
+    let root = tempfile::tempdir().unwrap();
+    let mut app = app_with_tabs(&["one.txt"]);
+    app.explorer = crate::explorer::FileExplorer::new_deferred(root.path().to_owned());
+    app.show_explorer = false;
+    app.open_source_control_tab(false);
+    let file_group = app.active_group;
+    app.create_split_group_dir(app.active_tab, SplitDirection::Horizontal);
+    assert_ne!(app.active_group, file_group);
+    app.switch_group(file_group);
+    app.source_control_repository_state = SourceControlRepositoryState::Available;
+    let mut terminal = Terminal::new(TestBackend::new(120, 28)).unwrap();
+    terminal.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+    let (source_group, _) = app.source_control_tab_surface().unwrap();
+    assert_ne!(source_group, app.active_group);
+    let panels = crate::ui_source_control::Panels::visible(&app).unwrap();
+    assert!(!panels.side_by_side);
+    assert_eq!(panels.changes.bottom(), panels.graph.y);
+    let area = app.text_input_area(TextInputId::SourceControlCommit).unwrap();
+    crate::mouse::handle_mouse(&mut app, MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left), column: area.x, row: area.y, modifiers: KeyModifiers::NONE,
+    });
+    assert_eq!(app.active_group, source_group);
+    assert!(app.source_control_has_focus());
+    assert_eq!(app.focused_text_input_id(), Some(TextInputId::SourceControlCommit));
+    crate::input_keyboard::handle_keyboard_event(&mut app, KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+    assert_eq!(app.source_control_commit_msg, "a");
+}
+
+#[test]
 fn opening_a_file_in_a_new_window_loads_it_only_in_that_window() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("new.txt");

@@ -258,6 +258,11 @@ Activity Bar to Left** or use **Activity Bar Position** under **Settings → Wor
 In Top mode, the panel icon before **New Desk** or the desk picker hides and reopens
 the sidebar. **View → Sidebar** (`Ctrl+B`) works in either layout.
 
+In Source Control, choose **Actions → Open in Editor** to use it as a tab, or
+**Open in New Window** to detach it directly. The tab’s toolbar and tab context
+menu can move it to another window. Use **Actions → Move to Sidebar** from the
+main window to put it back.
+
 **File Associations** also updates file icons throughout the Explorer, editor tabs,
 breadcrumbs, Quick Open, and Source Control. Explicit associations override built-in
 file types; for example, associating `*.rs` with C++ uses the C++ language and icon.

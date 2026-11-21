@@ -264,6 +264,7 @@ impl App {
             for (index, tab) in tabs.iter().enumerate() {
                 let kind = match tab.kind {
                     TabKind::Settings => "settings",
+                    TabKind::SourceControl => "source_control",
                     TabKind::KeyboardShortcuts => "keys",
                     TabKind::MarkdownPreview => "markdown",
                     _ => continue,
@@ -437,6 +438,7 @@ impl App {
         for tool in &saved.tools {
             let kind = match tool.kind.as_str() {
                 "settings" => TabKind::Settings,
+                "source_control" => TabKind::SourceControl,
                 "keys" => TabKind::KeyboardShortcuts,
                 "markdown" => TabKind::MarkdownPreview,
                 _ => continue,
@@ -454,7 +456,11 @@ impl App {
             editor.read_only = true;
             editor.scroll_offset = tool.scroll;
             let view = editor.navigation_id;
-            let mut tab = Tab::new_file(editor);
+            let mut tab = if kind == TabKind::SourceControl {
+                Tab::new_source_control(editor)
+            } else {
+                Tab::new_file(editor)
+            };
             tab.kind = kind;
             tab.pinned = tool.pinned;
             tab.text_color = tool.text_color;
@@ -887,7 +893,12 @@ impl App {
                 pane.active_tab = self.groups[source].active_tab;
                 pane.tab_scroll_offset = self.groups[source].tab_scroll_offset;
                 pane.tab_mru_order = self.groups[source].tab_mru_order.clone();
-                for tab in &self.groups[source].tabs {
+                for (index, tab) in self.groups[source].tabs.iter().enumerate() {
+                    if tab.kind == TabKind::SourceControl {
+                        pane.active_tab -= usize::from(index < pane.active_tab);
+                        crate::tab_collection::removed(&mut pane.tab_mru_order, index);
+                        continue;
+                    }
                     let clone = self.clone_desk_tab(tab);
                     if let Some(&old_group) = self.desks.membership.get(&tab.editor.navigation_id) {
                         let new_group = *group_remap
@@ -903,6 +914,7 @@ impl App {
                     }
                     pane.tabs.push(clone);
                 }
+                pane.active_tab = pane.active_tab.min(pane.tabs.len().saturating_sub(1));
                 remap.insert(source, self.groups.len());
                 self.groups.push(pane);
             }
@@ -1132,7 +1144,7 @@ impl App {
             for tab in self
                 .tabs
                 .iter()
-                .filter(|t| ids.contains(&t.editor.navigation_id))
+                .filter(|t| t.kind != TabKind::SourceControl && ids.contains(&t.editor.navigation_id))
             {
                 moving.push(self.clone_desk_tab(tab));
             }

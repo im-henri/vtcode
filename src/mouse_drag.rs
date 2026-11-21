@@ -530,34 +530,7 @@ pub(crate) fn handle_left_drag(
         app.mouse_row = row;
         return;
     }
-    if !app.resizing_sc_graph {
-        if let Some((start_col, start_row)) = app.sc_graph_click_start {
-            if col != start_col || row != start_row {
-                app.resizing_sc_graph = true;
-                app.sc_graph_click_start = None;
-            }
-        }
-    }
-    // Drag to resize bottom panel
-    if app.resizing_sc_graph {
-        if app.sidebar_view == crate::app::SidebarView::SourceControl {
-            if let Some(exp_area) = app.source_control_detail_area() {
-                let total_h = exp_area.height;
-                let max_graph = total_h.saturating_sub(8);
-                if max_graph >= 2 {
-                    let min_graph = 6u16.min(max_graph);
-                    let desired_graph_h = exp_area
-                        .y
-                        .saturating_add(exp_area.height)
-                        .saturating_sub(row)
-                        .max(1);
-                    app.sc_graph_height = desired_graph_h.clamp(min_graph, max_graph);
-                    app.sc_graph_collapsed = false;
-                }
-            }
-        }
-        return;
-    }
+    if crate::ui_source_control::drag_graph_header(app, col, row) { return; }
     // Drag to resize bottom panel
     if app.resizing_panel {
         // A press or a stationary drag must not change a maximized panel.
@@ -931,16 +904,7 @@ pub(crate) fn handle_left_up(app: &mut App, col: u16, row: u16, modifiers: KeyMo
         app.drag_has_moved = false;
         return;
     }
-    if app.sidebar_view == crate::app::SidebarView::SourceControl {
-        if app.sc_graph_click_start.take().is_some() && !app.resizing_sc_graph {
-            app.sc_graph_collapsed = !app.sc_graph_collapsed;
-            if !app.sc_graph_collapsed && app.git_log.is_empty() {
-                app.refresh_git_log_async();
-            }
-        }
-    } else {
-        app.sc_graph_click_start = None;
-    }
+    crate::ui_source_control::release_graph_header(app);
     if app.drag_has_moved {
         if !app.viewport_area.is_empty()
             && !app.viewport_area.contains((col, row).into())

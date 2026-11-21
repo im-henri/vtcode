@@ -1140,6 +1140,9 @@ fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, 
         app.refresh_file_search_view(group_id);
         if pending_diff {
             crate::ui_loading::draw_diff(f, app, pane_layout[2]);
+        } else if current_tab_kind == Some(crate::app::TabKind::SourceControl) {
+            app.settings_editor_active = false;
+            crate::ui_source_control::draw_tab(f, app, pane_layout[2]);
         } else if let Some(crate::app::TabKind::RemoteConnection(id)) = current_tab_kind {
             app.settings_editor_active = false;
             crate::ui_remote_targets::draw_connection_tab(f, app, pane_layout[2], id);
@@ -1367,7 +1370,11 @@ pub(crate) fn draw_editor_section_with_pending_diff(
     }
 
     // Settings/Keyboard Shortcuts tab view
-    if !is_split && let Some(crate::app::TabKind::RemoteConnection(id)) = current_tab_kind {
+    if !is_split && current_tab_kind == Some(crate::app::TabKind::SourceControl) {
+        app.settings_editor_active = false;
+        crate::ui_source_control::draw_tab(f, app, layout[2]);
+        return;
+    } else if !is_split && let Some(crate::app::TabKind::RemoteConnection(id)) = current_tab_kind {
         app.settings_editor_active = false;
         app.editor_area = Some(layout[2]);
         crate::ui_remote_targets::draw_connection_tab(f, app, layout[2], id);

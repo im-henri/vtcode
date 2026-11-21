@@ -420,7 +420,7 @@ impl App {
                 self.paste_editor_clipboard(false);
             }
             "select_all" => {
-                if self.active_pane == ActivePane::Explorer && self.sidebar_view == crate::app::SidebarView::SourceControl
+                if self.source_control_has_focus()
                     && !self.source_control_input_mode && !self.sc_graph_focused {
                     self.select_all_source_control_files();
                     return true;
@@ -516,17 +516,17 @@ impl App {
                 }
             }
             "source_control" => {
-                // Toggle source control sidebar
-                if self.sidebar_view == crate::app::SidebarView::SourceControl && self.sidebar_is_visible()
-                {
-                    self.show_explorer = false;
-                } else {
-                    self.sidebar_view = crate::app::SidebarView::SourceControl;
-                    self.activity_bar_selected = 2;
-                    self.reveal_sidebar();
-                    self.refresh_source_control_async();
-                    self.refresh_git_log_async();
-                    self.source_control_input_mode = false;
+                self.toggle_source_control_view();
+            }
+            "source_control_open_editor" => self.open_source_control_tab(false),
+            "source_control_new_window" => self.open_source_control_tab(true),
+            "source_control_move_sidebar" => self.move_source_control_to_sidebar(),
+            "source_control_main_window" => {
+                if self.detached_window_id().is_some() && self.source_control_tab_active() {
+                    self.tab_window_request = Some(crate::tab_windows::Request::Move {
+                        view: self.tabs[self.active_tab].editor.navigation_id,
+                        window: crate::tab_windows::MAIN_WINDOW,
+                    });
                 }
             }
             "extensions" => {

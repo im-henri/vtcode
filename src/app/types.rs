@@ -1721,6 +1721,7 @@ pub enum TerminalDock {
 pub enum TabKind {
     File,
     GitRevision,
+    SourceControl,
     CommitDetails,
     AmendCommit,
     Diff(u64),
@@ -1861,6 +1862,12 @@ impl Tab {
             file_search: Default::default(),
             terminal_idx: None,
         }
+    }
+
+    pub(crate) fn new_source_control(mut editor: Editor) -> Self {
+        editor.suggested_file_name = Some("Source Control".into());
+        editor.read_only = true;
+        Self { kind: TabKind::SourceControl, ..Self::new_file(editor) }
     }
 }
 

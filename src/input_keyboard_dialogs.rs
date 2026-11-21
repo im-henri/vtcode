@@ -7,10 +7,7 @@ use crate::app::App;
 /// Returns `Some(false)` if handled, `None` if not applicable.
 pub(crate) fn handle_commit_input_key(app: &mut App, key: crossterm::event::KeyEvent) -> Option<bool> {
     if app.current_git_operation().is_some() { app.source_control_input_mode = false; return None; }
-    if !(app.sidebar_view == crate::app::SidebarView::SourceControl
-        && app.active_pane == crate::app::ActivePane::Explorer
-        && app.source_control_input_mode)
-    {
+    if !app.source_control_has_focus() || !app.source_control_input_mode {
         return None;
     }
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);

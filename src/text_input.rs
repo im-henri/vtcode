@@ -942,8 +942,9 @@ impl App {
                 self.active_pane = crate::app::ActivePane::Explorer;
             }
             TextInputId::SourceControlCommit => {
+                self.focus_source_control_surface();
+                self.sc_graph_focused = false;
                 self.source_control_input_mode = true;
-                self.active_pane = crate::app::ActivePane::Explorer;
             }
             _ => {}
         }
@@ -1068,8 +1069,7 @@ impl App {
         {
             return Some(TextInputId::SettingsSearch);
         }
-        if self.sidebar_view == crate::app::SidebarView::SourceControl
-            && self.active_pane == crate::app::ActivePane::Explorer
+        if self.source_control_has_focus()
             && self.source_control_input_mode
             && self.current_git_operation().is_none()
         {

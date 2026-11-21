@@ -1,5 +1,5 @@
 use crate::{
-    app::{App, GitFileChange, SidebarView, SourceControlRepositoryState},
+    app::{App, GitFileChange, SourceControlRepositoryState},
     background::{BackgroundResult, CancellationToken},
 };
 use ratatui::layout::Rect;
@@ -149,8 +149,7 @@ fn hit(app: &App) -> Option<(&GitFileChange, Rect)> {
         || actions.contains(point)
         || !app.workspace_visible
         || !app.terminal_has_focus
-        || !app.sidebar_is_visible()
-        || app.sidebar_view != SidebarView::SourceControl
+        || app.source_control_view_area().is_none()
         || app.source_control_repository_state != SourceControlRepositoryState::Available
         || app.sc_context_active
         || app.context_menu_active

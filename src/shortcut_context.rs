@@ -476,7 +476,7 @@ impl<'a> Context<'a> {
             Key::SearchResults => search_results && input.is_none(),
             Key::FindInput => find,
             Key::FindVisible => app.file_search_visible(),
-            Key::SourceControl => sidebar && app.sidebar_view == SidebarView::SourceControl,
+            Key::SourceControl => !self.shell_focus() && app.source_control_has_focus(),
             Key::Remote => sidebar && app.sidebar_view == SidebarView::Remote,
             Key::Settings => settings,
             Key::Keybindings => !self.shell_focus() && crate::ui_keybindings::focused(app),

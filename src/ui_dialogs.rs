@@ -29,6 +29,7 @@ pub(crate) fn tab_icon(tab: &crate::app::Tab) -> &'static str {
     match tab.kind {
         crate::app::TabKind::File | crate::app::TabKind::GitRevision => crate::file_icons::for_editor(&tab.editor).0,
         crate::app::TabKind::Diff(_) => "↔ ",
+        crate::app::TabKind::SourceControl => "⑂ ",
         crate::app::TabKind::CommitDetails | crate::app::TabKind::AmendCommit => "◈ ",
         crate::app::TabKind::MarkdownPreview => "Md ",
         crate::app::TabKind::Settings => "≡ ",

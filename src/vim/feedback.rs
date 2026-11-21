@@ -52,6 +52,7 @@ pub(crate) fn context(app: &App) -> Option<&'static str> {
     }
     Some(match app.tabs.get(app.active_tab).map(|t| t.kind) {
         Some(TabKind::Settings) => "SETTINGS",
+        Some(TabKind::SourceControl) => "SOURCE CONTROL",
         Some(TabKind::KeyboardShortcuts) => "SHORTCUTS",
         Some(TabKind::MarkdownPreview) => "PREVIEW",
         Some(TabKind::Diff(_)) => "DIFF",

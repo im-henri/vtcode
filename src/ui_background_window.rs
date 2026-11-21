@@ -56,6 +56,7 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, window: WindowId) {
     let panel = std::mem::take(&mut app.panel_chrome);
     app.panel_chrome.maximized = panel.maximized;
     let dock_handle = app.terminal_sidebar.handle;
+    let source_control_tab_area = app.source_control_tab_area.take();
 
     app.rendering_background_window = true;
     let comparison = if let Some(layout) = &mut projection {
@@ -108,4 +109,5 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, window: WindowId) {
     app.split_layout_cache = split_layout;
     app.panel_chrome = panel;
     app.terminal_sidebar.handle = dock_handle;
+    app.source_control_tab_area = source_control_tab_area;
 }

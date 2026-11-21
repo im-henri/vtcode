@@ -490,7 +490,7 @@ fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
     if app.active_pane == ActivePane::Panel && app.show_panel && matches!(app.panel_tab, 1 | 3) {
         return panel_list_key(app, key);
     }
-    if app.active_pane == ActivePane::Explorer && app.show_explorer {
+    if (app.active_pane == ActivePane::Explorer && app.show_explorer) || app.source_control_has_focus() {
         return explorer_key(app, key, event);
     }
     if app.active_pane == ActivePane::Editor && !vim_tab(app) {
@@ -554,7 +554,7 @@ fn explorer_key(app: &mut App, key: Key, _event: KeyEvent) -> Option<bool> {
         app.vim_window_prefix = true;
         return Some(false);
     }
-    let view = app.sidebar_view;
+    let view = if app.source_control_has_focus() { SidebarView::SourceControl } else { app.sidebar_view };
     let pending = std::mem::take(&mut app.vim_explorer_pending);
     let Some(c) = key.char() else {
         if key.is_ctrl('d') { for _ in 0..10 { translate(app, KeyCode::Down); } return Some(false); }
@@ -1327,6 +1327,7 @@ fn command(app: &mut App, id: &str) -> Result<(), String> {
 fn revealed_sidebar(app: &App, (view, visible): (crate::app::SidebarView, bool)) -> bool {
     use crate::app::SidebarView;
     app.sidebar_is_visible()
+        && !(view == SidebarView::SourceControl && app.sidebar_view == SidebarView::Explorer && app.source_control_tab_active())
         && !(visible && view == app.sidebar_view)
         && matches!(app.sidebar_view, SidebarView::Explorer | SidebarView::SourceControl | SidebarView::Extensions | SidebarView::Remote)
         && app.active_pane != ActivePane::Explorer

@@ -518,10 +518,10 @@ impl App {
     }
 
     pub(crate) fn source_control_detail_area(&self) -> Option<Rect> {
-        if !self.sidebar_is_visible() || (self.repositories.discovered && !self.repositories.expanded) {
+        if self.repositories.discovered && !self.repositories.expanded {
             return None;
         }
-        self.repositories.detail_area.or(self.explorer_area)
+        self.source_control_view_area().map(|area| self.repositories.detail_area.unwrap_or(area))
     }
 
     pub(crate) fn source_control_change_count(&self) -> usize {

@@ -59,6 +59,10 @@ impl App {
     }
 
     pub(crate) fn activate_activity_item(&mut self, index: usize) {
+        if index == 2 {
+            self.toggle_source_control_view();
+            return;
+        }
         if index == ACTIVITY_SETTINGS_INDEX {
             self.execute_palette_command("settings");
             return;
@@ -66,7 +70,6 @@ impl App {
         let view = match index {
             0 => SidebarView::Explorer,
             1 => SidebarView::Search,
-            2 => SidebarView::SourceControl,
             3 => SidebarView::Remote,
             4 => SidebarView::Extensions,
             _ => return,
@@ -91,15 +94,9 @@ impl App {
         match view {
             SidebarView::Explorer => return self.show_explorer_view(),
             SidebarView::Search => self.focus_global_search(),
-            SidebarView::SourceControl => {
-                self.show_explorer = true;
-                self.sidebar_view = view;
-                self.refresh_source_control_async();
-                self.refresh_git_log_async();
-            }
             SidebarView::Remote => self.open_remote_sidebar(),
             SidebarView::Extensions => self.open_extensions_sidebar(),
-            SidebarView::Settings => unreachable!(),
+            SidebarView::Settings | SidebarView::SourceControl => unreachable!(),
         }
         if self.show_explorer {
             self.reveal_sidebar();

@@ -142,6 +142,8 @@ impl App {
             PaletteCommand { name: "File: Open Folder...".into(), shortcut: String::new(), id: Cow::Borrowed("change_dir") },
             PaletteCommand { name: "File: Open Parent Folder".into(), shortcut: String::new(), id: Cow::Borrowed("open_parent") },
             PaletteCommand { name: "Git: Open Source Control".into(), shortcut: "Ctrl+Shift+G".into(), id: Cow::Borrowed("source_control") },
+            PaletteCommand { name: "Git: Open Source Control in Editor".into(), shortcut: String::new(), id: Cow::Borrowed("source_control_open_editor") },
+            PaletteCommand { name: "Git: Open Source Control in New Window".into(), shortcut: String::new(), id: Cow::Borrowed("source_control_new_window") },
             PaletteCommand { name: "View: Open Remote".into(), shortcut: String::new(), id: Cow::Borrowed("remote") },
             PaletteCommand { name: "Remote: Connect to Target…".into(), shortcut: String::new(), id: Cow::Borrowed("remote_connect") },
             PaletteCommand { name: "Remote: Add Target…".into(), shortcut: String::new(), id: Cow::Borrowed("remote_target_add") },
