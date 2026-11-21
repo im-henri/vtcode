@@ -24,6 +24,25 @@ impl DiffAlgorithm {
     }
 }
 
+/// Bound diff preparation on the UI thread by both bytes and logical lines.
+pub(crate) fn fits_interactive_budget(base: &str, target: &str) -> bool {
+    const MAX_BYTES: usize = 256 * 1024;
+    const MAX_LINES: usize = 2000;
+
+    base.len().saturating_add(target.len()) <= MAX_BYTES
+        && [base, target].into_iter().all(|text| {
+            let bytes = text.as_bytes();
+            let endings = memchr::memchr2_iter(b'\r', b'\n', bytes)
+                .filter(|&index| bytes[index] == b'\n' || bytes.get(index + 1) != Some(&b'\n'))
+                .take(MAX_LINES + 1)
+                .count();
+            let unterminated = bytes
+                .last()
+                .is_some_and(|byte| !matches!(byte, b'\r' | b'\n'));
+            endings + usize::from(unterminated) <= MAX_LINES
+        })
+}
+
 pub(crate) fn file_diff(base: &str, target: &str, algorithm: DiffAlgorithm) -> Vec<(char, String)> {
     // Avoid copying files that are already LF-normalized.
     fn normalize(text: &str) -> std::borrow::Cow<'_, str> {
@@ -130,7 +149,7 @@ pub(crate) fn moved_lines(lines: &[(char, String)]) -> Option<Vec<bool>> {
             if *kind != change {
                 continue;
             }
-            let text = text.trim();
+            let text = move_text(text);
             let slot = if side == 0 {
                 if !text.chars().any(char::is_alphanumeric) {
                     continue;
@@ -149,6 +168,23 @@ pub(crate) fn moved_lines(lines: &[(char, String)]) -> Option<Vec<bool>> {
         }
     }
 
+    candidates.retain(|_, sides| match *sides {
+        [Some(a), Some(b)] => a.row != usize::MAX && b.row != usize::MAX && a.hunk != b.hunk,
+        _ => false,
+    });
+    if candidates.is_empty() {
+        return None;
+    }
+    // A retained copy makes a line ambiguous. It can still be matched as a
+    // neighbor of a distinctive anchor in the same moved block.
+    for (kind, text) in lines {
+        if *kind == ' ' {
+            candidates.remove(move_text(text));
+            if candidates.is_empty() {
+                return None;
+            }
+        }
+    }
     let mut seeds: Vec<_> = candidates
         .into_iter()
         .filter_map(|(text, sides)| {
@@ -156,16 +192,13 @@ pub(crate) fn moved_lines(lines: &[(char, String)]) -> Option<Vec<bool>> {
                 return None;
             };
             let (old, new) = if first == '-' { (a, b) } else { (b, a) };
-            (old.row != usize::MAX && new.row != usize::MAX && old.hunk != new.hunk)
-                .then_some((old.row, new.row, text))
+            Some((old.row, new.row, text))
         })
         .collect();
-    if seeds.is_empty() {
-        return None;
-    }
     seeds.sort_unstable_by_key(|&(old, _, _)| old);
     let mut moved = vec![false; lines.len()];
-    let same = |old: usize, new: usize| matches!((lines.get(old), lines.get(new)), (Some(('-', a)), Some(('+', b))) if a.trim() == b.trim());
+    let same = |old: usize, new: usize| matches!((lines.get(old), lines.get(new)), (Some(('-', a)), Some(('+', b))) if move_text(a) == move_text(b));
+    let mut found = false;
     for (old, new, text) in seeds {
         if moved[old] || moved[new] {
             continue;
@@ -185,9 +218,16 @@ pub(crate) fn moved_lines(lines: &[(char, String)]) -> Option<Vec<bool>> {
         if before + after > 1 || text.chars().take(4).count() == 4 {
             moved[old - before..old + after].fill(true);
             moved[new - before..new + after].fill(true);
+            found = true;
         }
     }
-    Some(moved)
+    found.then_some(moved)
+}
+
+fn move_text(line: &str) -> &str {
+    // Allow reindentation while retaining meaningful whitespace at the end
+    // of a nonblank line, such as a Markdown hard break.
+    line.trim_start_matches([' ', '\t'])
 }
 
 const MAX_PAIR_CANDIDATES: usize = 4096;
@@ -206,14 +246,8 @@ pub(crate) fn replacement_pairs(
         return Vec::new();
     }
 
-    let old_words: Vec<_> = old
-        .iter()
-        .map(|(_, line)| significant_words(line))
-        .collect();
-    let new_words: Vec<_> = new
-        .iter()
-        .map(|(_, line)| significant_words(line))
-        .collect();
+    let old_lines = replacement_lines(old, old_moved);
+    let new_lines = replacement_lines(new, new_moved);
     let columns = new.len() + 1;
     let mut scores = vec![0; (old.len() + 1) * columns];
     let mut matched = vec![false; scores.len()];
@@ -221,17 +255,10 @@ pub(crate) fn replacement_pairs(
         for right in (0..new.len()).rev() {
             let cell = left * columns + right;
             let skip = scores[cell + 1].max(scores[cell + columns]);
-            let similarity =
-                if old_moved.get(left) == Some(&true) || new_moved.get(right) == Some(&true) {
-                    0
-                } else {
-                    line_similarity(
-                        &old[left].1,
-                        &new[right].1,
-                        &old_words[left],
-                        &new_words[right],
-                    )
-                };
+            let similarity = match (&old_lines[left], &new_lines[right]) {
+                (Some(old), Some(new)) => line_similarity(old, new),
+                _ => 0,
+            };
             let paired = scores[cell + columns + 1] + similarity;
             matched[cell] = similarity > 0 && paired >= skip;
             scores[cell] = if matched[cell] { paired } else { skip };
@@ -255,22 +282,37 @@ pub(crate) fn replacement_pairs(
     pairs
 }
 
-fn significant_words(line: &str) -> Vec<&str> {
-    if line.len() > MAX_LINE_BYTES {
-        return Vec::new();
-    }
-    let mut words: Vec<_> = line.unicode_words().collect();
-    words.sort_unstable();
-    words
+struct ReplacementLine<'a> {
+    text: &'a str,
+    words: Vec<&'a str>,
 }
 
-fn line_similarity(old: &str, new: &str, old_words: &[&str], new_words: &[&str]) -> usize {
-    let (old, new) = (old.trim(), new.trim());
-    if old.len().max(new.len()) > MAX_LINE_BYTES {
-        return 0;
-    }
+fn replacement_lines<'a>(
+    lines: &'a [(char, String)],
+    moved: &[bool],
+) -> Vec<Option<ReplacementLine<'a>>> {
+    lines
+        .iter()
+        .enumerate()
+        .map(|(index, (_, line))| {
+            // Include indentation and trailing whitespace in the budget because
+            // the highlight pass will process the full original line.
+            if line.len() > MAX_LINE_BYTES || moved.get(index) == Some(&true) {
+                return None;
+            }
+            let text = line.trim();
+            let mut words: Vec<_> = text.unicode_words().collect();
+            words.sort_unstable();
+            Some(ReplacementLine { text, words })
+        })
+        .collect()
+}
+
+fn line_similarity(old: &ReplacementLine<'_>, new: &ReplacementLine<'_>) -> usize {
+    let (old_words, new_words) = (&old.words, &new.words);
+    let (old, new) = (old.text, new.text);
     if old == new {
-        return 100;
+        return 250;
     }
 
     let mut old_iter = old_words.iter().peekable();
@@ -300,7 +342,13 @@ fn line_similarity(old: &str, new: &str, old_words: &[&str], new_words: &[&str])
     // Shared words also give a small boost to borderline prefix/suffix
     // matches, such as a renamed identifier on a line with a new literal.
     let score = word_score.max(edge_score + (100 - edge_score) * word_score / 400);
-    if score >= 50 { score } else { 0 }
+    // Break ties between lines with the same words by preferring shared
+    // ordered text. An exact (trimmed) match earns the maximum score above.
+    if score >= 50 {
+        2 * score + edge_score / 2
+    } else {
+        0
+    }
 }
 
 /// Return shared UTF-8 byte lengths at both ends, without overlapping.
@@ -359,6 +407,21 @@ pub(crate) fn word_highlights(old: &str, new: &str) -> (Vec<bool>, Vec<bool>) {
         }
         for token in &new_tokens[new_range] {
             append(&mut new_mask, token, tag != DiffTag::Equal);
+        }
+    }
+    // Unicode word boundaries can fall inside a grapheme, such as when
+    // a prepend character attaches to punctuation. Paint the whole cluster.
+    for (text, mask) in [(old, &mut old_mask), (new, &mut new_mask)] {
+        if !text.is_ascii() {
+            let mut offset = 0;
+            for grapheme in text.graphemes(true) {
+                let end = offset + grapheme.chars().count();
+                let flags = &mut mask[offset..end];
+                if flags.iter().any(|&changed| changed) {
+                    flags.fill(true);
+                }
+                offset = end;
+            }
         }
     }
     (old_mask, new_mask)
@@ -450,5 +513,123 @@ mod tests {
                 vec![false, false, false, true, true]
             ),
         );
+    }
+
+    #[test]
+    fn smart_diff_ignores_ambiguous_move_anchors_and_preserves_trailing_edits() {
+        for (base, target) in [
+            (
+                "start\nreport();\nsection one\nreport();\nsection two\nsection three\nend\n",
+                "start\nsection one\nreport();\nsection two\nsection three\nreport();\nend\n",
+            ),
+            (
+                "start\nhard break  \nsection one\nsection two\nsection three\nend\n",
+                "start\nsection one\nsection two\nsection three\nhard break\nend\n",
+            ),
+        ] {
+            let changes = file_diff(base, target, DiffAlgorithm::Smart);
+            assert!(changes.iter().any(|(kind, _)| *kind == '-'));
+            assert!(changes.iter().any(|(kind, _)| *kind == '+'));
+            assert!(moved_lines(&changes).is_none());
+        }
+    }
+
+    #[test]
+    fn smart_diff_prefers_identical_content_to_a_permutation_of_its_words() {
+        let old = [('-', "let n = sum(a, b);".to_owned())];
+        let new = [
+            ('+', "let n = sum(b, a);".to_owned()),
+            ('+', "    let n = sum(a, b);".to_owned()),
+        ];
+        assert_eq!(replacement_pairs(&old, &new, &[], &[]), [(0, 1)]);
+    }
+
+    #[test]
+    fn smart_diff_measures_full_line_bytes_before_pairing() {
+        let old = [('-', format!("{}same", " ".repeat(MAX_LINE_BYTES)))];
+        let new = [('+', format!("{}same", "\t".repeat(MAX_LINE_BYTES)))];
+        assert!(replacement_pairs(&old, &new, &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn smart_diff_highlights_graphemes_that_span_word_boundaries() {
+        assert_eq!(
+            word_highlights("\u{600}!", "\u{600}?"),
+            (vec![true, true], vec![true, true]),
+        );
+    }
+
+    #[test]
+    fn interactive_budget_counts_crlf_as_one_break_and_counts_lone_cr() {
+        assert!(fits_interactive_budget("", &"x\r\n".repeat(2000)));
+        assert!(!fits_interactive_budget("", &"x\r".repeat(2001)));
+        assert!(!fits_interactive_budget(
+            "",
+            &format!("{}x", "\n".repeat(2000))
+        ));
+        assert!(!fits_interactive_budget(&"x".repeat(256 * 1024), "x"));
+    }
+
+    #[test]
+    fn smart_diff_projects_both_revisions_in_order_across_layouts() {
+        fn source_row(row: &crate::app::AlignedDiffRow, original: bool) -> Option<(usize, &str)> {
+            if original {
+                row.left_line.map(|line| (line, row.left_text.as_str()))
+            } else {
+                row.right_line.map(|line| (line, row.right_text.as_str()))
+            }
+        }
+
+        fn file(seed: &mut u32) -> String {
+            let mut pick = |count: usize| {
+                *seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (*seed >> 16) as usize % count
+            };
+            let lines = [
+                "",
+                " ",
+                "{",
+                "    }",
+                "cafe\u{301}()",
+                "\u{600}!",
+                "🧑‍💻",
+                "abc();",
+            ];
+            let endings = ["\n", "\r\n", "\r"];
+            let mut text = String::new();
+            let count = pick(24);
+            for row in 0..count {
+                text.push_str(lines[pick(lines.len())]);
+                let ending = pick(endings.len() + usize::from(row + 1 == count));
+                text.push_str(endings.get(ending).copied().unwrap_or(""));
+            }
+            text
+        }
+
+        let mut seed = 1009;
+        for _ in 0..400 {
+            let base = file(&mut seed);
+            let target = file(&mut seed);
+            let changes = file_diff(&base, &target, DiffAlgorithm::Smart);
+            let cache = DiffRenderCache::with_algorithm(&changes, DiffAlgorithm::Smart);
+            for (original, text) in [(true, base), (false, target)] {
+                let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+                let expected: Vec<_> = normalized.lines().enumerate().collect();
+                let aligned: Vec<_> = cache
+                    .rows
+                    .iter()
+                    .filter_map(|row| source_row(row, original))
+                    .collect();
+                let omitted = if original { '+' } else { '-' };
+                let inline: Vec<_> = cache
+                    .inline_rows
+                    .iter()
+                    .filter(|row| row.kind != omitted)
+                    .filter_map(|row| source_row(&cache.rows[row.aligned_row], original))
+                    .collect();
+                assert_eq!(aligned, expected);
+                assert_eq!(inline, expected);
+            }
+        }
     }
 }

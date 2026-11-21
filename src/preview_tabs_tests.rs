@@ -352,6 +352,31 @@ fn snapshot_and_agent_diffs_follow_the_preview_setting() {
 }
 
 #[test]
+fn line_heavy_agent_diff_builds_in_background_and_uses_the_latest_algorithm() {
+    use crate::diff_algorithm::DiffAlgorithm::{Classic, Smart};
+
+    let (directory, mut app) = workspace();
+    app.set_diff_algorithm(Smart);
+    let base = "\n".repeat(2100);
+    let target = format!("{base}new\n");
+    let diff = vtcode::acp::protocol::Diff::new(directory.path().join("a.txt"), &target)
+        .old_text(&base);
+    app.open_acp_diff(&diff);
+    assert!(app.bg_diff_refresh_running, "line count alone should defer preparation");
+
+    app.set_diff_algorithm(Classic);
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+        !app.bg_diff_refresh_running && app.diff_render_cache.algorithm == Classic
+    });
+    assert_eq!(app.compare_base_content.as_deref(), Some(base.as_str()));
+    assert_eq!(app.editor().unwrap().rope.to_string(), target);
+    assert_eq!(
+        app.compare_diff_lines.last().map(|(kind, text)| (*kind, text.as_str())),
+        Some(('+', "new")),
+    );
+}
+
+#[test]
 fn preview_tab_is_italic_when_active_and_double_click_keeps_it_open() {
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::{Terminal, backend::TestBackend, layout::Rect, style::Modifier};

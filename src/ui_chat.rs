@@ -2166,10 +2166,7 @@ fn diff_rows(
     let before = diff.old_text.as_deref().unwrap_or_default();
     // Avoid doing expensive full-file diff work on a streamed transcript frame.
     // The complete snapshots remain available in the native Review action.
-    if before.len() + diff.new_text.len() > 256 * 1024
-        || before.lines().take(2001).count() > 2000
-        || diff.new_text.lines().take(2001).count() > 2000
-    {
+    if !crate::diff_algorithm::fits_interactive_budget(before, &diff.new_text) {
         plain(
             rows,
             format!(

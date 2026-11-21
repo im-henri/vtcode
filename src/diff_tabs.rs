@@ -1346,7 +1346,7 @@ impl App {
         self.diff_target_path = Some(diff.path.clone());
         self.diff_tab_label = Some(format!("{} (Agent diff)", self.tabs[self.active_tab].editor.file_display_name()));
         self.diff_mode = self.preferred_diff_mode;
-        if base.len() + diff.new_text.len() > 256 * 1024 {
+        if !crate::diff_algorithm::fits_interactive_budget(&base, &diff.new_text) {
             self.refresh_compare_diff();
         } else {
             let prepared = crate::background::PreparedDiffRefresh::new(
