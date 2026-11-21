@@ -421,6 +421,37 @@ fn background_frames_wait_only_for_damaged_windows_in_the_changed_workspace() {
 }
 
 #[test]
+fn theme_previews_from_a_detached_window_repaint_the_main_window_every_time() {
+    let mut app = app_with_tabs(&["main.txt", "detached.txt"]);
+    let view = app.tabs[1].editor.navigation_id;
+    assert!(app.open_detached_window(1, view));
+    assert!(app.activate_window(1));
+    app.terminal_has_focus = true;
+    let mut windows = Windows::new(&app);
+    windows.id = 1;
+    let mut main = Terminal::new(TestBackend::new(100, 24)).unwrap();
+    windows.invalidate_background();
+    windows.paint_main_background(&mut main, &mut app).unwrap();
+    assert!(!windows.background_draw_ready(true));
+
+    // Revisiting themes leaves their highlights cached, so no document
+    // change can hide a missing repaint.
+    for key in ["monokai", "nord", "dracula", "monokai", "nord", "dracula", "dark"] {
+        assert!(app.set_theme_by_key(key));
+        windows.invalidate_pending_workspace_redraw(&mut app);
+        assert!(windows.background_draw_ready(true), "{key}");
+        windows.paint_main_background(&mut main, &mut app).unwrap();
+        let background = app.colors.bg_editor;
+        assert!(
+            main.backend().buffer().content.iter().any(|cell| cell.bg == background),
+            "main window kept the previous palette after previewing {key}"
+        );
+        assert!(!windows.background_draw_ready(true));
+    }
+    assert_eq!(windows.active(), 1);
+}
+
+#[test]
 fn a_window_waiting_for_its_first_focused_frame_cannot_block_another_windows_input() {
     let mut windows = Windows::new(&App::test_new());
     let (input, queue) = mpsc::channel();

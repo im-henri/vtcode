@@ -1587,6 +1587,9 @@ impl App {
                 highlights_changed |= self.highlighter.register_theme(&selected.syntax_theme, syntax);
             }
             self.semantic_theme_colors = selected.semantic_colors.clone();
+            // Every window paints from these colors. A preview in one window
+            // must repaint the others even when no document changed.
+            self.tab_window_redraw_pending |= self.has_detached_windows();
             // Chat display preferences also save settings. Keep editor colors
             // and in-flight work intact unless the effective syntax changed.
             // Include registrations made by background theme installation.
