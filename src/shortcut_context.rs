@@ -481,7 +481,7 @@ impl<'a> Context<'a> {
             Key::SourceControl => !self.shell_focus() && app.source_control_has_focus(),
             Key::Remote => sidebar && app.sidebar_view == SidebarView::Remote,
             Key::Settings => settings,
-            Key::Keybindings => !self.shell_focus() && crate::ui_keybindings::focused(app),
+            Key::Keybindings => settings && crate::ui_settings_shortcuts::page_active(app),
             Key::Chat => chat,
             Key::Panel => app.active_pane == ActivePane::Panel || app.docked_terminal_has_focus(),
             Key::Input => text_editor || input.is_some(),

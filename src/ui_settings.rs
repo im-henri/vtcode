@@ -633,6 +633,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         .filter(|&&idx| App::setting_field_kind(&items[idx].2) != "heading")
         .count();
     let section = (!searching_all_settings).then(|| app.settings_selected_section(selected_category)).flatten();
+    let shortcut_table = crate::ui_settings_shortcuts::page_active(app);
     let spacious_header = settings_area.height >= 12;
     let heading = Line::from(vec![
         Span::styled(
@@ -645,10 +646,11 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(
             format!(
                 "  {setting_count} {}",
-                if setting_count == 1 {
-                    "setting"
-                } else {
-                    "settings"
+                match (shortcut_table, setting_count == 1) {
+                    (true, true) => "command",
+                    (true, false) => "commands",
+                    (false, true) => "setting",
+                    (false, false) => "settings",
                 }
             ),
             Style::default().fg(fg_dim).bg(bg),
@@ -692,7 +694,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
                 2 => "Appearance and editor layout",
                 3 => "Code assistance, navigation, and search",
                 4 => "Saving, file types, and large files",
-                5 => "Choose shortcuts for your workflow",
+                5 => "Double-click or press Enter to change a shortcut · Del removes it · search by key, e.g. ctrl+k",
                 6 => "Configure your coding agents",
                 7 => "Motion and visual effects in the editor",
                 8 => "Language intelligence and diagnostics",
@@ -712,7 +714,8 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             .style(Style::default().fg(border).bg(bg)),
             Rect::new(settings_area.x, settings_area.y + 2, settings_area.width, 1));
     }
-    let header_height = if spacious_header { 4 } else { 2 };
+    // The shortcut table's column header takes the spacer line under the rule.
+    let header_height = if spacious_header && !shortcut_table { 4 } else if spacious_header { 3 } else { 2 };
     let introduction = match section {
         Some(VTCOMPLETE_SECTION) => "Word suggestions use the active file as you type or press Ctrl+Space.",
         Some(GPTCOMPLETE_SECTION) => "The built-in language model runs locally and predicts text at the caret.",
@@ -745,6 +748,13 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
             .saturating_add(settings_area.height)
             .saturating_sub(content_y),
     );
+    let content_area = if shortcut_table && content_area.height > 1 {
+        crate::ui_settings_shortcuts::draw_header(f, app,
+            Rect::new(content_area.x, content_area.y, content_area.width.saturating_sub(1), 1));
+        Rect { y: content_area.y + 1, height: content_area.height - 1, ..content_area }
+    } else {
+        content_area
+    };
     app.settings_sidebar_area = Some(content_area);
     app.settings_scroll_areas.push(content_area);
     if content_area.height == 0 || content_area.width == 0 {
@@ -790,6 +800,22 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         let (label, value, id) = &items[idx];
         let kind = App::setting_field_kind(id);
         let is_heading = kind == "heading";
+        if crate::ui_settings_shortcuts::is_table_item(id) {
+            let y = item_start_y + item.control as i64;
+            if y >= min_y && y < max_y {
+                let row = Rect::new(content_area.x, y as u16, content_area.width.saturating_sub(1), 1);
+                if is_heading {
+                    crate::ui_settings_shortcuts::draw_heading(f, app, row, label);
+                } else {
+                    let focused = idx == app.settings_selected
+                        && !app.settings_focus_categories
+                        && (app.settings_focus_control || app.settings_kb_editing);
+                    let hovered = !mouse_over_dropdown && row.contains((app.mouse_col, app.mouse_row).into());
+                    crate::ui_settings_shortcuts::draw_row(f, app, row, label, value, id, focused, hovered);
+                }
+            }
+            continue;
+        }
         let display_label = if searching_all_settings || selected_category == 0 || is_heading {
             vscode_setting_label(label, id)
         } else if section.is_none() && let Some(section) = App::settings_section_for_id(id) {
@@ -1617,7 +1643,8 @@ mod tests {
         assert!(rendered.contains("Appearance"));
         assert!(rendered.contains("Color Theme"));
         assert!(!rendered.contains("Workbench:"));
-        assert!(!rendered.contains("Default"));
+        // No "Default" source badge (descriptions may still say "Defaults to").
+        assert!(!rendered.lines().any(|line| line.trim_end().ends_with("Default")));
         assert!(rendered.contains("Dark+"));
         assert!(rendered.contains('✓'));
         assert!(!rendered.contains('☑') && !rendered.contains('☐'));

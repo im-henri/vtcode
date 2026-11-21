@@ -465,7 +465,12 @@ fn move_settings_selection(app: &mut App, filtered: &[usize], down: bool) {
 
 /// Handle settings editor view keyboard events.
 pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option<bool> {
-    if !app.settings_editor_has_focus() {
+    // Pickers opened over Settings own the keyboard, including Escape.
+    if !app.settings_editor_has_focus()
+        || app.quick_open_active
+        || app.goto_line_active
+        || app.symbol_list_active
+    {
         return None;
     }
     // Keybinding capture mode
@@ -676,6 +681,14 @@ pub(crate) fn handle_settings_editor_key(app: &mut App, key: KeyEvent) -> Option
             if let Some((_, _, id)) = items.get(app.settings_selected) {
                 app.reset_setting_in_selected_scope(id);
             }
+        }
+        KeyCode::Delete | KeyCode::Backspace
+            if app.settings_focus_control && key.modifiers.is_empty()
+                && let Some(index) = app.settings_items().get(app.settings_selected)
+                    .and_then(|(_, _, id)| crate::ui_settings_shortcuts::binding_index(id)) =>
+        {
+            // On a focused shortcut row (not the search field), Delete removes it.
+            app.unassign_keybinding_in_selected_scope(index);
         }
         KeyCode::Char(' ') if app.settings_focus_control => {
             let items = app.settings_items();

@@ -282,7 +282,6 @@ impl App {
             area: None,
         });
         self.settings_kb_editing = settings;
-        self.keybindings_editing = !settings;
     }
 
     pub(crate) fn shortcut_conflicts(
@@ -370,7 +369,6 @@ impl App {
             }
         }
         self.settings_kb_editing = false;
-        self.keybindings_editing = false;
     }
 
     fn shortcut_editor_action(&mut self, mut edit: EditorState, action: EditAction) {
@@ -429,11 +427,7 @@ impl App {
     }
 
     fn shortcut_editor_has_focus(&self, edit: &EditorState) -> bool {
-        let focused = if edit.settings {
-            self.settings_editor_has_focus() || self.settings_active
-        } else {
-            crate::ui_keybindings::focused(self)
-        };
+        let focused = self.settings_editor_has_focus() || self.settings_active;
         focused
             && edit.owner
                 == self
@@ -447,19 +441,15 @@ impl App {
             return false;
         }
         if self.shortcut_editor.is_none()
-            && ((self.settings_kb_editing
-                && (self.settings_editor_has_focus() || self.settings_active))
-                || (self.keybindings_editing && crate::ui_keybindings::focused(self)))
+            && self.settings_kb_editing
+            && (self.settings_editor_has_focus() || self.settings_active)
         {
-            let index = if self.settings_kb_editing {
-                self.settings_items()
-                    .get(self.settings_selected)
-                    .and_then(|(_, _, id)| id.strip_prefix("kb_")?.parse().ok())
-            } else {
-                Some(self.keybindings_selected)
-            };
+            let index = self
+                .settings_items()
+                .get(self.settings_selected)
+                .and_then(|(_, _, id)| id.strip_prefix("kb_")?.parse().ok());
             if let Some(index) = index {
-                self.begin_shortcut_edit(index, self.settings_kb_editing);
+                self.begin_shortcut_edit(index, true);
             }
         }
         let Some(mut edit) = self.shortcut_editor.take() else {

@@ -4,8 +4,12 @@ Settings, keybindings, themes, syntaxes, language servers, formatters and animat
 
 ## Settings and tools
 
-Open **File → Settings…** for preferences or **File → Keyboard Shortcuts…** to
-edit bindings. **Help → Keyboard Shortcut Reference** shows the quick reference.
+Open **File → Settings…** for preferences. **File → Keyboard Shortcuts…** opens
+**Settings → Keyboard Shortcuts**, a one-line-per-command table: double-click a row,
+click its key, or press **Enter** to change it; hover a row for **Change**, **Reset**
+and **Remove**, or press **Delete** to remove the focused shortcut. Search matches
+command names, keys (`ctrl+k`) and `when` conditions.
+**Help → Keyboard Shortcut Reference** shows the quick reference.
 **View** groups workspace views, panels, editor splits, and common display options;
 additional appearance controls are in Settings and the command palette.
 Syntax installation and reload are available through **Preferences: Install Syntax
@@ -44,7 +48,7 @@ formatting as one undoable change; it writes the original file only on Save.
 
 ## Shortcut contexts
 
-In **Keyboard Shortcuts**, select a binding and choose **When** to restrict it
+In **Settings → Keyboard Shortcuts**, edit a binding and choose **When** to restrict it
 to a context. Leave the condition blank to make the binding unconditional.
 Different commands can share a key when their conditions differ. Workspace rules
 take priority over User rules. Later rules in the same list win when both match.

@@ -105,7 +105,7 @@ impl App {
             return "heading";
         }
         if setting_id.starts_with("kb_") {
-            return "text";
+            return "shortcut";
         }
         match setting_id {
             "files_exclude" | "search_exclude" => "exclusions",
@@ -593,8 +593,8 @@ impl App {
         lines
     }
 
-    pub(crate) fn setting_row_gap(width: usize) -> usize {
-        if width >= 60 { 2 } else { 1 }
+    pub(crate) fn setting_row_gap(_width: usize) -> usize {
+        1
     }
 
     #[cfg(test)]
@@ -1268,8 +1268,8 @@ mod tests {
 
     #[test]
     fn field_kind_keyboard_bindings_are_text() {
-        assert_eq!(App::setting_field_kind("kb_copy"), "text");
-        assert_eq!(App::setting_field_kind("kb_paste"), "text");
+        assert_eq!(App::setting_field_kind("kb_copy"), "shortcut");
+        assert_eq!(App::setting_field_kind("kb_paste"), "shortcut");
     }
 
     #[test]
@@ -1495,7 +1495,7 @@ mod tests {
     fn visual_height_regular_includes_input_row() {
         let h = App::setting_visual_height("Tab Size", "tab_size", 80);
         let desc_lines = App::setting_description_lines("Tab Size", "tab_size", 80).len();
-        assert_eq!(h, desc_lines + 4); // control spacing, input, and two-row gap
+        assert_eq!(h, desc_lines + 2); // input directly below, then a one-row gap
     }
 
     #[test]

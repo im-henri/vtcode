@@ -265,7 +265,6 @@ impl App {
                 let kind = match tab.kind {
                     TabKind::Settings => "settings",
                     TabKind::SourceControl => "source_control",
-                    TabKind::KeyboardShortcuts => "keys",
                     TabKind::MarkdownPreview => "markdown",
                     _ => continue,
                 };
@@ -439,7 +438,8 @@ impl App {
             let kind = match tool.kind.as_str() {
                 "settings" => TabKind::Settings,
                 "source_control" => TabKind::SourceControl,
-                "keys" => TabKind::KeyboardShortcuts,
+                // Keyboard Shortcuts is now a Settings page, not a tab.
+                "keys" => continue,
                 "markdown" => TabKind::MarkdownPreview,
                 _ => continue,
             };

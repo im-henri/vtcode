@@ -63,7 +63,7 @@ fn viewport_duplicate_names_match_individual_labels_and_exact_frames_after_mutat
         app.tabs[2].kind = TabKind::MarkdownPreview;
         app.tabs[3].kind = TabKind::Diff(1);
         app.tabs[4].kind = TabKind::Settings;
-        app.tabs[5].kind = TabKind::KeyboardShortcuts;
+        app.tabs[5].kind = TabKind::SourceControl;
         app.tabs[6].kind = TabKind::ExtensionView;
         app.tabs[7].kind = TabKind::GitRevision;
         for width in [0, 1, 2, 4, 8, 24, 80, 160, 400] {

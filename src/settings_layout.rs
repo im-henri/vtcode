@@ -8,16 +8,20 @@ pub(crate) fn exclusion_count(id: &str, value: &str) -> usize {
     serde_json::from_str::<crate::settings::ExcludePatterns>(value).map_or(0, |map| map.len())
 }
 
-pub(crate) fn control_offset(kind: &str, lines: usize, width: usize) -> usize {
-    if kind == "checkbox" && lines > 1 {
+pub(crate) fn control_offset(kind: &str, lines: usize, _width: usize) -> usize {
+    if kind == "shortcut" {
+        0
+    } else if kind == "checkbox" && lines > 1 {
         1
     } else {
-        lines + usize::from(width >= 60 && lines > 1)
+        lines
     }
 }
 
 pub(crate) fn visual_height(kind: &str, lines: usize, width: usize) -> usize {
-    if kind == "heading" {
+    if kind == "shortcut" {
+        1
+    } else if kind == "heading" {
         lines.max(1)
     } else if kind == "checkbox" && lines > 1 {
         lines + App::setting_row_gap(width)
@@ -105,12 +109,14 @@ impl Cache {
                 let kind = App::setting_field_kind(id);
                 let lines = App::setting_description_lines(label, id, width);
                 let entries = exclusion_count(id, value);
-                let height = visual_height(kind, lines.len(), width) + entries;
+                // Shortcut group headings get one blank line above the label.
+                let table_heading = id.starts_with("heading_kb_");
+                let height = visual_height(kind, lines.len(), width) + entries + usize::from(table_heading);
                 let row = Row {
                     index,
                     start: total,
                     height,
-                    control: control_offset(kind, lines.len(), width),
+                    control: if table_heading { 1 } else { control_offset(kind, lines.len(), width) },
                     lines,
                     id: id.clone(),
                     entries,

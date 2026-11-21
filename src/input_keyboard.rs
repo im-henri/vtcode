@@ -110,12 +110,6 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
         return quit;
     }
 
-    // Explicit assignment captures shortcuts before workbench dispatch. Normal
-    // tab navigation follows the popup, field, and terminal handlers below.
-    if app.keybindings_editing && crate::ui_keybindings::handle_key(app, key) {
-        return false;
-    }
-
     // Source control commit message input (sidebar mode)
     if let Some(quit) = input_keyboard_dialogs::handle_commit_input_key(app, key) {
         return quit;
@@ -973,7 +967,6 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
         return false;
     }
 
-    if crate::ui_keybindings::handle_key(app, key) { return false; }
     if crate::ui_extension_info::handle_key(app, key) { return false; }
 
     if app.active_pane == ActivePane::Editor

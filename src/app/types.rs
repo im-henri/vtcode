@@ -1733,7 +1733,6 @@ pub enum TabKind {
     Diff(u64),
     MarkdownPreview,
     Settings,
-    KeyboardShortcuts,
     ExtensionView,
     ExtensionInfo,
     Terminal,

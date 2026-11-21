@@ -348,11 +348,11 @@ fn settings_wide_spacing_does_not_expand_dropdown_click_targets() {
                 .contains("Dark+")
         })
         .unwrap() as u16;
-    assert!(value_row > area.y + 2);
+    assert!(value_row > area.y + 1);
     click(&mut app, area.x + 3, value_row - 1);
     assert!(
         !app.settings_dropdown_open,
-        "space above input is not an input"
+        "the description above the input is not an input"
     );
     let focused = render(&mut app, 140, 38);
     assert_eq!(

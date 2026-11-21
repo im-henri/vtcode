@@ -196,7 +196,6 @@ impl App {
     pub(crate) fn clear_drag_states(&mut self) {
         if let Some(peek) = self.hunk_peek.as_mut() { peek.cancel_drag(); }
         crate::ui_extension_info::cancel_drag(self);
-        self.keybindings_ui.cancel_drag();
         self.context_menu_button_drag = None;
         self.search_bar_layout.resizing = false;
         self.commit_input.scrollbar_drag = None;

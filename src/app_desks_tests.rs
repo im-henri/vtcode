@@ -888,32 +888,6 @@ fn manual_tab_scrolling_does_not_snap_back_when_groups_are_present() {
 }
 
 #[test]
-fn desk_switch_dismisses_keyboard_shortcuts_input_before_the_next_frame() {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    let mut app = app();
-    app.open_keybindings_tab();
-    assert!(crate::ui_keybindings::handle_key(
-        &mut app,
-        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
-    ));
-    let other = app.new_desk("Code", false);
-    assert!(!crate::ui_keybindings::handle_key(
-        &mut app,
-        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
-    ));
-    app.switch_desk(0);
-    assert!(crate::ui_keybindings::handle_key(
-        &mut app,
-        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
-    ));
-    app.switch_desk(other);
-    assert!(!crate::ui_keybindings::handle_key(
-        &mut app,
-        KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
-    ));
-}
-
-#[test]
 fn save_finishing_in_hidden_view_preserves_new_edits_and_shared_undo() {
     let mut a = Editor::test_with_text("base\n");
     a.saved_rope = Some(a.rope.clone());

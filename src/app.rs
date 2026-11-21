@@ -813,9 +813,8 @@ pub(crate) struct App {
     pub(crate) sc_graph_focused: bool,
     // Keybindings
     pub(crate) keybindings: crate::app_shortcuts::KeyBindings,
-    pub(crate) keybindings_ui: crate::ui_keybindings::State,
-    pub keybindings_selected: usize,
-    pub keybindings_editing: bool, // waiting for new key combo
+    /// Last click on a Settings shortcut row, for double-click to edit.
+    pub(crate) settings_shortcut_click: Option<(std::time::Instant, usize)>,
     /// Cached keybinding settings items (label, value, id).
     /// Rebuilt when keybindings are loaded or modified.
     pub keybinding_settings_cache: Vec<(String, String, String)>,
@@ -1838,9 +1837,7 @@ impl App {
             commit_details: crate::commit_details::CommitDetails::default(),
             sc_graph_focused: false,
             keybindings: default_keybindings().into(),
-            keybindings_ui: Default::default(),
-            keybindings_selected: 0,
-            keybindings_editing: false,
+            settings_shortcut_click: None,
             keybinding_settings_cache: Vec::new(),
             menu_active: false,
             menu_selected: 0,

@@ -41,7 +41,6 @@ pub(crate) fn popup_open(app: &App) -> bool {
         || (app.lsp_references_active && !app.lsp_manager.reference_locations.is_empty())
         || crate::ui_modal::active(app).is_some()
         || crate::ui_quick_picker::active(app).is_some()
-        || app.keybindings_editing
         || app.change_dir_active
         || app.menu_active
         || app.menu_open

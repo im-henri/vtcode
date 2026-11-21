@@ -1155,9 +1155,6 @@ fn render_group_pane(f: &mut Frame, app: &mut App, area: Rect, group_id: usize, 
         } else if current_tab_kind == Some(crate::app::TabKind::Settings) {
             app.settings_editor_active = true;
             crate::ui_settings::draw_settings_editor(f, app, pane_layout[2]);
-        } else if current_tab_kind == Some(crate::app::TabKind::KeyboardShortcuts) {
-            app.settings_editor_active = false;
-            crate::ui_keybindings::draw(f, app, pane_layout[2]);
         } else if current_tab_kind == Some(crate::app::TabKind::ExtensionInfo) {
             app.settings_editor_active = false;
             crate::ui_extension_info::draw_extension_info(f, app, pane_layout[2]);
@@ -1290,7 +1287,6 @@ pub(crate) fn draw_editor_section_with_pending_diff(
     app.remote_targets.connection_hits.clear();
     app.remote_connection.area = None;
     app.remote_connection.buttons.clear();
-    app.keybindings_ui.begin_frame();
     crate::ui_extension_info::begin_frame(app);
     if !app.rendering_background_window { app.sync_diff_tab(); }
     app.commit_details.visible = false;
@@ -1394,11 +1390,6 @@ pub(crate) fn draw_editor_section_with_pending_diff(
         app.editor_area = Some(layout[2]);
         crate::ui_settings::draw_settings_editor(f, app, layout[2]);
         return;
-    } else if !is_split && current_tab_kind == Some(crate::app::TabKind::KeyboardShortcuts) {
-        app.settings_editor_active = false;
-        app.editor_area = Some(layout[2]);
-        crate::ui_keybindings::draw(f, app, layout[2]);
-        return;
     } else if !is_split && current_tab_kind == Some(crate::app::TabKind::ExtensionInfo) {
         app.settings_editor_active = false;
         app.editor_area = Some(layout[2]);
@@ -1425,7 +1416,7 @@ pub(crate) fn draw_editor_section_with_pending_diff(
         crate::ui_helpers::draw_markdown_preview(f, app, layout[2]);
         return;
     }
-    // Active tab is not Settings/KeyboardShortcuts, clear flags
+    // Active tab is not Settings, clear flags
     app.settings_editor_active = false;
 
     if app.should_render_diff_for_active_editor() {

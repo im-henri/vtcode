@@ -584,17 +584,7 @@ impl App {
                     self.detach_terminal_to_tab();
                 }
             }
-            "keybindings" => {
-                if self.tabs.get(self.active_tab).map(|t| t.kind)
-                    == Some(TabKind::KeyboardShortcuts)
-                {
-                    self.close_tab(self.active_tab);
-                } else {
-                    self.open_keybindings_tab();
-                }
-                self.keybindings_selected = 0;
-                self.keybindings_editing = false;
-            }
+            "keybindings" => self.open_keyboard_shortcuts_settings(),
             "settings" => {
                 self.open_settings_tab();
                 self.settings_selected = 0;

@@ -1183,28 +1183,6 @@ impl App {
             .count()
     }
 
-    /// Open keyboard shortcuts as a tab (or switch to existing)
-    pub(crate) fn open_keybindings_tab(&mut self) {
-        self.terminal_panel_focused = false;
-        if let Some(idx) = self
-            .tabs
-            .iter()
-            .position(|t| t.kind == TabKind::KeyboardShortcuts)
-        {
-            self.active_tab = idx;
-            self.active_pane = ActivePane::Editor;
-            return;
-        }
-        let mut editor = self.new_editor();
-        editor.file_path = Some(std::path::PathBuf::from("⌨ Keyboard Shortcuts"));
-        self.tabs.push(Tab {
-            kind: TabKind::KeyboardShortcuts,
-            ..Tab::new_file(editor)
-        });
-        self.active_tab = self.tabs.len() - 1;
-        self.active_pane = ActivePane::Editor;
-    }
-
     /// Explicit open pins the page; browsing reuses a dedicated extension preview.
     pub(crate) fn open_extension_info_tab(&mut self, extension_id: &str) {
         self.show_extension_info_tab(extension_id, false);

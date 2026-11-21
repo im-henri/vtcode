@@ -320,7 +320,6 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
         app.mouse_hover_changed = (col, row) != (prev_mouse_col, prev_mouse_row);
         return;
     }
-    if crate::ui_keybindings::handle_mouse(app, mouse) { return; }
     if crate::ui_commit_details::handle_mouse(app, mouse) { return; }
     if crate::ui_extension_info::handle_mouse(app, mouse) { return; }
     if crate::ui_lsp_completion::handle_mouse(app, mouse) {
@@ -1175,7 +1174,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                             let running_rows = item.start;
                             let kind = App::setting_field_kind(id);
                             let relative_row = visual_row - running_rows;
-                            let gap = if kind == "heading" { 0 } else {
+                            let gap = if matches!(kind, "heading" | "shortcut") { 0 } else {
                                 App::setting_row_gap(settings_area.width.saturating_sub(3) as usize)
                             };
                             // Spacing and section headings are not controls.
@@ -1193,66 +1192,23 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
                                 app.reset_setting_in_selected_scope(id);
                                 return;
                             }
-                            if id.starts_with("kb_") {
-                                let control_row = running_rows + item.control;
-                                if visual_row == control_row {
-                                    let reset_label = "[Reset]";
-                                    let unassign_label = "[Unassign]";
-                                    let reset_w = UnicodeWidthStr::width(reset_label) as u16;
-                                    let unassign_w = UnicodeWidthStr::width(unassign_label) as u16;
-                                    let buttons_w = reset_w + 1 + unassign_w;
-                                    if settings_area.width >= 34 {
-                                        let buttons_x = settings_area
-                                            .x
-                                            + settings_area.width.saturating_sub(buttons_w);
-                                        let unassign_x = buttons_x + reset_w + 1;
-                                        if col >= buttons_x && col < buttons_x + reset_w {
-                                            if let Some(kb_idx) = id
-                                                .strip_prefix("kb_")
-                                                .and_then(|v| v.parse::<usize>().ok())
-                                            {
-                                                app.reset_keybinding_in_selected_scope(kb_idx);
-                                            }
-                                            app.ensure_settings_selection_visible();
-                                            return;
-                                        }
-                                        if col >= unassign_x && col < unassign_x + unassign_w {
-                                            if let Some(kb_idx) = id
-                                                .strip_prefix("kb_")
-                                                .and_then(|v| v.parse::<usize>().ok())
-                                            {
-                                                app.flush_live_settings();
-                                                let scoped_before = app.selected_scope_settings();
-                                                app.apply_setting_value(id, &scoped_before);
-                                                let mut unassign_msg: Option<String> = None;
-                                                if let Some(kb) = app.keybindings.get_mut(kb_idx) {
-                                                    if kb.code != KeyCode::Null
-                                                        || !kb.modifiers.is_empty()
-                                                    {
-                                                        kb.assign(KeyModifiers::empty(), KeyCode::Null, None);
-                                                        unassign_msg =
-                                                            Some(format!("Unassigned {}", kb.label));
-                                                    }
-                                                }
-                                                if let Some(msg) = unassign_msg {
-                                                    app.notify(msg);
-                                                    app.rebuild_keybinding_settings_cache();
-                                                    app.persist_scoped_setting_change(id, &scoped_before);
-                                                } else {
-                                                    app.apply_effective_settings();
-                                                }
-                                            }
-                                            app.ensure_settings_selection_visible();
-                                            return;
-                                        }
-                                    }
-                                    if settings_area.width < 34 || col < settings_area.right().saturating_sub(buttons_w) {
-                                        if let Some(index) = id.strip_prefix("kb_").and_then(|index| index.parse().ok()) {
-                                            app.begin_shortcut_edit(index, true);
-                                        }
-                                    }
+                            if let Some(kb_index) = crate::ui_settings_shortcuts::binding_index(id) {
+                                // One-line table row: buttons and the key cap act
+                                // directly; a double-click anywhere edits.
+                                let row_rect = Rect::new(settings_area.x, row, settings_area.width.saturating_sub(1), 1);
+                                let now = std::time::Instant::now();
+                                let double = app.settings_shortcut_click.is_some_and(|(at, index)| {
+                                    index == orig_idx && now.duration_since(at).as_millis() < 400
+                                });
+                                app.settings_shortcut_click = Some((now, orig_idx));
+                                let action = crate::ui_settings_shortcuts::hit(app, id, &items[orig_idx].1, row_rect, col)
+                                    .or(double.then_some(crate::ui_settings_shortcuts::Action::Edit));
+                                if let Some(action) = action {
+                                    app.settings_shortcut_click = None;
+                                    app.run_shortcut_action(kb_index, action);
+                                } else {
+                                    app.ensure_settings_selection_visible();
                                 }
-                                app.ensure_settings_selection_visible();
                                 return;
                             }
                             if kind == "exclusions" {

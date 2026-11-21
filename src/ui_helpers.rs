@@ -203,8 +203,6 @@ pub(crate) fn draw_split_editor_for_group(f: &mut Frame, app: &mut App, area: Re
         let saved_settings_sidebar_area = app.settings_sidebar_area;
         crate::ui_settings::draw_settings_editor(f, app, layout[2]);
         app.settings_sidebar_area = saved_settings_sidebar_area;
-    } else if current_tab_kind == Some(crate::app::TabKind::KeyboardShortcuts) {
-        crate::ui_keybindings::draw(f, app, layout[2]);
     } else if current_tab_kind == Some(crate::app::TabKind::ExtensionInfo) {
         crate::ui_extension_info::draw_extension_info(f, app, layout[2]);
     } else if let Some(crate::app::TabKind::Chat(key)) = current_tab_kind {

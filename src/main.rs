@@ -279,7 +279,7 @@ mod editor_blame;
 mod ui_inline_blame;
 mod ui_text_selection;
 mod ui;
-mod ui_keybindings;
+mod ui_settings_shortcuts;
 #[cfg(test)]
 #[path = "ui_state_interaction_tests.rs"]
 mod ui_state_interaction_tests;

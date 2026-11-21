@@ -2601,30 +2601,39 @@ fn explorer_file_icons_keep_type_colors_while_folder_icons_use_selection_overrid
     }
 }
 
+fn draw_shortcut_settings(app: &mut App) -> Terminal<TestBackend> {
+    let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
+    terminal
+        .draw(|frame| crate::ui_settings::draw_settings_editor(frame, app, frame.area()))
+        .unwrap();
+    terminal
+}
+
+fn shortcut_settings_app() -> App {
+    let mut app = App::test_new();
+    app.rebuild_keybinding_settings_cache();
+    app.open_keyboard_shortcuts_settings();
+    app
+}
+
 #[test]
 fn keyboard_shortcut_text_remains_readable_on_its_own_rows() {
-    let mut app = App::test_new();
+    let mut app = shortcut_settings_app();
     let mut failures = Vec::new();
     assert!(!app.keybindings.is_empty());
     for theme in audit_themes() {
         app.colors = theme.to_theme_colors();
         for editing in [false, true] {
-            app.keybindings_editing = editing;
-            let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
-            terminal
-                .draw(|frame| {
-                    crate::ui_keybindings::draw(frame, &mut app, frame.area())
-                })
-                .unwrap();
-            for area in [Rect::new(0, 0, 100, 2), Rect::new(0, 3, 100, 15)] {
-                check_region(
-                    terminal.backend().buffer(),
-                    area,
-                    &format!("{}: keyboard shortcuts, editing={editing}", theme.name),
-                    &mut failures,
-                    &app.colors.ui,
-                );
-            }
+            app.settings_kb_editing = editing;
+            let terminal = draw_shortcut_settings(&mut app);
+            let content = app.settings_sidebar_area.unwrap();
+            check_region(
+                terminal.backend().buffer(),
+                Rect::new(content.x, content.y.saturating_sub(1), content.width, content.height + 1),
+                &format!("{}: keyboard shortcuts, editing={editing}", theme.name),
+                &mut failures,
+                &app.colors.ui,
+            );
         }
     }
     assert_readable(failures);
@@ -2640,39 +2649,38 @@ fn shortcut_labels_and_table_use_dedicated_theme_roles() {
         ("keybindingLabel.bottomBorder", "#99ddff"),
         ("keybindingTable.headerBackground", "#305040"),
         ("keybindingTable.rowsBackground", "#30305080"),
-        ("settings.headerForeground", "#ddccff"),
     ] {
         theme.workbench_colors.insert(key.into(), value.into());
     }
-    let mut app = App::test_new();
+    let mut app = shortcut_settings_app();
     app.colors = theme.to_theme_colors();
-    let mut terminal = Terminal::new(TestBackend::new(100, 18)).unwrap();
-    terminal
-        .draw(|frame| crate::ui_keybindings::draw(frame, &mut app, frame.area()))
-        .unwrap();
+    app.settings_focus_control = false;
+    let terminal = draw_shortcut_settings(&mut app);
     let buffer = terminal.backend().buffer();
-    assert_eq!(buffer[(1, 0)].fg, Color::Rgb(221, 204, 255));
-    assert_eq!(buffer[(1, 1)].bg, Color::Rgb(48, 80, 64));
-    assert_eq!(buffer[(99, 1)].bg, Color::Rgb(48, 80, 64));
+    let content = app.settings_sidebar_area.unwrap();
+    let header_y = content.y - 1;
+    assert_eq!(buffer[(content.x + 3, header_y)].bg, Color::Rgb(48, 80, 64));
+    // Odd binding rows are striped with the table row layer.
+    let items = app.settings_items();
+    let layout = app.settings_line_layout(content.width.saturating_sub(3) as usize);
+    let row = layout
+        .rows
+        .iter()
+        .find(|row| crate::ui_settings_shortcuts::binding_index(&items[row.index].2).is_some_and(|i| i % 2 == 1))
+        .unwrap();
+    let y = content.y + row.start as u16;
     assert_eq!(
-        buffer[(1, 4)].bg,
+        buffer[(content.x + 3, y)].bg,
         crate::theme_workbench::ColorLayer::rgba(48, 48, 80, 128)
             .over(app.colors.bg_editor)
             .unwrap()
     );
-    assert_eq!(buffer[(31, 3)].fg, Color::Rgb(255, 255, 255));
-    assert_eq!(
-        buffer[(31, 3)].bg,
-        crate::theme_workbench::ColorLayer::rgba(136, 102, 170, 128)
-            .over(buffer[(1, 3)].bg)
-            .unwrap()
-    );
-    assert_eq!(buffer[(31, 3)].underline_color, Color::Rgb(153, 221, 255));
-    assert!(
-        buffer[(31, 3)]
-            .modifier
-            .contains(ratatui::style::Modifier::UNDERLINED)
-    );
+    // The key cap uses the keybinding label roles.
+    let cap = (content.x..content.right())
+        .find(|&x| buffer[(x, y)].fg == Color::Rgb(255, 255, 255))
+        .expect("key cap foreground");
+    assert!(buffer[(cap, y)].modifier.contains(ratatui::style::Modifier::UNDERLINED));
+    assert_eq!(buffer[(cap, y)].underline_color, Color::Rgb(153, 221, 255));
     snapshot(buffer, "independent shortcut roles");
 }
 

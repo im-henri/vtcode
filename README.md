@@ -127,7 +127,7 @@ Linux x86_64 builds come in glibc 2.28+ and 2.43+ variants (check with `getconf 
 | `Ctrl+Space` | Suggestions | | `Alt+I` | Ask GPTComplete for a prediction |
 | `Alt+←` / `Alt+→` | Back / forward | | `Ctrl+B` | Toggle sidebar |
 
-Every shortcut can be rebound in **File → Keyboard Shortcuts…**, including VS Code–style `when` conditions. **Help → Keyboard Shortcut Reference** lists them all.
+Every shortcut can be rebound in **Settings → Keyboard Shortcuts** (also **File → Keyboard Shortcuts…**), including VS Code–style `when` conditions. **Help → Keyboard Shortcut Reference** lists them all.
 
 ## Highlights
 
