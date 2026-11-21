@@ -66,6 +66,16 @@ themes! {
     ("palenight", "Palenight Theme", "vs-dark", "palenight/palenight.json"),
     ("andromeda", "Andromeda", "vs-dark", "andromeda/Andromeda-color-theme.json"),
     ("solarized-dark", "Solarized Dark", "vs-dark", "solarized-dark-color-theme.json"),
+    ("cobalt2", "Cobalt2", "vs-dark", "cobalt2/cobalt2.json"),
+    ("vitesse-dark", "Vitesse Dark", "vs-dark", "vitesse/vitesse-dark.json"),
+    ("horizon", "Horizon", "vs-dark", "horizon/horizon.json"),
+    ("winter-is-coming-dark-blue", "Winter is Coming (Dark Blue)", "vs-dark", "winter-is-coming/WinterIsComing-dark-blue-color-theme.json"),
+    ("aura-dark", "Aura Dark", "vs-dark", "aura/aura-dark-color-theme.json"),
+    ("kanagawa-wave", "Kanagawa Wave", "vs-dark", "kanagawa/kanagawa-wave-color-theme.json"),
+    ("moonlight-ii", "Moonlight II", "vs-dark", "moonlight/moonlight-ii.json"),
+    ("everforest-dark", "Everforest Dark", "vs-dark", "everforest/everforest-dark.json"),
+    ("noctis", "Noctis", "vs-dark", "noctis/noctis.json"),
+    ("darcula", "Darcula", "vs-dark", "darcula/darcula.json"),
 }
 
 /// Resolve the complete bundled path: different packs may reuse file names.

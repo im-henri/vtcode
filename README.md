@@ -64,7 +64,7 @@ Connect any [Agent Client Protocol](https://agentclientprotocol.com) agent, revi
 </tr>
 </table>
 
-**Plus:** Markdown preview with tables, math and Mermaid · 29 built-in themes and any VS Code theme · TextMate grammars · [Wasm extensions](extension-api/README.md) · file-type detection with [Magika](https://github.com/google/magika) · a live performance monitor · optional [animations](#animations).
+**Plus:** Markdown preview with tables, math and Mermaid · 39 built-in themes and any VS Code theme · TextMate grammars · [Wasm extensions](extension-api/README.md) · file-type detection with [Magika](https://github.com/google/magika) · a live performance monitor · optional [animations](#animations).
 
 ## Screenshots
 

@@ -842,7 +842,7 @@ mod tests {
         let imported: ThemeFile = serde_json::from_value(serialized).unwrap();
         assert!(!imported.builtin, "theme files cannot claim bundled provenance");
         assert_eq!(themes.len(), crate::builtin_themes::THEMES.len());
-        assert_eq!(themes.len(), 29);
+        assert_eq!(themes.len(), 39);
         assert!(themes.iter().skip(4).all(|theme| !theme.is_light));
         for theme in &themes {
             assert!(

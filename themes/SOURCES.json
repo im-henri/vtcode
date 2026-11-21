@@ -425,6 +425,176 @@
         "blob_sha1": "af1e7a913ff461f7bbe1f004e3f275fbee9cddd3",
         "license_path": "LICENSE.txt"
       }
+    },
+    {
+      "key": "cobalt2",
+      "name": "Cobalt2",
+      "file": "cobalt2/cobalt2.json",
+      "kind": "vs-dark",
+      "license_file": "cobalt2/LICENSE",
+      "sha256": "6c50a853863649468a1a0c1d1c51e6e37c5002e0915070ca606be9f171defeb6",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/wesbos/cobalt2-vscode",
+        "version": "2.4.3",
+        "url": "https://open-vsx.org/api/wesbos/theme-cobalt2/2.4.3/file/wesbos.theme-cobalt2-2.4.3.vsix",
+        "sha256": "67c66ef0565389dd48035cb19ffcf2decc729541255a4e2aea8262214d8dd570",
+        "theme_path": "extension/theme/cobalt2.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "vitesse-dark",
+      "name": "Vitesse Dark",
+      "file": "vitesse/vitesse-dark.json",
+      "kind": "vs-dark",
+      "license_file": "vitesse/LICENSE",
+      "sha256": "4c0d1ea6503bf17599fe1d615232ebae972028b93470f95431e8b61cc647e4f4",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/antfu/vscode-theme-vitesse",
+        "version": "1.0.1",
+        "url": "https://open-vsx.org/api/antfu/theme-vitesse/1.0.1/file/antfu.theme-vitesse-1.0.1.vsix",
+        "sha256": "03aa445a6c66e815845f5642ca22b1789f481ddb22262e6352b5ff158d4798ad",
+        "theme_path": "extension/themes/vitesse-dark.json",
+        "license_path": "extension/LICENSE.md"
+      }
+    },
+    {
+      "key": "horizon",
+      "name": "Horizon",
+      "file": "horizon/horizon.json",
+      "kind": "vs-dark",
+      "license_file": "horizon/LICENSE",
+      "sha256": "94ff253e0d9d6b19565b90799baa9b355075c58c92ab4f323828c7898bd0104e",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/jolaleye/horizon-theme-vscode",
+        "version": "2.0.2",
+        "url": "https://open-vsx.org/api/jolaleye/horizon-theme-vscode/2.0.2/file/jolaleye.horizon-theme-vscode-2.0.2.vsix",
+        "sha256": "272a271a74d05c1d8971a8220edf31bec2d1975b3db6129ec166f54234fd0e17",
+        "theme_path": "extension/themes/horizon.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "winter-is-coming-dark-blue",
+      "name": "Winter is Coming (Dark Blue)",
+      "file": "winter-is-coming/WinterIsComing-dark-blue-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "winter-is-coming/LICENSE",
+      "sha256": "898c0996769eacc7cfd9a712b5756736ce8ad2e744791fc65744bd6fdb6f4130",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/johnpapa/vscode-winteriscoming",
+        "version": "1.5.0",
+        "url": "https://open-vsx.org/api/johnpapa/winteriscoming/1.5.0/file/johnpapa.winteriscoming-1.5.0.vsix",
+        "sha256": "0c980aa43c89cf819b8d13d284af798bdb4f4d75f63f7ba2c236f368676dfff0",
+        "theme_path": "extension/themes/WinterIsComing-dark-blue-color-theme.json",
+        "license_path": "extension/LICENSE.md"
+      }
+    },
+    {
+      "key": "aura-dark",
+      "name": "Aura Dark",
+      "file": "aura/aura-dark-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "aura/LICENSE",
+      "sha256": "52db6f391b98e6d2850a076d00d5ba3940c1eaa84bd6749bae2f948c72e971c6",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/daltonmenezes/aura-theme",
+        "version": "2.1.2",
+        "url": "https://open-vsx.org/api/DaltonMenezes/aura-theme/2.1.2/file/DaltonMenezes.aura-theme-2.1.2.vsix",
+        "sha256": "b203b1e0337af49b222fcfb5e0a0f289c8fbbbdb5fa461e87de5f89eb6aae991",
+        "theme_path": "extension/themes/aura-dark-color-theme.json",
+        "license_url": "https://github.com/daltonmenezes/aura-theme/blob/20924aa0a43975420edd0e0b2f919e07a3eff9c9/LICENSE"
+      }
+    },
+    {
+      "key": "kanagawa-wave",
+      "name": "Kanagawa Wave",
+      "file": "kanagawa/kanagawa-wave-color-theme.json",
+      "kind": "vs-dark",
+      "license_file": "kanagawa/LICENSE",
+      "sha256": "8044ec24ca8034eb86af04ffa33c092529d83d80f3cb5da2d4f9a72bdfdf2325",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/metapho-re/kanagawa-vscode-theme",
+        "version": "0.5.0",
+        "url": "https://open-vsx.org/api/metaphore/kanagawa-vscode-color-theme/0.5.0/file/metaphore.kanagawa-vscode-color-theme-0.5.0.vsix",
+        "sha256": "bd443ef53aea77f72009ac30bfb8deb82a9ca69b66bf5689ab7fd917cbe8fdd4",
+        "theme_path": "extension/themes/kanagawa-wave-color-theme.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "moonlight-ii",
+      "name": "Moonlight II",
+      "file": "moonlight/moonlight-ii.json",
+      "kind": "vs-dark",
+      "license_file": "moonlight/LICENSE",
+      "sha256": "93bd784f9e892a7af7162c345dc3c68a49d280aa3dc0d8f665e432c64c341691",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/atomiks/moonlight-vscode-theme",
+        "version": "0.10.6",
+        "url": "https://open-vsx.org/api/atomiks/moonlight/0.10.6/file/atomiks.moonlight-0.10.6.vsix",
+        "sha256": "d83bbfdab2d6654328ef8eab5569e7823d1fd3f1fff786eddeb17e1bedc8a6ac",
+        "theme_path": "extension/themes/moonlight-ii.json",
+        "license_path": "extension/LICENSE"
+      }
+    },
+    {
+      "key": "everforest-dark",
+      "name": "Everforest Dark",
+      "file": "everforest/everforest-dark.json",
+      "kind": "vs-dark",
+      "license_file": "everforest/LICENSE",
+      "sha256": "523e58732dc72c1227d5749e73c34f9a255b90f33cd54e98e93b1722104856aa",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/sainnhe/everforest-vscode",
+        "version": "0.3.0",
+        "url": "https://open-vsx.org/api/sainnhe/everforest/0.3.0/file/sainnhe.everforest-0.3.0.vsix",
+        "sha256": "5f5bdab54200099d42e53450baf10a78b19d887e37d3d50c710c2d411216a338",
+        "theme_path": "extension/themes/everforest-dark.json",
+        "license_path": "extension/LICENSE.txt"
+      }
+    },
+    {
+      "key": "noctis",
+      "name": "Noctis",
+      "file": "noctis/noctis.json",
+      "kind": "vs-dark",
+      "license_file": "noctis/LICENSE",
+      "sha256": "31cea9faeb7c0d96277b7f57487a119ee98844a4f9169187e91bf8a8cd0c9b17",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/liviuschera/noctis",
+        "version": "10.43.3",
+        "url": "https://open-vsx.org/api/liviuschera/noctis/10.43.3/file/liviuschera.noctis-10.43.3.vsix",
+        "sha256": "5a3a9b881f7da62b2e5a16e7f25cd3b9bccc1813b0ec9edf9190f5b8eba2fdb8",
+        "theme_path": "extension/themes/noctis.json",
+        "license_path": "extension/LICENSE.md"
+      }
+    },
+    {
+      "key": "darcula",
+      "name": "Darcula",
+      "file": "darcula/darcula.json",
+      "kind": "vs-dark",
+      "license_file": "darcula/LICENSE",
+      "sha256": "81ffbc023f7e0af27d76f29d3bc986d4ae92ef0612157957471357635a08618a",
+      "source": {
+        "type": "vsix",
+        "repository": "https://github.com/rokoroku/vscode-theme-darcula",
+        "version": "1.2.3",
+        "url": "https://open-vsx.org/api/rokoroku/vscode-theme-darcula/1.2.3/file/rokoroku.vscode-theme-darcula-1.2.3.vsix",
+        "sha256": "9cc94cc567c066418a2381b49034d2ddf62845bd865df95c266e37bbc4d04e9a",
+        "theme_path": "extension/themes/darcula.json",
+        "license_path": "extension/LICENSE.txt"
+      }
     }
   ]
 }

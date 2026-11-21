@@ -9,7 +9,7 @@ base includes, and Solarized Dark come from Microsoft VS Code tag
 [1.103.0](https://github.com/microsoft/vscode/tree/1.103.0/extensions), under
 the [Microsoft MIT license](LICENSE). Existing theme keys and defaults are unchanged.
 
-The following 25 additional dark variants are available in
+The following 35 additional dark variants are available in
 **Settings → Workbench → Appearance → Color Theme** and the command palette.
 They retain the upstream color values, token scopes, styles, and semantic rules.
 
@@ -40,10 +40,22 @@ They retain the upstream color values, token scopes, styles, and semantic rules.
 | Palenight Theme (`palenight`) | [palenight/palenight.json](palenight/palenight.json) | [whizkydee/vscode-palenight-theme 63949af02792](https://github.com/whizkydee/vscode-palenight-theme/blob/63949af027921fd09466c1e6003bd2b994e14a9e/themes/palenight.json) | [MIT](palenight/LICENSE) |
 | Andromeda (`andromeda`) | [andromeda/Andromeda-color-theme.json](andromeda/Andromeda-color-theme.json) | [EliverLara/Andromeda d1abb48c6949](https://github.com/EliverLara/Andromeda/blob/d1abb48c69493000aa0133a32d594eb25e523d4f/themes/Andromeda-color-theme.json) | [MIT](andromeda/LICENSE) |
 | Solarized Dark (`solarized-dark`) | [solarized-dark-color-theme.json](solarized-dark-color-theme.json) | [microsoft/vscode 1.103.0](https://github.com/microsoft/vscode/blob/1.103.0/extensions/theme-solarized-dark/themes/solarized-dark-color-theme.json) | [MIT](LICENSE) |
+| Cobalt2 (`cobalt2`) | [cobalt2/cobalt2.json](cobalt2/cobalt2.json) | [wesbos/cobalt2-vscode 2.4.3](https://open-vsx.org/api/wesbos/theme-cobalt2/2.4.3/file/wesbos.theme-cobalt2-2.4.3.vsix) | [MIT](cobalt2/LICENSE) |
+| Vitesse Dark (`vitesse-dark`) | [vitesse/vitesse-dark.json](vitesse/vitesse-dark.json) | [antfu/vscode-theme-vitesse 1.0.1](https://open-vsx.org/api/antfu/theme-vitesse/1.0.1/file/antfu.theme-vitesse-1.0.1.vsix) | [MIT](vitesse/LICENSE) |
+| Horizon (`horizon`) | [horizon/horizon.json](horizon/horizon.json) | [jolaleye/horizon-theme-vscode 2.0.2](https://open-vsx.org/api/jolaleye/horizon-theme-vscode/2.0.2/file/jolaleye.horizon-theme-vscode-2.0.2.vsix) | [MIT](horizon/LICENSE) |
+| Winter is Coming (Dark Blue) (`winter-is-coming-dark-blue`) | [winter-is-coming/WinterIsComing-dark-blue-color-theme.json](winter-is-coming/WinterIsComing-dark-blue-color-theme.json) | [johnpapa/vscode-winteriscoming 1.5.0](https://open-vsx.org/api/johnpapa/winteriscoming/1.5.0/file/johnpapa.winteriscoming-1.5.0.vsix) | [MIT](winter-is-coming/LICENSE) |
+| Aura Dark (`aura-dark`) | [aura/aura-dark-color-theme.json](aura/aura-dark-color-theme.json) | [daltonmenezes/aura-theme 2.1.2](https://open-vsx.org/api/DaltonMenezes/aura-theme/2.1.2/file/DaltonMenezes.aura-theme-2.1.2.vsix) | [MIT](aura/LICENSE) |
+| Kanagawa Wave (`kanagawa-wave`) | [kanagawa/kanagawa-wave-color-theme.json](kanagawa/kanagawa-wave-color-theme.json) | [metapho-re/kanagawa-vscode-theme 0.5.0](https://open-vsx.org/api/metaphore/kanagawa-vscode-color-theme/0.5.0/file/metaphore.kanagawa-vscode-color-theme-0.5.0.vsix) | [MIT](kanagawa/LICENSE) |
+| Moonlight II (`moonlight-ii`) | [moonlight/moonlight-ii.json](moonlight/moonlight-ii.json) | [atomiks/moonlight-vscode-theme 0.10.6](https://open-vsx.org/api/atomiks/moonlight/0.10.6/file/atomiks.moonlight-0.10.6.vsix) | [MIT](moonlight/LICENSE) |
+| Everforest Dark (`everforest-dark`) | [everforest/everforest-dark.json](everforest/everforest-dark.json) | [sainnhe/everforest-vscode 0.3.0](https://open-vsx.org/api/sainnhe/everforest/0.3.0/file/sainnhe.everforest-0.3.0.vsix) | [MIT](everforest/LICENSE) |
+| Noctis (`noctis`) | [noctis/noctis.json](noctis/noctis.json) | [liviuschera/noctis 10.43.3](https://open-vsx.org/api/liviuschera/noctis/10.43.3/file/liviuschera.noctis-10.43.3.vsix) | [MIT](noctis/LICENSE) |
+| Darcula (`darcula`) | [darcula/darcula.json](darcula/darcula.json) | [rokoroku/vscode-theme-darcula 1.2.3](https://open-vsx.org/api/rokoroku/vscode-theme-darcula/1.2.3/file/rokoroku.vscode-theme-darcula-1.2.3.vsix) | [MIT](darcula/LICENSE) |
 
 Some upstream projects generate their theme JSON only when publishing an
 extension. Those definitions and licenses are copied from the versioned Open VSX
-archives linked above. Only color data is bundled; extension code is not run.
+archives linked above; the Aura Dark license comes from the
+[pinned repository revision](https://github.com/daltonmenezes/aura-theme/blob/20924aa0a43975420edd0e0b2f919e07a3eff9c9/LICENSE)
+because its archive omits one. Only color data is bundled; extension code is not run.
 Other definitions are vendored from the exact Git revisions linked above.
 
 [SOURCES.json](SOURCES.json) records the SHA-256 of every additional definition,
