@@ -561,45 +561,19 @@ impl App {
                 &cancel,
             );
             let path_aliases = std::sync::Arc::<crate::search_paths::PathAliases>::default();
-            let disk_paths = crate::search_walk::paths(
-                &root, includes.clone(), excludes.clone(), setting_excludes.clone(),
-                crate::search_walk::Options {
-                    follow_links,
-                    workers: 1,
-                    open_aliases: open_aliases.clone(),
-                    path_aliases: path_aliases.clone(),
-                },
-                &cancel,
-            );
             let mut results = Vec::new();
             let mut truncated = false;
             let mut sent = 0;
             let mut last_publish = std::time::Instant::now();
-            let mut visited = rustc_hash::FxHashSet::default();
+            let visited = std::sync::Mutex::new(rustc_hash::FxHashSet::default());
             let mut matched_files = follow_links.then(MatchedFiles::default);
             // Open files keep the editor's text matching and path rules.
             // Drafts shadow disk text. Clean views are verified on demand.
             let open_regex = regex.for_open_buffer();
-            let mut paths = open_paths.iter().map(|path| (path.to_path_buf(), true, false))
-                .chain(disk_paths.map(|(path, is_symlink)| (path, false, is_symlink)));
-            loop {
-                if cancel.is_cancelled() { return; }
-                let Some((path, from_open, is_symlink)) = paths.next() else { break; };
-                if from_open {
-                    let candidate = crate::search_paths::Candidate::new(&path);
-                    let included = if has_parent_traversal(&path) {
-                        let Ok(actual) = path.canonicalize() else { continue; };
-                        let actual_root = root.canonicalize().unwrap_or_else(|_| root.clone());
-                        let resolved = crate::search_paths::Candidate::new(&actual);
-                        includes.includes_canonical_open(&resolved)
-                            && !excludes.excludes_with_aliases(&resolved, &actual_root, &path_aliases)
-                            && !setting_excludes.excludes_tree(&actual, &actual_root)
-                    } else {
-                        includes.includes_open_with_aliases(&candidate, &path_aliases)
-                    };
-                    if !included || excludes.excludes_with_aliases(&candidate, &root, &path_aliases)
-                        || setting_excludes.excludes_tree(&path, &root) { continue; }
-                }
+            // Search one file into `found`. `None` means another source (an
+            // open buffer or an alias of it) already covered this file.
+            let search_path = |path: PathBuf, from_open: bool, limit: usize, found: &mut Vec<GlobalSearchResult>,
+                limited: &mut bool, cancel: &CancellationToken| -> Option<(PathBuf, bool)> {
                 let (path, is_open) = if from_open || open_buffers.contains_key(&path) || saved_buffers.contains_key(&path) {
                     (path, true)
                 } else if let Some(index) = open_aliases.as_ref().and_then(|aliases| aliases.get(&path)) {
@@ -607,38 +581,117 @@ impl App {
                 } else {
                     (path, false)
                 };
-                if !visited.insert(path.clone()) { continue; }
+                if !visited.lock().unwrap().insert(path.clone()) { return None; }
                 let spec = GlobalSearchSpec {
                     query: &query, regex: Some(&regex), include: "", exclude: "",
-                    max_results: max_results.saturating_sub(sent), case_sensitive,
+                    max_results: limit, case_sensitive,
                     open_buffers: Some(&open_buffers),
                 };
-                let first_match = results.len();
                 if let Some(saved) = saved_buffers.get(&path) {
-                    if let Some(rope) = search_saved(&path, saved, None, &cancel) {
+                    if let Some(rope) = search_saved(&path, saved, None, cancel) {
                         Self::search_file_rope(&path, &rope,
                             GlobalSearchSpec { regex: Some(&open_regex), ..spec },
-                            &mut results, &mut truncated, &cancel);
+                            found, limited, cancel);
                     }
                 } else {
-                    Self::search_single_file(&path, &root, spec, &mut results, &mut truncated, &cancel);
+                    Self::search_single_file(&path, &root, spec, found, limited, cancel);
                 }
-                if (results.len() > first_match || truncated)
-                    && let Some(matched_files) = &mut matched_files
-                    && !is_open
-                    && !matched_files.insert(&path, is_symlink)
-                {
-                    results.truncate(first_match);
-                    truncated = false;
-                }
-                if truncated { break; }
+                Some((path, is_open))
+            };
+            // Accept one file's matches as a unit, deduplicating linked save
+            // destinations. Returns false once the result limit is reached.
+            let mut accept = |path: &Path, is_open: bool, is_symlink: bool, mut found: Vec<GlobalSearchResult>,
+                limited: bool, sent: usize, results: &mut Vec<GlobalSearchResult>, truncated: &mut bool| -> bool {
+                if found.is_empty() && !limited { return true; }
+                if let Some(matched_files) = &mut matched_files
+                    && !is_open && !matched_files.insert(path, is_symlink) { return true; }
+                let room = max_results.saturating_sub(sent + results.len());
+                if found.len() > room { found.truncate(room); *truncated = true; }
+                *truncated |= limited;
+                results.append(&mut found);
+                !*truncated
+            };
+            let publish_due = |results: &mut Vec<GlobalSearchResult>, sent: &mut usize, last_publish: &mut std::time::Instant| {
                 if !results.is_empty() && (results.len() >= 32 || last_publish.elapsed() >= std::time::Duration::from_millis(80)) {
-                    sent += results.len();
+                    *sent += results.len();
                     let _ = sender.send(crate::background::BackgroundResult::GlobalSearchResults {
-                        results: std::mem::take(&mut results), done: false, generation, truncated: false,
+                        results: std::mem::take(results), done: false, generation, truncated: false,
                     });
-                    last_publish = std::time::Instant::now();
+                    *last_publish = std::time::Instant::now();
                 }
+            };
+            for &path in &open_paths {
+                if cancel.is_cancelled() { return; }
+                let candidate = crate::search_paths::Candidate::new(path);
+                let included = if has_parent_traversal(path) {
+                    let Ok(actual) = path.canonicalize() else { continue; };
+                    let actual_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+                    let resolved = crate::search_paths::Candidate::new(&actual);
+                    includes.includes_canonical_open(&resolved)
+                        && !excludes.excludes_with_aliases(&resolved, &actual_root, &path_aliases)
+                        && !setting_excludes.excludes_tree(&actual, &actual_root)
+                } else {
+                    includes.includes_open_with_aliases(&candidate, &path_aliases)
+                };
+                if !included || excludes.excludes_with_aliases(&candidate, &root, &path_aliases)
+                    || setting_excludes.excludes_tree(path, &root) { continue; }
+                let (mut found, mut limited) = (Vec::new(), false);
+                let limit = max_results.saturating_sub(sent + results.len());
+                let Some((path, is_open)) = search_path(path.to_path_buf(), true, limit, &mut found, &mut limited, &cancel)
+                    else { continue; };
+                if !accept(&path, is_open, false, found, limited, sent, &mut results, &mut truncated) { break; }
+                publish_due(&mut results, &mut sent, &mut last_publish);
+            }
+            // Disk files are walked and scanned on several workers, like
+            // ripgrep. The results view orders matches by path on arrival.
+            if !truncated && !cancel.is_cancelled() {
+                use std::sync::atomic::{AtomicUsize, Ordering};
+                let workers = std::thread::available_parallelism().map_or(1, usize::from).saturating_sub(1).clamp(1, 8);
+                // Stops traversal when the search is superseded or full.
+                let scan_cancel = CancellationToken::new();
+                let accepted = AtomicUsize::new(sent + results.len());
+                let options = crate::search_walk::Options {
+                    follow_links, workers,
+                    open_aliases: open_aliases.clone(),
+                    path_aliases: path_aliases.clone(),
+                };
+                std::thread::scope(|scope| {
+                    let (file_sender, receiver) = std::sync::mpsc::sync_channel(workers * 4);
+                    let (accepted, search_path, worker_cancel) = (&accepted, &search_path, scan_cancel.clone());
+                    let (includes, excludes, setting_excludes, root) =
+                        (includes.clone(), excludes.clone(), setting_excludes.clone(), &root);
+                    scope.spawn(move || {
+                        crate::worker_priority::lower_current_thread();
+                        crate::search_walk::visit(root, includes, excludes, setting_excludes, options, &worker_cancel,
+                            |path, is_symlink| {
+                                crate::worker_priority::lower_current_thread();
+                                if worker_cancel.is_cancelled() { return; }
+                                let (mut found, mut limited) = (Vec::new(), false);
+                                let limit = max_results.saturating_sub(accepted.load(Ordering::Relaxed));
+                                if let Some((path, is_open)) = search_path(path.to_path_buf(), false, limit,
+                                    &mut found, &mut limited, &worker_cancel)
+                                    && (!found.is_empty() || limited)
+                                {
+                                    let _ = file_sender.send((path, is_open, is_symlink, found, limited));
+                                }
+                            });
+                    });
+                    while !cancel.is_cancelled() {
+                        match receiver.recv_timeout(std::time::Duration::from_millis(20)) {
+                            Ok((path, is_open, is_symlink, found, limited)) => {
+                                let more = accept(&path, is_open, is_symlink, found, limited, sent, &mut results, &mut truncated);
+                                accepted.store(sent + results.len(), Ordering::Relaxed);
+                                if !more { break; }
+                                publish_due(&mut results, &mut sent, &mut last_publish);
+                            }
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => publish_due(&mut results, &mut sent, &mut last_publish),
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        }
+                    }
+                    scan_cancel.cancel();
+                    // Release workers blocked on a full channel before joining.
+                    drop(receiver);
+                });
             }
             if !cancel.is_cancelled() {
                 let _ = sender.send(crate::background::BackgroundResult::GlobalSearchResults { results, done: true, generation, truncated });
@@ -1085,6 +1138,30 @@ mod tests {
         App::search_single_file(&path, workspace.path(), spec, &mut results, &mut truncated, &cancel);
         assert!(results.is_empty());
         assert!(!truncated);
+    }
+
+    /// Whole-workspace Find in Files over this repository, from the request
+    /// to the final streamed batch.
+    #[test]
+    #[ignore = "manual release benchmark"]
+    fn benchmark_local_workspace_search() {
+        let root = std::env::current_dir().unwrap();
+        for (query, regex) in [("zq_absent_needle_qz", false), ("Rope", false), (r"fn \w+_cache\(", true)] {
+            let mut samples = Vec::new();
+            let mut found = 0;
+            for _ in 0..5 {
+                let mut app = App::new(root.clone());
+                app.global_search_query = query.into();
+                app.global_search_regex = regex;
+                let started = std::time::Instant::now();
+                app.update_global_search();
+                app.wait_for_background(std::time::Duration::from_secs(120), |app| !app.bg_global_search_running);
+                samples.push(started.elapsed());
+                found = app.global_search_results.len();
+            }
+            samples.sort();
+            eprintln!("BENCH workspace search {query:?}: results={found} median={:?} min={:?}", samples[2], samples[0]);
+        }
     }
 
     #[test]
