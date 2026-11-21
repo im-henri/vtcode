@@ -109,6 +109,10 @@ impl App {
         if new_group == self.active_group || new_group >= self.groups.len() {
             return;
         }
+        if !self.source_control_tab_active() {
+            self.source_control_preview.last_editor = self.tabs.get(self.active_tab)
+                .map(|tab| tab.editor.navigation_id);
+        }
         self.cancel_remote_location();
         // Input can change focus before the next render/synchronization pass.
         // Flush the outgoing document and its history before the new view can edit.

@@ -1027,6 +1027,10 @@ impl App {
     }
 
     pub(crate) fn open_source_control_diff(&mut self, idx: usize) {
+        self.open_source_control_change(idx, false);
+    }
+
+    pub(crate) fn open_source_control_change(&mut self, idx: usize, keep_open: bool) {
         let change = match self.source_control_files.get(idx) {
             Some(c) => c.clone(),
             None => return,
@@ -1038,8 +1042,19 @@ impl App {
             self.active_pane = crate::app::ActivePane::Editor;
             return;
         }
-        self.open_source_control_diff_in_repository(&file_path, change.status == 'D', change.staged,
-            Some(self.source_control_root().to_owned()));
+        let repository = self.source_control_root().to_owned();
+        let deleted = change.status == 'D';
+        let opened = self.with_source_control_preview(|app, slot| {
+            app.open_source_control_preview_diff(&file_path, deleted, change.staged, &repository, slot)
+        }).or_else(|| {
+            self.open_source_control_diff_in_repository(&file_path, deleted, change.staged, Some(repository));
+            self.tabs.get(self.active_tab).map(|tab| tab.kind)
+        });
+        if keep_open && let Some(kind @ crate::app::TabKind::Diff(_)) = opened
+            && let Some((group, index)) = self.tab_kind_location(kind)
+        {
+            self.keep_preview_tab_open(group, index);
+        }
     }
 
     /// Request the active Source Control comparison (or HEAD for a regular editor)

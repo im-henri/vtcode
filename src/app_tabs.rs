@@ -877,8 +877,16 @@ impl App {
 
     /// Keep the current preview open without pinning it in the tab bar.
     pub(crate) fn pin_preview_tab(&mut self) {
-        if self.active_tab < self.tabs.len() {
-            self.tabs[self.active_tab].preview = false;
+        self.keep_preview_tab_open(self.active_group, self.active_tab);
+    }
+
+    pub(crate) fn keep_preview_tab_open(&mut self, group: usize, index: usize) {
+        let tabs = if group == self.active_group { &mut self.tabs } else { &mut self.groups[group].tabs };
+        if let Some(tab) = tabs.get_mut(index) {
+            tab.preview = false;
+            if self.source_control_preview.tab == Some(tab.kind) {
+                self.source_control_preview.tab = None;
+            }
         }
     }
 
@@ -1705,6 +1713,7 @@ impl App {
             self.source_control_last_refresh = None;
             self.source_control_initialize_area = None;
             self.source_control_files.clear();
+            self.source_control_preview = Default::default();
             self.source_control_selection = Default::default();
             self.source_control_selected = 0;
             self.source_control_scroll = 0;

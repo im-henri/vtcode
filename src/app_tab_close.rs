@@ -46,6 +46,15 @@ impl App {
             .find_map(|(group, state)| position(&state.tabs).map(|index| (group, index)))
     }
 
+    pub(crate) fn tab_kind_location(&self, kind: TabKind) -> Option<(usize, usize)> {
+        let position = |tabs: &[Tab]| tabs.iter().position(|tab| tab.kind == kind);
+        if let Some(index) = position(&self.tabs) {
+            return Some((self.active_group, index));
+        }
+        self.groups.iter().enumerate().filter(|(group, _)| *group != self.active_group)
+            .find_map(|(group, state)| position(&state.tabs).map(|index| (group, index)))
+    }
+
     pub(crate) fn confirm_close_is_amend(&self) -> bool {
         self.tabs.get(self.confirm_close_tab).is_some_and(|tab| tab.kind == TabKind::AmendCommit)
     }
@@ -334,6 +343,9 @@ impl App {
             self.desks.membership.remove(&tab.navigation_id);
             self.desks.selected_tabs.remove(&tab.navigation_id);
             let still_open = self.tabs.iter().chain(self.groups.iter().flat_map(|g|&g.tabs)).any(|t|t.kind==tab.kind);
+            if !still_open && self.source_control_preview.tab == Some(tab.kind) {
+                self.source_control_preview.tab = None;
+            }
             match tab.kind {
                 TabKind::RemoteConnection(id) if !still_open => {
                     if id == 0 {

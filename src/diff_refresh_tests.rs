@@ -123,6 +123,29 @@ impl Fixture {
     }
 }
 
+fn click(app: &mut App, column: u16, row: u16) {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)] {
+        crate::mouse::handle_mouse(app, MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE });
+    }
+}
+
+fn draw_source_control(app: &mut App) {
+    app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
+    app.repositories.expanded = true;
+    app.sc_graph_collapsed = false;
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(180, 35)).unwrap();
+    terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+}
+
+fn click_change(app: &mut App, index: usize) {
+    draw_source_control(app);
+    let area = crate::ui_source_control::Panels::visible(app).unwrap().changes;
+    let file_row = app.source_control_layout().file_row(index).unwrap() - app.source_control_scroll;
+    click(app, area.x + 4, area.y + 6 + file_row as u16);
+}
+
 #[test]
 fn diffs_in_unfocused_windows_refresh_without_activating_their_tabs() {
     for main_in_background in [false, true] {
@@ -147,6 +170,159 @@ fn diffs_in_unfocused_windows_refresh_without_activating_their_tabs() {
         assert_eq!(f.app.groups[pane].tabs[tab].editor.rope.to_string(),
             "changed while the other window was focused\n");
         assert_eq!(f.app.editor().unwrap().navigation_id, editor_view);
+    }
+}
+
+#[test]
+fn source_control_tab_reuses_one_preview_for_diffs_and_commits() {
+    use crate::app::{GitCommitInfo, GitFileChange, SplitDirection};
+    use crate::tab_windows::MAIN_WINDOW;
+
+    for (detached, sibling, main_showing) in [
+        (false, true, false), (true, false, true), (true, true, true), (true, false, false),
+    ] {
+        let mut f = Fixture::new(false);
+        f.stage(1, "staged version\n");
+        let hash = git2::Repository::open(&f.root).unwrap().head().unwrap().target().unwrap().to_string();
+        let app = &mut f.app;
+        app.new_file();
+        let main_file = app.editor().unwrap().navigation_id;
+        app.new_file();
+        let target_file = app.editor().unwrap().navigation_id;
+        app.create_split_group_dir(app.active_tab, SplitDirection::Horizontal);
+        if !detached {
+            app.switch_group(app.tab_location(main_file).unwrap().0);
+        }
+        app.open_source_control_tab(false);
+        let source = app.editor().unwrap().navigation_id;
+        if detached {
+            assert!(app.open_detached_window(1, source));
+            if sibling {
+                assert!(app.move_tab_to_window(target_file, 1));
+            }
+            assert!(app.activate_window(1));
+            app.set_main_window_in_background(main_showing);
+            if sibling {
+                app.create_split_group_dir(app.active_tab, SplitDirection::Horizontal);
+                let (group, index) = app.tab_location(source).unwrap();
+                app.switch_group(group);
+                app.active_tab = index;
+            }
+        } else {
+            app.switch_group(app.tab_location(target_file).unwrap().0);
+        }
+        let expected_window = if detached && (sibling || !main_showing) { 1 } else { MAIN_WINDOW };
+        let has_editor_pane = sibling || main_showing;
+        let select_diff = |app: &mut App, path: &str, staged: bool| {
+            app.source_control_files = vec![GitFileChange {
+                directory: false, path: path.into(), status: 'M', staged, original_path: None,
+            }];
+            click_change(app, 0);
+            app.wait_for_background(Duration::from_secs(10), |app| !app.diff_tabs.refresh_running);
+            assert_eq!(app.editor().unwrap().navigation_id, source);
+            assert_eq!(app.detached_window_id(), detached.then_some(1));
+        };
+        let preview_location = |app: &App| {
+            let kind = app.source_control_preview.tab.unwrap();
+            let (group, index) = app.tab_kind_location(kind).unwrap();
+            if has_editor_pane {
+                assert_eq!(group, app.tab_location(target_file).unwrap().0);
+            } else {
+                assert!(app.desk_panes().contains(&group));
+                assert_ne!(group, app.active_group);
+            }
+            let pane = &app.groups[group];
+            assert_eq!(pane.active_tab, index);
+            assert_eq!(pane.tabs.len(), if has_editor_pane { 2 } else { 1 });
+            assert_eq!(app.tab_window(pane.tabs[index].editor.navigation_id), Some(expected_window));
+            (group, index)
+        };
+
+        select_diff(app, "a.txt", false);
+        let (group, slot) = preview_location(app);
+        let TabKind::Diff(first) = app.groups[group].tabs[slot].kind else { panic!("expected a diff") };
+        assert_eq!(app.diff_tabs.views[&first].base.as_deref(), Some("original\n"));
+        assert_eq!(app.groups[group].tabs[slot].editor.rope, "worktree\n");
+        if detached && expected_window == MAIN_WINDOW {
+            let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 32)).unwrap();
+            terminal.draw(|frame| crate::ui::draw_background_window(frame, app, MAIN_WINDOW)).unwrap();
+            let text: String = terminal.backend().buffer().content.iter().map(|cell| cell.symbol()).collect();
+            assert!(text.contains("original") && text.contains("worktree"));
+        }
+
+        select_diff(app, "b.txt", true);
+        let (group, index) = preview_location(app);
+        assert_eq!(index, slot);
+        assert!(!app.diff_tabs.source_control.contains_key(&first));
+        assert_eq!(app.groups[group].tabs[index].editor.rope, "staged version\n");
+
+        app.git_log = vec![GitCommitInfo {
+            graph: "●".into(), hash: hash[..7].into(), full_hash: hash.clone(),
+            message: "Initial".into(), author: "Test".into(), time_ago: String::new(), branches: Vec::new(),
+        }];
+        draw_source_control(app);
+        let graph = crate::ui_source_control::Panels::visible(app).unwrap().graph;
+        click(app, graph.x + 4, graph.y + 1);
+        app.wait_for_background(Duration::from_secs(10), |app| !app.commit_details.loading);
+        assert_eq!(app.editor().unwrap().navigation_id, source);
+        let (group, index) = preview_location(app);
+        assert_eq!(index, slot);
+        assert_eq!(app.groups[group].tabs[index].kind, TabKind::CommitDetails);
+        assert_eq!(app.commit_details.data.hash, hash);
+
+        select_diff(app, "a.txt", false);
+        assert_eq!(preview_location(app).1, slot);
+        assert!(!app.commit_details.active);
+        assert!(app.tab_location(main_file).is_some());
+    }
+}
+
+#[test]
+fn double_click_keeps_a_detached_source_control_diff_open() {
+    use crate::{app::GitFileChange, tab_windows::MAIN_WINDOW};
+
+    for click_tab in [false, true] {
+        let mut f = Fixture::new(false);
+        let app = &mut f.app;
+        app.new_file();
+        app.open_source_control_tab(false);
+        let source = app.editor().unwrap().navigation_id;
+        assert!(app.open_detached_window(1, source));
+        assert!(app.activate_window(1));
+        app.set_main_window_in_background(true);
+        app.source_control_files = ["a.txt", "b.txt"].into_iter().map(|path| GitFileChange {
+            directory: false, path: path.into(), status: 'M', staged: false, original_path: None,
+        }).collect();
+
+        click_change(app, 0);
+        let kept = app.source_control_preview.tab.unwrap();
+        if click_tab {
+            assert!(app.activate_window(MAIN_WINDOW));
+            let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 32)).unwrap();
+            terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+            let area = app.tab_bar_area.unwrap();
+            let column = (area.x..area.right()).find(|&x| {
+                crate::mouse::find_tab_at_col(app, x, area) == Some(app.active_tab)
+            }).unwrap();
+            click(app, column, area.y);
+            click(app, column, area.y);
+            assert!(app.activate_window(1));
+        } else {
+            click_change(app, 0);
+        }
+        assert!(app.source_control_preview.tab.is_none(), "double-clicking the diff keeps it open");
+
+        click_change(app, 1);
+        let preview = app.source_control_preview.tab.unwrap();
+        assert_ne!(preview, kept);
+        assert!(app.tab_kind_location(kept).is_some());
+
+        click_change(app, 0);
+        assert_eq!(app.source_control_preview.tab, Some(preview));
+        assert!(app.tab_kind_location(kept).is_some());
+        let (group, index) = app.tab_kind_location(kept).unwrap();
+        assert_eq!(app.groups[group].active_tab, index);
+        assert_eq!(app.editor().unwrap().navigation_id, source);
     }
 }
 

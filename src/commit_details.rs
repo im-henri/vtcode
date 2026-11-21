@@ -519,14 +519,28 @@ impl App {
         };
         self.git_log_selected = idx;
         self.sc_graph_focused = true;
-        self.open_commit_details(self.source_control_root().to_owned(), CommitData {
+        let root = self.source_control_root().to_owned();
+        let data = CommitData {
             hash: info.full_hash,
             message: info.message,
             author: info.author,
             time_ago: info.time_ago,
             references: info.branches,
             ..CommitData::default()
-        });
+        };
+        if self.with_source_control_preview(|app, _| {
+            // Commit details have one shared inspector. Reuse that inspector
+            // in the preview pane even if it was previously opened elsewhere.
+            if let Some((group, index)) = app.tab_kind_location(TabKind::CommitDetails)
+                && group != app.active_group
+            {
+                app.move_tab_between_groups(group, index, app.active_group);
+            }
+            app.open_commit_details(root.clone(), data.clone());
+            !app.tabs[app.active_tab].pinned
+        }).is_none() {
+            self.open_commit_details(root, data);
+        }
     }
 
     pub(crate) fn commit_details_root(&self) -> &Path {

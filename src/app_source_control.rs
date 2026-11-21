@@ -107,6 +107,12 @@ impl SourceControlSelection {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct SourceControlPreview {
+    pub(crate) tab: Option<crate::app::TabKind>,
+    pub(crate) last_editor: Option<u64>,
+}
+
 impl App {
     pub(crate) fn source_control_tab_active(&self) -> bool {
         self.tabs.get(self.active_tab).is_some_and(|tab| tab.kind == crate::app::TabKind::SourceControl)
@@ -146,12 +152,76 @@ impl App {
     }
 
     fn source_control_tab(&self) -> Option<(usize, usize)> {
-        use crate::app::TabKind;
-        let index = |tabs: &[crate::app::Tab]| tabs.iter().position(|tab| tab.kind == TabKind::SourceControl);
-        index(&self.tabs).map(|index| (self.active_group, index)).or_else(|| {
-            self.groups.iter().enumerate().filter(|(group, _)| *group != self.active_group)
-                .find_map(|(group, pane)| index(&pane.tabs).map(|index| (group, index)))
-        })
+        self.tab_kind_location(crate::app::TabKind::SourceControl)
+    }
+
+    /// Select the preview in its destination pane while keeping Source Control
+    /// selected in the pane and window receiving input.
+    pub(crate) fn with_source_control_preview(
+        &mut self,
+        open: impl FnOnce(&mut Self, Option<crate::app::TabKind>) -> bool,
+    ) -> Option<crate::app::TabKind> {
+        use crate::app::{ActivePane, SplitDirection, TabKind};
+        use crate::tab_windows::MAIN_WINDOW;
+
+        if !self.source_control_tab_active() {
+            return None;
+        }
+        let window = self.detached_window_id().unwrap_or(MAIN_WINDOW);
+        let origin = self.tabs[self.active_tab].editor.navigation_id;
+        let source_group = self.active_group;
+        let last_editor = self.source_control_preview.last_editor;
+        let main = (window != MAIN_WINDOW && self.main_window_in_background)
+            .then(|| self.window_desk(MAIN_WINDOW)).flatten();
+        let main_id = main.map(|desk| desk.id);
+        let main_group = main.and_then(|desk| desk.layout.as_ref().map(|layout| layout.active_group));
+        let previous = self.source_control_preview.tab.and_then(|kind| {
+            let (group, index) = self.tab_kind_location(kind)?;
+            let tab = if group == source_group { &self.tabs[index] } else { &self.groups[group].tabs[index] };
+            (!tab.pinned).then_some((kind, group, tab.editor.navigation_id))
+        });
+        let sibling = |group: usize| group != source_group && self.group_in_current_desk(group);
+        let target = previous.map(|(_, group, _)| group).filter(|&group| {
+            sibling(group) || self.groups.get(group).is_some_and(|pane| Some(pane.desk) == main_id)
+        }).or_else(|| {
+            let other = last_editor.and_then(|view| self.tab_location(view))
+                .map(|(group, _)| group).filter(|&group| sibling(group));
+            other.or_else(|| self.desk_panes().into_iter().find(|&group| sibling(group)))
+        }).or(main_group);
+        if let Some(group) = target {
+            self.switch_group(group);
+        }
+        let replace_preview = open(self, previous.map(|(kind, _, _)| kind));
+        if target.is_none() {
+            self.create_split_group_dir(self.active_tab, SplitDirection::Horizontal);
+        }
+        let result = &self.tabs[self.active_tab];
+        let kind = result.kind;
+        let view = result.editor.navigation_id;
+        let cross_window = self.tab_window(view) != Some(window);
+        if replace_preview && let Some((previous_kind, _, old_view)) = previous
+            && previous_kind != kind
+        {
+            if let Some((group, index)) = self.tab_location(old_view)
+                && group == self.active_group
+            {
+                self.move_tab(self.active_tab, index);
+            }
+            self.force_close_tab_view(old_view);
+        }
+        if replace_preview && matches!(kind, TabKind::Diff(_) | TabKind::CommitDetails) {
+            self.source_control_preview.tab = Some(kind);
+        }
+        if let Some((group, index)) = self.tab_location(origin) {
+            self.switch_group(group);
+            self.active_tab = index;
+            self.active_pane = ActivePane::Editor;
+            self.terminal_panel_focused = false;
+            self.sync_diff_tab();
+        }
+        self.source_control_preview.last_editor = last_editor;
+        self.tab_window_redraw_pending |= cross_window;
+        Some(kind)
     }
 
     pub(crate) fn avoid_duplicate_source_control_sidebar(&mut self) {
@@ -506,21 +576,12 @@ impl App {
                 && last.change == change
                 && time.duration_since(last.time) < std::time::Duration::from_millis(400)
         });
-        let path = self.workspace_file_path(&repository.join(&change.0));
         self.source_control_file_click = Some(FileClick {
             change, repository, position, time, serial: self.mouse_press_serial,
             workspace: self.workspace_generation,
         });
         self.select_source_control_file(index, false, false);
-        self.open_source_control_diff(index);
-        // Opening an existing diff may focus another split. Keep that exact
-        // tab, including a still-loading preview, without pinning its position.
-        if keep_open && self.tabs.get(self.active_tab).is_some_and(|tab| {
-            matches!(tab.kind, crate::app::TabKind::Diff(_))
-                && tab.editor.file_path.as_deref().is_some_and(|other| Self::same_open_path(other, &path))
-        }) {
-            self.pin_preview_tab();
-        }
+        self.open_source_control_change(index, keep_open);
     }
 
     pub(crate) fn select_source_control_file(&mut self, index: usize, toggle: bool, range: bool) {

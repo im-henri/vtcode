@@ -598,7 +598,7 @@ pub(crate) fn draw_tab_bar_for_group(
             4.5,
         );
         let mut style = Style::default().fg(fg).bg(tab_bg);
-        if tab.preview {
+        if tab.preview || (!tab.pinned && app.source_control_preview.tab == Some(tab.kind)) {
             style = style.add_modifier(Modifier::ITALIC);
         }
         if let Some(named) = app.tab_group(tab) {

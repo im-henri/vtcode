@@ -68,6 +68,13 @@ struct SourceControlIdentity {
     dirty: Dirty,
     inflight: Dirty,
     validating_cached: Option<std::time::Instant>,
+    loading_preview: bool,
+}
+
+#[derive(Clone, Copy)]
+enum SourceControlOpen {
+    Editor,
+    Preview(Option<TabKind>),
 }
 
 #[derive(Clone, Copy, Default)]
@@ -628,7 +635,10 @@ impl App {
             if let Some(tab) = tab {
                 let TabKind::Diff(id) = tab.kind else { return; };
                 if !self.diff_tabs.dirty.contains(&id) || tab.editor.bg_loading { return; }
-                let (base, version, pending, algorithm) = if self.diff_tabs.owner == Some(id) {
+                let Some(origin) = self.diff_tabs.source_control.get(&id) else { return; };
+                let (base, version, pending, algorithm) = if origin.loading_preview {
+                    (None, None, false, self.diff_algorithm)
+                } else if self.diff_tabs.owner == Some(id) {
                     (
                         self.compare_base_content.as_ref(),
                         self.compare_diff_target_version,
@@ -640,7 +650,8 @@ impl App {
                     (view.base.as_ref(), view.target_version, view.pending, view.cache.algorithm)
                 };
                 if pending { return; }
-                let (Some(base), Some(path), Some(origin)) = (base, &tab.editor.file_path, self.diff_tabs.source_control.get(&id)) else { return; };
+                let Some(path) = &tab.editor.file_path else { return; };
+                if base.is_none() && !origin.loading_preview { return; }
                 requests.push(DiffRefreshRequest {
                     id,
                     epoch: origin.epoch,
@@ -648,7 +659,7 @@ impl App {
                     repository: self.diff_tabs.repository_for_tab(tab).map(Path::to_owned)
                         .or_else(|| self.repository_hint_for_path(path)),
                     staged: origin.staged,
-                    base: base.clone(),
+                    base: base.cloned().unwrap_or_default(),
                     target: crate::editor::LoadedTextFile { remote_checkpoint: tab.editor.remote_checkpoint.clone(), rope: tab.editor.rope.clone(), encoding: tab.editor.encoding, file_size: tab.editor.file_size, last_disk_modified: tab.editor.last_disk_modified },
                     missing: tab.editor.disk_unavailable,
                     revisions: origin.revisions,
@@ -772,6 +783,7 @@ impl App {
                 continue;
             }
             let active = self.diff_tabs.owner == Some(id);
+            let initial_preview = origin.loading_preview;
             // A newly requested initial compare owns this tab until it completes.
             let initial_compare_pending = if active {
                 self.pending_git_compare_path.is_some() || self.compare_base_content.is_none()
@@ -781,14 +793,19 @@ impl App {
                     .get(&id)
                     .is_none_or(|view| view.pending)
             };
-            if initial_compare_pending {
+            if initial_compare_pending && !initial_preview {
                 let origin = self.diff_tabs.source_control.get_mut(&id).unwrap();
                 origin.dirty.git |= inflight.git;
                 origin.dirty.worktree |= inflight.worktree;
                 self.diff_tabs.dirty.insert(id);
                 continue;
             }
-            let was_cached = self.diff_tabs.source_control.get_mut(&id).unwrap().validating_cached.take().is_some();
+            let origin = self.diff_tabs.source_control.get_mut(&id).unwrap();
+            origin.loading_preview = false;
+            let staged = origin.staged;
+            let was_cached = origin.validating_cached.take().is_some();
+            let mode = self.preferred_diff_mode;
+            let explicit_layout = self.has_diff_layout_preference();
             match update.result {
                 Ok(prepared) => {
                     if active && was_cached && self.status_message.starts_with("Updating diff:") {
@@ -804,7 +821,7 @@ impl App {
                         continue;
                     };
                     let editor = &mut tab.editor;
-                    if prepared.target_changed {
+                    if prepared.target_changed || initial_preview {
                         let (line, col, scroll, horizontal, version) = (
                             editor.cursor_line,
                             editor.cursor_col,
@@ -836,7 +853,39 @@ impl App {
                     editor.set_git_line_status(diff.target_line_markers);
                     let version = Some(editor.content_version);
                     let cache = Arc::new(diff.render_cache);
-                    if active {
+                    if initial_preview {
+                        let first = cache.hunks.first().map_or(0, |hunk| hunk.target_start);
+                        editor.cursor_line = first.min(editor.line_count().saturating_sub(1));
+                        editor.cursor_col = 0;
+                        editor.scroll_offset = editor.cursor_line.saturating_sub(10);
+                        let path = editor.file_path.clone();
+                        let label = format!("{} ({}) ↔ {} ({})", editor.file_display_name(),
+                            if staged { "HEAD" } else { "Index" }, editor.file_display_name(),
+                            if staged { "Index" } else { "Working Tree" });
+                        let view = DiffViewState {
+                            mode: if prepared.revisions.base.is_none() && !explicit_layout { DiffMode::Inline } else { mode },
+                            base_path: None,
+                            base: Some(diff.base_content),
+                            base_rope: None,
+                            lines: diff.diff_lines,
+                            cache,
+                            target_version: version,
+                            base_revision: Some(DiffBaseRevision::Snapshot),
+                            label: Some(label),
+                            labels: Some(if staged { DiffLabels::new("HEAD (last commit)", "Index (staged)") }
+                                else { DiffLabels::new("Index (staged)", "Working Tree") }),
+                            target: path,
+                            left_scroll: 0,
+                            split_area: None,
+                            left_code_area: None,
+                            inline_scroll: Default::default(),
+                            selection: Default::default(),
+                            scope_source: Default::default(),
+                            split_ratio: self.diff_split_ratio,
+                            pending: false,
+                        };
+                        if active { view.install(self); } else { self.cache_diff_view(id, view); }
+                    } else if active {
                         if self.diff_render_cache.algorithm != cache.algorithm {
                             self.clear_diff_selection();
                         }
@@ -863,7 +912,15 @@ impl App {
                     changed = true;
                 }
                 Err(error) => {
-                    if active {
+                    if initial_preview {
+                        if let Some(tab) = self.tabs.iter_mut().chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
+                            .find(|tab| tab.kind == TabKind::Diff(id))
+                        {
+                            tab.editor.load_failed = true;
+                        }
+                        self.forget_cached_diff_view(id);
+                        self.notify_error(error);
+                    } else if active {
                         self.clear_diff_state();
                         if was_cached { self.status_message = format!("Diff refresh failed: {error}"); }
                         self.notify_error(error);
@@ -1018,9 +1075,10 @@ impl App {
         self.source_control_enabled
             && !self.rendering_inactive_editor
             && self.active_diff_tab_id() == self.diff_tabs.owner
-            && self.pending_git_compare_path.as_ref().is_some_and(|path| {
+            && (self.pending_git_compare_path.as_ref().is_some_and(|path| {
                 self.editor().and_then(|editor| editor.file_path.as_ref()) == Some(path)
-            })
+            }) || self.diff_tabs.owner.and_then(|id| self.diff_tabs.source_control.get(&id))
+                .is_some_and(|origin| origin.loading_preview))
     }
 
     pub(crate) fn suspend_diff_tab(&mut self) {
@@ -1073,6 +1131,12 @@ impl App {
             } else {
                 true
             };
+            let loading_preview = self.diff_tabs.source_control.get(&id).is_some_and(|origin| origin.loading_preview);
+            // The preview's initial refresh belongs to its tab even after focus moves.
+            if loading_preview {
+                self.refresh_dirty_source_control_diffs();
+                return;
+            }
             if restart && id != COMMIT_DIFF_ID {
                 if self.source_control_enabled {
                     self.request_compare_with_git_async();
@@ -1175,9 +1239,22 @@ impl App {
     pub(crate) fn open_source_control_diff_in_repository(
         &mut self, path: &Path, deleted: bool, staged: bool, repository: Option<PathBuf>,
     ) {
+        self.open_source_control_diff_with_placement(path, deleted, staged, repository, SourceControlOpen::Editor);
+    }
+
+    pub(crate) fn open_source_control_preview_diff(
+        &mut self, path: &Path, deleted: bool, staged: bool, repository: &Path, slot: Option<TabKind>,
+    ) -> bool {
+        self.open_source_control_diff_with_placement(path, deleted, staged, Some(repository.to_owned()), SourceControlOpen::Preview(slot))
+    }
+
+    fn open_source_control_diff_with_placement(
+        &mut self, path: &Path, deleted: bool, staged: bool, repository: Option<PathBuf>, placement: SourceControlOpen,
+    ) -> bool {
         self.auto_save_on_focus_change();
         self.push_nav_history();
         let path = Self::open_target_path(path);
+        let preview = matches!(placement, SourceControlOpen::Preview(_));
         let matches = |tab: &Tab| {
             matches!(tab.kind, TabKind::Diff(_))
                 && self.diff_tabs.staged_for_tab(tab) == Some(staged)
@@ -1192,10 +1269,25 @@ impl App {
                     .as_ref()
                     .is_some_and(|other| Self::same_open_path(other, &path))
         };
-        if let Some(index) = self.tabs.iter().position(matches) {
+        let (existing, replace_preview) = match placement {
+            SourceControlOpen::Editor => (self.tabs.iter().position(matches), false),
+            SourceControlOpen::Preview(slot) => {
+                let current = self.tabs.iter().position(|tab| {
+                    slot == Some(tab.kind) && !tab.editor.load_failed && matches(tab)
+                });
+                if let Some(index) = current {
+                    (Some(index), true)
+                } else {
+                    let kept = self.tabs.iter().position(|tab| {
+                        slot != Some(tab.kind) && !tab.preview && !tab.editor.load_failed && matches(tab)
+                    });
+                    (kept, kept.is_none())
+                }
+            }
+        };
+        if let Some(index) = existing {
             self.active_tab = index;
-        } else if let Some((group, index)) =
-            self.groups.iter().enumerate().find_map(|(group, state)| {
+        } else if !preview && let Some((group, index)) = self.groups.iter().enumerate().find_map(|(group, state)| {
                 state
                     .tabs
                     .iter()
@@ -1211,7 +1303,7 @@ impl App {
                 limit, std::time::Instant::now());
             let mut editor = if let Some(cached) = &cached {
                 cached.editor(self.new_editor(), limit)
-            } else if deleted || staged {
+            } else if deleted || staged || preview {
                 let mut editor = self.new_editor();
                 editor.file_path = Some(path.clone());
                 editor.disk_unavailable = deleted;
@@ -1225,19 +1317,23 @@ impl App {
             editor.set_language_associations(&self.language_associations);
             editor.tab_size = self.default_tab_size;
             self.diff_tabs.next_id += 1;
+            let loading_preview = preview && cached.is_none();
             self.diff_tabs.source_control.insert(self.diff_tabs.next_id, SourceControlIdentity {
                 staged, repository, revisions: cached.as_ref().map(|cached| cached.revisions), epoch: 0,
-                dirty: if cached.is_some() { Dirty::ALL } else { Dirty::default() }, inflight: Dirty::default(),
+                dirty: if cached.is_some() || loading_preview { Dirty::ALL } else { Dirty::default() }, inflight: Dirty::default(),
                 validating_cached: cached.as_ref().map(|cached| cached.closed),
+                loading_preview,
             });
             let mut tab = Tab::new_file(editor);
             tab.kind = TabKind::Diff(self.diff_tabs.next_id);
-            self.open_previewable_tab(tab, self.enable_preview_tabs);
+            self.open_previewable_tab(tab, !preview && self.enable_preview_tabs);
             if let Some(cached) = cached {
                 let id = self.active_diff_tab_id().unwrap();
                 self.diff_tabs.views.insert(id, cached.view);
                 self.diff_tabs.dirty.insert(id);
                 self.status_message = format!("Updating diff: {}", self.editor().unwrap().file_display_name());
+            } else if loading_preview {
+                self.diff_tabs.dirty.insert(self.diff_tabs.next_id);
             } else if !deleted && !staged {
                 if let Some(loaded) = self.remote_open_editor_snapshot(&path) {
                     // Same delivery path as a completed read, without the read.
@@ -1252,6 +1348,7 @@ impl App {
         self.touch_tab_mru(self.active_tab);
         self.sync_diff_tab();
         self.reveal_opened_diff_tab();
+        replace_preview
     }
 
     /// Over SSH, an unmodified editor for the same path already holds the
@@ -1382,7 +1479,9 @@ impl App {
             // An uncached diff tab has not prepared its comparison yet.
             id.is_some()
         };
-        let pending = pending && self.editor().is_some_and(|editor| {
+        let loading_preview = id.and_then(|id| self.diff_tabs.source_control.get(&id))
+            .is_some_and(|origin| origin.loading_preview);
+        let pending = (pending || loading_preview) && id != Some(COMMIT_DIFF_ID) && self.editor().is_some_and(|editor| {
             !editor.load_failed && !editor.large_file_mode
         });
         Some(InactiveDiffView { saved, pending })
