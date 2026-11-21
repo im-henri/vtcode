@@ -2905,6 +2905,8 @@ impl App {
                     let outcome = self.highlighter.apply_batch_with_outcome(batch);
                     let applied = outcome.accepted();
                     has_visual_changes |= outcome.visual_changes();
+                    // Other windows may show this file and requested these colors.
+                    self.tab_window_redraw_pending |= outcome.visual_changes() && self.has_detached_windows();
                     if !provisional
                         && applied
                         && self
@@ -2967,6 +2969,7 @@ impl App {
                         // This request covered the complete diff viewport.
                         // Retain its key until the viewport, document, or theme changes.
                         has_visual_changes |= has_entries;
+                        self.tab_window_redraw_pending |= has_entries && self.has_detached_windows();
                     }
                 }
                 crate::background::BackgroundResult::SessionUntitledLoaded { restores } => {

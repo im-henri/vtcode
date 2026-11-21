@@ -452,6 +452,53 @@ fn theme_previews_from_a_detached_window_repaint_the_main_window_every_time() {
 }
 
 #[test]
+fn theme_previews_from_a_detached_window_rehighlight_the_main_window_syntax() {
+    let mut app = App::test_new();
+    let mut source = Editor::test_with_text("fn main() {}\n");
+    source.file_path = Some(std::path::PathBuf::from("main.rs"));
+    source.viewport_height = 10;
+    let mut other = Editor::test_with_text("plain\n");
+    other.file_path = Some(std::path::PathBuf::from("detached.txt"));
+    app.tabs = vec![Tab::new_file(source), Tab::new_file(other)];
+    let view = app.tabs[1].editor.navigation_id;
+    assert!(app.open_detached_window(1, view));
+    assert!(app.activate_window(1));
+    app.terminal_has_focus = true;
+    let mut windows = Windows::new(&app);
+    windows.id = 1;
+    let mut main = Terminal::new(TestBackend::new(100, 24)).unwrap();
+
+    fn keyword_fg(terminal: &Terminal<TestBackend>) -> Option<ratatui::style::Color> {
+        let cells = &terminal.backend().buffer().content;
+        cells.windows(4).find(|w| {
+            w.iter().map(|cell| cell.symbol()).collect::<String>() == "fn m"
+        }).map(|w| w[0].fg)
+    }
+
+    for key in ["monokai", "dracula", "nord", "monokai", "dracula"] {
+        assert!(app.set_theme_by_key(key));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            app.poll_background_results();
+            windows.invalidate_pending_workspace_redraw(&mut app);
+            if windows.background_draw_ready(true) {
+                windows.paint_main_background(&mut main, &mut app).unwrap();
+            }
+            let expected = app.highlighter
+                .highlighted_line_if_cached("fn main() {}\n", 0, Some(std::path::Path::new("main.rs")), None, &app.syntax_theme)
+                .and_then(|spans| spans.iter().find(|(_, text)| text.starts_with("fn")).map(|(style, _)| ratatui::style::Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b)));
+            if expected.is_some() && keyword_fg(&main) == expected {
+                break;
+            }
+            assert!(Instant::now() < deadline, "main window kept stale syntax colors after previewing {key}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    assert_eq!(windows.active(), 1);
+    assert_eq!(app.editor().unwrap().navigation_id, view);
+}
+
+#[test]
 fn a_window_waiting_for_its_first_focused_frame_cannot_block_another_windows_input() {
     let mut windows = Windows::new(&App::test_new());
     let (input, queue) = mpsc::channel();

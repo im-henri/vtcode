@@ -65,6 +65,9 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, window: WindowId) {
         app.desks.active = target_desk;
         app.load_group(app.active_group);
         app.sync_activity_bar_selection();
+        // Only the focused desk schedules highlighting from input. Request
+        // this desk's viewports too, or a theme change paints stale syntax.
+        app.refresh_visible_highlights_async();
         app.begin_inactive_diff_view()
     } else {
         None
