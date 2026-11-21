@@ -862,14 +862,7 @@ impl App {
         *self.tab_animation_cache.borrow_mut() = None;
         // Hidden panes must never retain mouse hit targets from their last frame.
         for group in &mut self.groups {
-            group.code_area = None;
-            group.tab_bar_area = None;
-            group.editor_area = None;
-            group.minimap_area = None;
-            group.scrollbar_area = None;
-            group.h_scrollbar_area = None;
-            group.gutter_area = None;
-            group.breadcrumb_area = None;
+            group.clear_hit_areas();
         }
         self.code_area = None;
         self.tab_bar_area = None;

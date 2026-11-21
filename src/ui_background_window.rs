@@ -78,6 +78,11 @@ pub(crate) fn draw(frame: &mut Frame, app: &mut App, window: WindowId) {
     if let Some(layout) = &mut projection {
         app.end_inactive_diff_view(comparison);
         app.save_active_group();
+        // Background windows share the workbench's pane storage. Their cell
+        // coordinates must never become hit targets in the foreground window.
+        for group in app.groups.iter_mut().filter(|group| group.desk == target_desk) {
+            group.clear_hit_areas();
+        }
         layout.swap_presentation(app);
         app.desks.active = foreground_desk;
         app.load_group(app.active_group);

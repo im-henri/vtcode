@@ -1904,6 +1904,17 @@ impl Default for EditorGroup {
 }
 
 impl EditorGroup {
+    pub(crate) fn clear_hit_areas(&mut self) {
+        self.code_area = None;
+        self.tab_bar_area = None;
+        self.editor_area = None;
+        self.minimap_area = None;
+        self.scrollbar_area = None;
+        self.h_scrollbar_area = None;
+        self.gutter_area = None;
+        self.breadcrumb_area = None;
+    }
+
     pub(crate) fn new() -> Self {
         Self {
             desk: 0,

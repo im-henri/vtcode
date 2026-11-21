@@ -517,6 +517,67 @@ fn background_main_refreshes_its_own_sidebar_while_the_detached_editor_keeps_foc
 }
 
 #[test]
+fn resizing_a_detached_split_keeps_the_window_active() {
+    for direction in [SplitDirection::Horizontal, SplitDirection::Vertical] {
+        let mut app = app_with_tabs(&["main.txt", "first.txt", "second.txt"]);
+        app.show_explorer = false;
+        app.show_panel = false;
+        app.show_minimap = false;
+        let main_view = app.tabs[0].editor.navigation_id;
+        let first = app.tabs[1].editor.navigation_id;
+        let second = app.tabs[2].editor.navigation_id;
+        assert!(app.open_detached_window(1, first));
+        assert!(app.move_tab_to_window(second, 1));
+        assert!(app.activate_window(1));
+        app.create_split_group_dir(app.active_tab, direction);
+        app.terminal_has_focus = true;
+
+        let mut detached = Terminal::new(TestBackend::new(100, 32)).unwrap();
+        detached.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        let divider = app.split_dividers[0].0;
+        let column = divider.x + divider.width / 2;
+        let row = divider.y + divider.height / 2;
+
+        // Repaint the main window behind the detached split. Its geometry
+        // overlaps the divider in terminal coordinates. For a horizontal
+        // split the main window's right scrollbar is directly under it.
+        let width = if direction == SplitDirection::Horizontal { column + 1 } else { 100 };
+        let mut main = Terminal::new(TestBackend::new(width, 38)).unwrap();
+        let mut windows = Windows::new(&app);
+        windows.id = 1;
+        windows.invalidate_background();
+        windows.paint_main_background(&mut main, &mut app).unwrap();
+        assert!(screen_text(&main).contains("main.txt"));
+
+        let mouse = |app: &mut App, kind, column, row| {
+            crate::mouse::handle_mouse(app, MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE });
+        };
+        mouse(&mut app, MouseEventKind::Down(MouseButton::Left), column, row);
+        assert_eq!(app.detached_window_id(), Some(1), "{direction:?}");
+        assert!(app.resizing_split, "{direction:?}");
+
+        let end = match direction {
+            SplitDirection::Horizontal => (column + 6, row),
+            SplitDirection::Vertical => (column, row + 6),
+        };
+        mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), end.0, end.1);
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), end.0, end.1);
+        detached.draw(|frame| crate::ui::draw(frame, &mut app)).unwrap();
+        let resized = app.split_dividers[0].0;
+        assert!(match direction {
+            SplitDirection::Horizontal => resized.x > divider.x,
+            SplitDirection::Vertical => resized.y > divider.y,
+        });
+        assert_eq!(app.detached_window_id(), Some(1));
+        assert!(!app.resizing_split);
+        assert!(app.tab_window_request.is_none());
+        for (view, window) in [(first, 1), (second, 1), (main_view, MAIN_WINDOW)] {
+            assert_eq!(app.tab_window(view), Some(window));
+        }
+    }
+}
+
+#[test]
 fn a_displayed_parked_workspace_processes_git_changes_without_a_focus_event() {
     check_parked_workspace_git_changes(false);
 }
