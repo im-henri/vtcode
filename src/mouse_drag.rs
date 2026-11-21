@@ -471,21 +471,6 @@ pub(crate) fn handle_left_drag(
         }
         return;
     }
-    // Drag to resize explorer
-    if app.resizing_explorer {
-        let new_width = if let Some(exp_area) = app.explorer_area {
-            if app.sidebar_right {
-                let right_edge = exp_area.x + exp_area.width;
-                right_edge.saturating_sub(col).clamp(15, 80)
-            } else {
-                col.saturating_sub(exp_area.x).saturating_add(1).clamp(15, 80)
-            }
-        } else {
-            col.clamp(15, 80)
-        };
-        app.explorer_width = new_width;
-        return;
-    }
     // Drag the internal side-by-side diff divider.
     if app.resizing_diff_split {
         if let Some(area) = app.diff_split_area {
@@ -1117,7 +1102,6 @@ pub(crate) fn handle_left_up(app: &mut App, col: u16, row: u16, modifiers: KeyMo
     app.tab_drop_zone = None;
     app.tab_drop_target_group = None;
     app.terminal_dock_drop_target = None;
-    app.resizing_explorer = false;
     app.resizing_panel = false;
     app.resizing_sc_graph = false;
     app.sc_graph_click_start = None;

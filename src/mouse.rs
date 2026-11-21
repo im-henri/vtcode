@@ -68,6 +68,28 @@ fn handle_mouse_workbench(app: &mut App, mouse: event::MouseEvent) {
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Drag(_)) {
         app.copy_animation.clear();
     }
+    // A sidebar resize keeps the pointer until release, including over the
+    // editor, terminals and the bottom panel.
+    if app.resizing_explorer
+        && matches!(mouse.kind, MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left))
+    {
+        app.mouse_col = mouse.column;
+        app.mouse_row = mouse.row;
+        if mouse.kind == MouseEventKind::Drag(MouseButton::Left) {
+            let width = app.explorer_area.map_or(mouse.column, |area| {
+                if app.sidebar_right {
+                    area.right().saturating_sub(mouse.column)
+                } else {
+                    mouse.column.saturating_sub(area.x).saturating_add(1)
+                }
+            });
+            app.explorer_width = width.clamp(15, 80);
+        } else {
+            app.resizing_explorer = false;
+            app.update_sidebar_auto_hide(mouse);
+        }
+        return;
+    }
     if crate::terminal_sidebar::captured_mouse(app, mouse) { return; }
     if crate::terminal_scrollbar::captured_mouse(app, mouse) { return; }
     if crate::ui_panels::captured_mouse(app, mouse) { return; }
@@ -92,6 +114,10 @@ fn handle_mouse_workbench(app: &mut App, mouse: event::MouseEvent) {
             || crate::ui_commit_details::scrollbar_hover_changed(app, previous)
             || crate::ui_desks::sidebar_toggle_area(app).is_some_and(|area| {
                 area.contains(previous) != area.contains((app.mouse_col, app.mouse_row).into())
+            })
+            || app.explorer_area.is_some_and(|area| {
+                explorer_resize_hit(area, app.sidebar_right, previous.x, previous.y)
+                    != explorer_resize_hit(area, app.sidebar_right, app.mouse_col, app.mouse_row)
             })
             || diff_divider_hit(app, previous.x, previous.y)
                 != diff_divider_hit(app, app.mouse_col, app.mouse_row)
@@ -192,6 +218,7 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
         app.alt_cursor_mouse_down_active = false;
         app.explorer_scrollbar_drag = None;
+        app.resizing_explorer = false;
     }
 
     // A gesture that began in a terminal keeps its drag/release even if a
@@ -372,6 +399,20 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     // Non-modal fields run after overlay/dialog hit testing so an obscured
     // Settings/Search/Explorer field can never steal a click from a popup.
     if app.handle_background_text_input_mouse(mouse.kind, col, row, mouse.modifiers) {
+        return;
+    }
+    if mouse.kind == MouseEventKind::Down(MouseButton::Left)
+        && !app.zen_mode && app.sidebar_is_visible()
+        && app.explorer_area.is_some_and(|area| explorer_resize_hit(area, app.sidebar_right, col, row))
+    {
+        // When only one column fits, Source Control's Actions button shares
+        // the first cell of the seam. The other rows still resize the sidebar.
+        if !crate::ui_source_control::click_header(app, col, row) {
+            app.clear_drag_states();
+            app.drag_start_pos = None;
+            app.drag_has_moved = false;
+            app.resizing_explorer = true;
+        }
         return;
     }
     // Remote consumes mouse events across its entire pane, so give the

@@ -611,6 +611,12 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
         app.editor_gradient_area = Some(editor_area);
         ui_chrome::draw_editor_section_with_pending_diff(f, app, editor_area, pending_diff);
         app.editor_gradient_area = None;
+        // Some sidebar views leave the seam unpainted. Give it the sidebar's
+        // background before gradients and translucent borders are applied.
+        f.buffer_mut().set_style(
+            Rect::new(border_col, sidebar_content.y, 1, sidebar_content.height),
+            Style::default().bg(app.colors.bg_sidebar),
+        );
         apply_area_gradient(
             f,
             sidebar_area,
@@ -626,7 +632,7 @@ fn draw_workbench(f: &mut Frame, app: &mut App, pending_diff: bool) {
 
         // Resolve the sidebar border over each cell's final background.
         let is_hovering_border = crate::mouse::explorer_resize_hit(
-            sidebar_area,
+            sidebar_content,
             app.sidebar_right,
             app.mouse_col,
             app.mouse_row,
@@ -1386,8 +1392,77 @@ mod tests {
         assert!((sidebar.top()..sidebar.bottom()).all(|y| {
             buffer
                 .cell((seam_x, y))
-                .is_some_and(|cell| cell.symbol() == if app.colors.ui.border_sidebar.is_some() { "│" } else { " " })
+                .is_some_and(|cell| cell.bg == app.colors.bg_sidebar
+                    && cell.symbol() == if app.colors.ui.border_sidebar.is_some() { "│" } else { " " })
         }));
+    }
+
+    #[test]
+    fn sidebar_divider_uses_the_theme_and_resizes_every_view() {
+        use crate::app::SidebarView;
+        use crate::app_theme::{GradientPrecomputed, ThemeGradientSpec, lerp_color};
+        use crate::theme_workbench::ColorLayer;
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let mut app = App::test_new();
+        app.show_explorer = true;
+        app.set_sidebar_auto_hide(false);
+        app.show_activity_bar = false;
+        app.show_panel = false;
+        app.tabs.push(crate::app::Tab::new_file(crate::editor::Editor::new()));
+        app.source_control_repository_state = crate::app::SourceControlRepositoryState::Available;
+        app.colors.ui.sidebar_border = ColorLayer::default();
+        app.colors.ui.border_sidebar = None;
+        let hover = Color::Rgb(77, 214, 221);
+        app.colors.ui.sash_hover_border = ColorLayer::opaque(hover);
+        let gradient = ThemeGradientSpec {
+            start: Color::Rgb(32, 42, 49), end: Color::Rgb(54, 59, 67), angle_deg: 45.0,
+        };
+        app.colors.gradients.bg_sidebar = gradient;
+        let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        let mouse = |app: &mut App, kind, column, row| {
+            crate::mouse::handle_mouse(app, MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE });
+        };
+
+        for view in [SidebarView::Explorer, SidebarView::Search, SidebarView::SourceControl,
+            SidebarView::Remote, SidebarView::Extensions, SidebarView::Settings]
+        {
+            app.sidebar_view = view;
+            for right in [false, true] {
+                app.sidebar_right = right;
+                app.explorer_width = 30;
+                app.mouse_col = u16::MAX;
+                app.mouse_row = u16::MAX;
+                terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+                let area = app.explorer_area.unwrap();
+                let seam = if right { area.x } else { area.right() - 1 };
+                let row = area.y + 10;
+                let position = GradientPrecomputed::new(area.width, area.height, gradient.angle_deg);
+                let expected_bg = lerp_color(gradient.start, gradient.end, position.t_at(seam - area.x, row - area.y));
+                let cell = &terminal.backend().buffer()[(seam, row)];
+                assert_eq!(cell.symbol(), " ", "{view:?}, right={right}");
+                assert_eq!(cell.bg, expected_bg, "{view:?}, right={right}");
+
+                app.mouse_hover_changed = false;
+                mouse(&mut app, MouseEventKind::Moved, seam, row);
+                assert!(app.mouse_hover_changed, "{view:?}, right={right}");
+                terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+                let cell = &terminal.backend().buffer()[(seam, row)];
+                assert_eq!(cell.symbol(), "│", "{view:?}, right={right}");
+                assert_eq!(cell.fg, hover);
+                assert_eq!(cell.bg, expected_bg);
+
+                mouse(&mut app, MouseEventKind::Down(MouseButton::Left), seam, row);
+                assert!(app.resizing_explorer, "{view:?}, right={right}");
+                let target = if right { seam - 8 } else { seam + 8 };
+                mouse(&mut app, MouseEventKind::Drag(MouseButton::Left), target, 31);
+                assert_eq!(app.explorer_width, 38, "{view:?}, right={right}");
+                mouse(&mut app, MouseEventKind::Up(MouseButton::Left), target, 31);
+                assert!(!app.resizing_explorer);
+                terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+                assert_eq!(app.explorer_area.unwrap().width, 38);
+            }
+        }
     }
 
     #[test]

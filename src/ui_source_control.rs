@@ -15,6 +15,7 @@ use crate::text_input::{TextInputHitMap, TextInputId};
 use crate::ui_pickers::truncate_to_width;
 
 const SC_ACTIONS_LABEL: &str = " Actions ▾ ";
+const SC_REOPEN_LABEL: &str = " Reopen ▾ ";
 const SC_SECTION_ACTION_WIDTH: u16 = 3;
 #[path = "ui_source_control_file_actions.rs"]
 mod file_actions;
@@ -229,7 +230,13 @@ fn draw_sc_actions(f: &mut Frame, app: &mut App, area: Rect) {
     let refresh_width = if app.source_control_enabled && app.has_open_folder() && area.width >= 2 {
         if area.width >= 6 { 3 } else { 1 }
     } else { 0 };
-    let placement_width = if area.width >= 20 { 3 } else { 0 };
+    let closed = if app.source_control_enabled { app.repositories.closed_roots().count() } else { 0 };
+    let minimum_width = if closed > 0 {
+        (SC_ACTIONS_LABEL.width() + SC_REOPEN_LABEL.width() + 1) as u16 + refresh_width + 3
+    } else {
+        20
+    };
+    let placement_width = if area.width >= minimum_width { 3 } else { 0 };
     let controls = Rect::new(area.x, area.y, area.width - refresh_width - placement_width, area.height);
     let Some(button) = sc_actions_area(controls) else { return; };
     let label = if button.width >= UnicodeWidthStr::width(SC_ACTIONS_LABEL) as u16 {
@@ -257,14 +264,13 @@ fn draw_sc_actions(f: &mut Frame, app: &mut App, area: Rect) {
                 app.colors.bg_sidebar, refresh.contains((app.mouse_col, app.mouse_row).into()), false, false)), refresh);
         app.source_control_refresh_area = Some(refresh);
     }
-    let closed = app.repositories.closed_roots().count();
     if closed == 0 { return; }
     let available = controls.right().saturating_sub(button.right().saturating_add(1));
     let full_label = format!(" Reopen ({closed}) ▾ ");
     let label = if full_label.width() <= usize::from(available) {
         full_label.as_str()
-    } else if available >= " Reopen ▾ ".width() as u16 {
-        " Reopen ▾ "
+    } else if available >= SC_REOPEN_LABEL.width() as u16 {
+        SC_REOPEN_LABEL
     } else { return; }; // The Actions menu still exposes it on narrow sidebars.
     let width = label.width() as u16;
     let reopen = Rect::new(controls.right() - width, area.y, width, 1);
