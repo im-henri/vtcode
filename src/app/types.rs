@@ -1472,6 +1472,12 @@ impl KeyBinding {
             && self.chord.map(normalize) == other.chord.map(normalize)
     }
 
+    /// Reassigning these hands their default key back to its ordinary
+    /// meaning (Ctrl+Right moves a word) instead of disabling it.
+    pub(crate) fn releases_default_key(&self) -> bool {
+        self.id == "vtcomplete_inline_accept_word"
+    }
+
     pub(crate) fn uses_native_handler(&self) -> bool {
         self.built_in_handler && self.priority == 0 && !self.is_modified()
     }

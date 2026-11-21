@@ -204,10 +204,6 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
             }
         }
 
-        // Accept the next word of a visible inline prediction.
-        if key.code == KeyCode::Right && key.modifiers == KeyModifiers::CONTROL && app.accept_inline(true) {
-            return false;
-        }
         // Configurable keybinding dispatch
         if app.route_custom_editor_shortcut(key.code, key.modifiers) { return false; }
         let legacy_reassigned = (!key.modifiers.is_empty() || matches!(key.code, KeyCode::F(_)))

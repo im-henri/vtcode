@@ -113,6 +113,32 @@ fn control_right_accepts_one_word_and_keeps_the_rest() {
 }
 
 #[test]
+fn accept_next_word_can_be_reassigned_and_ctrl_right_moves_again() {
+    let mut app = with_ghost();
+    let binding = app
+        .keybindings
+        .iter()
+        .position(|binding| binding.id == "vtcomplete_inline_accept_word")
+        .unwrap();
+    assert_eq!(app.keybindings[binding].display(), "Ctrl+Right");
+    app.keybindings[binding].assign(KeyModifiers::ALT, KeyCode::Char('k'), None);
+    // A following line gives Ctrl+Right's word movement somewhere to go.
+    let mut moving = app_with("let value = \nnext");
+    moving.editor_mut().unwrap().cursor_line = 0;
+    moving.editor_mut().unwrap().cursor_col = "let value = ".len();
+    show(&mut moving, "project_value.len();");
+    moving.keybindings[binding].assign(KeyModifiers::ALT, KeyCode::Char('k'), None);
+    press(&mut moving, KeyCode::Right, KeyModifiers::CONTROL);
+    assert_eq!(text(&moving), "let value = \nnext", "Ctrl+Right no longer accepts");
+    assert_eq!(moving.editor().unwrap().cursor_line, 1, "Ctrl+Right moves by a word again");
+    let mut app = with_ghost();
+    app.keybindings[binding].assign(KeyModifiers::ALT, KeyCode::Char('k'), None);
+    press(&mut app, KeyCode::Char('k'), KeyModifiers::ALT);
+    assert_eq!(text(&app), "let value = project_value");
+    assert_eq!(app.inline_ghost_text(), Some(".len();"));
+}
+
+#[test]
 fn word_acceptance_always_advances() {
     assert_eq!(next_word_end("project_value.len()"), 13);
     assert_eq!(next_word_end(".len()"), 4);

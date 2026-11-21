@@ -260,4 +260,9 @@ pub(super) const BUILTINS: &[(&str, &str, &str)] = &[
     ("goto_tab_7", "View: Open Editor 7", "Alt+7"),
     ("goto_tab_8", "View: Open Editor 8", "Alt+8"),
     ("goto_tab_9", "View: Open Editor 9", "Alt+9"),
+    (
+        "vtcomplete_inline_accept_word",
+        "GPTComplete: Accept Next Word",
+        "Ctrl+Right",
+    ),
 ];

@@ -1102,6 +1102,9 @@ impl App {
                     self.completion_ui.explicit = true;
                 }
             }
+            "vtcomplete_inline_accept_word" => {
+                self.accept_inline(true);
+            }
             "trigger_parameter_hints" => {
                 self.request_lsp_suggestions(true);
             }

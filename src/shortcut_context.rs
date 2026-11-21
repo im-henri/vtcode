@@ -308,6 +308,7 @@ enum Key {
     Panel,
     Input,
     Suggest,
+    InlineSuggestion,
     Zen,
     Recording,
     RemoteWorkspace,
@@ -350,6 +351,7 @@ impl Key {
             "panelFocus" => Self::Panel,
             "inputFocus" | "textInputFocus" => Self::Input,
             "suggestWidgetVisible" => Self::Suggest,
+            "inlineSuggestionVisible" => Self::InlineSuggestion,
             "inZenMode" => Self::Zen,
             "macroRecording" => Self::Recording,
             "remoteWorkspace" => Self::RemoteWorkspace,
@@ -484,6 +486,7 @@ impl<'a> Context<'a> {
             Key::Panel => app.active_pane == ActivePane::Panel || app.docked_terminal_has_focus(),
             Key::Input => text_editor || input.is_some(),
             Key::Suggest => text_editor && (app.lsp_completion_active || app.vtcomplete_active),
+            Key::InlineSuggestion => text_editor && app.inline_ghost_visible(),
             Key::Zen => app.zen_mode,
             Key::Recording => app.macro_recording,
             Key::RemoteWorkspace => app.remote_workspace.is_some(),
@@ -562,8 +565,11 @@ pub(crate) fn default_when(binding: &KeyBinding) -> &'static When {
         LazyLock::new(|| When::parse("editorTextFocus && !macroRecording").unwrap());
     static STOP_MACRO: LazyLock<When> =
         LazyLock::new(|| When::parse("editorTextFocus && macroRecording").unwrap());
+    static INLINE: LazyLock<When> =
+        LazyLock::new(|| When::parse("editorTextFocus && inlineSuggestionVisible").unwrap());
     match binding.id {
         "toggle_terminal" => &ALWAYS,
+        "vtcomplete_inline_accept_word" => &INLINE,
         // Alt+F is also the shell's forward-word shortcut.
         "global_search" if binding.default_modifiers == crossterm::event::KeyModifiers::ALT => {
             &NON_SHELL

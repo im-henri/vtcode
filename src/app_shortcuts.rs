@@ -213,6 +213,7 @@ pub(crate) fn append_builtins(bindings: &mut Vec<KeyBinding>) {
             built_in_handler: !matches!(
                 id,
                 "reopen_closed" | "toggle_zen" | "settings" | "show_explorer" | "quit"
+                    | "vtcomplete_inline_accept_word"
             ),
             editor_only: ["Edit:", "Selection:", "Fold:", "Bookmarks:", "Macro:"]
                 .iter()
@@ -653,6 +654,7 @@ impl App {
             let binding = &self.keybindings[position];
             binding.default_chord.is_none()
                 && binding.is_modified()
+                && !binding.releases_default_key()
                 && binding
                     .default_when()
                     .matches(context.get_or_init(|| Context::new(self)))

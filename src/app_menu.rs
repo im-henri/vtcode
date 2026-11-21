@@ -324,6 +324,7 @@ impl App {
             PaletteCommand { name: "Edit: Transform to Uppercase".into(), shortcut: String::new(), id: Cow::Borrowed("to_uppercase") },
             PaletteCommand { name: "Edit: Transform to Lowercase".into(), shortcut: String::new(), id: Cow::Borrowed("to_lowercase") },
             PaletteCommand { name: "Edit: Toggle Case".into(), shortcut: String::new(), id: Cow::Borrowed("toggle_case") },
+            PaletteCommand { name: "GPTComplete: Accept Next Word".into(), shortcut: "Ctrl+Right".into(), id: Cow::Borrowed("vtcomplete_inline_accept_word") },
             PaletteCommand { name: "Edit: Trigger Suggest".into(), shortcut: "Ctrl+Space".into(), id: Cow::Borrowed("trigger_suggest") },
             PaletteCommand { name: "Edit: Trigger Parameter Hints".into(), shortcut: "Ctrl+Shift+Space".into(), id: Cow::Borrowed("trigger_parameter_hints") },
             PaletteCommand { name: "Edit: Trim Trailing Whitespace".into(), shortcut: String::new(), id: Cow::Borrowed("trim_trailing") },
