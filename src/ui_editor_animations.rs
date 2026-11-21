@@ -2261,9 +2261,11 @@ fn draw_overlays_at(
     } else {
         0.0
     };
+    // A caret outside the viewport has no cell, but its smear still crosses
+    // the visible text on the way in or out, so only a visible caret needs
+    // its recorded underlay.
     let smear = ((settings.enabled(Effect::CursorSmear) || settings.enabled(Effect::CursorFire))
-        && cursor.is_some()
-        && geometry.primary_cursor.is_some())
+        && (cursor.is_none() || geometry.primary_cursor.is_some()))
     .then(|| {
         events
             .iter()

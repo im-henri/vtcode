@@ -595,6 +595,40 @@ fn screen_point(
     })
 }
 
+/// Extrapolate the screen cell of a source position that has no visible
+/// anchor, from the visible anchor nearest to it in the document. Lines are
+/// assumed one row apart and columns one cell apart, which is exact for plain
+/// unwrapped text and close enough elsewhere for a position that is clipped
+/// anyway. Distant positions are pulled in to a fraction of a viewport beyond
+/// the visible text, so a long jump still shows the smear crossing the edge
+/// instead of covering the whole viewport in a single frame.
+fn estimated_point(anchors: &[Anchor], position: (usize, usize)) -> Option<MotionPoint> {
+    let distance = |anchor: &Anchor| {
+        (
+            anchor.line.abs_diff(position.0),
+            anchor.col.abs_diff(position.1),
+        )
+    };
+    let reference = anchors.iter().min_by_key(|anchor| distance(anchor))?;
+    let (mut left, mut top, mut right, mut bottom) = (u16::MAX, u16::MAX, 0, 0);
+    for anchor in anchors {
+        left = left.min(anchor.x);
+        top = top.min(anchor.y);
+        right = right.max(anchor.x.saturating_add(anchor.width.max(1)));
+        bottom = bottom.max(anchor.y.saturating_add(1));
+    }
+    let rows = f32::from(bottom - top);
+    let columns = f32::from(right - left);
+    let reach_y = (rows * 0.35).max(3.0);
+    let reach_x = (columns * 0.25).max(6.0);
+    let y = f32::from(reference.y) + position.0 as f32 - reference.line as f32;
+    let x = f32::from(reference.x) + position.1 as f32 - reference.col as f32;
+    Some(MotionPoint {
+        x: x.clamp(f32::from(left) - reach_x, f32::from(right) + reach_x),
+        y: y.clamp(f32::from(top) - reach_y, f32::from(bottom) + reach_y),
+    })
+}
+
 /// Source offsets belong to one document revision. Preserve disjoint highlights
 /// through an edit, translate following ranges, and discard overlapping ranges
 /// rather than letting stale offsets illuminate unrelated replacement text.
@@ -1325,6 +1359,7 @@ impl AnimationState {
             return observed_events(&[]);
         };
         let old = &view.snapshot;
+        let old_cursor = old.cursor;
         let editing = old.content_version != snapshot.content_version;
         let projected_origin = if cursor_motion {
             if old.cursor == snapshot.cursor {
@@ -1373,7 +1408,12 @@ impl AnimationState {
             } else {
                 view.cursor_point
             };
-            if let Some((origin, target)) = origin.zip(cursor_point) {
+            // A caret outside the viewport still animates: its position is
+            // extrapolated from the visible text, so the smear enters from
+            // (or leaves through) the edge nearest the off-screen line.
+            let origin = origin.or_else(|| estimated_point(anchors, old_cursor));
+            let target = cursor_point.or_else(|| estimated_point(anchors, snapshot.cursor));
+            if let Some((origin, target)) = origin.zip(target) {
                 let motion = SmearMotion::retarget(origin, target, previous, editing);
                 if settings.enabled(Effect::CursorFire) && !changed_view {
                     view.fire
@@ -2103,6 +2143,78 @@ mod tests {
             state.next_frame_wait(&settings, now + Duration::from_millis(20)),
             None
         );
+    }
+
+    #[test]
+    fn cursor_smear_enters_from_and_leaves_through_the_viewport_edge() {
+        let mut settings = AnimationSettings::default();
+        settings.set(Effect::CursorSmear, true);
+        let text = "abcdefgh
+"
+        .repeat(200);
+        // Only lines 100..110 are visible, drawn on rows 0..10.
+        let viewport = |scroll: usize, cursor_line: usize| {
+            let mut snapshot = snapshot(&text, cursor_line * 9 + 3);
+            snapshot.scroll = (scroll, 0, 0);
+            let anchors: Vec<_> = (scroll..scroll + 10)
+                .flat_map(|line| {
+                    (0..8).map(move |col| Anchor {
+                        line,
+                        col,
+                        x: col as u16,
+                        y: (line - scroll) as u16,
+                        width: 1,
+                        ch: 'a',
+                    })
+                })
+                .collect();
+            (snapshot, anchors)
+        };
+        let sample = |state: &AnimationState, now: Instant| {
+            state.views[&1]
+                .events
+                .iter()
+                .find_map(|event| event.cursor_sample(&settings, Effect::CursorSmear, now))
+                .expect("a cursor smear is running")
+        };
+        let mut state = AnimationState::default();
+        let now = Instant::now();
+        // The caret starts far above the viewport, then a jump scrolls to it.
+        let (initial, anchors) = viewport(0, 2);
+        state.observe(initial, &anchors, &settings, now);
+        let (jumped, anchors) = viewport(100, 105);
+        let events = state.observe(jumped, &anchors, &settings, now);
+        assert_eq!(events.len(), 1);
+        let start = sample(&state, now);
+        let top = start
+            .corners
+            .iter()
+            .map(|c| c.y)
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            top < 0.0 && top > -8.0,
+            "enters from just above the top: {top}"
+        );
+        let later = sample(&state, now + Duration::from_millis(40));
+        assert!(
+            later.corners.iter().any(|c| c.y >= 0.0),
+            "reaches the viewport"
+        );
+
+        // Moving the caret below the viewport without scrolling leaves downward.
+        let (stay, anchors) = viewport(100, 105);
+        let later = now + Duration::from_secs(1);
+        state.observe(stay, &anchors, &settings, later);
+        let (below, anchors) = viewport(100, 180);
+        let events = state.observe(below, &anchors, &settings, later);
+        assert_eq!(events.len(), 1);
+        let leaving = sample(&state, later + Duration::from_millis(60));
+        let bottom = leaving
+            .corners
+            .iter()
+            .map(|c| c.y)
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(bottom > 10.0, "leaves through the bottom edge: {bottom}");
     }
 
     #[test]
