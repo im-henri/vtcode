@@ -294,6 +294,7 @@ pub(crate) fn map_visible_rows(app: &mut App, aligned: bool) {
     let start = scroll.row;
     let height = app.code_area.map_or(0, |area| area.height as usize);
     let cache = &app.diff_render_cache;
+    let diff_text_inset = if aligned { cache.change_marker_width() } else { 0 };
     let rows = (start..start + height)
         .map(|visual| {
             let display = scroll.wrap.row_at(visual);
@@ -306,7 +307,7 @@ pub(crate) fn map_visible_rows(app: &mut App, aligned: bool) {
         .collect();
     if let Some(editor) = app.editor_mut() {
         editor.diff_display_rows = Some(rows);
-        editor.diff_text_inset = if aligned { 2 } else { 0 };
+        editor.diff_text_inset = diff_text_inset;
     }
 }
 

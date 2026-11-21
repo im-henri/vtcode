@@ -1874,6 +1874,9 @@ impl ChatCache {
             c.ui.fg_group_border,
             c.fg_dim,
             c.fg_accent_blue,
+            c.fg_hack,
+            c.fg_accent,
+            c.fg_bookmark,
             c.fg_success,
             c.fg_error,
             c.fg_warning,
@@ -2179,14 +2182,14 @@ fn diff_rows(
         return;
     };
     let moved = (algorithm == crate::diff_algorithm::DiffAlgorithm::Smart)
-        .then(|| crate::diff_algorithm::moved_lines(&changes))
+        .then(|| crate::diff_algorithm::detect_moves(&changes))
         .flatten();
     let changed_rows = changes.iter().enumerate().filter_map(|(index, (kind, text))| {
-        (*kind != ' ').then_some((*kind, text, moved.as_ref().is_some_and(|moved| moved[index])))
+        (*kind != ' ').then_some((*kind, text, moved.as_ref().and_then(|moved| moved.rows[index])))
     });
-    let added = changed_rows.clone().filter(|(kind, _, moved)| *kind == '+' && !moved).count();
-    let removed = changed_rows.clone().filter(|(kind, _, moved)| *kind == '-' && !moved).count();
-    let moved_count = changed_rows.clone().filter(|(kind, _, moved)| *kind == '-' && *moved).count();
+    let added = changed_rows.clone().filter(|(kind, _, moved)| *kind == '+' && moved.is_none()).count();
+    let removed = changed_rows.clone().filter(|(kind, _, moved)| *kind == '-' && moved.is_none()).count();
+    let moved_count = changed_rows.clone().filter(|(kind, _, moved)| *kind == '-' && moved.is_some()).count();
     let review = ChatAction::Review(Arc::new(diff.clone()));
     let mut header = vec![
             Span::styled(
@@ -2203,8 +2206,8 @@ fn diff_rows(
                 Style::default().fg(c.ui.fg_chat_removed),
             ),
     ];
-    if moved_count > 0 {
-        header.push(Span::styled(format!(" ↔{moved_count}"), Style::default().fg(c.fg_accent_blue)));
+    if let Some(moves) = &moved {
+        header.push(Span::styled(format!(" ↔{}", moves.lengths.len()), Style::default().fg(c.fg_accent_blue)));
     }
     if let Some(side) = crate::diff_algorithm::missing_final_newline(before, &diff.new_text) {
         use crate::diff_algorithm::MissingFinalNewline::{Original, Target};
@@ -2218,10 +2221,13 @@ fn diff_rows(
     row(rows, Line::from(header), Some(review.clone()), None);
     for (kind, text, moved) in changed_rows.take(limit) {
         let (marker, fg, bg) = match (kind, moved) {
-            ('+', true) => ('←', c.fg_accent_blue, crate::ui_diff_display::moved_background(c, c.bg_sidebar)),
-            ('-', true) => ('→', c.fg_accent_blue, crate::ui_diff_display::moved_background(c, c.bg_sidebar)),
-            ('+', false) => ('+', c.ui.fg_gutter_added, c.bg_diff_added),
-            _ => ('-', c.ui.fg_gutter_deleted, c.bg_diff_removed),
+            (_, Some(id)) => (
+                crate::ui_diff_display::move_label(kind == '-', id),
+                crate::ui_diff_display::move_color(c, id),
+                crate::ui_diff_display::moved_background(c, c.bg_sidebar, id),
+            ),
+            ('+', None) => ("+".into(), c.ui.fg_gutter_added, c.bg_diff_added),
+            _ => ("-".into(), c.ui.fg_gutter_deleted, c.bg_diff_removed),
         };
         wrapped(rows, &format!("{marker} {text}"), width, fg, Some(bg));
     }

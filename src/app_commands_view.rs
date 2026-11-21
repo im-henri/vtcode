@@ -501,6 +501,13 @@ impl App {
                 }
                 self.save_diff_layout_preference();
             }
+            "follow_diff_move" => {
+                if let Some((id, original)) = self.move_at_diff_cursor() {
+                    self.follow_diff_move(id, original);
+                } else {
+                    self.notify("Place the cursor on a moved line");
+                }
+            }
             "next_diff_hunk" => {
                 if let Some(editor) = self.editor() {
                     let cur = editor.cursor_line;

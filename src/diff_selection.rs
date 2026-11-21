@@ -10,6 +10,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::{ActivePane, AlignedDiffRow, App, DiffMode, DiffRenderCache};
+use crate::diff_algorithm::MoveId;
 use crate::diff_wrap::{Layout, Row};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -177,7 +178,7 @@ impl DiffSelection {
         };
         let code = app.code_area.unwrap_or_default();
         let target_inset = if aligned && !app.compare_diff_lines.is_empty() {
-            2
+            app.diff_render_cache.change_marker_width().min(code.width as usize) as u16
         } else {
             0
         };
@@ -782,6 +783,115 @@ fn rendered_width(grapheme: &str) -> usize {
 }
 
 impl App {
+    pub(crate) fn diff_move_at(&self, col: u16, row: u16) -> Option<(MoveId, bool)> {
+        let cache = &self.diff_render_cache;
+        let state = &self.diff_selection;
+        let marker_width = cache.change_marker_width() as u16;
+        if marker_width == 2 || !state.fresh(self) {
+            return None;
+        }
+        let wrap = &self.diff_inline_scroll.wrap;
+        if self.diff_mode == DiffMode::Inline {
+            let geometry = state.inline;
+            let screen = row.checked_sub(geometry.area.y)?;
+            if screen >= geometry.area.height || col >= geometry.area.x {
+                return None;
+            }
+            let display = wrap.row_at(geometry.first + screen as usize);
+            let entry = cache.inline_rows.get(display.logical)?;
+            let original = entry.kind == '-';
+            let number_width = crate::ui_diff_display::inline_number_width(cache, self.editor()?.line_count()) as u16;
+            let slot = number_width + 1;
+            let start = self.diff_inline_scroll.area.x + if original { slot } else { 0 };
+            if display.continuation != 0 || !(start..start + slot).contains(&col) {
+                return None;
+            }
+            let row = &cache.rows[entry.aligned_row];
+            let id = if original { row.left_move } else if entry.kind == '+' { row.right_move } else { None };
+            return id.map(|id| (id, original));
+        }
+        for (original, geometry) in [(true, state.original), (false, state.target)] {
+            let area = geometry.area;
+            let marker = Rect::new(area.x.saturating_sub(marker_width), area.y, marker_width, area.height);
+            let target_gutter = !original && self.gutter_area.is_some_and(|gutter| {
+                col == gutter.x && gutter.contains((col, row).into())
+            });
+            if area.is_empty() || !marker.contains((col, row).into()) && !target_gutter {
+                continue;
+            }
+            let display = wrap.row_at(geometry.first + (row - area.y) as usize);
+            if display.continuation > 0 { return None; }
+            let row = cache.rows.get(display.logical)?;
+            let id = if original { row.left_move } else { row.right_move };
+            return id.map(|id| (id, original));
+        }
+        None
+    }
+
+    pub(crate) fn move_at_diff_cursor(&self) -> Option<(MoveId, bool)> {
+        if !self.should_render_diff_for_active_editor() { return None; }
+        let cache = &self.diff_render_cache;
+        let state = &self.diff_selection;
+        if state.fresh(self) && let Some(domain) = state.focus {
+            let line = state.line(cache, domain, state.cursor.row)?;
+            let row = line.row?;
+            let id = if line.original { row.left_move } else { row.right_move };
+            return id.map(|id| (id, line.original));
+        }
+        let line = self.editor()?.cursor_line;
+        let row = cache.rows.get(cache.aligned_row_for_target_line(line))?;
+        row.right_move.filter(|_| row.right_line == Some(line)).map(|id| (id, false))
+    }
+
+    pub(crate) fn follow_diff_move(&mut self, id: MoveId, from_original: bool) -> bool {
+        if !self.should_render_diff_for_active_editor() { return false; }
+        let original = !from_original;
+        let Some(end) = self.diff_render_cache.move_block(id).and_then(|block| block.end(original)) else {
+            return false;
+        };
+        let aligned = self.diff_mode == DiffMode::SideBySide;
+        let domain = if !aligned { Domain::Inline } else if original { Domain::Original } else { Domain::Target };
+        let row = if aligned { end.aligned_row } else { end.inline_row };
+        let visual = self.diff_inline_scroll.wrap.first_row(row);
+        let mut state = std::mem::take(&mut self.diff_selection);
+        state.refresh(self, aligned);
+        state.focus = Some(domain);
+        state.cursor = Position { row, column: 0 };
+        state.anchor = state.cursor;
+        state.cancel_drag();
+        state.unit = SelectionUnit::Character;
+        state.desired = None;
+        state.last_click = None;
+        if let Some(editor) = self.editor_mut() {
+            editor.clear_selection();
+            editor.extra_cursors.clear();
+            editor.extra_cursor_anchors.clear();
+        }
+        self.active_pane = ActivePane::Editor;
+        self.cursor_visible = true;
+        state.sync_target(self);
+        let mut scroll = std::mem::take(&mut self.diff_inline_scroll);
+        if let Some(editor) = self.editor_mut() {
+            scroll.reveal_move_row(editor, visual);
+        }
+        self.diff_inline_scroll = scroll;
+        if self.is_commit_details_tab()
+            && let Some(card) = self.commit_details.review.visible.iter()
+                .find(|card| Some(card.file) == self.commit_details.diff_file)
+        {
+            if !(card.first_row..card.first_row + usize::from(card.body.height)).contains(&visual) {
+                self.commit_details.review.scroll = card.start.saturating_add(visual.saturating_sub(2));
+                self.commit_details.review.reveal = false;
+            }
+            self.commit_details.review.caret = None;
+        }
+        state.refresh(self, aligned);
+        self.diff_selection = state;
+        let side = if original { "original" } else { "modified" };
+        self.status_message = format!("Move {id} · {side} line {}", end.line + 1);
+        true
+    }
+
     /// Copy the selection coordinates that affect cosmetic geometry. The
     /// comparison's immutable text and source identity live in the cache key;
     /// no selected text or viewport cells need to be allocated or hashed.

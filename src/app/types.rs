@@ -38,7 +38,7 @@ impl InlayHintDisplay {
     }
 }
 
-use crate::diff_algorithm::{self, DiffAlgorithm};
+use crate::diff_algorithm::{self, DiffAlgorithm, MoveId};
 
 #[cfg(test)]
 pub(crate) fn compute_file_diff(base: &str, target: &str) -> Vec<(char, String)> {
@@ -74,13 +74,13 @@ pub(crate) fn compute_char_diff(old: &str, new: &str) -> (Vec<bool>, Vec<bool>) 
 pub(crate) struct AlignedDiffRow {
     pub hidden_lines: usize,
     pub left_kind: char,
-    pub left_moved: bool,
+    pub left_move: Option<MoveId>,
     pub left_line: Option<usize>,
     pub left_text: String,
     /// Per-char highlight flags for left text (true = changed char, use highlight color)
     pub left_char_highlights: Option<Vec<bool>>,
     pub right_kind: char,
-    pub right_moved: bool,
+    pub right_move: Option<MoveId>,
     pub right_line: Option<usize>,
     pub right_text: String,
     /// Per-char highlight flags for right text (true = changed char, use highlight color)
@@ -420,12 +420,12 @@ impl AlignedDiffRow {
         Self {
             hidden_lines: 0,
             left_kind,
-            left_moved: false,
+            left_move: None,
             left_line,
             left_text,
             left_char_highlights,
             right_kind,
-            right_moved: false,
+            right_move: None,
             right_line,
             right_text,
             right_char_highlights,
@@ -513,6 +513,25 @@ pub(crate) struct CachedDiffHunk {
     pub target_end: usize,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MoveEndpoint {
+    pub line: usize,
+    pub aligned_row: usize,
+    pub inline_row: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct DiffMoveBlock {
+    pub len: usize,
+    ends: [Option<MoveEndpoint>; 2],
+}
+
+impl DiffMoveBlock {
+    pub(crate) fn end(&self, original: bool) -> Option<MoveEndpoint> {
+        self.ends[usize::from(original)]
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DiffLabels {
     pub base: String,
@@ -564,6 +583,7 @@ pub(crate) struct DiffRenderCache {
     pub rows: Vec<AlignedDiffRow>,
     pub inline_rows: Vec<CachedInlineDiffRow>,
     pub hunks: Vec<CachedDiffHunk>,
+    move_blocks: Vec<DiffMoveBlock>,
     pub target_changes: Vec<(usize, char)>,
     pub max_left_line: usize,
     pub max_left_text_width: usize,
@@ -592,6 +612,7 @@ impl Default for DiffRenderCache {
             rows: Vec::new(),
             inline_rows: Vec::new(),
             hunks: Vec::new(),
+            move_blocks: Vec::new(),
             target_changes: Vec::new(),
             max_left_line: 1,
             max_left_text_width: 0,
@@ -623,7 +644,11 @@ impl DiffRenderCache {
             line
         });
         let syntax_hashes = syntax_first_lines.each_ref().map(|line| crate::highlight::Highlighter::line_hash(line));
-        let mut rows = align_diff_rows_with_algorithm(diff_lines, algorithm);
+        let moves = (algorithm == DiffAlgorithm::Smart)
+            .then(|| diff_algorithm::detect_moves(diff_lines)).flatten();
+        let mut rows = align_diff_rows_with_algorithm(
+            diff_lines, algorithm, moves.as_ref().map(|moves| moves.rows.as_slice()),
+        );
         let max_left_line = rows
             .iter()
             .filter_map(|row| row.left_line)
@@ -734,6 +759,9 @@ impl DiffRenderCache {
 
         let selectable_rows = Self::index_selectable_rows(&rows, &inline_rows);
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
+        let mut move_blocks: Vec<_> = moves.into_iter().flat_map(|moves| moves.lengths)
+            .map(|len| DiffMoveBlock { len, ends: [None; 2] }).collect();
+        Self::index_move_endpoints(&rows, &inline_rows, &overview_rows[1], &mut move_blocks);
         Self {
             algorithm,
             missing_final_newline: None,
@@ -747,6 +775,7 @@ impl DiffRenderCache {
             rows,
             inline_rows,
             hunks,
+            move_blocks,
             target_changes,
             max_left_line,
             max_left_text_width,
@@ -758,6 +787,40 @@ impl DiffRenderCache {
             inline_target_text_rows,
             selectable_rows,
             overview_rows,
+        }
+    }
+
+    pub(crate) fn move_block(&self, id: MoveId) -> Option<&DiffMoveBlock> {
+        self.move_blocks.get(id.get() as usize - 1)
+    }
+
+    pub(crate) fn change_marker_width(&self) -> usize {
+        // An arrow, the one-based move ID, and a separating space.
+        self.move_blocks.len().checked_ilog10().map_or(2, |digits| digits as usize + 3)
+    }
+
+    fn index_move_endpoints(
+        rows: &[AlignedDiffRow],
+        inline: &[CachedInlineDiffRow],
+        changes: &[Vec<usize>; 2],
+        blocks: &mut [DiffMoveBlock],
+    ) {
+        if blocks.is_empty() { return; }
+        for block in blocks.iter_mut() { block.ends = [None; 2]; }
+        for (side, changed_rows) in changes.iter().enumerate() {
+            for &inline_row in changed_rows {
+                let aligned_row = inline[inline_row].aligned_row;
+                let row = &rows[aligned_row];
+                let (id, line) = if side == 1 {
+                    (row.left_move, row.left_line)
+                } else {
+                    (row.right_move, row.right_line)
+                };
+                if let (Some(id), Some(line)) = (id, line) {
+                    blocks[id.get() as usize - 1].ends[side]
+                        .get_or_insert(MoveEndpoint { line, aligned_row, inline_row });
+                }
+            }
         }
     }
 
@@ -1042,6 +1105,8 @@ impl DiffRenderCache {
         let max_inline_text_width = max_right_text_width.max(max_left_text_width);
         let selectable_rows = Self::index_selectable_rows(&rows, &inline_rows);
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
+        let mut move_blocks = self.move_blocks.clone();
+        Self::index_move_endpoints(&rows, &inline_rows, &overview_rows[1], &mut move_blocks);
         Self {
             algorithm: self.algorithm,
             missing_final_newline: self.missing_final_newline,
@@ -1058,6 +1123,7 @@ impl DiffRenderCache {
             rows,
             inline_rows,
             hunks: self.hunks.clone(),
+            move_blocks,
             target_changes: self.target_changes.clone(),
             max_left_line: self.max_left_line,
             max_left_text_width,
@@ -1111,17 +1177,15 @@ impl DiffRenderCache {
 
 #[cfg(test)]
 pub(crate) fn align_diff_rows(diff_lines: &[(char, String)]) -> Vec<AlignedDiffRow> {
-    align_diff_rows_with_algorithm(diff_lines, DiffAlgorithm::Classic)
+    align_diff_rows_with_algorithm(diff_lines, DiffAlgorithm::Classic, None)
 }
 
 /// Align unified diff lines into side-by-side rows with spacer lines.
 fn align_diff_rows_with_algorithm(
     diff_lines: &[(char, String)],
     algorithm: DiffAlgorithm,
+    moved: Option<&[Option<MoveId>]>,
 ) -> Vec<AlignedDiffRow> {
-    let moved = (algorithm == DiffAlgorithm::Smart)
-        .then(|| diff_algorithm::moved_lines(diff_lines))
-        .flatten();
     let mut rows = Vec::with_capacity(diff_lines.len());
     let (mut left_line, mut right_line, mut i) = (0, 0, 0);
 
@@ -1153,8 +1217,8 @@ fn align_diff_rows_with_algorithm(
         let deletes = &diff_lines[start..middle];
         let inserts = &diff_lines[middle..i];
         let emit = |rows: &mut Vec<_>, left, right, paired| {
-            let (left_idx, left_text, left_moved) = diff_line_side(deletes, left, left_line, moved.as_deref(), start);
-            let (right_idx, right_text, right_moved) = diff_line_side(inserts, right, right_line, moved.as_deref(), middle);
+            let (left_idx, left_text, left_move) = diff_line_side(deletes, left, left_line, moved, start);
+            let (right_idx, right_text, right_move) = diff_line_side(inserts, right, right_line, moved, middle);
             let (left_highlights, right_highlights) = if paired {
                 let (old, new) = match algorithm {
                     DiffAlgorithm::Smart => diff_algorithm::word_highlights(&left_text, &right_text),
@@ -1168,13 +1232,13 @@ fn align_diff_rows_with_algorithm(
                 if left_idx.is_some() { '-' } else { ' ' }, left_idx, left_text, left_highlights,
                 if right_idx.is_some() { '+' } else { ' ' }, right_idx, right_text, right_highlights,
             );
-            row.left_moved = left_moved;
-            row.right_moved = right_moved;
+            row.left_move = left_move;
+            row.right_move = right_move;
             rows.push(row);
         };
 
         if algorithm == DiffAlgorithm::Smart {
-            let (old_moved, new_moved) = moved.as_ref().map_or(
+            let (old_moved, new_moved) = moved.map_or(
                 (&[][..], &[][..]),
                 |moved| (&moved[start..middle], &moved[middle..i]),
             );
@@ -1208,13 +1272,13 @@ fn diff_line_side(
     lines: &[(char, String)],
     index: Option<usize>,
     line_start: usize,
-    moved: Option<&[bool]>,
+    moved: Option<&[Option<MoveId>]>,
     diff_start: usize,
-) -> (Option<usize>, String, bool) {
+) -> (Option<usize>, String, Option<MoveId>) {
     index.map_or_else(
-        || (None, String::new(), false),
+        || (None, String::new(), None),
         |index| (Some(line_start + index), lines[index].1.clone(),
-            moved.is_some_and(|moved| moved[diff_start + index])),
+            moved.and_then(|moved| moved[diff_start + index])),
     )
 }
 

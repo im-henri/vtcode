@@ -33,15 +33,15 @@ fn diff_algorithm_defaults_to_smart_and_rebuilds_an_open_diff_when_switched() {
     std::fs::write(&target, "begin\nkeep one\nkeep two\nmove me\nend\n").unwrap();
     app.begin_path_compare(base, target);
     app.wait_for_background(std::time::Duration::from_secs(5), |app| {
-        app.diff_render_cache.rows.iter().any(|row| row.right_moved)
+        app.diff_render_cache.rows.iter().any(|row| row.right_move.is_some())
     });
     assert_eq!(app.diff_algorithm, Smart);
-    assert!(app.diff_render_cache.rows.iter().any(|row| row.left_moved));
+    assert!(app.diff_render_cache.rows.iter().any(|row| row.left_move.is_some()));
     assert_eq!(app.setting_dropdown_options("diff_algorithm").unwrap(), ["Smart", "Classic"]);
 
     app.execute_palette_command("toggle_diff_algorithm");
     app.wait_for_background(std::time::Duration::from_secs(5), |app| app.diff_render_cache.algorithm == Classic);
-    assert!(app.diff_render_cache.rows.iter().all(|row| !row.left_moved && !row.right_moved));
+    assert!(app.diff_render_cache.rows.iter().all(|row| row.left_move.is_none() && row.right_move.is_none()));
     assert_eq!(saved(&app, SettingsScope::Global).diff_algorithm, Some(Classic));
     let mut restarted = App::test_new();
     restarted.settings_global = saved(&app, SettingsScope::Global);

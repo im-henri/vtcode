@@ -94,7 +94,8 @@ fn handle_mouse_workbench(app: &mut App, mouse: event::MouseEvent) {
                 area.contains(previous) != area.contains((app.mouse_col, app.mouse_row).into())
             })
             || diff_divider_hit(app, previous.x, previous.y)
-                != diff_divider_hit(app, app.mouse_col, app.mouse_row);
+                != diff_divider_hit(app, app.mouse_col, app.mouse_row)
+            || app.diff_move_at(previous.x, previous.y) != app.diff_move_at(app.mouse_col, app.mouse_row);
     }
     if matches!(mouse.kind, MouseEventKind::Down(_) | MouseEventKind::Up(_)) {
         app.update_sidebar_auto_hide(mouse);

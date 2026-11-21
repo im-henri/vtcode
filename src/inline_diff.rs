@@ -128,7 +128,7 @@ impl InlineDiffScroll {
     }
 
     fn horizontal_width(&self) -> usize {
-        if self.review {
+        if self.review || self.aligned && self.cache.change_marker_width() > 2 {
             crate::commit_review::target_scroll_width(&self.cache, self.aligned)
         } else {
             self.cache.max_inline_text_width
@@ -221,6 +221,17 @@ impl InlineDiffScroll {
         self.row = cursor
             .saturating_sub(self.text_area.height as usize / 2)
             .min(self.max_row());
+        self.sync_editor(editor);
+    }
+
+    pub(crate) fn reveal_move_row(&mut self, editor: &mut Editor, visual: usize) {
+        let height = self.text_area.height.max(1) as usize;
+        if !(self.row..self.row.saturating_add(height)).contains(&visual) {
+            self.row = visual.saturating_sub(height / 2).min(self.max_row());
+        }
+        // A jump to removed text may leave the native target cursor elsewhere.
+        // Keep this exact display row when the renderer next lays out the diff.
+        self.cursor = Some((editor.cursor_line, editor.cursor_col));
         self.sync_editor(editor);
     }
 

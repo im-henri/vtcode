@@ -175,7 +175,7 @@ fn geometry_layout(app: &App, original: bool, aligned: bool) -> Option<(Rect, us
         app.code_area?
     };
     if aligned && !original && !app.compare_diff_lines.is_empty() {
-        let inset = area.width.min(2);
+        let inset = area.width.min(app.diff_render_cache.change_marker_width() as u16);
         area.x += inset;
         area.width -= inset;
     }

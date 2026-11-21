@@ -1479,7 +1479,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     // have their own visible-line cache, not the active file's width estimate.
     let review_diff = crate::commit_review::painting_row(app).is_some()
         && app.diff_mode == crate::app::DiffMode::SideBySide;
-    let max_line_width = if review_diff {
+    let has_move_labels = app.diff_mode == crate::app::DiffMode::SideBySide
+        && app.diff_render_cache.change_marker_width() > 2
+        && app.should_render_diff_for_active_editor();
+    let max_line_width = if review_diff || has_move_labels {
         crate::commit_review::target_scroll_width(&app.diff_render_cache, true)
     } else if editor.large_file_mode || app.rendering_inactive_editor {
         visible_max_line_width

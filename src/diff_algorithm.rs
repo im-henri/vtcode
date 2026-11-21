@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use similar::{Algorithm, ChangeTag, DiffOp, DiffTag, TextDiff, capture_diff_slices_deadline};
 use std::{
     borrow::Cow,
+    num::NonZeroU32,
     time::{Duration, Instant},
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -231,9 +232,17 @@ fn change_row(change: similar::Change<&str>) -> (char, String) {
     line_row(kind, change.value())
 }
 
+pub(crate) type MoveId = NonZeroU32;
+
+pub(crate) struct DetectedMoves {
+    /// One ID per unified row. Both copies of a moved block share an ID.
+    pub rows: Vec<Option<MoveId>>,
+    pub lengths: Vec<usize>,
+}
+
 /// Find unique matching text across change blocks. Extend from these anchors
 /// through shared neighbors, including braces and blank lines.
-pub(crate) fn moved_lines(lines: &[(char, String)]) -> Option<Vec<bool>> {
+pub(crate) fn detect_moves(lines: &[(char, String)]) -> Option<DetectedMoves> {
     #[derive(Clone, Copy)]
     struct Anchor {
         row: usize,
@@ -314,32 +323,43 @@ pub(crate) fn moved_lines(lines: &[(char, String)]) -> Option<Vec<bool>> {
         })
         .collect();
     seeds.sort_unstable_by_key(|&(old, _, _)| old);
-    let mut moved = vec![false; lines.len()];
+    let mut moved = DetectedMoves {
+        rows: vec![None; lines.len()],
+        lengths: Vec::new(),
+    };
     let same = |old: usize, new: usize| matches!((lines.get(old), lines.get(new)), (Some(('-', a)), Some(('+', b))) if move_text(a) == move_text(b));
-    let mut found = false;
     for (old, new, text) in seeds {
-        if moved[old] || moved[new] {
+        if moved.rows[old].is_some() || moved.rows[new].is_some() {
             continue;
         }
         let mut before = 0;
         while before < old.min(new)
             && same(old - before - 1, new - before - 1)
-            && !moved[old - before - 1]
-            && !moved[new - before - 1]
+            && moved.rows[old - before - 1].is_none()
+            && moved.rows[new - before - 1].is_none()
         {
             before += 1;
         }
         let mut after = 1;
-        while same(old + after, new + after) && !moved[old + after] && !moved[new + after] {
+        while same(old + after, new + after)
+            && moved.rows[old + after].is_none()
+            && moved.rows[new + after].is_none()
+        {
             after += 1;
         }
         if before + after > 1 || text.chars().take(4).count() == 4 {
-            moved[old - before..old + after].fill(true);
-            moved[new - before..new + after].fill(true);
-            found = true;
+            let Some(id) = u32::try_from(moved.lengths.len() + 1)
+                .ok()
+                .and_then(MoveId::new)
+            else {
+                break;
+            };
+            moved.rows[old - before..old + after].fill(Some(id));
+            moved.rows[new - before..new + after].fill(Some(id));
+            moved.lengths.push(before + after);
         }
     }
-    found.then_some(moved)
+    (!moved.lengths.is_empty()).then_some(moved)
 }
 
 fn move_text(line: &str) -> &str {
@@ -356,8 +376,8 @@ const MAX_LINE_BYTES: usize = 2048;
 pub(crate) fn replacement_pairs(
     old: &[(char, String)],
     new: &[(char, String)],
-    old_moved: &[bool],
-    new_moved: &[bool],
+    old_moved: &[Option<MoveId>],
+    new_moved: &[Option<MoveId>],
 ) -> Vec<(usize, usize)> {
     if old.is_empty() || new.is_empty() || old.len().saturating_mul(new.len()) > MAX_PAIR_CANDIDATES
     {
@@ -407,7 +427,7 @@ struct ReplacementLine<'a> {
 
 fn replacement_lines<'a>(
     lines: &'a [(char, String)],
-    moved: &[bool],
+    moved: &[Option<MoveId>],
 ) -> Vec<Option<ReplacementLine<'a>>> {
     lines
         .iter()
@@ -415,7 +435,7 @@ fn replacement_lines<'a>(
         .map(|(index, (_, line))| {
             // Include indentation and trailing whitespace in the budget because
             // the highlight pass will process the full original line.
-            if line.len() > MAX_LINE_BYTES || moved.get(index) == Some(&true) {
+            if line.len() > MAX_LINE_BYTES || moved.get(index).is_some_and(Option::is_some) {
                 return None;
             }
             let text = line.trim();
@@ -560,7 +580,7 @@ mod tests {
             cache
                 .rows
                 .iter()
-                .filter_map(|row| row.left_line.filter(|_| row.left_moved))
+                .filter_map(|row| row.left_line.filter(|_| row.left_move.is_some()))
                 .collect::<Vec<_>>(),
             [1, 2, 3]
         );
@@ -568,7 +588,7 @@ mod tests {
             cache
                 .rows
                 .iter()
-                .filter_map(|row| row.right_line.filter(|_| row.right_moved))
+                .filter_map(|row| row.right_line.filter(|_| row.right_move.is_some()))
                 .collect::<Vec<_>>(),
             [5, 6, 7]
         );
@@ -648,7 +668,7 @@ mod tests {
             let changes = file_diff(base, target, DiffAlgorithm::Smart);
             assert!(changes.iter().any(|(kind, _)| *kind == '-'));
             assert!(changes.iter().any(|(kind, _)| *kind == '+'));
-            assert!(moved_lines(&changes).is_none());
+            assert!(detect_moves(&changes).is_none());
         }
     }
 

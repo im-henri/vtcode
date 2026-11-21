@@ -729,6 +729,7 @@ fn draw_overlays(f: &mut Frame, app: &mut App) {
     crate::app_terminal_find::draw_tooltip(f, app);
     crate::app_terminal_links::draw_tooltip(f, app);
     crate::ui_editor_folds::draw_tooltip(f, app);
+    crate::ui_diff_display::draw_move_tooltip(f, app);
 
     crate::ui_inline_blame::draw(f, app);
 

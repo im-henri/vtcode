@@ -404,6 +404,7 @@ impl App {
             PaletteCommand { name: "Go to Previous Change".into(), shortcut: "Alt+Shift+F5".into(), id: Cow::Borrowed("prev_change") },
             PaletteCommand { name: "Go to Next Diff Hunk".into(), shortcut: String::new(), id: Cow::Borrowed("next_diff_hunk") },
             PaletteCommand { name: "Go to Previous Diff Hunk".into(), shortcut: String::new(), id: Cow::Borrowed("prev_diff_hunk") },
+            PaletteCommand { name: "Go to Other End of Move".into(), shortcut: String::new(), id: Cow::Borrowed("follow_diff_move") },
             PaletteCommand { name: "File: Copy Path".into(), shortcut: String::new(), id: Cow::Borrowed("copy_path") },
             PaletteCommand { name: "File: Reveal in Explorer".into(), shortcut: String::new(), id: Cow::Borrowed("reveal_in_explorer") },
             PaletteCommand { name: "Explorer: Sort by Name".into(), shortcut: String::new(), id: Cow::Borrowed("explorer_sort_name") },

@@ -139,8 +139,7 @@ impl HorizontalDrag {
 
 pub(crate) fn target_scroll_width(cache: &DiffRenderCache, aligned: bool) -> usize {
     if aligned {
-        // The comparison paints a two-cell change marker inside the target text area.
-        cache.max_right_text_width.saturating_add(2)
+        cache.max_right_text_width.saturating_add(cache.change_marker_width())
     } else {
         cache.max_inline_text_width
     }

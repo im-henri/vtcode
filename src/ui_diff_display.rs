@@ -105,7 +105,7 @@ pub(crate) fn measure_wrap(
             + 2 + u16::from(scope_rail);
         let minimap = minimap.filter(|_| panes.right.width > 80).unwrap_or(0);
         let code = crate::ui_editor::editor_columns(panes.right, gutter, minimap)[1];
-        (original_text_width(cache, panes.left), code.width.saturating_sub(2) as usize)
+        (original_text_width(cache, panes.left), (code.width as usize).saturating_sub(cache.change_marker_width()))
     } else {
         let layout = inline_diff_layout(area, minimap.is_some(), minimap.unwrap_or(0));
         let number_width = inline_number_width(cache, editor.line_count());
@@ -117,12 +117,12 @@ pub(crate) fn measure_wrap(
 }
 
 fn original_text_width(cache: &DiffRenderCache, pane: Rect) -> usize {
-    (pane.width as usize).saturating_sub(digit_count(cache.max_left_line).max(2) + 4)
+    (pane.width as usize).saturating_sub(digit_count(cache.max_left_line).max(2) + 2 + cache.change_marker_width())
 }
 
-fn inline_number_width(cache: &DiffRenderCache, line_count: usize) -> usize {
+pub(crate) fn inline_number_width(cache: &DiffRenderCache, line_count: usize) -> usize {
     let last_line = cache.max_left_line.max(cache.target_content_lines()).max(line_count);
-    digit_count(last_line).max(4)
+    digit_count(last_line).max(4).max(cache.change_marker_width() - 1)
 }
 
 fn inline_gutter_width(number_width: usize) -> usize {
@@ -308,7 +308,7 @@ fn draw_diff_cursor(
         return None;
     };
     let cache = &app.diff_render_cache;
-    let inset = if aligned { 2 } else { 0 };
+    let inset = if aligned { cache.change_marker_width() } else { 0 };
     let width = (area.width as usize).saturating_sub(inset);
     if width == 0 {
         return None;
@@ -922,8 +922,65 @@ fn theme_coverage_plain_diff_preserves_named_and_indexed_foregrounds() {
     }
 }
 
-pub(crate) fn moved_background(colors: &crate::app_theme::ThemeColors, base: Color) -> Color {
-    crate::app_theme::lerp_color(base, colors.fg_accent_blue, 0.16)
+pub(crate) fn move_color(colors: &crate::app_theme::ThemeColors, id: crate::diff_algorithm::MoveId) -> Color {
+    let accents = [colors.fg_accent_blue, colors.fg_hack, colors.fg_accent, colors.fg_bookmark];
+    accents[(id.get() as usize - 1) % accents.len()]
+}
+
+pub(crate) fn moved_background(
+    colors: &crate::app_theme::ThemeColors, base: Color, id: crate::diff_algorithm::MoveId,
+) -> Color {
+    crate::app_theme::lerp_color(base, move_color(colors, id), 0.19)
+}
+
+pub(crate) fn move_label(original: bool, id: crate::diff_algorithm::MoveId) -> String {
+    format!("{}{id}", if original { '→' } else { '←' })
+}
+
+pub(crate) fn draw_move_tooltip(f: &mut Frame, app: &App) {
+    if !app.mouse_position_known || app.palette.active || app.menu_active || app.context_menu_active
+        || app.change_dir_active || app.workspaces.popup.open || crate::ui_modal::active(app).is_some()
+        || app.editor_selection_drag.is_some()
+    {
+        return;
+    }
+    let Some((id, original)) = app.diff_move_at(app.mouse_col, app.mouse_row) else { return };
+    let Some(block) = app.diff_render_cache.move_block(id) else { return };
+    let (Some(old), Some(new)) = (block.end(true), block.end(false)) else { return };
+    let range = |start: usize| {
+        if block.len == 1 { (start + 1).to_string() } else { format!("{}–{}", start + 1, start + block.len) }
+    };
+    let header = format!("Move {id} · Original {} → Modified {}", range(old.line), range(new.line));
+    let (side, endpoint) = if original { ("modified", new) } else { ("original", old) };
+    let action = format!("Click to jump to {side} line {}", endpoint.line + 1);
+    crate::ui_widgets::Tooltip::hover(vec![Line::raw(header), Line::raw(action)], &app.colors)
+        .prefer_below().render(f, app.mouse_col, app.mouse_row);
+}
+
+fn change_marker(
+    colors: &crate::app_theme::ThemeColors,
+    width: usize,
+    bg: Color,
+    kind: char,
+    id: Option<crate::diff_algorithm::MoveId>,
+) -> Span<'static> {
+    if let Some(id) = id {
+        let accent = move_color(colors, id);
+        let badge_bg = crate::app_theme::lerp_color(bg, accent, 0.27);
+        let label = move_label(kind == '-', id);
+        return Span::styled(
+            format!("{label:<width$}"),
+            Style::default().fg(accent).bg(badge_bg).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+        );
+    }
+    let (label, fg): (Cow<'_, str>, _) = match kind {
+        '+' if width == 2 => ("+ ".into(), colors.fg_diff_added),
+        '-' if width == 2 => ("- ".into(), colors.fg_diff_removed),
+        '+' => (format!("{kind:<width$}").into(), colors.fg_diff_added),
+        '-' => (format!("{kind:<width$}").into(), colors.fg_diff_removed),
+        _ => (crate::helpers::spaces(width), colors.fg_dim),
+    };
+    Span::styled(label, Style::default().fg(fg).bg(bg))
 }
 
 fn style_diff_spans(spans: &mut [Span<'_>], colors: &crate::app_theme::ThemeColors, kind: char, contrast: &mut crate::ui_colors::TextContrastCache) {
@@ -966,6 +1023,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
     let rows = &diff_cache.rows;
     let row_scroll = app.aligned_diff_scroll_row(editor_scroll_offset);
     let gutter_width = digit_count(diff_cache.max_left_line).max(2) + 1;
+    let marker_width = diff_cache.change_marker_width();
     let display_width = original_text_width(&diff_cache, area);
     let wrap = &app.diff_inline_scroll.wrap;
     let show_h_scrollbar = !wrap.enabled() && diff_cache.max_left_text_width > display_width && area.height > 1;
@@ -976,7 +1034,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
         area.height.saturating_sub(u16::from(show_h_scrollbar)),
     );
     let left_code_area = Rect::new(
-        area.x.saturating_add((gutter_width + 3) as u16).min(area.right()),
+        area.x.saturating_add((gutter_width + 1 + marker_width) as u16).min(area.right()),
         content_area.y,
         display_width.min(u16::MAX as usize) as u16,
         content_area.height,
@@ -1035,7 +1093,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
                     left_num_pad.as_str(),
                     Style::default().fg(app.colors.fg_dim).bg(spacer_bg),
                 ),
-                Span::styled("  ", Style::default().fg(app.colors.fg_dim).bg(spacer_bg)),
+                Span::styled(crate::helpers::spaces(marker_width), Style::default().fg(app.colors.fg_dim).bg(spacer_bg)),
                 Span::styled(
                     diff_spacer_pattern(display_width, row_idx, starts_block, ends_block),
                     Style::default().fg(app.colors.ui.fg_diff_diagonal).bg(spacer_bg),
@@ -1044,10 +1102,10 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
             continue;
         }
 
-        let bg = match status {
-            _ if diff_row.left_moved => moved_background(&app.colors, base_bg),
-            '-' => app.colors.bg_diff_removed,
-            '+' => app.colors.bg_diff_added,
+        let bg = match (status, diff_row.left_move) {
+            (_, Some(id)) => moved_background(&app.colors, base_bg, id),
+            ('-', None) => app.colors.bg_diff_removed,
+            ('+', None) => app.colors.bg_diff_added,
             _ => base_bg,
         };
 
@@ -1069,12 +1127,8 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
             )
         };
 
-        let indicator = match if display.continuation == 0 { status } else { ' ' } {
-            '-' if diff_row.left_moved => Span::styled("→ ", Style::default().fg(app.colors.fg_accent_blue).bg(bg)),
-            '-' => Span::styled("- ", Style::default().fg(app.colors.fg_diff_removed).bg(bg)),
-            '+' => Span::styled("+ ", Style::default().fg(app.colors.fg_diff_added).bg(bg)),
-            _ => Span::styled("  ", Style::default().fg(app.colors.fg_dim).bg(bg)),
-        };
+        let (kind, id) = if display.continuation == 0 { (status, diff_row.left_move) } else { (' ', None) };
+        let indicator = change_marker(&app.colors, marker_width, bg, kind, id);
         let bg_hl = match status {
             '-' => Some(app.colors.bg_diff_removed_highlight),
             '+' => Some(app.colors.bg_diff_added_highlight),
@@ -1115,7 +1169,7 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
             ));
         }
         if display.columns(true).is_some() {
-            pad_wrapped_diff_row(&mut row_spans, gutter_width + 3 + display_width, bg);
+            pad_wrapped_diff_row(&mut row_spans, gutter_width + 1 + marker_width + display_width, bg);
         }
         style_diff_spans(&mut row_spans, &app.colors, status, &mut contrast);
         lines_out.push(Line::from(row_spans));
@@ -1183,6 +1237,7 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
     let visible_rows = code_area.height as usize;
     let h_scroll = editor_h_scroll;
     let visible_width = code_area.width as usize;
+    let marker_width = diff_cache.change_marker_width();
     // The side-by-side layout always reserves a numeric gutter on both panes.
     // Use the actual target gutter width so a transient editor/diff line-count
     // mismatch cannot push the digits beyond the clipped render area.
@@ -1252,9 +1307,9 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             ]));
             let style = Style::default().fg(app.colors.ui.fg_diff_diagonal).bg(spacer_bg);
             code_lines.push(Line::from(vec![
-                Span::styled("  ", style),
+                Span::styled(crate::helpers::spaces(marker_width), style),
                 Span::styled(
-                    diff_spacer_pattern(visible_width.saturating_sub(2), row_idx, starts_block, ends_block),
+                    diff_spacer_pattern(visible_width.saturating_sub(marker_width), row_idx, starts_block, ends_block),
                     style,
                 ),
             ]));
@@ -1267,27 +1322,31 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
         } else {
             app.colors.bg_editor
         };
-        let row_bg = match diff_row.right_kind {
-            _ if diff_row.right_moved => moved_background(&app.colors, base_bg),
-            '+' => app.colors.bg_diff_added,
-            '-' => app.colors.bg_diff_removed,
+        let row_bg = match (diff_row.right_kind, diff_row.right_move) {
+            (_, Some(id)) => moved_background(&app.colors, base_bg, id),
+            ('+', None) => app.colors.bg_diff_added,
+            ('-', None) => app.colors.bg_diff_removed,
             _ => base_bg,
         };
 
-        let marker_kind = if display.continuation == 0 { diff_row.right_kind } else { ' ' };
-        let (diff_char, diff_style) = match marker_kind {
-            '+' if diff_row.right_moved => (
+        let (marker_kind, marker_id) = if display.continuation == 0 {
+            (diff_row.right_kind, diff_row.right_move)
+        } else {
+            (' ', None)
+        };
+        let (diff_char, diff_style) = match (marker_kind, marker_id) {
+            ('+', Some(id)) => (
                 "←",
-                Style::default().fg(app.colors.fg_accent_blue).bg(row_bg).add_modifier(Modifier::BOLD),
+                Style::default().fg(move_color(&app.colors, id)).bg(row_bg).add_modifier(Modifier::BOLD),
             ),
-            '+' => (
+            ('+', None) => (
                 "+",
                 Style::default()
                     .fg(app.colors.fg_diff_added)
                     .bg(row_bg)
                     .add_modifier(Modifier::BOLD),
             ),
-            '-' => (
+            ('-', _) => (
                 "-",
                 Style::default()
                     .fg(app.colors.fg_diff_removed)
@@ -1331,29 +1390,18 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
         ]));
 
         let fg = match diff_row.right_kind {
-            _ if diff_row.right_moved => app.colors.fg_text,
+            _ if diff_row.right_move.is_some() => app.colors.fg_text,
             '+' => app.colors.fg_diff_added,
             '-' => app.colors.fg_diff_removed,
             _ => app.colors.fg_text,
         };
-        let marker = match marker_kind {
-            '+' if diff_row.right_moved => Span::styled("← ", Style::default().fg(app.colors.fg_accent_blue).bg(row_bg)),
-            '+' => Span::styled(
-                "+ ",
-                Style::default().fg(app.colors.fg_diff_added).bg(row_bg),
-            ),
-            '-' => Span::styled(
-                "- ",
-                Style::default().fg(app.colors.fg_diff_removed).bg(row_bg),
-            ),
-            _ => Span::styled("  ", Style::default().fg(app.colors.fg_dim).bg(row_bg)),
-        };
+        let marker = change_marker(&app.colors, marker_width, row_bg, marker_kind, marker_id);
         let bg_hl = match diff_row.right_kind {
             '+' => Some(app.colors.bg_diff_added_highlight),
             '-' => Some(app.colors.bg_diff_removed_highlight),
             _ => None,
         };
-        let text_width = visible_width.saturating_sub(2);
+        let text_width = visible_width.saturating_sub(marker_width);
         let mut row_spans = vec![marker];
         let (start, count) = display.columns(false)
             .map_or((h_scroll, text_width), |(start, end)| (start, end - start));
@@ -1713,44 +1761,68 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             None
         };
-        let moved_bg = || moved_background(&app.colors, app.colors.bg_editor);
-        let (old_marker, new_marker, bg, bg_hl, fg) = match cached_row.kind {
-            '-' if aligned_row.left_moved => ("", "→", moved_bg(), moved_bg(), app.colors.fg_accent_blue),
-            '+' if aligned_row.right_moved => ("←", "", moved_bg(), moved_bg(), app.colors.fg_accent_blue),
-            '-' => (
-                "",
-                "-",
+        let original = cached_row.kind == '-';
+        let move_id = if original { aligned_row.left_move } else { aligned_row.right_move };
+        let (old_marker, new_marker, bg, bg_hl, fg) = match (cached_row.kind, move_id) {
+            (_, Some(id)) => {
+                let label = move_label(original, id);
+                let (old, new) = if original {
+                    (Cow::Borrowed(""), Cow::Owned(label))
+                } else {
+                    (Cow::Owned(label), Cow::Borrowed(""))
+                };
+                let bg = moved_background(&app.colors, app.colors.bg_editor, id);
+                (old, new, bg, bg, app.colors.fg_text)
+            }
+            ('-', None) => (
+                "".into(),
+                "-".into(),
                 app.colors.bg_diff_removed,
                 app.colors.bg_diff_removed_highlight,
                 app.colors.fg_diff_removed,
             ),
-            '+' => (
-                "+",
-                "",
+            ('+', None) => (
+                "+".into(),
+                "".into(),
                 app.colors.bg_diff_added,
                 app.colors.bg_diff_added_highlight,
                 app.colors.fg_diff_added,
             ),
             _ => (
-                "",
-                "",
+                "".into(),
+                "".into(),
                 app.colors.bg_editor,
                 app.colors.bg_editor,
                 app.colors.fg_text,
             ),
         };
-        let mut line_head = String::with_capacity(full_gutter_width);
-        if display.continuation == 0 {
+        let gutter_style = Style::default().fg(fg).bg(bg);
+        let mut row_spans = Vec::new();
+        if display.continuation != 0 {
+            row_spans.push(Span::styled(crate::helpers::spaces(full_gutter_width), gutter_style));
+        } else if let Some(id) = move_id {
+            for (line, marker) in [(old_ln, old_marker), (new_ln, new_marker)] {
+                let (label, style) = match line {
+                    Some(line) => (format!("{:>number_width$} ", line + 1), gutter_style),
+                    None => {
+                        let accent = move_color(&app.colors, id);
+                        let badge_bg = crate::app_theme::lerp_color(bg, accent, 0.27);
+                        let style = gutter_style.fg(accent).bg(badge_bg).add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+                        (format!("{marker:>number_width$} "), style)
+                    }
+                };
+                row_spans.push(Span::styled(label, style));
+            }
+        } else {
+            let mut line_head = String::with_capacity(full_gutter_width);
             for (line, marker) in [(old_ln, old_marker), (new_ln, new_marker)] {
                 let _ = match line {
                     Some(line) => write!(line_head, "{:>number_width$} ", line + 1),
                     None => write!(line_head, "{marker:>number_width$} "),
                 };
             }
-        } else {
-            let _ = write!(line_head, "{:full_gutter_width$}", "");
+            row_spans.push(Span::styled(line_head, gutter_style));
         }
-        let mut row_spans = vec![Span::styled(line_head, Style::default().fg(fg).bg(bg))];
         let window = || display.window(aligned_row, cached_row.kind == '-', false, horizontal_scroll, available);
         #[cfg(test)]
         let (text, char_start, padding) = if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get) && widths.is_none() {
@@ -1981,22 +2053,71 @@ mod tests {
     }
 
     #[test]
-    fn smart_diff_renders_move_arrows_in_both_layouts() {
-        let mut app = app_with_diff(
-            "begin\nmove me\nkeep one\nkeep two\nend\n",
-            "begin\nkeep one\nkeep two\nmove me\nend\n",
-        );
-        app.show_minimap = false;
+    fn smart_diff_links_distinct_moves_and_jumps_between_their_ends() {
+        let base = "begin\nmove alpha\nkeep one\nkeep two\nkeep three\nkeep four\nmove beta\nkeep five\nkeep six\nkeep seven\nkeep eight\nend\n";
+        let target = "begin\nkeep one\nkeep two\nkeep three\nkeep four\nkeep five\nkeep six\nkeep seven\nkeep eight\nmove beta\nmove alpha\nend\n";
+        let badge_at = |buffer: &Buffer, arrow: &str, id: &str| {
+            (0..buffer.area.height).find_map(|y| {
+                (0..buffer.area.width.saturating_sub(1)).find_map(|x| {
+                    (buffer.cell((x, y))?.symbol() == arrow
+                        && buffer.cell((x + 1, y))?.symbol() == id).then_some((x, y))
+                })
+            })
+        };
         for (mode, render) in [
             (DiffMode::Inline, draw_inline_diff as fn(&mut Frame, &mut App, Rect)),
             (DiffMode::SideBySide, draw_side_by_side_diff),
         ] {
+            let mut app = app_with_diff(base, target);
+            app.show_minimap = false;
             app.diff_mode = mode;
-            let mut terminal = Terminal::new(TestBackend::new(96, 14)).unwrap();
-            terminal.draw(|frame| render(frame, &mut app, frame.area())).unwrap();
-            let text: String = (0..14).map(|y| buffer_row(terminal.backend().buffer(), y, 96)).collect();
-            assert!(text.contains('→'));
-            assert!(text.contains('←'));
+            let aligned = mode == DiffMode::SideBySide;
+            let draw = |frame: &mut Frame, app: &mut App| {
+                render(frame, app, frame.area());
+                draw_diff_layers(frame, app, aligned);
+            };
+            let mut terminal = Terminal::new(TestBackend::new(96, 20)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            for (number, original, modified) in [("1", 1, 10), ("2", 6, 9)] {
+                for (arrow, from_original) in [("→", true), ("←", false)] {
+                    let (x, y) = badge_at(terminal.backend().buffer(), arrow, number).unwrap();
+                    let (id, side) = app.diff_move_at(x, y).unwrap();
+                    assert_eq!(id.to_string(), number);
+                    assert_eq!(side, from_original);
+                    let block = app.diff_render_cache.move_block(id).unwrap();
+                    assert_eq!(block.end(true).unwrap().line, original);
+                    assert_eq!(block.end(false).unwrap().line, modified);
+                }
+                let compact = app.diff_render_cache.with_context(0);
+                let id = crate::diff_algorithm::MoveId::new(number.parse().unwrap()).unwrap();
+                let block = compact.move_block(id).unwrap();
+                let source = block.end(true).unwrap();
+                let destination = block.end(false).unwrap();
+                assert_eq!(compact.rows[source.aligned_row].left_move, Some(id));
+                assert_eq!(compact.rows[compact.inline_rows[destination.inline_row].aligned_row].right_move, Some(id));
+            }
+            let (x, y) = badge_at(terminal.backend().buffer(), "→", "1").unwrap();
+            app.mouse_col = x;
+            app.mouse_row = y;
+            app.mouse_position_known = true;
+            terminal.draw(|frame| {
+                draw(frame, &mut app);
+                draw_move_tooltip(frame, &app);
+            }).unwrap();
+            assert!((0..20).any(|y| buffer_row(terminal.backend().buffer(), y, 96)
+                .contains("Move 1 · Original 2 → Modified 11")));
+
+            let mut terminal = Terminal::new(TestBackend::new(96, 7)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            assert!(badge_at(terminal.backend().buffer(), "←", "1").is_none());
+            let (x, y) = badge_at(terminal.backend().buffer(), "→", "1").unwrap();
+            crate::mouse_selection::handle_editor_area_left_click(&mut app, x, y, crossterm::event::KeyModifiers::NONE);
+            assert_eq!(app.editor().unwrap().cursor_line, 10);
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            let (x, y) = badge_at(terminal.backend().buffer(), "←", "1").unwrap();
+            crate::mouse_selection::handle_editor_area_left_click(&mut app, x, y, crossterm::event::KeyModifiers::NONE);
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            assert!(badge_at(terminal.backend().buffer(), "→", "1").is_some());
         }
     }
 

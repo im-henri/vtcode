@@ -81,6 +81,11 @@ pub(crate) fn handle_editor_area_left_click(
         }
     }
 
+    if modifiers.is_empty() && let Some((id, original)) = app.diff_move_at(col, row)
+        && app.follow_diff_move(id, original)
+    {
+        return;
+    }
     if app.diff_selection_mouse_down(col, row, modifiers) { return; }
 
     // Click on gutter (line numbers) — select entire line
