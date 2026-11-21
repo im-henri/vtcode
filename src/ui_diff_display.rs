@@ -13,6 +13,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::{App, DiffMode, DiffRenderCache};
 use crate::diff_wrap::Widths;
 use crate::editor::Editor;
+use crate::ui_colors::DiffWordPaint;
 use crate::ui_editor_highlight::{draw_horizontal_scrollbar, draw_minimap_separator, HScrollbarParams};
 use crate::ui_editor::refresh_cached_editor_diagnostics;
 use crate::ui_editor_minimap::{
@@ -473,30 +474,6 @@ fn diff_spacer_pattern(width: usize, row: usize, starts_block: bool, ends_block:
     pattern
 }
 
-#[cfg(test)]
-fn plain_diff_highlight_line(
-    text: &str,
-    foreground: Color,
-) -> Vec<(crate::textmate::Style, String)> {
-    let (r, g, b) = match foreground {
-        Color::Rgb(r, g, b) => (r, g, b),
-        _ => (212, 212, 212),
-    };
-    vec![(
-        crate::textmate::Style {
-            foreground: crate::textmate::Color { r, g, b, a: 255 },
-            background: crate::textmate::Color {
-                r: 0,
-                g: 0,
-                b: 0,
-                a: 0,
-            },
-            font_style: crate::textmate::FontStyle::empty(),
-        },
-        text.to_string(),
-    )]
-}
-
 const DIFF_HIGHLIGHT_SEEK_STRIDE: usize = 64;
 
 struct DiffSpanIndex {
@@ -639,31 +616,13 @@ fn diff_highlight_index(
     DIFF_HIGHLIGHT_CACHE.with(|cache| cache.borrow_mut().get(spans))
 }
 
-#[cfg(test)]
-fn normalize_diff_highlight_line(
-    highlighted: &[(crate::textmate::Style, String)],
-    text: &str,
-    foreground: Color,
-) -> Option<Vec<(crate::textmate::Style, String)>> {
-    let expected_len = text.chars().count();
-    let highlighted_len: usize = highlighted
-        .iter()
-        .map(|(_, segment)| segment.trim_end_matches('\n').chars().count())
-        .sum();
-    if highlighted_len < expected_len {
-        Some(plain_diff_highlight_line(text, foreground))
-    } else {
-        None
-    }
-}
-
 fn render_diff_highlighted_spans(
     highlighted: &[(crate::textmate::Style, String)],
     index: &DiffHighlightIndex,
     visible_width: usize,
     horizontal_scroll: usize,
     bg: Color,
-    bg_highlight: Option<Color>,
+    word_paint: Option<DiffWordPaint>,
     char_highlights: Option<&[bool]>,
     fallback_fg: Color,
 ) -> Vec<Span<'static>> {
@@ -688,27 +647,21 @@ fn render_diff_highlighted_spans(
         let skipped = horizontal_scroll.saturating_sub(span_start);
         let segment = index.segment_tail(span, segment, skipped);
         let fg = crate::ui_colors::syntax_color(style.foreground, bg);
-        let token_style = Style::default().fg(fg).add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style));
-        let highlighted_style = token_style.fg(crate::ui_colors::syntax_color(
-            style.foreground,
-            bg_highlight.unwrap_or(bg),
-        ));
+        let token_style = Style::default().fg(fg).bg(bg)
+            .add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style));
+        let highlighted_style = word_paint.filter(|_| char_highlights.is_some()).map_or(token_style, |paint| {
+            paint.apply(token_style.fg(crate::ui_colors::syntax_color(style.foreground, paint.background)))
+        });
         for ch in segment.chars() {
             if absolute_col >= horizontal_scroll {
                 let is_highlighted = char_highlights
                     .and_then(|h| h.get(absolute_col).copied())
                     .unwrap_or(false);
-                let char_bg = if is_highlighted {
-                    bg_highlight.unwrap_or(bg)
-                } else {
-                    bg
-                };
                 let char_style = if is_highlighted {
                     highlighted_style
                 } else {
                     token_style
-                }
-                .bg(char_bg);
+                };
                 if char_style == batch_style && !batch_buf.is_empty() {
                     batch_buf.push(ch);
                 } else {
@@ -744,7 +697,7 @@ fn render_diff_highlighted_spans_reference(
     visible_width: usize,
     horizontal_scroll: usize,
     bg: Color,
-    bg_highlight: Option<Color>,
+    word_paint: Option<DiffWordPaint>,
     char_highlights: Option<&[bool]>,
     fallback_fg: Color,
 ) -> Vec<Span<'static>> {
@@ -758,21 +711,17 @@ fn render_diff_highlighted_spans_reference(
     let mut batch_style = Style::default();
     'outer: for (style, segment) in highlighted {
         let fg = crate::ui_colors::syntax_color(style.foreground, bg);
-        let token_style = Style::default().fg(fg).add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style));
-        let highlighted_style = token_style.fg(crate::ui_colors::syntax_color(
-            style.foreground, bg_highlight.unwrap_or(bg),
-        ));
+        let token_style = Style::default().fg(fg).bg(bg)
+            .add_modifier(crate::ui_colors::syntax_font_modifiers(style.font_style));
+        let highlighted_style = word_paint.filter(|_| char_highlights.is_some()).map_or(token_style, |paint| {
+            paint.apply(token_style.fg(crate::ui_colors::syntax_color(style.foreground, paint.background)))
+        });
         for ch in segment.trim_end_matches('\n').chars() {
             if absolute_col >= horizontal_scroll {
                 let is_highlighted = char_highlights
                     .and_then(|h| h.get(absolute_col).copied())
                     .unwrap_or(false);
-                let char_bg = if is_highlighted {
-                    bg_highlight.unwrap_or(bg)
-                } else {
-                    bg
-                };
-                let char_style = if is_highlighted { highlighted_style } else { token_style }.bg(char_bg);
+                let char_style = if is_highlighted { highlighted_style } else { token_style };
                 if char_style == batch_style && !batch_buf.is_empty() {
                     batch_buf.push(ch);
                 } else {
@@ -807,7 +756,7 @@ fn render_plain_diff_window(
     absolute_start: usize,
     visible_width: usize,
     bg: Color,
-    bg_highlight: Option<Color>,
+    word_paint: Option<DiffWordPaint>,
     char_highlights: Option<&[bool]>,
     fg: Color,
 ) -> Vec<Span<'static>> {
@@ -816,17 +765,15 @@ fn render_plain_diff_window(
     }
     let mut spans = Vec::new();
     let mut batch = String::with_capacity(visible_width.min(128));
-    let mut batch_style = Style::default().fg(fg).bg(bg);
+    let plain_style = Style::default().fg(fg).bg(bg);
+    let changed_style = word_paint.filter(|_| char_highlights.is_some()).map_or(plain_style, |paint| paint.apply(plain_style));
+    let mut batch_style = plain_style;
     let mut rendered = 0usize;
     for (offset, ch) in text.chars().take(visible_width).enumerate() {
         let highlighted = char_highlights
             .and_then(|flags| flags.get(absolute_start + offset).copied())
             .unwrap_or(false);
-        let style = Style::default().fg(fg).bg(if highlighted {
-            bg_highlight.unwrap_or(bg)
-        } else {
-            bg
-        });
+        let style = if highlighted { changed_style } else { plain_style };
         if style != batch_style && !batch.is_empty() {
             spans.push(Span::styled(std::mem::take(&mut batch), batch_style));
         }
@@ -848,41 +795,29 @@ fn render_plain_diff_window(
 
 fn render_diff_line<'a>(
     cached: Option<&std::rc::Rc<crate::highlight::HighlightSpans>>,
-    _text: &str,
     char_len: usize,
     plain_window: impl FnOnce() -> &'a str,
     visible_width: usize,
     horizontal_scroll: usize,
     bg: Color,
-    bg_highlight: Option<Color>,
+    word_paint: Option<DiffWordPaint>,
     char_highlights: Option<&[bool]>,
     fg: Color,
 ) -> Vec<Span<'static>> {
     #[cfg(test)]
-    if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get) {
-        let fallback = match cached {
-            Some(spans) => normalize_diff_highlight_line(spans, _text, fg),
-            None => Some(plain_diff_highlight_line(_text, fg)),
-        };
-        let highlighted = fallback
-            .as_ref()
-            .or(cached.map(std::rc::Rc::as_ref))
-            .unwrap();
-        let mut spans = render_diff_highlighted_spans_reference(
-            highlighted,
+    if REFERENCE_DIFF_RENDER.with(std::cell::Cell::get)
+        && let Some(highlighted) = cached
+        && highlighted.iter().map(|(_, text)| text.trim_end_matches('\n').chars().count()).sum::<usize>() >= char_len
+    {
+        return render_diff_highlighted_spans_reference(
+            highlighted.as_ref(),
             visible_width,
             horizontal_scroll,
             bg,
-            bg_highlight,
+            word_paint,
             char_highlights,
             fg,
         );
-        // The reference uses an RGB-only TextMate carrier for plain rows.
-        // Restore the caller's foreground instead of imposing an RGB default.
-        if fallback.is_some() {
-            for span in &mut spans { span.style = span.style.fg(fg); }
-        }
-        return spans;
     }
     if let Some(cached) = cached {
         let index = diff_highlight_index(cached);
@@ -893,7 +828,7 @@ fn render_diff_line<'a>(
                 visible_width,
                 horizontal_scroll,
                 bg,
-                bg_highlight,
+                word_paint,
                 char_highlights,
                 fg,
             );
@@ -906,7 +841,7 @@ fn render_diff_line<'a>(
         horizontal_scroll,
         visible_width,
         bg,
-        bg_highlight,
+        word_paint,
         char_highlights,
         fg,
     )
@@ -916,7 +851,7 @@ fn render_diff_line<'a>(
 #[test]
 fn theme_coverage_plain_diff_preserves_named_and_indexed_foregrounds() {
     for foreground in [Color::Indexed(23), Color::White, Color::Reset, Color::Rgb(12,34,56)] {
-        let spans = render_diff_line(None, "abc", 3, || "abc", 6, 0, Color::Rgb(1,2,3), None, None, foreground);
+        let spans = render_diff_line(None, 3, || "abc", 6, 0, Color::Rgb(1,2,3), None, None, foreground);
         assert_eq!(spans.iter().map(|span| span.content.as_ref()).collect::<String>(), "abc   ");
         assert!(spans.iter().all(|span| span.style.fg == Some(foreground)), "{foreground:?}");
     }
@@ -983,20 +918,12 @@ fn change_marker(
     Span::styled(label, Style::default().fg(fg).bg(bg))
 }
 
-fn style_diff_spans(spans: &mut [Span<'_>], colors: &crate::app_theme::ThemeColors, kind: char, contrast: &mut crate::ui_colors::TextContrastCache) {
-    let (highlight, border) = match kind {
-        '+' => (colors.bg_diff_added_highlight, colors.ui.border_diff_added),
-        '-' => (colors.bg_diff_removed_highlight, colors.ui.border_diff_removed),
-        _ => (colors.bg_editor, None),
-    };
+fn style_diff_spans(spans: &mut [Span<'_>], colors: &crate::app_theme::ThemeColors, contrast: &mut crate::ui_colors::TextContrastCache) {
     for span in spans {
         let background = span.style.bg.unwrap_or(colors.bg_editor);
         let foreground = span.style.fg.unwrap_or(colors.fg_text);
         span.style = span.style.fg(contrast.foreground(foreground, background))
             .remove_modifier(Modifier::DIM);
-        if background == highlight && let Some(border) = border {
-            span.style = span.style.add_modifier(Modifier::UNDERLINED).underline_color(border);
-        }
     }
 }
 
@@ -1048,6 +975,8 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
     let visible_lines = content_area.height as usize;
 
     let mut contrast = crate::ui_colors::TextContrastCache::new(&app.colors.ui);
+    let added_word = DiffWordPaint::themed(&app.colors, true);
+    let removed_word = DiffWordPaint::themed(&app.colors, false);
     let mut lines_out: Vec<Line<'_>> = Vec::with_capacity(visible_lines);
     let mut left_num_pad = String::with_capacity(gutter_width + 2);
     let _ = write!(left_num_pad, "{:>width$} ", " ", width = gutter_width);
@@ -1129,11 +1058,12 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
 
         let (kind, id) = if display.continuation == 0 { (status, diff_row.left_move) } else { (' ', None) };
         let indicator = change_marker(&app.colors, marker_width, bg, kind, id);
-        let bg_hl = match status {
-            '-' => Some(app.colors.bg_diff_removed_highlight),
-            '+' => Some(app.colors.bg_diff_added_highlight),
+        let word_paint = match status {
+            '-' => Some(removed_word),
+            '+' => Some(added_word),
             _ => None,
         };
+        let fg = app.colors.ui.editor_foreground.over(bg).unwrap_or(app.colors.fg_text);
         let mut row_spans = vec![line_num_span, indicator];
         let (start, count) = display.columns(true)
             .map_or((left_horizontal_scroll, display_width), |(start, end)| (start, end - start));
@@ -1143,9 +1073,9 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
                 start,
                 count,
                 bg,
-                bg_hl,
+                word_paint,
                 diff_row.left_char_highlights.as_deref(),
-                app.colors.fg_text,
+                fg,
             ));
         } else {
             let cached = app.highlighter.highlighted_fragment_by_hash_if_cached(
@@ -1157,21 +1087,20 @@ pub(crate) fn draw_diff_original(f: &mut Frame, app: &mut App, area: Rect) {
             );
             row_spans.extend(render_diff_line(
                 cached.as_ref(),
-                &diff_row.left_text,
                 diff_row.left_char_len(),
                 || diff_row.left_text_window(start, count),
                 count,
                 start,
                 bg,
-                bg_hl,
+                word_paint,
                 diff_row.left_char_highlights.as_deref(),
-                app.colors.fg_text,
+                fg,
             ));
         }
         if display.columns(true).is_some() {
             pad_wrapped_diff_row(&mut row_spans, gutter_width + 1 + marker_width + display_width, bg);
         }
-        style_diff_spans(&mut row_spans, &app.colors, status, &mut contrast);
+        style_diff_spans(&mut row_spans, &app.colors, &mut contrast);
         lines_out.push(Line::from(row_spans));
     }
 
@@ -1249,6 +1178,8 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
     };
     let mut gutter_lines: Vec<Line> = Vec::with_capacity(visible_rows);
     let mut contrast = crate::ui_colors::TextContrastCache::new(&app.colors.ui);
+    let added_word = DiffWordPaint::themed(&app.colors, true);
+    let removed_word = DiffWordPaint::themed(&app.colors, false);
     let mut code_lines: Vec<Line> = Vec::with_capacity(visible_rows);
     let mut has_hidden_rows = false;
     let tilde_gutter: std::borrow::Cow<str> = if show_line_numbers {
@@ -1389,16 +1320,11 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             Span::styled(fold_char, Style::default().fg(app.colors.fg_dim).bg(row_bg)),
         ]));
 
-        let fg = match diff_row.right_kind {
-            _ if diff_row.right_move.is_some() => app.colors.fg_text,
-            '+' => app.colors.fg_diff_added,
-            '-' => app.colors.fg_diff_removed,
-            _ => app.colors.fg_text,
-        };
+        let fg = app.colors.ui.editor_foreground.over(row_bg).unwrap_or(app.colors.fg_text);
         let marker = change_marker(&app.colors, marker_width, row_bg, marker_kind, marker_id);
-        let bg_hl = match diff_row.right_kind {
-            '+' => Some(app.colors.bg_diff_added_highlight),
-            '-' => Some(app.colors.bg_diff_removed_highlight),
+        let word_paint = match diff_row.right_kind {
+            '+' => Some(added_word),
+            '-' => Some(removed_word),
             _ => None,
         };
         let text_width = visible_width.saturating_sub(marker_width);
@@ -1411,7 +1337,7 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
                 start,
                 count,
                 row_bg,
-                bg_hl,
+                word_paint,
                 diff_row.right_char_highlights.as_deref(),
                 fg,
             ));
@@ -1425,13 +1351,12 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
             );
             row_spans.extend(render_diff_line(
                 cached.as_ref(),
-                &diff_row.right_text,
                 diff_row.right_char_len(),
                 || diff_row.right_text_window(start, count),
                 count,
                 start,
                 row_bg,
-                bg_hl,
+                word_paint,
                 diff_row.right_char_highlights.as_deref(),
                 fg,
             ));
@@ -1439,7 +1364,7 @@ pub(crate) fn draw_diff_target_overlay(f: &mut Frame, app: &mut App) {
         if display.columns(false).is_some() {
             pad_wrapped_diff_row(&mut row_spans, visible_width, row_bg);
         }
-        style_diff_spans(&mut row_spans, &app.colors, diff_row.right_kind, &mut contrast);
+        style_diff_spans(&mut row_spans, &app.colors, &mut contrast);
         code_lines.push(Line::from(row_spans));
     }
 
@@ -1698,6 +1623,8 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
     let available = usize::from(text_width);
 
     let mut contrast = crate::ui_colors::TextContrastCache::new(&app.colors.ui);
+    let added_word = DiffWordPaint::themed(&app.colors, true);
+    let removed_word = DiffWordPaint::themed(&app.colors, false);
     let mut render_lines: Vec<Line<'_>> = Vec::new();
     for row in 0..visible {
         let display = app.diff_inline_scroll.wrap.row_at(scroll + row);
@@ -1763,7 +1690,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         };
         let original = cached_row.kind == '-';
         let move_id = if original { aligned_row.left_move } else { aligned_row.right_move };
-        let (old_marker, new_marker, bg, bg_hl, fg) = match (cached_row.kind, move_id) {
+        let (old_marker, new_marker, bg, word_paint, gutter_fg) = match (cached_row.kind, move_id) {
             (_, Some(id)) => {
                 let label = move_label(original, id);
                 let (old, new) = if original {
@@ -1772,31 +1699,32 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
                     (Cow::Owned(label), Cow::Borrowed(""))
                 };
                 let bg = moved_background(&app.colors, app.colors.bg_editor, id);
-                (old, new, bg, bg, app.colors.fg_text)
+                (old, new, bg, None, app.colors.fg_text)
             }
             ('-', None) => (
                 "".into(),
                 "-".into(),
                 app.colors.bg_diff_removed,
-                app.colors.bg_diff_removed_highlight,
+                Some(removed_word),
                 app.colors.fg_diff_removed,
             ),
             ('+', None) => (
                 "+".into(),
                 "".into(),
                 app.colors.bg_diff_added,
-                app.colors.bg_diff_added_highlight,
+                Some(added_word),
                 app.colors.fg_diff_added,
             ),
             _ => (
                 "".into(),
                 "".into(),
                 app.colors.bg_editor,
-                app.colors.bg_editor,
+                None,
                 app.colors.fg_text,
             ),
         };
-        let gutter_style = Style::default().fg(fg).bg(bg);
+        let gutter_style = Style::default().fg(gutter_fg).bg(bg);
+        let fg = app.colors.ui.editor_foreground.over(bg).unwrap_or(app.colors.fg_text);
         let mut row_spans = Vec::new();
         if display.continuation != 0 {
             row_spans.push(Span::styled(crate::helpers::spaces(full_gutter_width), gutter_style));
@@ -1849,7 +1777,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
                         text.chars().count(),
                         char_start,
                         bg,
-                        Some(bg_hl),
+                        word_paint,
                         char_highlights,
                         fg,
                     )
@@ -1865,7 +1793,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
                     text.chars().count(),
                     char_start,
                     bg,
-                    Some(bg_hl),
+                    word_paint,
                     char_highlights,
                     fg,
                 )
@@ -1873,14 +1801,14 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
             row_spans.extend(spans);
         } else {
             row_spans.extend(render_plain_diff_window(
-                text, char_start, text.chars().count(), bg, Some(bg_hl), char_highlights, fg,
+                text, char_start, text.chars().count(), bg, word_paint, char_highlights, fg,
             ));
         }
         row_spans.push(Span::styled(
             crate::helpers::spaces(available.saturating_sub(padding + text.width())),
             Style::default().fg(fg).bg(bg),
         ));
-        style_diff_spans(&mut row_spans, &app.colors, cached_row.kind, &mut contrast);
+        style_diff_spans(&mut row_spans, &app.colors, &mut contrast);
         render_lines.push(Line::from(row_spans));
     }
 
@@ -2020,7 +1948,7 @@ mod tests {
             2,
             0,
             Color::Rgb(32, 32, 32),
-            Some(Color::Rgb(224, 224, 224)),
+            Some(Color::Rgb(224, 224, 224).into()),
             Some(&[false, true]),
             Color::Rgb(255, 255, 255),
         );
@@ -2031,6 +1959,82 @@ mod tests {
                 .iter()
                 .all(|span| span.style.add_modifier.contains(Modifier::ITALIC))
         );
+    }
+
+    #[test]
+    fn bundled_diff_word_layers_overlay_the_line_and_keep_the_text_legible() {
+        for theme in crate::app_theme_loader::load_builtin_themes() {
+            let colors = theme.to_theme_colors();
+            for (added, line, layer) in [
+                (true, colors.bg_diff_added, colors.ui.diff_inserted_text_background),
+                (false, colors.bg_diff_removed, colors.ui.diff_removed_text_background),
+            ] {
+                let paint = DiffWordPaint::themed(&colors, added);
+                assert_eq!(paint.background, layer.over(line).unwrap_or(line), "{}", theme.name);
+                if matches!(theme.config_key.as_str(), "tokyo-night" | "rose-pine") {
+                    let previous = layer.over(colors.bg_editor).unwrap();
+                    assert_eq!(previous, line, "the flattened colors collided in {}", theme.name);
+                    assert_ne!(paint.background, line, "{}", theme.name);
+                }
+                let style = paint.apply(Style::default().fg(paint.background));
+                let ratio = crate::ui_colors::contrast_ratio(style.fg.unwrap(), paint.background).unwrap();
+                assert!(ratio >= 4.5, "{}: changed word contrast {ratio}", theme.name);
+                if crate::ui_colors::contrast_ratio(paint.background, line).is_some_and(|ratio| ratio < 1.3) {
+                    assert!(style.add_modifier.contains(Modifier::UNDERLINED), "{}", theme.name);
+                    let border_contrast = crate::ui_colors::contrast_ratio(style.underline_color.unwrap(), paint.background).unwrap();
+                    assert!(border_contrast >= 3.0, "{}: diff underline contrast {border_contrast}", theme.name);
+                }
+                let readable = style.fg.unwrap();
+                assert_eq!(paint.apply(Style::default().fg(readable)).fg, Some(readable));
+            }
+        }
+    }
+
+    #[test]
+    fn equal_diff_backgrounds_underline_only_the_changed_words_in_both_layouts() {
+        let base = "let status = \"draft\";\n";
+        let target = "let status = \"published\";\n";
+        let mut app = app_with_diff(base, target);
+        app.show_minimap = false;
+        app.cursor_visible = false;
+        let painted = Color::Rgb(45, 50, 52);
+        let layer = crate::theme_workbench::ColorLayer::opaque(painted);
+        app.colors.bg_diff_added = painted;
+        app.colors.bg_diff_removed = painted;
+        app.colors.fg_diff_added = painted;
+        app.colors.fg_diff_removed = painted;
+        app.colors.ui.diff_inserted_text_background = layer;
+        app.colors.ui.diff_removed_text_background = layer;
+        app.colors.ui.diff_inserted_text_border = layer;
+        app.colors.ui.diff_removed_text_border = layer;
+        for (mode, render) in [
+            (DiffMode::Inline, draw_inline_diff as fn(&mut Frame, &mut App, Rect)),
+            (DiffMode::SideBySide, draw_side_by_side_diff),
+        ] {
+            app.diff_mode = mode;
+            let mut terminal = Terminal::new(TestBackend::new(100, 8)).unwrap();
+            terminal.draw(|frame| render(frame, &mut app, frame.area())).unwrap();
+            let target_code = app.code_area.unwrap();
+            let (source_code, source_row, target_x, target_row) = if mode == DiffMode::Inline {
+                (target_code, target_code.y, target_code.x, target_code.y + 1)
+            } else {
+                let source = app.diff_left_code_area.unwrap();
+                (source, source.y, target_code.x + 2, target_code.y)
+            };
+            let buffer = terminal.backend().buffer();
+            for (x, y, word) in [(source_code.x, source_row, "draft"), (target_x, target_row, "published")] {
+                let unmodified = &buffer[(x, y)];
+                assert_eq!(unmodified.symbol(), "l");
+                assert_eq!(unmodified.fg, app.colors.ui.editor_foreground.over(painted).unwrap_or(app.colors.fg_text));
+                assert!(!unmodified.modifier.contains(Modifier::UNDERLINED));
+                let changed = &buffer[(x + "let status = \"".len() as u16, y)];
+                assert_eq!(changed.symbol(), &word[..1]);
+                assert_eq!(changed.bg, painted);
+                assert!(changed.modifier.contains(Modifier::UNDERLINED));
+                assert!(crate::ui_colors::contrast_ratio(changed.fg, changed.bg).unwrap() >= 4.5);
+                assert!(crate::ui_colors::contrast_ratio(changed.underline_color, changed.bg).unwrap() >= 3.0);
+            }
+        }
     }
 
     fn app_with_diff(base: &str, target: &str) -> App {

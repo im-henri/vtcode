@@ -61,6 +61,82 @@ pub(crate) fn syntax_color(color: crate::textmate::Color, surface: Color) -> Col
         .unwrap_or(Color::Rgb(color.r, color.g, color.b))
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct DiffWordPaint {
+    pub(crate) background: Color,
+    readable_foreground: Option<Color>,
+    underline: Option<Color>,
+}
+
+impl DiffWordPaint {
+    pub(crate) fn themed(colors: &crate::app_theme::ThemeColors, added: bool) -> Self {
+        let ui = &colors.ui;
+        let (line, layer, native_background, border, native_border, accent) = if added {
+            (
+                colors.bg_diff_added,
+                ui.diff_inserted_text_background,
+                colors.bg_diff_added_highlight,
+                ui.diff_inserted_text_border,
+                ui.border_diff_added,
+                colors.fg_diff_added,
+            )
+        } else {
+            (
+                colors.bg_diff_removed,
+                ui.diff_removed_text_background,
+                colors.bg_diff_removed_highlight,
+                ui.diff_removed_text_border,
+                ui.border_diff_removed,
+                colors.fg_diff_removed,
+            )
+        };
+        // A VS Code diff word overlays its tinted line. In particular, two
+        // identical translucent roles still produce distinguishable surfaces.
+        let default_background = if ui.preserve_theme_colors { line } else { native_background };
+        let background = layer.over(line).unwrap_or(default_background);
+        let terminal_colors = [Color::Rgb(0, 0, 0), Color::Rgb(255, 255, 255)];
+        let foreground = ui.editor_foreground.over(background).unwrap_or(colors.fg_text);
+        let foreground = ensure_contrast(foreground, background, 4.5, &terminal_colors);
+        let needs_underline = background == line
+            || contrast_ratio(background, line).is_some_and(|ratio| ratio < 1.3);
+        let theme_border = border
+            .border(background)
+            .or(native_border.filter(|_| !border.is_transparent()));
+        let underline = if needs_underline {
+            Some(ensure_contrast(
+                theme_border.unwrap_or(accent),
+                background,
+                3.0,
+                &[foreground, terminal_colors[0], terminal_colors[1]],
+            ))
+        } else {
+            theme_border
+        };
+        Self { background, readable_foreground: Some(foreground), underline }
+    }
+
+    pub(crate) fn apply(self, style: Style) -> Style {
+        let mut style = style.bg(self.background);
+        if let Some(foreground) = self.readable_foreground
+            && style.fg.and_then(|fg| contrast_ratio(fg, self.background))
+                .is_some_and(|ratio| ratio < 4.5)
+        {
+            style = style.fg(foreground);
+        }
+        if let Some(underline) = self.underline {
+            style = style.add_modifier(Modifier::UNDERLINED).underline_color(underline);
+        }
+        style
+    }
+}
+
+#[cfg(test)]
+impl From<Color> for DiffWordPaint {
+    fn from(background: Color) -> Self {
+        Self { background, readable_foreground: None, underline: None }
+    }
+}
+
 /// The input is an eight-bit channel, so decoding needs only 256 exact values.
 pub(crate) fn srgb_linear_channel(channel: u8) -> f32 {
     static LINEAR: LazyLock<[f32; 256]> = LazyLock::new(|| {

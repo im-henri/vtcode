@@ -68,7 +68,7 @@ fn indexed_diff_syntax_seeks_match_full_prefix_styles_and_character_flags() {
             index.char_len() - 1,
             index.char_len() + 20,
         ] {
-            let args = (Color::Rgb(20, 30, 40), Some(Color::Rgb(180, 190, 200)));
+            let args = (Color::Rgb(20, 30, 40), Some(Color::Rgb(180, 190, 200).into()));
             let expected = render_diff_highlighted_spans_reference(
                 &spans,
                 width,
@@ -106,22 +106,28 @@ fn borrowed_plain_diff_fallback_matches_cached_miss_and_truncated_styles() {
                     let draw = || {
                         render_diff_line(
                             cached,
-                            source,
                             source.chars().count(),
                             || window.as_str(),
                             width,
                             scroll,
                             Color::Rgb(20, 20, 20),
-                            Some(Color::Rgb(80, 90, 100)),
+                            Some(Color::Rgb(80, 90, 100).into()),
                             Some(&flags),
                             fg,
                         )
                     };
-                    assert_eq!(
-                        reference(false, draw),
-                        reference(true, draw),
-                        "source={source:?}, scroll={scroll}"
-                    );
+                    let rendered: Vec<_> = draw().iter().flat_map(|span| {
+                        span.content.chars().map(|ch| (ch, span.style))
+                    }).collect();
+                    let window = window.trim_end_matches('\n');
+                    let expected: Vec<_> = window.chars().enumerate().map(|(column, ch)| {
+                        let bg = if flags[scroll + column] { Color::Rgb(80, 90, 100) } else { Color::Rgb(20, 20, 20) };
+                        (ch, Style::default().fg(fg).bg(bg))
+                    }).chain(std::iter::repeat_n(
+                        (' ', Style::default().fg(fg).bg(Color::Rgb(20, 20, 20))),
+                        width - window.chars().count(),
+                    )).collect();
+                    assert_eq!(rendered, expected, "source={source:?}, scroll={scroll}");
                 }
             }
         }
@@ -345,7 +351,6 @@ fn benchmark_dense_inline_diff_redraw_and_syntax_seek() {
             std::hint::black_box(reference(baseline, || {
                 render_diff_line(
                     Some(&spans),
-                    &source,
                     len,
                     || window.as_str(),
                     80,
