@@ -349,8 +349,10 @@ impl App {
                                 region.incoming(),
                             ))
                             .into();
-                        let lines = crate::diff_algorithm::file_diff(&current, &incoming.to_string(), algorithm);
-                        let cache = crate::app::DiffRenderCache::with_algorithm(&lines, algorithm);
+                        let incoming_text = incoming.to_string();
+                        let lines = crate::diff_algorithm::file_diff(&current, &incoming_text, algorithm);
+                        let mut cache = crate::app::DiffRenderCache::with_algorithm(&lines, algorithm);
+                        cache.missing_final_newline = crate::diff_algorithm::missing_final_newline(&current, &incoming_text);
                         let _ = sender.send(crate::background::BackgroundResult::MergeComparison(
                             Comparison {
                                 view,

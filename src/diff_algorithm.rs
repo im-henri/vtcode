@@ -1,7 +1,10 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use similar::{ChangeTag, DiffTag, TextDiff};
-use std::time::Duration;
+use similar::{Algorithm, ChangeTag, DiffOp, DiffTag, TextDiff, capture_diff_slices_deadline};
+use std::{
+    borrow::Cow,
+    time::{Duration, Instant},
+};
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,8 +27,24 @@ impl DiffAlgorithm {
     }
 }
 
-/// Bound diff preparation on the UI thread by both bytes and logical lines.
-pub(crate) fn fits_interactive_budget(base: &str, target: &str) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MissingFinalNewline {
+    Original,
+    Target,
+}
+
+pub(crate) fn missing_final_newline(base: &str, target: &str) -> Option<MissingFinalNewline> {
+    if base.is_empty() || target.is_empty() {
+        return None;
+    }
+    match (base.ends_with(['\r', '\n']), target.ends_with(['\r', '\n'])) {
+        (false, true) => Some(MissingFinalNewline::Original),
+        (true, false) => Some(MissingFinalNewline::Target),
+        _ => None,
+    }
+}
+
+fn fits_interactive_budget(base: &str, target: &str) -> bool {
     const MAX_BYTES: usize = 256 * 1024;
     const MAX_LINES: usize = 2000;
 
@@ -43,22 +62,38 @@ pub(crate) fn fits_interactive_budget(base: &str, target: &str) -> bool {
         })
 }
 
-pub(crate) fn file_diff(base: &str, target: &str, algorithm: DiffAlgorithm) -> Vec<(char, String)> {
-    // Avoid copying files that are already LF-normalized.
-    fn normalize(text: &str) -> std::borrow::Cow<'_, str> {
-        if memchr::memchr(b'\r', text.as_bytes()).is_none() {
-            return text.into();
-        }
-        text.replace("\r\n", "\n").replace('\r', "\n").into()
+/// Keep expensive comparisons off the UI thread, including small files with
+/// a dense set of edits. A small edit in a long shared prefix/suffix is cheap.
+pub(crate) fn interactive_file_diff(
+    base: &str,
+    target: &str,
+    algorithm: DiffAlgorithm,
+) -> Option<Vec<(char, String)>> {
+    const MAX_LINE_PAIRS: usize = 65_536;
+    if !fits_interactive_budget(base, target) {
+        return None;
     }
+    let base = normalize(base);
+    let target = normalize(target);
+    let old: Vec<_> = base.split_inclusive('\n').collect();
+    let new: Vec<_> = target.split_inclusive('\n').collect();
+    let (prefix, suffix) = unchanged_edges(&old, &new);
+    let old_changes = old.len() - prefix - suffix;
+    let new_changes = new.len() - prefix - suffix;
+    if old_changes * new_changes > MAX_LINE_PAIRS {
+        return None;
+    }
+    Some(match algorithm {
+        DiffAlgorithm::Smart => smart_diff_rows(&old, &new, prefix, suffix),
+        DiffAlgorithm::Classic => classic_diff_rows(&base, &target),
+    })
+}
 
+pub(crate) fn file_diff(base: &str, target: &str, algorithm: DiffAlgorithm) -> Vec<(char, String)> {
     let base = normalize(base);
     let target = normalize(target);
     if algorithm == DiffAlgorithm::Classic {
-        return TextDiff::from_lines(base.as_ref(), target.as_ref())
-            .iter_all_changes()
-            .map(change_row)
-            .collect();
+        return classic_diff_rows(&base, &target);
     }
     if base == target {
         return base
@@ -67,17 +102,55 @@ pub(crate) fn file_diff(base: &str, target: &str, algorithm: DiffAlgorithm) -> V
             .collect();
     }
 
-    // Skip hashing and looking for anchors in the unchanged edges. A typical
-    // edit only needs the diff algorithm to process a small slice of the file.
     let old: Vec<_> = base.split_inclusive('\n').collect();
     let new: Vec<_> = target.split_inclusive('\n').collect();
-    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
+    let (prefix, suffix) = unchanged_edges(&old, &new);
+    smart_diff_rows(&old, &new, prefix, suffix)
+}
+
+fn normalize(text: &str) -> Cow<'_, str> {
+    let bytes = text.as_bytes();
+    let mut returns = memchr::memchr_iter(b'\r', bytes);
+    let Some(first) = returns.next() else {
+        return text.into();
+    };
+    let mut normalized = String::with_capacity(text.len());
+    let mut start = 0;
+    for index in std::iter::once(first).chain(returns) {
+        normalized.push_str(&text[start..index]);
+        normalized.push('\n');
+        start = index + 1 + usize::from(bytes.get(index + 1) == Some(&b'\n'));
+    }
+    normalized.push_str(&text[start..]);
+    normalized.into()
+}
+
+fn classic_diff_rows(base: &str, target: &str) -> Vec<(char, String)> {
+    TextDiff::from_lines(base, target)
+        .iter_all_changes()
+        .map(change_row)
+        .collect()
+}
+
+// Skip hashing and looking for anchors in the unchanged edges. A typical
+// edit only needs the diff algorithm to process a small slice of the file.
+fn unchanged_edges(old: &[&str], new: &[&str]) -> (usize, usize) {
+    let prefix = old.iter().zip(new).take_while(|(a, b)| a == b).count();
     let suffix = old[prefix..]
         .iter()
         .rev()
         .zip(new[prefix..].iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
+    (prefix, suffix)
+}
+
+fn smart_diff_rows(
+    old: &[&str],
+    new: &[&str],
+    prefix: usize,
+    suffix: usize,
+) -> Vec<(char, String)> {
     let old_middle = &old[prefix..old.len() - suffix];
     let new_middle = &new[prefix..new.len() - suffix];
     let mut rows = Vec::with_capacity(old.len().max(new.len()));
@@ -86,11 +159,15 @@ pub(crate) fn file_diff(base: &str, target: &str, algorithm: DiffAlgorithm) -> V
         rows.extend(old_middle.iter().map(|line| line_row('-', line)));
         rows.extend(new_middle.iter().map(|line| line_row('+', line)));
     } else {
-        let diff = TextDiff::configure()
-            .algorithm(similar::Algorithm::Patience)
-            .timeout(Duration::from_millis(250))
-            .diff_slices(old_middle, new_middle);
-        rows.extend(diff.iter_all_changes().map(change_row));
+        for op in smart_operations(old_middle, new_middle) {
+            let (tag, old_range, new_range) = op.as_tag_tuple();
+            if tag == DiffTag::Equal {
+                rows.extend(old_middle[old_range].iter().map(|line| line_row(' ', line)));
+            } else {
+                rows.extend(old_middle[old_range].iter().map(|line| line_row('-', line)));
+                rows.extend(new_middle[new_range].iter().map(|line| line_row('+', line)));
+            }
+        }
     }
     rows.extend(
         old[old.len() - suffix..]
@@ -98,6 +175,47 @@ pub(crate) fn file_diff(base: &str, target: &str, algorithm: DiffAlgorithm) -> V
             .map(|line| line_row(' ', line)),
     );
     rows
+}
+
+fn smart_operations(old: &[&str], new: &[&str]) -> Vec<DiffOp> {
+    let deadline = Some(Instant::now() + Duration::from_millis(250));
+    if old.len().max(new.len()) <= 100 {
+        return capture_diff_slices_deadline(Algorithm::Patience, old, new, deadline);
+    }
+
+    // Intern exact lines once for cheap comparisons. When the two revisions
+    // share no lines, a single replacement is exact and needs no search.
+    let mut ids = FxHashMap::<&str, usize>::default();
+    let intern = |line, ids: &mut FxHashMap<_, _>| {
+        let next = ids.len();
+        *ids.entry(line).or_insert(next)
+    };
+    let old_ids: Vec<_> = old
+        .iter()
+        .copied()
+        .map(|line| intern(line, &mut ids))
+        .collect();
+    let old_unique = ids.len();
+    let mut shared = false;
+    let new_ids: Vec<_> = new
+        .iter()
+        .copied()
+        .map(|line| {
+            let id = intern(line, &mut ids);
+            shared |= id < old_unique;
+            id
+        })
+        .collect();
+    if !shared {
+        return vec![DiffOp::Replace {
+            old_index: 0,
+            old_len: old.len(),
+            new_index: 0,
+            new_len: new.len(),
+        }];
+    }
+    drop(ids);
+    capture_diff_slices_deadline(Algorithm::Patience, &old_ids, &new_ids, deadline)
 }
 
 fn line_row(kind: char, line: &str) -> (char, String) {
@@ -568,6 +686,64 @@ mod tests {
             &format!("{}x", "\n".repeat(2000))
         ));
         assert!(!fits_interactive_budget(&"x".repeat(256 * 1024), "x"));
+    }
+
+    #[test]
+    fn interactive_diff_defers_dense_edits_but_keeps_sparse_edits() {
+        let base: String = (0..1200).map(|line| format!("old_{line}\n")).collect();
+        let rewritten: String = (0..1200).map(|line| format!("new_{line}\n")).collect();
+        let edited = base.replacen("old_600\n", "new_600\n", 1);
+        assert!(fits_interactive_budget(&base, &rewritten));
+        for algorithm in DiffAlgorithm::ALL {
+            assert!(interactive_file_diff(&base, &rewritten, algorithm).is_none());
+            assert_eq!(
+                interactive_file_diff(&base, &edited, algorithm).unwrap(),
+                file_diff(&base, &edited, algorithm),
+            );
+        }
+    }
+
+    #[test]
+    fn newline_difference_distinguishes_eof_from_line_ending_style() {
+        use MissingFinalNewline::{Original, Target};
+        assert_eq!(missing_final_newline("same", "same\n"), Some(Original));
+        assert_eq!(missing_final_newline("same\r\n", "same"), Some(Target));
+        assert_eq!(missing_final_newline("same\r", "same\n"), None);
+        assert_eq!(missing_final_newline("", "new"), None);
+    }
+
+    #[test]
+    fn smart_diff_interner_preserves_patience_alignment() {
+        let base: Vec<_> = (0..180)
+            .map(|index| format!("keep {}\n", index % 31))
+            .collect();
+        let inserted: Vec<_> = (0..160).map(|index| format!("insert {index}\n")).collect();
+        let old: Vec<_> = base.iter().map(String::as_str).collect();
+        let new = [
+            &old[72..140],
+            &inserted.iter().map(String::as_str).collect::<Vec<_>>(),
+            &old[..43],
+        ]
+        .concat();
+        let expected = TextDiff::configure()
+            .algorithm(Algorithm::Patience)
+            .diff_slices(&old, &new);
+        assert_eq!(smart_operations(&old, &new), expected.ops());
+    }
+
+    #[test]
+    fn smart_diff_disjoint_middle_is_one_exact_replacement() {
+        let old = vec!["old\n"; 300];
+        let new = vec!["new\n"; 500];
+        assert_eq!(
+            smart_operations(&old, &new),
+            [DiffOp::Replace {
+                old_index: 0,
+                old_len: 300,
+                new_index: 0,
+                new_len: 500
+            }],
+        );
     }
 
     #[test]

@@ -2166,7 +2166,7 @@ fn diff_rows(
     let before = diff.old_text.as_deref().unwrap_or_default();
     // Avoid doing expensive full-file diff work on a streamed transcript frame.
     // The complete snapshots remain available in the native Review action.
-    if !crate::diff_algorithm::fits_interactive_budget(before, &diff.new_text) {
+    let Some(changes) = crate::diff_algorithm::interactive_file_diff(before, &diff.new_text, algorithm) else {
         plain(
             rows,
             format!(
@@ -2177,8 +2177,7 @@ fn diff_rows(
             Some(ChatAction::Review(Arc::new(diff.clone()))),
         );
         return;
-    }
-    let changes = crate::diff_algorithm::file_diff(before, &diff.new_text, algorithm);
+    };
     let moved = (algorithm == crate::diff_algorithm::DiffAlgorithm::Smart)
         .then(|| crate::diff_algorithm::moved_lines(&changes))
         .flatten();
@@ -2206,6 +2205,14 @@ fn diff_rows(
     ];
     if moved_count > 0 {
         header.push(Span::styled(format!(" ↔{moved_count}"), Style::default().fg(c.fg_accent_blue)));
+    }
+    if let Some(side) = crate::diff_algorithm::missing_final_newline(before, &diff.new_text) {
+        use crate::diff_algorithm::MissingFinalNewline::{Original, Target};
+        let label = match side {
+            Original => "  Original has no final newline",
+            Target => "  Result has no final newline",
+        };
+        header.push(Span::styled(label, Style::default().fg(c.fg_dim)));
     }
     header.push(Span::styled("  Review", Style::default().fg(c.fg_md_link)));
     row(rows, Line::from(header), Some(review.clone()), None);

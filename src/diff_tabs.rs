@@ -1346,16 +1346,17 @@ impl App {
         self.diff_target_path = Some(diff.path.clone());
         self.diff_tab_label = Some(format!("{} (Agent diff)", self.tabs[self.active_tab].editor.file_display_name()));
         self.diff_mode = self.preferred_diff_mode;
-        if !crate::diff_algorithm::fits_interactive_budget(&base, &diff.new_text) {
-            self.refresh_compare_diff();
-        } else {
-            let prepared = crate::background::PreparedDiffRefresh::new(
+        if let Some(lines) = crate::diff_algorithm::interactive_file_diff(&base, &diff.new_text, self.diff_algorithm) {
+            let prepared = crate::background::PreparedDiffRefresh::from_lines(
                 base,
                 &diff.new_text,
+                lines,
                 self.editor().map_or(0, |editor| editor.rope.len_lines()),
                 self.diff_algorithm,
             );
             self.apply_prepared_compare_diff(prepared.diff_lines, prepared.render_cache, prepared.target_line_markers);
+        } else {
+            self.refresh_compare_diff();
         }
         self.active_pane = ActivePane::Editor;
         self.terminal_panel_focused = false;

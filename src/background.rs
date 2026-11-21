@@ -313,7 +313,19 @@ impl PreparedDiffRefresh {
         algorithm: crate::diff_algorithm::DiffAlgorithm,
     ) -> Self {
         let diff_lines = crate::diff_algorithm::file_diff(&base_content, target, algorithm);
-        let render_cache = crate::app::DiffRenderCache::with_algorithm(&diff_lines, algorithm);
+        Self::from_lines(base_content, target, diff_lines, line_count, algorithm)
+    }
+
+    pub(crate) fn from_lines(
+        base_content: Arc<str>,
+        target: &str,
+        diff_lines: Vec<(char, String)>,
+        line_count: usize,
+        algorithm: crate::diff_algorithm::DiffAlgorithm,
+    ) -> Self {
+        let mut render_cache = crate::app::DiffRenderCache::with_algorithm(&diff_lines, algorithm);
+        render_cache.missing_final_newline =
+            crate::diff_algorithm::missing_final_newline(&base_content, target);
         let target_line_markers =
             crate::app_git_display::target_line_markers_from_compare_diff(&diff_lines, line_count);
         Self { base_content, diff_lines, render_cache, target_line_markers }

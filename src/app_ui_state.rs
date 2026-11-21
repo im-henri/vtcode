@@ -985,7 +985,12 @@ impl App {
         let Some(editor) = self.editor() else {
             return;
         };
-        if editor.bg_loading || editor.large_file_mode && !algorithm_changed {
+        // An explicit snapshot review may already contain a large diff. A
+        // different default on an empty cache does not qualify as a rebuild.
+        let rebuilding_snapshot = algorithm_changed
+            && self.active_diff_tab_id().is_some()
+            && self.compare_diff_target_version.is_some();
+        if editor.bg_loading || editor.large_file_mode && !rebuilding_snapshot {
             return;
         }
 
@@ -2274,6 +2279,25 @@ mod tests {
         app.refresh_compare_diff();
 
         assert!(std::sync::Arc::ptr_eq(&cache, &app.diff_render_cache));
+    }
+
+    #[test]
+    fn classic_preference_cannot_bypass_the_large_file_diff_guard() {
+        let mut app = App::test_new();
+        let mut editor = crate::editor::Editor::new();
+        editor.rope = ropey::Rope::from_str("after\n");
+        editor.large_file_mode = true;
+        app.tabs.push(crate::app::Tab::new_file(editor));
+        app.active_tab = 0;
+        app.diff_mode = DiffMode::SideBySide;
+        app.compare_base_content = Some("before\n".into());
+        app.diff_algorithm = crate::diff_algorithm::DiffAlgorithm::Classic;
+        assert!(app.should_render_diff_for_active_editor());
+
+        app.refresh_compare_diff();
+
+        assert!(!app.bg_diff_refresh_running);
+        assert!(app.compare_diff_lines.is_empty());
     }
 
     #[test]

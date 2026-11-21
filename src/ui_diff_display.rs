@@ -1,4 +1,4 @@
-use std::fmt::Write as FmtWrite;
+use std::{borrow::Cow, fmt::Write as FmtWrite};
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -129,12 +129,18 @@ fn inline_gutter_width(number_width: usize) -> usize {
     2 * (number_width + 1)
 }
 
-fn diff_labels(app: &App) -> (&str, &str) {
-    app.diff_labels
+fn diff_labels(app: &App) -> (Cow<'_, str>, Cow<'_, str>) {
+    use crate::diff_algorithm::MissingFinalNewline::{Original, Target};
+    let (base, target) = app.diff_labels
         .as_ref()
         .map_or(("Original", "Modified"), |labels| {
             (labels.base.as_str(), labels.target.as_str())
-        })
+        });
+    match app.diff_render_cache.missing_final_newline {
+        Some(Original) => (format!("{base} (no final newline)").into(), target.into()),
+        Some(Target) => (base.into(), format!("{target} (no final newline)").into()),
+        None => (base.into(), target.into()),
+    }
 }
 
 fn draw_diff_header(f: &mut Frame, app: &App, area: Rect, label: &str, unsaved: bool) {
@@ -163,8 +169,8 @@ pub(crate) fn draw_side_by_side_diff(f: &mut Frame, app: &mut App, area: Rect) {
     let unsaved = app
         .editor()
         .is_some_and(|editor| editor.modified && !editor.read_only);
-    draw_diff_header(f, app, layout.left_header, base, false);
-    draw_diff_header(f, app, layout.right_header, target, unsaved);
+    draw_diff_header(f, app, layout.left_header, &base, false);
+    draw_diff_header(f, app, layout.right_header, &target, unsaved);
 
     let compact = app.context_diff_active() || crate::commit_review::painting_row(app).is_some();
     let show_minimap = app.show_minimap;
@@ -1991,6 +1997,29 @@ mod tests {
             let text: String = (0..14).map(|y| buffer_row(terminal.backend().buffer(), y, 96)).collect();
             assert!(text.contains('→'));
             assert!(text.contains('←'));
+        }
+    }
+
+    #[test]
+    fn diff_view_labels_the_revision_missing_a_final_newline() {
+        let mut app = App::test_new();
+        let diff = vtcode::acp::protocol::Diff::new(PathBuf::from("file.txt"), "same\n")
+            .old_text("same");
+        app.open_acp_diff(&diff);
+        assert_eq!(app.compare_diff_lines, [
+            ('-', "same".to_owned()),
+            ('+', "same".to_owned()),
+        ]);
+        for (mode, render) in [
+            (DiffMode::Inline, draw_inline_diff as fn(&mut Frame, &mut App, Rect)),
+            (DiffMode::SideBySide, draw_side_by_side_diff),
+        ] {
+            app.diff_mode = mode;
+            let mut terminal = Terminal::new(TestBackend::new(120, 12)).unwrap();
+            terminal.draw(|frame| render(frame, &mut app, frame.area())).unwrap();
+            let title = buffer_row(terminal.backend().buffer(), 0, 120);
+            assert!(title.contains("Before agent edit (no final newline)"), "{title}");
+            assert!(!title.contains("Agent result (no final newline)"), "{title}");
         }
     }
 

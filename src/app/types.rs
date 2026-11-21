@@ -551,6 +551,7 @@ pub(crate) enum DiffBaseRevision {
 #[derive(Clone, Debug)]
 pub(crate) struct DiffRenderCache {
     pub algorithm: DiffAlgorithm,
+    pub missing_final_newline: Option<diff_algorithm::MissingFinalNewline>,
     /// Bounded original/target headers survive scrolling and compact views.
     pub syntax_first_lines: [String; 2],
     pub context_lines: Option<usize>,
@@ -580,6 +581,7 @@ impl Default for DiffRenderCache {
     fn default() -> Self {
         Self {
             algorithm: DiffAlgorithm::default(),
+            missing_final_newline: None,
             syntax_first_lines: Default::default(),
             context_lines: None,
             expanded_context: Vec::new(),
@@ -734,6 +736,7 @@ impl DiffRenderCache {
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
         Self {
             algorithm,
+            missing_final_newline: None,
             syntax_first_lines,
             context_lines: None,
             expanded_context: Vec::new(),
@@ -1041,6 +1044,7 @@ impl DiffRenderCache {
         let overview_rows = Self::index_overview_rows(&rows, &inline_rows);
         Self {
             algorithm: self.algorithm,
+            missing_final_newline: self.missing_final_newline,
             syntax_first_lines: self.syntax_first_lines.clone(),
             context_lines: Some(context),
             expanded_context: expanded.to_vec(),
