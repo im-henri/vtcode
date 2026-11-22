@@ -18,3 +18,12 @@ regions, so these per-cell paths dominate the cost of scrolling:
 - `Cell::eq` compared symbol strings before the colors and modifier. It now
   checks the plain fields first, and compares one-byte symbols without a
   `memcmp` call; the result is the same (`None` still equals `" "`).
+- `Cell::clone_from` was derived, so it built a whole clone and dropped the
+  old cell. When neither cell's symbol owns a heap allocation it now copies
+  the cell as plain memory (compact_str copies inline strings the same way);
+  `unsafe_code` is `deny` instead of `forbid` so that one copy can opt in.
+  vtcode replays cached scenes (cursor animations, tab strips) with
+  `clone_from_slice`; a 200x50 copy went from ~137 us to ~7 us.
+- `Span::styled_graphemes` and `Buffer::set_stringn` segment graphemes only for
+  non-ASCII text. ASCII is one cluster per byte except CR LF, and that pair
+  is control text both drop, so the symbols drawn are identical.

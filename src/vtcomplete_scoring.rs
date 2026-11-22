@@ -147,12 +147,18 @@ impl<'a> Scores<'a> {
         {
             return Some(());
         }
+        // A word is scored only after missing both sets, then lands in at most
+        // one, so they never overlap. Most repeated words in a file were
+        // rejected; checking that set first saves them a second hash lookup.
+        if self.rejected.contains(candidate) {
+            return Some(());
+        }
         if let Some(entry) = self.matches.get_mut(candidate) {
             entry.proximity = entry.proximity.min(proximity);
             entry.keyword |= keyword;
             return Some(());
         }
-        if self.rejected.contains(candidate) || (!keyword && self.deferred.contains(candidate)) {
+        if !keyword && self.deferred.contains(candidate) {
             return Some(());
         }
 

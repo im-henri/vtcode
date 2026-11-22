@@ -409,6 +409,11 @@ fn identifier_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_' || ch == '$'
 }
 
+/// [`identifier_char`] for an ASCII byte.
+fn ascii_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+}
+
 pub(super) fn quick_matches(word: &str, prefix: &str) -> bool {
     if prefix.is_empty() {
         return true;
@@ -489,6 +494,40 @@ fn scan_words(
         }
         if !scores.charge_scan_bytes(chunk.len()) {
             return Some(false);
+        }
+        if chunk.is_ascii() {
+            // Source text is nearly always ASCII: append whole identifier runs
+            // instead of decoding and pushing one character at a time.
+            let bytes = chunk.as_bytes();
+            let mut index = 0;
+            while index < bytes.len() {
+                let start = index;
+                while index < bytes.len() && ascii_identifier_byte(bytes[index]) {
+                    index += 1;
+                }
+                if index > start {
+                    if !oversized {
+                        if word.len() + (index - start) <= MAX_COMPLETION_WORD_BYTES {
+                            word.push_str(&chunk[start..index]);
+                        } else {
+                            scores.defer_candidate();
+                            word.clear();
+                            oversized = true;
+                        }
+                    }
+                    if index == bytes.len() {
+                        break;
+                    }
+                }
+                // bytes[index] ends the identifier.
+                if !word.is_empty() {
+                    scores.add(word, proximity, false, cancelled)?;
+                    word.clear();
+                }
+                oversized = false;
+                index += 1;
+            }
+            continue;
         }
         for ch in chunk.chars() {
             if identifier_char(ch) {
@@ -749,20 +788,24 @@ fn compute_contextual_invoked(
     let mut context_bytes = 0usize;
     // Search outward from the caret. The token budget also bounds work on
     // very large files; only nearby lines need richer context analysis.
-    let last_line = active.rope.len_lines() - 1;
+    let line_count = active.rope.len_lines();
+    let last_line = line_count - 1;
     let max_distance = active.cursor_line.max(last_line - active.cursor_line);
+    // Two cursors walk outward line by line. Looking each line up by index
+    // descended the rope again per line and dominated typing on large files.
+    let start = (active.cursor_line + 1).min(line_count);
+    let mut above = active.rope.lines_at(start);
+    let mut below = active.rope.lines_at(start);
     'file: for distance in 0..=max_distance {
-        for line in [
-            active.cursor_line.checked_sub(distance),
-            (distance > 0).then(|| active.cursor_line.saturating_add(distance)),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if line >= active.rope.len_lines() {
-                continue;
-            }
-            let source = active.rope.line(line);
+        let up = active
+            .cursor_line
+            .checked_sub(distance)
+            .filter(|&line| line < line_count)
+            .and_then(|_| above.prev());
+        let down = (distance > 0 && active.cursor_line.saturating_add(distance) < line_count)
+            .then(|| below.next())
+            .flatten();
+        for source in [up, down].into_iter().flatten() {
             if !scan_words(source, distance, &mut scores, &mut word, &cancelled)? {
                 break 'file;
             }

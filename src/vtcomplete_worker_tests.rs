@@ -352,6 +352,77 @@ fn streaming_words_reuse_bounded_scratch_without_leaking_cancelled_tokens() {
     }
 }
 
+/// The original one-character-at-a-time scan, kept to check the ASCII path.
+fn reference_scan_words(line: ropey::RopeSlice<'_>, scores: &mut Scores<'_>) {
+    let mut word = String::new();
+    let mut oversized = false;
+    for chunk in line.chunks() {
+        assert!(scores.charge_scan_bytes(chunk.len()));
+        for ch in chunk.chars() {
+            if identifier_char(ch) {
+                if !oversized {
+                    if word.len() + ch.len_utf8() <= MAX_COMPLETION_WORD_BYTES {
+                        word.push(ch);
+                    } else {
+                        scores.defer_candidate();
+                        word.clear();
+                        oversized = true;
+                    }
+                }
+            } else {
+                if !word.is_empty() {
+                    scores.add(&word, 3, false, &|| false).unwrap();
+                    word.clear();
+                }
+                oversized = false;
+            }
+        }
+    }
+    if !word.is_empty() {
+        scores.add(&word, 3, false, &|| false).unwrap();
+    }
+}
+
+#[test]
+fn ascii_word_scan_matches_character_scan_across_chunks_and_oversized_words() {
+    let long = "x".repeat(MAX_COMPLETION_WORD_BYTES - 1);
+    let texts = [
+        "alpha beta_gamma $delta 42abc a-b",
+        &format!("{long} {long}yz {long}y end"),
+        &format!("pre {}界 tail", "q".repeat(3000)),
+        &format!(
+            "{} mixed αβγ{} ascii_after",
+            "word ".repeat(900),
+            "z".repeat(40)
+        ),
+        &"identifier_".repeat(1000),
+        "trailing_",
+        "",
+    ];
+    for text in texts {
+        let rope = ropey::Rope::from_str(text);
+        let budget = || crate::fuzzy_score::FuzzyWorkBudget::new(scoring::work_limits());
+        let mut fast = Scores::new("", "", budget());
+        let mut reference = Scores::new("", "", budget());
+        assert_eq!(
+            scan_words(rope.line(0), 3, &mut fast, &mut String::new(), &|| false),
+            Some(true)
+        );
+        reference_scan_words(rope.line(0), &mut reference);
+        let words = |scores: &Scores<'_>| {
+            let mut words: Vec<_> = scores
+                .matches
+                .iter()
+                .map(|(word, entry)| (word.clone(), entry.proximity))
+                .collect();
+            words.sort();
+            words
+        };
+        assert_eq!(words(&fast), words(&reference), "{text:.40}");
+        assert_eq!(fast.deferred_candidates, reference.deferred_candidates);
+    }
+}
+
 fn snapshot(id: u64, text: &str, cursor_line: usize) -> VtCompleteSnapshot {
     VtCompleteSnapshot {
         source: Default::default(),

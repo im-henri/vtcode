@@ -2,7 +2,6 @@ use alloc::borrow::Cow;
 use alloc::string::ToString;
 use core::fmt;
 
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::buffer::Buffer;
@@ -308,10 +307,7 @@ impl<'a> Span<'a> {
         base_style: S,
     ) -> impl Iterator<Item = StyledGrapheme<'a>> {
         let style = base_style.into().patch(self.style);
-        self.content
-            .as_ref()
-            .graphemes(true)
-            .filter(|g| !g.contains(char::is_control))
+        crate::visible_graphemes(self.content.as_ref())
             .map(move |g| StyledGrapheme { symbol: g, style })
     }
 

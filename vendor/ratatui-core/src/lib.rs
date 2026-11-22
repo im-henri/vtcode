@@ -80,3 +80,28 @@ pub mod symbols;
 pub mod terminal;
 pub mod text;
 pub mod widgets;
+
+/// The extended grapheme clusters of `text` that contain no control character,
+/// as rendering draws them.
+///
+/// vtcode patch: ASCII text, nearly every label and source line, is one cluster
+/// per byte except CR LF, and that pair is control text dropped either way,
+/// so ASCII skips grapheme segmentation and yields identical symbols.
+pub(crate) fn visible_graphemes(text: &str) -> impl Iterator<Item = &str> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let ascii = text.is_ascii();
+    let bytes = ascii.then(|| {
+        text.bytes()
+            .enumerate()
+            .filter(|(_, byte)| !byte.is_ascii_control())
+            .map(|(index, _)| &text[index..=index])
+    });
+    let clusters = (!ascii).then(|| {
+        text.graphemes(true)
+            .filter(|symbol| !symbol.contains(char::is_control))
+    });
+    bytes
+        .into_iter()
+        .flatten()
+        .chain(clusters.into_iter().flatten())
+}

@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use core::ops::{Index, IndexMut};
 use core::{cmp, fmt};
 
+#[cfg(test)]
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -346,8 +347,7 @@ impl Buffer {
     {
         let max_width = max_width.try_into().unwrap_or(u16::MAX);
         let mut remaining_width = self.area.right().saturating_sub(x).min(max_width);
-        let graphemes = UnicodeSegmentation::graphemes(string.as_ref(), true)
-            .filter(|symbol| !symbol.contains(char::is_control))
+        let graphemes = crate::visible_graphemes(string.as_ref())
             .map(|symbol| (symbol, symbol.width() as u16))
             .filter(|(_symbol, width)| *width > 0)
             .map_while(|(symbol, width)| {

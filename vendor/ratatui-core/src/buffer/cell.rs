@@ -4,7 +4,7 @@ use crate::style::{Color, Modifier, Style};
 use crate::symbols::merge::MergeStrategy;
 
 /// A buffer cell
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Cell {
     /// The string to be drawn in the cell.
@@ -192,6 +192,53 @@ impl Cell {
     /// Resets the cell to the empty state.
     pub fn reset(&mut self) {
         *self = Self::EMPTY;
+    }
+}
+
+impl Clone for Cell {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            symbol: self.symbol.clone(),
+            fg: self.fg,
+            bg: self.bg,
+            #[cfg(feature = "underline-color")]
+            underline_color: self.underline_color,
+            modifier: self.modifier,
+            skip: self.skip,
+        }
+    }
+
+    /// The derived version built a whole clone and dropped the old cell. Frame
+    /// symbols are nearly always inline, so copy those cells as plain memory.
+    #[inline]
+    fn clone_from(&mut self, source: &Self) {
+        if self.owns_heap() || source.owns_heap() {
+            *self = source.clone();
+        } else {
+            *self = source.bitwise_copy();
+        }
+    }
+}
+
+impl Cell {
+    /// Whether the symbol owns a heap allocation. Every other field is `Copy`.
+    #[inline]
+    fn owns_heap(&self) -> bool {
+        self.symbol
+            .as_ref()
+            .is_some_and(CompactString::is_heap_allocated)
+    }
+
+    /// Copies a cell whose symbol owns no heap allocation.
+    #[inline]
+    #[allow(unsafe_code)]
+    fn bitwise_copy(&self) -> Self {
+        debug_assert!(!self.owns_heap());
+        // SAFETY: an inline or `&'static str` `CompactString` holds no
+        // allocation (compact_str's own `Clone` copies it this way), and the
+        // remaining fields are `Copy`, so the duplicate shares no ownership.
+        unsafe { core::ptr::read(self) }
     }
 }
 

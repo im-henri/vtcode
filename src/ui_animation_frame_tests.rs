@@ -430,3 +430,138 @@ fn benchmark_input_frame_geometry_reuse() {
         times[0][3], times[1][3]
     );
 }
+
+#[test]
+#[ignore = "manual release benchmark of scene row copies"]
+fn benchmark_scene_row_copies() {
+    let area = Rect::new(0, 0, 200, 50);
+    let mut source = Buffer::empty(area);
+    for (index, cell) in source.content.iter_mut().enumerate() {
+        cell.set_symbol(["a", "界", " ", "é", "{"][index % 5])
+            .set_fg(ratatui::style::Color::Indexed((index % 200) as u8));
+    }
+    let mut target = Buffer::empty(area);
+    let width = usize::from(area.width);
+    let mut time =
+        |copy: &mut dyn FnMut(&mut [ratatui::buffer::Cell], &[ratatui::buffer::Cell])| {
+            let mut samples = Vec::new();
+            for _ in 0..9 {
+                let started = Instant::now();
+                for _ in 0..200 {
+                    target.reset();
+                    for row in 0..usize::from(area.height) {
+                        let range = row * width..(row + 1) * width;
+                        copy(&mut target.content[range.clone()], &source.content[range]);
+                    }
+                }
+                samples.push(started.elapsed() / 200);
+            }
+            samples.sort();
+            assert_eq!(target, source);
+            samples[4]
+        };
+    let slice = time(&mut |target, source| target.clone_from_slice(source));
+    // The derived `Clone::clone_from` that `Cell` used before.
+    let derived = time(&mut |target, source| {
+        for (target, source) in target.iter_mut().zip(source) {
+            *target = source.clone();
+        }
+    });
+    let mut reset_only = Vec::new();
+    for _ in 0..9 {
+        let started = Instant::now();
+        for _ in 0..200 {
+            target.reset();
+            std::hint::black_box(&target);
+        }
+        reset_only.push(started.elapsed() / 200);
+    }
+    reset_only.sort();
+    eprintln!(
+        "scene copy 200x50: reset alone={:?}; with copy: derived={derived:?} clone_from_slice={slice:?}",
+        reset_only[4]
+    );
+}
+
+#[test]
+fn cell_clone_from_copies_inline_and_heap_symbols() {
+    use ratatui::buffer::Cell;
+    let heap = "a much longer grapheme cluster than fits inline";
+    let row = |symbols: &[&str]| -> Vec<Cell> {
+        symbols
+            .iter()
+            .enumerate()
+            .map(|(index, symbol)| {
+                let mut cell = Cell::default();
+                cell.set_symbol(symbol)
+                    .set_fg(ratatui::style::Color::Indexed(index as u8));
+                cell
+            })
+            .collect()
+    };
+    let cases = [
+        (row(&["a", "b", "界"]), row(&["x", "y", "z"])),
+        (row(&["a", heap, "c"]), row(&["x", "y", "z"])),
+        (row(&["a", "b", "c"]), row(&["x", heap, "z"])),
+        (row(&[heap, heap]), row(&[heap, "y"])),
+    ];
+    for (source, mut target) in cases {
+        target.clone_from_slice(&source);
+        assert_eq!(target, source);
+        for cell in &target {
+            assert_eq!(cell.clone(), *cell);
+        }
+    }
+    let mut reset = Cell::new("q");
+    reset.reset();
+    let mut copy = Cell::new(heap);
+    copy.clone_from(&reset);
+    assert_eq!(copy, reset);
+}
+
+#[test]
+fn ascii_spans_draw_the_same_graphemes_as_unicode_segmentation() {
+    use unicode_segmentation::UnicodeSegmentation;
+    for text in [
+        "plain ascii",
+        "tab\there\r\nnext\nline\r",
+        "\u{7f}del\u{1}ctl \r\r\n\n",
+        "",
+        "mixed é and 界 and 👁️‍🗨️ emoji\r\n",
+        "e\u{301} combining",
+    ] {
+        let span = ratatui::text::Span::raw(text);
+        let drawn: Vec<_> = span
+            .styled_graphemes(ratatui::style::Style::default())
+            .map(|grapheme| grapheme.symbol)
+            .collect();
+        let expected: Vec<_> = text
+            .graphemes(true)
+            .filter(|symbol| !symbol.contains(char::is_control))
+            .collect();
+        assert_eq!(drawn, expected, "{text:?}");
+        let width = 40;
+        let mut fast = Buffer::empty(Rect::new(0, 0, width, 1));
+        fast.set_stringn(
+            0,
+            0,
+            text,
+            usize::from(width),
+            ratatui::style::Style::default(),
+        );
+        let mut reference = Buffer::empty(Rect::new(0, 0, width, 1));
+        let mut x = 0;
+        for symbol in &expected {
+            let cells = unicode_width::UnicodeWidthStr::width(*symbol) as u16;
+            if cells == 0 || x + cells > width {
+                continue;
+            }
+            reference[(x, 0)].set_symbol(symbol);
+            x += cells;
+        }
+        let symbols = |buffer: &Buffer| -> String {
+            buffer.content.iter().map(|cell| cell.symbol()).collect()
+        };
+        assert_eq!(symbols(&fast), symbols(&reference), "{text:?}");
+    }
+}
