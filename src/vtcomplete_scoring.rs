@@ -62,6 +62,7 @@ enum CandidateScore {
     WorkLimited,
 }
 
+#[derive(Clone)]
 pub(super) struct Scores<'a> {
     prefix: &'a str,
     lower: &'a str,

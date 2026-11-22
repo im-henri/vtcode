@@ -24,6 +24,8 @@ mod prediction;
 mod replacement;
 #[path = "vtcomplete_scoring.rs"]
 mod scoring;
+#[path = "vtcomplete_word_index.rs"]
+mod word_index;
 use crate::completion_match as identifier;
 use scoring::{MAX_COMPLETION_WORD_BYTES, MAX_QUERY_BYTES, Scores};
 
@@ -559,6 +561,7 @@ fn scan_words(
 #[derive(Default)]
 struct CompletionCache {
     document: Option<u64>,
+    words: word_index::WordIndex,
     prediction: prediction::Cache,
     edit_history: edit_history::Cache,
 }
@@ -697,6 +700,168 @@ impl ContextKey {
 }
 
 #[cfg(test)]
+thread_local! {
+    /// Always use the line-by-line scan, as a reference for the word index.
+    static FULL_SCAN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Requests answered from the word index.
+    static INDEXED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Lines in the order the popup scan visits them: outward from the caret,
+/// the line above before the line below at each distance.
+fn outward_lines(cursor: usize, count: usize) -> impl Iterator<Item = (usize, usize)> {
+    let max_distance = cursor.max(count - 1 - cursor);
+    (0..=max_distance).flat_map(move |distance| {
+        let up = cursor.checked_sub(distance).filter(|&line| line < count);
+        let down = (distance > 0)
+            .then(|| cursor.saturating_add(distance))
+            .filter(|&line| line < count);
+        [up, down]
+            .into_iter()
+            .flatten()
+            .map(move |line| (line, distance))
+    })
+}
+
+/// Score every word near the caret, line by line. Nearby lines also record
+/// how each already-matched word is used.
+#[allow(clippy::too_many_arguments)]
+fn scan_document(
+    active: &VtCompleteSnapshot,
+    scores: &mut Scores<'_>,
+    evidence: &mut FxHashMap<String, CompletionEvidence>,
+    context_bytes: &mut usize,
+    domain: crate::completion_context::Domain,
+    key: &ContextKey,
+    cancelled: &impl Fn() -> bool,
+) -> Option<()> {
+    let mut word = String::new();
+    let line_count = active.rope.len_lines();
+    // Two cursors walk outward line by line. Looking each line up by index
+    // descended the rope again per line and dominated typing on large files.
+    let start = (active.cursor_line + 1).min(line_count);
+    let mut above = active.rope.lines_at(start);
+    let mut below = active.rope.lines_at(start);
+    for (line, distance) in outward_lines(active.cursor_line, line_count) {
+        let source = if line <= active.cursor_line {
+            above.prev()
+        } else {
+            below.next()
+        }?;
+        if !scan_words(source, distance, scores, &mut word, cancelled)? {
+            break;
+        }
+        observe_nearby(
+            source,
+            distance,
+            scores,
+            evidence,
+            context_bytes,
+            domain,
+            key,
+        );
+    }
+    Some(())
+}
+
+/// [`scan_document`] over the word index: each distinct word is scored once,
+/// at its first (nearest) occurrence, since later occurrences of a matched,
+/// rejected or deferred word change nothing. That holds while no limit is
+/// reached; returns `Some(false)` otherwise, and the caller rescans.
+#[allow(clippy::too_many_arguments)]
+fn scan_indexed(
+    active: &VtCompleteSnapshot,
+    index: &mut word_index::WordIndex,
+    scores: &mut Scores<'_>,
+    evidence: &mut FxHashMap<String, CompletionEvidence>,
+    context_bytes: &mut usize,
+    domain: crate::completion_context::Domain,
+    key: &ContextKey,
+    cancelled: &impl Fn() -> bool,
+) -> Option<bool> {
+    let deferred = scores.deferred_candidates;
+    let mut oversized = 0u32;
+    index.begin_request();
+    for (line, distance) in outward_lines(active.cursor_line, active.rope.len_lines()) {
+        if cancelled() {
+            return None;
+        }
+        let words = index.line(line);
+        // The budget is cumulative, so one charge per line passes exactly
+        // when the scan's per-chunk charges would.
+        if !scores.charge_scan_bytes(words.bytes) {
+            return Some(false);
+        }
+        oversized += words.oversized;
+        for position in 0..index.line(line).words.len() {
+            let id = index.line(line).words[position];
+            if index.first_visit(id) {
+                scores.add(index.word(id), distance, false, cancelled)?;
+            }
+        }
+        if distance < 128 {
+            let source = active.rope.line(line);
+            observe_nearby(
+                source,
+                distance,
+                scores,
+                evidence,
+                context_bytes,
+                domain,
+                key,
+            );
+        }
+    }
+    // Rescan when a candidate was deferred for work or a rejection was not
+    // remembered: the scan scores such words again at each occurrence.
+    if scores.deferred_candidates != deferred
+        || scores.rejected.len() >= scoring::MAX_REJECTED_WORDS
+        || scores.rejected_bytes + MAX_COMPLETION_WORD_BYTES > scoring::MAX_REJECTED_BYTES
+    {
+        return Some(false);
+    }
+    for _ in 0..oversized {
+        scores.defer_candidate();
+    }
+    Some(true)
+}
+
+/// Record local usage of matched words on lines near the caret.
+fn observe_nearby(
+    source: ropey::RopeSlice<'_>,
+    distance: usize,
+    scores: &Scores<'_>,
+    evidence: &mut FxHashMap<String, CompletionEvidence>,
+    context_bytes: &mut usize,
+    domain: crate::completion_context::Domain,
+    key: &ContextKey,
+) {
+    if distance >= 128
+        || source.len_bytes() > 4096
+        || *context_bytes + source.len_bytes() > 48 * 1024
+    {
+        return;
+    }
+    *context_bytes += source.len_bytes();
+    for observed in local_observations(&source.to_string(), &scores.matches) {
+        let item = evidence.entry(observed.word).or_default();
+        item.local = true;
+        item.local_context_score = 170;
+        if observed.domain == domain {
+            item.frequency = item.frequency.saturating_add(1);
+            item.context_score = item.context_score.max(key.relevance(&observed.context));
+        }
+        if !item.lexical_seen
+            || observed.domain == crate::completion_context::Domain::Code && !item.semantic_seen
+        {
+            item.domain = observed.domain;
+            item.semantic_score = if observed.domain == domain { 0 } else { -145 };
+            item.lexical_seen = true;
+        }
+    }
+}
+
+#[cfg(test)]
 fn compute_contextual(
     active: &VtCompleteSnapshot,
     prefix: &str,
@@ -784,60 +949,47 @@ fn compute_contextual_invoked(
     if examples.limited {
         scores.defer_candidate();
     }
-    let mut word = String::new();
     let mut context_bytes = 0usize;
-    // Search outward from the caret. The token budget also bounds work on
-    // very large files; only nearby lines need richer context analysis.
-    let line_count = active.rope.len_lines();
-    let last_line = line_count - 1;
-    let max_distance = active.cursor_line.max(last_line - active.cursor_line);
-    // Two cursors walk outward line by line. Looking each line up by index
-    // descended the rope again per line and dominated typing on large files.
-    let start = (active.cursor_line + 1).min(line_count);
-    let mut above = active.rope.lines_at(start);
-    let mut below = active.rope.lines_at(start);
-    'file: for distance in 0..=max_distance {
-        let up = active
-            .cursor_line
-            .checked_sub(distance)
-            .filter(|&line| line < line_count)
-            .and_then(|_| above.prev());
-        let down = (distance > 0 && active.cursor_line.saturating_add(distance) < line_count)
-            .then(|| below.next())
-            .flatten();
-        for source in [up, down].into_iter().flatten() {
-            if !scan_words(source, distance, &mut scores, &mut word, &cancelled)? {
-                break 'file;
-            }
-            if distance < 128
-                && source.len_bytes() <= 4096
-                && context_bytes + source.len_bytes() <= 48 * 1024
-            {
-                context_bytes += source.len_bytes();
-                for observed in local_observations(&source.to_string(), &scores.matches) {
-                    let item = evidence.entry(observed.word).or_default();
-                    item.local = true;
-                    item.local_context_score = 170;
-                    if observed.domain == analysis.context.domain {
-                        item.frequency = item.frequency.saturating_add(1);
-                        item.context_score =
-                            item.context_score.max(key.relevance(&observed.context));
-                    }
-                    if !item.lexical_seen
-                        || observed.domain == crate::completion_context::Domain::Code
-                            && !item.semantic_seen
-                    {
-                        item.domain = observed.domain;
-                        item.semantic_score = if observed.domain == analysis.context.domain {
-                            0
-                        } else {
-                            -145
-                        };
-                        item.lexical_seen = true;
-                    }
-                }
-            }
+    let domain = analysis.context.domain;
+    #[cfg(test)]
+    let use_index = !FULL_SCAN.get();
+    #[cfg(not(test))]
+    let use_index = true;
+    let indexed = if use_index && cache.words.update(&active.rope, &cancelled)? {
+        let snapshot = scores.clone();
+        if scan_indexed(
+            active,
+            &mut cache.words,
+            &mut scores,
+            &mut evidence,
+            &mut context_bytes,
+            domain,
+            &key,
+            &cancelled,
+        )? {
+            true
+        } else {
+            // A limit was reached, where every occurrence's order counts.
+            scores = snapshot;
+            evidence.clear();
+            context_bytes = 0;
+            false
         }
+    } else {
+        false
+    };
+    #[cfg(test)]
+    INDEXED.set(INDEXED.get() + usize::from(indexed));
+    if !indexed {
+        scan_document(
+            active,
+            &mut scores,
+            &mut evidence,
+            &mut context_bytes,
+            domain,
+            &key,
+            &cancelled,
+        )?;
     }
     for observed in analysis.prior.iter().chain(analysis.current) {
         if !scores.matches.contains_key(&observed.word) {

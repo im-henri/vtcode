@@ -62,6 +62,7 @@ pub(crate) struct FuzzyWorkUsage {
     pub(crate) bytes: usize,
 }
 
+#[derive(Clone)]
 pub(crate) struct FuzzyWorkBudget {
     limits: FuzzyWorkLimits,
     usage: FuzzyWorkUsage,
@@ -182,6 +183,7 @@ impl Default for ScoreCell {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct PreparedFuzzyScore<'a> {
     query: &'a str,
     ascii: bool,
@@ -192,7 +194,7 @@ pub(crate) struct PreparedFuzzyScore<'a> {
     scratch: ScoreScratch,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct ScoreScratch {
     first_matches: Vec<usize>,
     bonuses: Vec<i32>,

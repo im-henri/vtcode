@@ -882,3 +882,80 @@ fn benchmark_vtcomplete_budgeted_identifiers() {
         original[3], optimized[3]
     );
 }
+
+#[test]
+fn word_index_matches_full_scan_through_edits_and_limits() {
+    let result =
+        |active: &VtCompleteSnapshot, prefix: &str, cache: &mut CompletionCache, full: bool| {
+            FULL_SCAN.set(full);
+            let result = compute_contextual_invoked(
+                active,
+                prefix,
+                "Rust",
+                &Default::default(),
+                cache,
+                true,
+                || false,
+            )
+            .unwrap();
+            FULL_SCAN.set(false);
+            (
+                result.suggestions,
+                format!("{:?}", result.details),
+                result.outcome,
+                result.deferred_candidates,
+            )
+        };
+    let long = "w".repeat(MAX_COMPLETION_WORD_BYTES + 3);
+    let documents = [
+        include_str!("vtcomplete_worker.rs").to_owned(),
+        include_str!("ui_row.rs").to_owned(),
+        format!("let {long} = café_naïve + 界面_value;\nfn go() {{ value_one(); }}\n"),
+        // Beyond the indexed size: always the full scan.
+        "let spare_value = other_value + 1;\n".repeat(10_000),
+        "x\n".repeat(3),
+    ];
+    let mut checked = 0;
+    INDEXED.set(0);
+    for (document_index, text) in documents.iter().enumerate() {
+        let mut rope = ropey::Rope::from_str(text);
+        let mut cache = CompletionCache::default();
+        let mut seed = 0x9e37_79b9_u32 ^ document_index as u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as usize
+        };
+        for step in 0..12 {
+            // Edit between requests so the cached index follows changes.
+            if step > 0 {
+                let at = next() % (rope.len_chars() + 1);
+                match next() % 4 {
+                    0 => rope.insert(at, "va"),
+                    1 => rope.insert(at, "\nnew_line_value("),
+                    2 if rope.len_chars() > at + 5 => rope.remove(at..at + 5),
+                    _ => rope.insert(at, " value_two "),
+                }
+            }
+            let cursor_line = next() % rope.len_lines();
+            let mut active = snapshot(document_index as u64, "", cursor_line);
+            active.rope = rope.clone();
+            let line = rope.line(cursor_line).to_string();
+            let columns = line.trim_end_matches(&['\r', '\n'][..]).chars().count();
+            active.cursor_col = next() % (columns + 1);
+            for prefix in ["va", "s", "value_", "zz"] {
+                let indexed = result(&active, prefix, &mut cache, false);
+                let reference = result(&active, prefix, &mut CompletionCache::default(), true);
+                assert_eq!(
+                    indexed, reference,
+                    "document {document_index} step {step} {prefix:?}"
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert_eq!(checked, 5 * 12 * 4);
+    // Every request on the four indexable documents used the index.
+    assert_eq!(INDEXED.get(), 4 * 12 * 4);
+}
