@@ -407,3 +407,35 @@ fn ctrl_click_uses_the_same_source_position_as_the_underlined_symbol() {
     assert_eq!(click["params"]["position"], hover["params"]["position"]);
     assert!(app.lsp_goto_pending);
 }
+
+#[test]
+fn ctrl_repaints_only_when_a_link_decoration_can_change() {
+    use crossterm::event::ModifierKeyCode::LeftControl;
+    let press = KeyEvent::new(KeyCode::Modifier(LeftControl), KeyModifiers::CONTROL);
+    let release = KeyEvent::new_with_kind(press.code, KeyModifiers::CONTROL, KeyEventKind::Release);
+    let (mut app, server, _directory) = fixture("measurements\n");
+    let at = cell(&draw(&mut app, 60), "measurements");
+    // Over plain text, Ctrl by itself draws nothing; the target is reported
+    // by refresh_lsp_link_hover once resolved.
+    pointer(&mut app, (at.0 + 30, at.1 + 3), KeyModifiers::NONE);
+    assert!(!app.update_link_hover_key(press));
+    assert!(!app.update_link_hover_key(release));
+    pointer(&mut app, at, KeyModifiers::NONE);
+    assert!(!app.update_link_hover_key(press));
+    app.refresh_lsp_link_hover();
+    let request = probe(&server);
+    resolve(&mut app, &server, &request, true);
+    assert!(app.lsp_link_hover_range().is_some());
+    // Releasing Ctrl removes a shown link.
+    assert!(app.update_link_hover_key(release));
+    assert!(app.lsp_link_hover_range().is_none());
+    // Terminal links are hit-tested while drawing.
+    app.terminal_surfaces
+        .push(crate::app_terminal_selection::TerminalSurface {
+            index: 0,
+            area: Rect::new(at.0, at.1, 4, 1),
+            group: None,
+        });
+    assert!(app.update_link_hover_key(press));
+    assert!(app.update_link_hover_key(release));
+}

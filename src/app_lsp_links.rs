@@ -72,15 +72,27 @@ impl App {
             .find(|(row, start, end, _)| *row == line && (*start..*end).contains(&col))
     }
 
+    /// Returns whether the change can alter what is drawn. Pressing Ctrl does
+    /// not decorate the editor by itself: `refresh_lsp_link_hover` reports the
+    /// target once it resolves. Integrated terminal links are hit-tested while
+    /// drawing, so a pointer over a terminal surface always repaints. Tapping
+    /// Ctrl+arrow used to repaint the whole screen for the Ctrl press and again
+    /// for its release.
     pub(crate) fn update_link_hover_modifiers(&mut self, modifiers: KeyModifiers) -> bool {
         if self.lsp_link_hover.modifiers == modifiers {
             return false;
         }
+        let shown = self.lsp_link_hover_range();
         self.lsp_link_hover.modifiers = modifiers;
         if modifiers != KeyModifiers::CONTROL {
             self.clear_lsp_link_hover();
         }
-        true
+        let pointer = (self.mouse_col, self.mouse_row).into();
+        shown != self.lsp_link_hover_range()
+            || self
+                .terminal_surfaces
+                .iter()
+                .any(|surface| surface.area.contains(pointer))
     }
 
     /// Modifier-only key reports must not execute commands or dismiss popups.
