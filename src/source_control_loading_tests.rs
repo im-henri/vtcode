@@ -717,6 +717,43 @@ fn compact_activity_bars_keep_the_unknown_count_beside_the_label() {
 }
 
 #[test]
+fn top_activity_badge_shows_two_digits_only_on_wide_buttons() {
+    let mut app = App::test_new();
+    app.activity_bar_position = crate::settings::ActivityBarPosition::Top;
+    app.source_control_repository_state = State::Available;
+    // 24 cells fit six 4-cell buttons; 23 falls back to 3-cell buttons.
+    for (width, cases) in [
+        (24, [(9, "9"), (42, "42"), (99, "99"), (100, "+")]),
+        (23, [(9, "9"), (42, "+"), (99, "+"), (100, "+")]),
+    ] {
+        let bar = Rect::new(0, 0, width, 1);
+        let region = crate::ui_chrome::activity_item_regions(bar, app.activity_bar_position)
+            .into_iter()
+            .find(|(_, index)| *index == 2)
+            .unwrap()
+            .0;
+        let badge = Rect::new(region.x + 2, region.y, region.width - 2, 1);
+        for (count, expected) in cases {
+            app.source_control_files = (0..count)
+                .map(|index| GitFileChange {
+                    path: format!("file-{index}"),
+                    ..change()
+                })
+                .collect();
+            let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
+            terminal
+                .draw(|frame| crate::ui_chrome::draw_activity_bar(frame, &app, bar))
+                .unwrap();
+            assert_eq!(
+                text(terminal.backend().buffer(), badge).trim(),
+                expected,
+                "{width}/{count}"
+            );
+        }
+    }
+}
+
+#[test]
 fn loading_panels_fit_small_sizes_and_do_not_activate_hidden_controls() {
     let mut app = App::test_new();
     for state in [State::Checking, State::Loading] {

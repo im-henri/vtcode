@@ -2428,7 +2428,11 @@ fn draw_top_activity_button(
     if area.width > 1
         && let Some((badge, badge_style)) = badge
     {
-        spans.push(Span::styled(badge.text(1), badge_style));
+        // Wide buttons leave two cells after the icon, enough for counts up to 99.
+        spans.push(Span::styled(
+            badge.text(area.width - padding - 1),
+            badge_style,
+        ));
     }
     f.render_widget(
         Paragraph::new(Line::from(spans)).style(Style::default().bg(style.bg.unwrap_or_default())),
