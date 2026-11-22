@@ -273,6 +273,12 @@ impl Index {
     pub fn has_markers(&self) -> bool {
         !self.markers.is_empty()
     }
+
+    /// Whether no view draws anything for this index: every renderer needs a
+    /// complete region, or section markers left over from earlier conflicts.
+    pub(crate) fn draws_nothing(&self, had_conflicts: bool) -> bool {
+        self.regions.is_empty() && (!had_conflicts || self.section_markers.is_empty())
+    }
 }
 
 #[derive(Default)]

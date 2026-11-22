@@ -764,10 +764,20 @@ fn scan_document(
     Some(())
 }
 
+/// Upper bound on the request bytes one fresh candidate of `len` bytes can
+/// charge in [`Scores::add`]: the word itself plus its lowercase copy, which
+/// Unicode case mapping can make longer than the word.
+const fn candidate_charge_bound(len: usize) -> usize {
+    7 * len
+}
+
 /// [`scan_document`] over the word index: each distinct word is scored once,
 /// at its first (nearest) occurrence, since later occurrences of a matched,
 /// rejected or deferred word change nothing. That holds while no limit is
-/// reached; returns `Some(false)` otherwise, and the caller rescans.
+/// reached. Before a line could reach the byte budget, the request continues
+/// with the scan itself from the same state, so large documents stay exact
+/// without rescanning. Returns `Some(false)` when another limit was reached,
+/// and the caller rescans.
 #[allow(clippy::too_many_arguments)]
 fn scan_indexed(
     active: &VtCompleteSnapshot,
@@ -781,10 +791,42 @@ fn scan_indexed(
 ) -> Option<bool> {
     let deferred = scores.deferred_candidates;
     let mut oversized = 0u32;
+    // Set once the remaining lines are scanned the way `scan_document` does.
+    let mut scanning = false;
+    let mut word = String::new();
     index.begin_request();
     for (line, distance) in outward_lines(active.cursor_line, active.rope.len_lines()) {
         if cancelled() {
             return None;
+        }
+        if !scanning && !index_line_within_budget(index, line, scores) {
+            // The scan would charge this line chunk by chunk, interleaved with
+            // its new words, and may stop partway through it. Every line so far
+            // left the same state as the scan unless a word was deferred or a
+            // rejection was not remembered, which repeats would see again.
+            if !index_state_matches_scan(scores, deferred) {
+                return Some(false);
+            }
+            for _ in 0..oversized {
+                scores.defer_candidate();
+            }
+            scanning = true;
+        }
+        if scanning {
+            let source = active.rope.line(line);
+            if !scan_words(source, distance, scores, &mut word, cancelled)? {
+                return Some(true);
+            }
+            observe_nearby(
+                source,
+                distance,
+                scores,
+                evidence,
+                context_bytes,
+                domain,
+                key,
+            );
+            continue;
         }
         let words = index.line(line);
         // The budget is cumulative, so one charge per line passes exactly
@@ -812,18 +854,52 @@ fn scan_indexed(
             );
         }
     }
+    if scanning {
+        return Some(true);
+    }
     // Rescan when a candidate was deferred for work or a rejection was not
     // remembered: the scan scores such words again at each occurrence.
-    if scores.deferred_candidates != deferred
-        || scores.rejected.len() >= scoring::MAX_REJECTED_WORDS
-        || scores.rejected_bytes + MAX_COMPLETION_WORD_BYTES > scoring::MAX_REJECTED_BYTES
-    {
+    if !index_state_matches_scan(scores, deferred) {
         return Some(false);
     }
     for _ in 0..oversized {
         scores.defer_candidate();
     }
     Some(true)
+}
+
+/// Whether the indexed scan has so far left the state the line scan would:
+/// no candidate was deferred for work and every rejection was remembered.
+fn index_state_matches_scan(scores: &Scores<'_>, deferred: u32) -> bool {
+    scores.deferred_candidates == deferred
+        && scores.rejected.len() < scoring::MAX_REJECTED_WORDS
+        && scores.rejected_bytes + MAX_COMPLETION_WORD_BYTES <= scoring::MAX_REJECTED_BYTES
+}
+
+/// Whether the line's bytes and every new word on it fit the request's byte
+/// budget, so no charge can fail however the scan would order them.
+fn index_line_within_budget(
+    index: &word_index::WordIndex,
+    line: usize,
+    scores: &Scores<'_>,
+) -> bool {
+    let words = index.line(line);
+    let remaining = scores.budget.remaining_bytes();
+    // Words lie within the line, so their total length is at most its bytes.
+    if words
+        .bytes
+        .saturating_add(candidate_charge_bound(words.bytes))
+        <= remaining
+    {
+        return true;
+    }
+    let fresh = words
+        .words
+        .iter()
+        .filter(|&&id| !index.visited(id))
+        .map(|&id| candidate_charge_bound(index.word(id).len()))
+        .fold(words.bytes, usize::saturating_add);
+    fresh <= remaining
 }
 
 /// Record local usage of matched words on lines near the caret.

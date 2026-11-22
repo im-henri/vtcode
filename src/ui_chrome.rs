@@ -1183,20 +1183,24 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
         .then(|| visible_explorer_selection(app, &rows))
         .flatten();
 
-    // Pre-compute set of modified file paths for O(1) lookup in explorer entries
-    let modified_paths: FxHashSet<&PathBuf> = app
+    // Resolve modified and active files to their rows once. Comparing or
+    // hashing each visible row's path instead parses it component by
+    // component, which is costly on Windows and ran on every frame.
+    let modified_rows: FxHashSet<usize> = app
         .tabs
         .iter()
         .chain(app.groups.iter().flat_map(|g| g.tabs.iter()))
         .filter(|t| t.has_unsaved_changes())
-        .filter_map(|t| t.editor.file_path.as_ref())
+        .filter_map(|t| t.editor.file_path.as_deref())
+        .filter_map(|path| app.explorer.indexed_position(path))
         .collect();
 
     // Identify the currently active file for highlighting in the tree
-    let active_file_path: Option<&PathBuf> = app
+    let active_file_row = app
         .tabs
         .get(app.active_tab)
-        .and_then(|t| t.editor.file_path.as_ref());
+        .and_then(|t| t.editor.file_path.as_deref())
+        .and_then(|path| app.explorer.indexed_position(path));
 
     // Pre-build only enough indentation for the rendered slice. Scanning the
     // complete expanded tree here made every editor cursor frame proportional
@@ -1248,8 +1252,8 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             };
 
             // Check if this file is open and modified
-            let is_modified = !entry.is_dir && modified_paths.contains(&entry.path);
-            let is_active_file = !entry.is_dir && active_file_path == Some(&entry.path);
+            let is_modified = !entry.is_dir && modified_rows.contains(&i);
+            let is_active_file = !entry.is_dir && active_file_row == Some(i);
             let is_selected = selected_paths.as_ref().map_or_else(
                 || app.explorer_multi_selected.iter().any(|p| p == &entry.path),
                 |selected| selected.get(&entry.path).copied().unwrap_or(false),

@@ -27,3 +27,8 @@ regions, so these per-cell paths dominate the cost of scrolling:
 - `Span::styled_graphemes` and `Buffer::set_stringn` segment graphemes only for
   non-ASCII text. ASCII is one cluster per byte except CR LF, and that pair
   is control text both drop, so the symbols drawn are identical.
+- `Cell::set_symbol` and `Cell::set_char` built every symbol with
+  `CompactString::new`, a variable-length copy behind a length and heap check.
+  A one-byte ASCII symbol, nearly every cell a frame writes, now clones one of
+  128 prebuilt inline strings: a fixed-size copy, about twice as fast. The
+  stored symbol is the same inline string as before.

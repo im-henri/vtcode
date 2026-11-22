@@ -99,7 +99,6 @@ impl FuzzyWorkBudget {
     pub(crate) fn usage(&self) -> FuzzyWorkUsage {
         self.usage
     }
-    #[cfg(test)]
     pub(crate) fn remaining_bytes(&self) -> usize {
         self.limits.request_bytes.saturating_sub(self.usage.bytes)
     }

@@ -2168,7 +2168,8 @@ impl App {
             };
             let redraws_by_default = !matches!(
                 &result,
-                crate::background::BackgroundResult::ChatPastePrepared { .. }
+                crate::background::BackgroundResult::MergeConflicts { .. }
+                    | crate::background::BackgroundResult::ChatPastePrepared { .. }
                     | crate::background::BackgroundResult::GitBranch(_)
                     | crate::background::BackgroundResult::GitRepositoryFound { .. }
                     | crate::background::BackgroundResult::GitRepositories { .. }
@@ -4615,6 +4616,14 @@ impl App {
                         .chain(self.groups.iter_mut().flat_map(|group| &mut group.tabs))
                     {
                         if tab.editor.navigation_id == view {
+                            let conflicts = &tab.editor.merge_conflicts;
+                            // Edits re-check every file; one without conflicts
+                            // before and after looks the same, so skip the frame.
+                            let unchanged = conflicts.review.is_none()
+                                && index.draws_nothing(conflicts.had_conflicts)
+                                && conflicts.index.as_ref().is_none_or(|previous| {
+                                    previous.draws_nothing(conflicts.had_conflicts)
+                                });
                             tab.editor.merge_conflicts.pending = false;
                             if let Some(review) = tab.editor.merge_conflicts.review.as_mut()
                                 && let Some(region) = index
@@ -4627,7 +4636,7 @@ impl App {
                             }
                             tab.editor.merge_conflicts.had_conflicts |= !index.regions.is_empty();
                             tab.editor.merge_conflicts.index = Some(index.clone());
-                            has_visual_changes = true;
+                            has_visual_changes |= !unchanged;
                         }
                     }
                 }

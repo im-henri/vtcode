@@ -907,17 +907,36 @@ fn word_index_matches_full_scan_through_edits_and_limits() {
             )
         };
     let long = "w".repeat(MAX_COMPLETION_WORD_BYTES + 3);
+    // Past the request's byte budget: the scan stops partway through a line.
+    let sources = [
+        include_str!("vtcomplete_worker.rs"),
+        include_str!("ui_row.rs"),
+        include_str!("vtcomplete_scoring.rs"),
+        include_str!("completion_examples.rs"),
+    ]
+    .concat();
+    let budget = sources.repeat(384 * 1024 / sources.len() + 2);
     let documents = [
         include_str!("vtcomplete_worker.rs").to_owned(),
         include_str!("ui_row.rs").to_owned(),
         format!("let {long} = café_naïve + 界面_value;\nfn go() {{ value_one(); }}\n"),
-        // Beyond the indexed size: always the full scan.
         "let spare_value = other_value + 1;\n".repeat(10_000),
         "x\n".repeat(3),
+        budget,
+        // Long lines put the budget's end far inside one line.
+        format!(
+            "{} Ünïcode_välue ΣΑΣ_value\n",
+            "value_a café_b ".repeat(4096)
+        )
+        .repeat(12),
+        // Beyond the indexed size: always the full scan.
+        "let spare_value = other_value + 1;\n".repeat(130_000),
     ];
+    let indexable = documents.len() - 1;
     let mut checked = 0;
-    INDEXED.set(0);
+    let mut indexed_per_document = Vec::new();
     for (document_index, text) in documents.iter().enumerate() {
+        INDEXED.set(0);
         let mut rope = ropey::Rope::from_str(text);
         let mut cache = CompletionCache::default();
         let mut seed = 0x9e37_79b9_u32 ^ document_index as u32;
@@ -954,8 +973,59 @@ fn word_index_matches_full_scan_through_edits_and_limits() {
                 checked += 1;
             }
         }
+        indexed_per_document.push(INDEXED.get());
     }
-    assert_eq!(checked, 5 * 12 * 4);
-    // Every request on the four indexable documents used the index.
-    assert_eq!(INDEXED.get(), 4 * 12 * 4);
+    assert_eq!(checked, documents.len() * 12 * 4);
+    // Every request on an indexable document used the index once its lines
+    // were filled in, including those that reached the byte budget; the
+    // oversized one always scans.
+    let expected: Vec<usize> = documents
+        .iter()
+        .take(indexable)
+        .map(|text| 12 * 4 - text.len().div_ceil(word_index::FILL_BYTES_PER_REQUEST) + 1)
+        .chain([0])
+        .collect();
+    assert_eq!(indexed_per_document, expected);
+}
+
+/// A large document is indexed over several requests. Cancelling a request
+/// keeps the lines it finished, so typing faster than a full build still
+/// completes the index instead of restarting it on every keystroke.
+#[test]
+fn word_index_fill_survives_cancellation_and_edits() {
+    let text = include_str!("vtcomplete_worker.rs").repeat(40);
+    let mut rope = ropey::Rope::from_str(&text);
+    let mut index = word_index::WordIndex::default();
+    let requests = text.len().div_ceil(word_index::FILL_BYTES_PER_REQUEST);
+    let mut complete = false;
+    for request in 0..4 * requests {
+        // Edit and cancel partway through every other request.
+        rope.insert(rope.len_chars() / 3, "edited_value ");
+        let checks = std::cell::Cell::new(0);
+        let cancelled = || {
+            checks.set(checks.get() + 1);
+            request % 2 == 1 && checks.get() > 2
+        };
+        if index.update(&rope, &cancelled) == Some(true) {
+            complete = true;
+            break;
+        }
+    }
+    assert!(complete, "the index never finished filling");
+    // The finished index matches one built at once.
+    let mut fresh = word_index::WordIndex::default();
+    while fresh.update(&rope, &|| false) == Some(false) {}
+    for line in 0..rope.len_lines() {
+        let words = |index: &word_index::WordIndex| {
+            index
+                .line(line)
+                .words
+                .iter()
+                .map(|&id| index.word(id).to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(words(&index), words(&fresh), "line {line}");
+        assert_eq!(index.line(line).bytes, fresh.line(line).bytes);
+        assert_eq!(index.line(line).oversized, fresh.line(line).oversized);
+    }
 }

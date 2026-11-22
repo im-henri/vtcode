@@ -146,16 +146,21 @@ impl FileExplorer {
         path: &std::path::Path,
         visibility: GitBadgeVisibility,
     ) -> Option<usize> {
-        // Rendering reads an indexed snapshot. Most dirty documents may be
-        // outside its expanded tree: an absent key must not scan every entry.
-        // Keep find_path's general stale-index fallback for navigation callers.
+        self.indexed_position(path)
+            .map(|index| self.row_width(&self.entries[index], visibility))
+    }
+
+    /// The row showing `path`, for rendering. Rendering reads an indexed
+    /// snapshot. Most open documents may be outside its expanded tree: an
+    /// absent key must not scan every entry. Keep find_path's general
+    /// stale-index fallback for navigation callers.
+    pub(crate) fn indexed_position(&self, path: &std::path::Path) -> Option<usize> {
         if !self.indices.paths.contains_key(&Self::path_key(path))
             && self.indices.parents.len() == self.entries.len()
         {
             return None;
         }
         self.find_path(path)
-            .map(|index| self.row_width(&self.entries[index], visibility))
     }
 
     pub(crate) fn row_width(&self, entry: &FileEntry, visibility: GitBadgeVisibility) -> usize {

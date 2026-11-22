@@ -3,6 +3,45 @@ use compact_str::CompactString;
 use crate::style::{Color, Modifier, Style};
 use crate::symbols::merge::MergeStrategy;
 
+static ASCII_BYTES: [u8; 128] = {
+    let mut bytes = [0; 128];
+    let mut byte = 0;
+    while byte < 128 {
+        bytes[byte] = byte as u8;
+        byte += 1;
+    }
+    bytes
+};
+
+/// Every one-byte ASCII symbol, already inline. Nearly every cell a frame
+/// writes holds one, and cloning a prebuilt string is a fixed-size copy where
+/// `CompactString::new` copies a variable length and checks for the heap.
+static ASCII_SYMBOLS: [CompactString; 128] = {
+    const EMPTY: CompactString = CompactString::const_new("");
+    let mut symbols = [EMPTY; 128];
+    let mut byte = 0;
+    while byte < 128 {
+        let Ok(symbol) = core::str::from_utf8(core::slice::from_ref(&ASCII_BYTES[byte])) else {
+            panic!("ASCII is UTF-8");
+        };
+        // The replaced value is an empty inline string, which owns nothing.
+        core::mem::forget(core::mem::replace(
+            &mut symbols[byte],
+            CompactString::const_new(symbol),
+        ));
+        byte += 1;
+    }
+    symbols
+};
+
+#[inline]
+fn symbol_string(symbol: &str) -> CompactString {
+    match *symbol.as_bytes() {
+        [byte] if byte.is_ascii() => ASCII_SYMBOLS[usize::from(byte)].clone(),
+        _ => CompactString::new(symbol),
+    }
+}
+
 /// A buffer cell
 #[derive(Debug, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -115,7 +154,7 @@ impl Cell {
 
     /// Sets the symbol of the cell.
     pub fn set_symbol(&mut self, symbol: &str) -> &mut Self {
-        self.symbol = Some(CompactString::new(symbol));
+        self.symbol = Some(symbol_string(symbol));
         self
     }
 
@@ -130,7 +169,7 @@ impl Cell {
     /// Sets the symbol of the cell to a single character.
     pub fn set_char(&mut self, ch: char) -> &mut Self {
         let mut buf = [0; 4];
-        self.symbol = Some(CompactString::new(ch.encode_utf8(&mut buf)));
+        self.symbol = Some(symbol_string(ch.encode_utf8(&mut buf)));
         self
     }
 
