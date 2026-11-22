@@ -3095,7 +3095,20 @@ impl App {
                 }
                 crate::background::BackgroundResult::QuickOpenFiles { files, generation } => {
                     if generation == self.quick_open_generation {
+                        // A second result for one query re-ranks a rebuilt
+                        // file index; keep the row the user has selected.
+                        let selected = (!self.bg_quick_open_running)
+                            .then(|| self.quick_open_results.get(self.quick_open_selected))
+                            .flatten()
+                            .cloned();
                         self.quick_open_results = files.into_iter().map(|(_, p)| p).collect();
+                        if let Some(selected) = selected {
+                            self.quick_open_selected = self
+                                .quick_open_results
+                                .iter()
+                                .position(|path| *path == selected)
+                                .unwrap_or(0);
+                        }
                         self.bg_quick_open_running = false;
                         has_visual_changes = true;
                     }

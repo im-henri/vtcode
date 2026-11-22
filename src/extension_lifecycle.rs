@@ -5,8 +5,6 @@
 
 use std::path::Path;
 
-#[cfg(not(test))]
-use wasmtime::Module;
 use wasmtime::{Engine, Linker, Store};
 
 use crate::extension_manifest::{
@@ -217,7 +215,7 @@ impl ExtensionManager {
             }
         });
         #[cfg(not(test))]
-        let module = Module::from_file(engine, &record.wasm_path);
+        let module = crate::extension_module_cache::load(engine, &record.wasm_path);
         #[cfg(test)]
         let module = std::fs::read(&record.wasm_path)
             .map_err(wasmtime::Error::from)

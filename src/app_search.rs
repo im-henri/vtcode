@@ -29,6 +29,9 @@ const QUICK_OPEN_NAME_SCORE_MIN_REUSE: usize = 16;
 pub(crate) struct QuickOpenIndex {
     files: std::sync::Arc<std::sync::Mutex<Option<QuickOpenFileIndex>>>,
     ranking: std::sync::Arc<std::sync::Mutex<QuickOpenRankingCache>>,
+    /// Held for a whole local traversal, so `files` stays free for queries
+    /// that rank the previous listing meanwhile.
+    build: std::sync::Arc<std::sync::Mutex<()>>,
     service: Option<std::sync::Arc<std::sync::OnceLock<LatestQueryService>>>,
 }
 
@@ -37,6 +40,7 @@ impl Default for QuickOpenIndex {
         Self {
             files: Default::default(),
             ranking: Default::default(),
+            build: Default::default(),
             service: Some(Default::default()),
         }
     }
@@ -112,6 +116,21 @@ struct QuickOpenFileIndex {
     excludes: crate::settings::ExcludePatterns,
 }
 
+impl QuickOpenFileIndex {
+    fn reusable(&self, root: &std::path::Path, excludes: &crate::settings::ExcludePatterns) -> bool {
+        self.root == root
+            && self.excludes == *excludes
+            && !excludes.values().any(serde_json::Value::is_object)
+    }
+
+    fn fresh(&self, generation: u64, watched: bool) -> bool {
+        // Native watches on shared filesystems can miss another client's
+        // changes. Bound reuse even when the backend reported a healthy watch.
+        let max_age = std::time::Duration::from_secs(if watched { 30 } else { 2 });
+        self.generation == generation && self.built_at.elapsed() < max_age
+    }
+}
+
 struct QuickOpenEntry {
     path: PathBuf,
     name: String,
@@ -119,6 +138,32 @@ struct QuickOpenEntry {
 }
 
 impl QuickOpenIndex {
+    fn worker_handle(&self) -> Self {
+        Self {
+            files: std::sync::Arc::clone(&self.files),
+            ranking: std::sync::Arc::clone(&self.ranking),
+            build: std::sync::Arc::clone(&self.build),
+            service: None,
+        }
+    }
+
+    /// Starts rebuilding an outdated local listing when the picker opens,
+    /// so the traversal overlaps the user typing the first characters.
+    fn prefetch(
+        &self,
+        background: &mut crate::background::BackgroundWorkers,
+        root: PathBuf,
+        generation: u64,
+        watched: bool,
+        excludes: crate::settings::ExcludePatterns,
+    ) {
+        let index = self.worker_handle();
+        background.spawn("quick-open-index", move || {
+            let cancel = crate::background::CancellationToken::new();
+            let _ = index.files_with_remote(&root, generation, watched, &cancel, None, &excludes); // Error OK: a prefetch only warms the shared index
+        });
+    }
+
     fn submit_latest(
         &self,
         background: &mut crate::background::BackgroundWorkers,
@@ -141,11 +186,7 @@ impl QuickOpenIndex {
             .cancellable(cancel.clone());
         // Requests retain only cache state. Capturing the original handle here
         // would keep the service sender alive from its own pending slot.
-        let worker_index = Self {
-            files: std::sync::Arc::clone(&self.files),
-            ranking: std::sync::Arc::clone(&self.ranking),
-            service: None,
-        };
+        let worker_index = self.worker_handle();
         service.replace(LatestQueryJob {
             cancel: token.clone(),
             run: Box::new(move || {
@@ -192,16 +233,10 @@ impl QuickOpenIndex {
         if cancel.is_cancelled() {
             return None;
         }
-        // Native watches on shared filesystems can miss another client's
-        // changes. Bound reuse even when the backend reported a healthy watch.
-        let max_age = std::time::Duration::from_secs(if watched { 30 } else { 2 });
-        if let Some(index) = cached.as_ref().filter(|index| {
-            index.root == root
-                && index.excludes == *excludes
-                && !excludes.values().any(serde_json::Value::is_object)
-                && index.generation == generation
-                && index.built_at.elapsed() < max_age
-        }) {
+        if let Some(index) = cached
+            .as_ref()
+            .filter(|index| index.reusable(root, excludes) && index.fresh(generation, watched))
+        {
             return Some(std::sync::Arc::clone(&index.entries));
         }
         if let Some(remote) = remote {
@@ -246,9 +281,24 @@ impl QuickOpenIndex {
             }
             return cached.as_ref().map(|index| index.entries.clone());
         }
+        drop(cached);
         // Finish a shared index even if this query is superseded. Subsequent
         // requests reuse the completed traversal rather than
-        // repeatedly restarting it. The UI never acquires this mutex.
+        // repeatedly restarting it. The UI never acquires these mutexes.
+        let _build = self
+            .build
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(index) = self
+            .files
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .filter(|index| index.reusable(root, excludes) && index.fresh(generation, watched))
+        {
+            // Another worker finished this traversal while we waited.
+            return Some(std::sync::Arc::clone(&index.entries));
+        }
         let rules = crate::search_paths::ExcludeRules::new(excludes, &Default::default());
         let entries = walkdir::WalkDir::new(root)
             .min_depth(1)
@@ -277,7 +327,10 @@ impl QuickOpenIndex {
             })
             .collect();
         let entries = std::sync::Arc::new(entries);
-        *cached = Some(QuickOpenFileIndex {
+        *self
+            .files
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(QuickOpenFileIndex {
             root: root.to_path_buf(),
             generation,
             entries: std::sync::Arc::clone(&entries),
@@ -286,6 +339,30 @@ impl QuickOpenIndex {
             excludes: excludes.clone(),
         });
         Some(entries)
+    }
+
+    /// A local index that [`Self::files_with_remote`] would rebuild. Ranking
+    /// it first shows results at once instead of after a full traversal; a
+    /// changed listing is ranked again once the rebuilt index is ready.
+    fn stale_local_files(
+        &self,
+        root: &std::path::Path,
+        generation: u64,
+        watched: bool,
+        excludes: &crate::settings::ExcludePatterns,
+    ) -> Option<std::sync::Arc<Vec<QuickOpenEntry>>> {
+        let cached = self
+            .files
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cached
+            .as_ref()
+            .filter(|index| {
+                index.remote_version.is_none()
+                    && index.reusable(root, excludes)
+                    && !index.fresh(generation, watched)
+            })
+            .map(|index| std::sync::Arc::clone(&index.entries))
     }
 
     fn rank_files(
@@ -1830,6 +1907,15 @@ impl App {
             && self.remote_workspace.is_none()
             && !excludes.values().any(serde_json::Value::is_object)
         {
+            if self.has_open_folder() {
+                self.quick_open_index.prefetch(
+                    &mut self.background,
+                    self.explorer.root.clone(),
+                    self.workspace_file_index_generation,
+                    self.workspace_watcher_active,
+                    excludes.clone(),
+                );
+            }
             let rules = crate::search_paths::ExcludeRules::new(&excludes, &Default::default());
             self.quick_open_results = self
                 .recent_files
@@ -1922,6 +2008,19 @@ impl App {
                 }
                 return;
             }
+            let stale = remote
+                .is_none()
+                .then(|| index.stale_local_files(&root, index_generation, watched, &excludes))
+                .flatten();
+            if let Some(stale) = &stale
+                && let Some(files) = index.rank_files(stale, &query, &cancel)
+            {
+                if cancel.is_cancelled() {
+                    return;
+                }
+                let _ = sender
+                    .send(crate::background::BackgroundResult::QuickOpenFiles { files, generation }); // Error OK: receiver dropped means no listener
+            }
             let Some(entries) = index.files_with_remote(
                 &root,
                 index_generation,
@@ -1940,6 +2039,12 @@ impl App {
                 }
                 return;
             };
+            if stale.is_some_and(|stale| {
+                stale.len() == entries.len()
+                    && stale.iter().zip(entries.iter()).all(|(a, b)| a.path == b.path)
+            }) {
+                return;
+            }
             let Some(files) = index.rank_files(&entries, &query, &cancel) else {
                 return;
             };
