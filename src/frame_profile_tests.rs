@@ -1933,3 +1933,119 @@ fn profile_search_quick_open_and_startup() {
         );
     }
 }
+
+/// Writes every cell of the frame (symbol and style) for before/after checks.
+fn dump_frame(out: &mut String, label: &str, buffer: &ratatui::buffer::Buffer) {
+    use std::fmt::Write;
+    let _ = writeln!(out, "== {label}");
+    for y in 0..buffer.area.height {
+        for x in 0..buffer.area.width {
+            let cell = &buffer[(x, y)];
+            let _ = write!(
+                out,
+                "{}\u{1}{:?}{:?}{:?}{:?}{}\u{2}",
+                cell.symbol(),
+                cell.fg,
+                cell.bg,
+                cell.underline_color,
+                cell.modifier,
+                cell.skip
+            );
+        }
+        out.push('\n');
+    }
+}
+
+#[test]
+#[ignore = "manual Explorer and menu bar paint profile"]
+fn profile_explorer_and_menu_bar() {
+    let (width, height) = (200u16, 55u16);
+    let mut app = App::new(repo());
+    let mut term = terminal(width, height);
+    for effect in crate::animation_config::AnimationEffect::ALL {
+        app.animation_settings.set(effect, false);
+    }
+    settle(&mut app, &mut term);
+    app.open_file(&repo().join("src/ui_chrome.rs"));
+    app.active_pane = crate::app::ActivePane::Explorer;
+    for name in ["src", "scripts", "vendor"] {
+        if let Some(index) = app.explorer.entries.iter().position(|e| e.name == name) {
+            app.explorer.selected = index;
+            key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+            settle(&mut app, &mut term);
+        }
+    }
+    app.explorer.selected = 3;
+    settle(&mut app, &mut term);
+    let menu = app.menu_bar_area.expect("menu bar");
+    let explorer = app.explorer_area.expect("explorer");
+    let mut snapshot = String::new();
+    let states: [(&str, &dyn Fn(&mut App)); 5] = [
+        ("explorer focused", &|_| {}),
+        ("hover row and menu", &|app| {
+            app.mouse_row = explorer.y + 6;
+            app.mouse_col = explorer.x + 4;
+            app.hovered_explorer = Some(app.explorer.scroll_offset + 4);
+        }),
+        ("menu hover", &|app| {
+            app.mouse_row = menu.y;
+            app.mouse_col = 6;
+            app.hovered_explorer = None;
+        }),
+        ("editor focused, scrolled", &|app| {
+            app.active_pane = crate::app::ActivePane::Editor;
+            app.explorer.scroll_offset = 20;
+        }),
+        ("horizontal scroll", &|app| {
+            app.explorer.horizontal.offset = 3;
+        }),
+    ];
+    for (label, apply) in states {
+        apply(&mut app);
+        frame(&mut app, &mut term);
+        let mut frames = Vec::new();
+        for reference in [true, false] {
+            crate::ui_row::REFERENCE.set(reference);
+            app.animation_frame_cache = Default::default();
+            let completed = term.draw(|f| crate::ui::draw(f, &mut app)).unwrap();
+            frames.push(completed.buffer.clone());
+        }
+        crate::ui_row::REFERENCE.set(false);
+        assert_eq!(
+            frames[0], frames[1],
+            "{label}: direct rows differ from Paragraph"
+        );
+        dump_frame(&mut snapshot, label, &frames[1]);
+    }
+    if let Some(path) = std::env::var_os("VTCODE_CHROME_SNAPSHOT") {
+        std::fs::write(path, &snapshot).unwrap();
+    }
+    app.explorer.horizontal.offset = 0;
+    app.active_pane = crate::app::ActivePane::Explorer;
+    frame(&mut app, &mut term);
+    let (mut menu_times, mut explorer_times) = (Vec::new(), Vec::new());
+    for _ in 0..2_000 {
+        term.draw(|f| {
+            let started = Instant::now();
+            crate::ui_chrome::draw_menu_bar(f, &app, menu);
+            let middle = Instant::now();
+            crate::ui_chrome::draw_explorer(f, &mut app, explorer);
+            explorer_times.push(middle.elapsed());
+            menu_times.push(middle - started);
+        })
+        .unwrap();
+    }
+    menu_times.sort();
+    explorer_times.sort();
+    eprintln!(
+        "PROFILE chrome explorer {}x{} rows={}: p50={:?} p90={:?} | menu bar {}: p50={:?} p90={:?}",
+        explorer.width,
+        explorer.height,
+        app.explorer.entries.len(),
+        explorer_times[1_000],
+        explorer_times[1_800],
+        menu.width,
+        menu_times[1_000],
+        menu_times[1_800],
+    );
+}

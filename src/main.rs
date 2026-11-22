@@ -323,6 +323,7 @@ mod ui_pickers;
 mod ui_quick_picker;
 mod ui_remote_connection;
 mod ui_remote_targets;
+mod ui_row;
 mod ui_scope_bubble_settings;
 mod ui_search_controls;
 mod ui_search_dialog;

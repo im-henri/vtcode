@@ -743,10 +743,7 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
         && app.sidebar_view == crate::app::SidebarView::Explorer;
 
     // VS Code uses borderless flat style for the sidebar
-    f.render_widget(
-        Paragraph::new("").style(Style::default().bg(sidebar_bg)),
-        area,
-    );
+    crate::ui_row::fill(f.buffer_mut(), area, Style::default().bg(sidebar_bg));
 
     // Header: "EXPLORER" with collapse-all and refresh buttons
     let header_area = Rect::new(area.x, area.y, area.width, 1);
@@ -829,7 +826,13 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
         Span::styled(collapse_btn, button_style(hover_collapse)),
         Span::styled(refresh_btn, button_style(hover_refresh)),
     ]);
-    f.render_widget(Paragraph::new(header_line), header_area);
+    crate::ui_row::render_line(
+        f.buffer_mut(),
+        header_area,
+        &header_line,
+        Style::default(),
+        0,
+    );
 
     if !app.has_open_folder() && app.tabs.is_empty() {
         draw_empty_folder_state(f, app, area);
@@ -917,9 +920,12 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             oe_header.push_span(Span::styled(range, header_style));
         }
     }
-    f.render_widget(
-        Paragraph::new(oe_header).style(Style::default().bg(header_bg)),
+    crate::ui_row::render_line(
+        f.buffer_mut(),
         header_area,
+        &oe_header,
+        Style::default().bg(header_bg),
+        0,
     );
 
     // Open editor entries
@@ -1026,9 +1032,11 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
             ]));
         }
         if !oe_lines.is_empty() {
-            f.render_widget(
-                Paragraph::new(oe_lines).style(Style::default().bg(sidebar_bg)),
+            crate::ui_row::render_lines(
+                f.buffer_mut(),
                 oe_list_area,
+                &oe_lines,
+                Style::default().bg(sidebar_bg),
             );
         }
         if let Some(bar) = explorer_scrollbar(app, area, ExplorerSection::OpenEditors) {
@@ -1104,9 +1112,12 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
         folder_header_spans.extend(root_badges);
     }
     let folder_header = Line::from(folder_header_spans);
-    f.render_widget(
-        Paragraph::new(folder_header).style(Style::default().bg(ws_bg)),
+    crate::ui_row::render_line(
+        f.buffer_mut(),
         Rect::new(tree_area.x, tree_area.y, tree_area.width, 1),
+        &folder_header,
+        Style::default().bg(ws_bg),
+        0,
     );
 
     crate::ui_explorer_find::draw(f, app, area);
@@ -1426,17 +1437,21 @@ fn draw_explorer_impl(f: &mut Frame, app: &mut App, area: Rect, indexed_selectio
         let reserved = badge_width
             .saturating_add(u16::from(badge_width > 0))
             .min(file_area.width);
-        f.render_widget(
-            Paragraph::new(line)
-                .style(style)
-                .scroll((0, horizontal_offset as u16)),
+        crate::ui_row::render_line(
+            f.buffer_mut(),
             Rect::new(row_area.x, row_area.y, row_area.width - reserved, 1),
+            &line,
+            style,
+            horizontal_offset as u16,
         );
         if badge_width > 0 {
             // Git/find/unsaved indicators stay readable while the name scrolls.
-            f.render_widget(
-                Paragraph::new(Line::from(trailing)).style(style),
+            crate::ui_row::render_line(
+                f.buffer_mut(),
                 Rect::new(row_area.right() - badge_width, row_area.y, badge_width, 1),
+                &Line::from(trailing),
+                style,
+                0,
             );
         }
     }
@@ -2056,7 +2071,13 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(close_fg).bg(close_bg),
             ));
         }
-        f.render_widget(Paragraph::new(Line::from(compact)), area);
+        crate::ui_row::render_line(
+            f.buffer_mut(),
+            area,
+            &Line::from(compact),
+            Style::default(),
+            0,
+        );
         return;
     }
 
@@ -2185,7 +2206,13 @@ pub(crate) fn draw_menu_bar(f: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(close_fg).bg(close_bg),
     ));
 
-    f.render_widget(Paragraph::new(Line::from(spans)), area);
+    crate::ui_row::render_line(
+        f.buffer_mut(),
+        area,
+        &Line::from(spans),
+        Style::default(),
+        0,
+    );
 }
 
 pub(crate) fn draw_menu_dropdown(f: &mut Frame, app: &mut App) {
