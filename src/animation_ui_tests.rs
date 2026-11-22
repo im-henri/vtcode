@@ -757,16 +757,11 @@ fn scope_connector_and_brace_colors_stay_fixed_while_scrolling() {
             );
             let buffer = render(&mut app, width, 18);
             let code = app.code_area.unwrap();
-            let rails: Vec<_> = buffer
-                .content
-                .iter()
-                .enumerate()
-                .filter(|(index, cell)| {
-                    cell.symbol() == "│"
-                        && (*index % width as usize) >= code.x.saturating_sub(1) as usize
-                        && (*index % width as usize) < code.right() as usize
-                })
-                .map(|(_, cell)| cell.fg)
+            let rails: Vec<_> = (code.top()..code.bottom())
+                .flat_map(|row| (code.x.saturating_sub(1)..code.right()).map(move |x| (x, row)))
+                .map(|position| &buffer[position])
+                .filter(|cell| cell.symbol() == "│")
+                .map(|cell| cell.fg)
                 .collect();
             assert!(
                 !rails.is_empty(),

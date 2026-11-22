@@ -96,7 +96,6 @@ fn detached_highlights_follow_the_focused_window_and_its_find_options() {
         let mut app = app_with_words(wrapped);
         app.highlight_words_across_tabs = true;
         app.search_whole_word = true;
-        let source = app.tabs[0].editor.navigation_id;
         let target = app.tabs[1].editor.navigation_id;
         assert!(app.open_detached_window(1, target));
         let (target_group, _) = app.tab_location(target).unwrap();
@@ -107,7 +106,8 @@ fn detached_highlights_follow_the_focused_window_and_its_find_options() {
             terminal
                 .draw(|frame| crate::ui::draw_background_window(frame, app, 1))
                 .unwrap();
-            app.groups[target_group].code_area.unwrap()
+            assert!(app.groups[target_group].code_area.is_none());
+            terminal.backend().buffer().area
         };
 
         draw(&mut app, &mut main);
@@ -145,8 +145,7 @@ fn detached_highlights_follow_the_focused_window_and_its_find_options() {
         assert!(std::mem::take(&mut app.tab_window_redraw_pending));
         main.draw(|frame| crate::ui::draw_background_window(frame, &mut app, MAIN_WINDOW))
             .unwrap();
-        let (source_group, _) = app.tab_location(source).unwrap();
-        let main_area = app.groups[source_group].code_area.unwrap();
+        let main_area = main.backend().buffer().area;
         assert_eq!(colored_cells(&main, main_area, WORD_BG), 4);
 
         app.highlight_words_across_tabs = false;

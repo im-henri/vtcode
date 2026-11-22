@@ -758,6 +758,39 @@ fn read_manifest<T: serde::de::DeserializeOwned>(path: &Path) -> io::Result<T> {
     serde_json::from_slice(&data).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+fn persist_manifest(temporary: tempfile::NamedTempFile, path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::time::{Duration, Instant};
+        use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION};
+
+        // A scanner can briefly hold either file open without delete sharing.
+        // Retry the same staged file while still holding the session writer lock.
+        let deadline = Instant::now() + Duration::from_millis(150);
+        let mut temporary = temporary;
+        loop {
+            match temporary.persist(path) {
+                Ok(_) => return Ok(()),
+                Err(error)
+                    if matches!(
+                        error.error.raw_os_error().map(|code| code as u32),
+                        Some(ERROR_ACCESS_DENIED | ERROR_SHARING_VIOLATION)
+                    ) && Instant::now() < deadline =>
+                {
+                    temporary = error.file;
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error.error),
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    temporary
+        .persist(path)
+        .map(|_| ())
+        .map_err(|error| error.error)
+}
+
 #[cfg(unix)]
 fn sync_directory(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -918,7 +951,7 @@ pub(crate) fn save_session(project_root: &Path, session: &Session) -> std::io::R
     if !writes.created.is_empty() {
         sync_directory(&recovery_dir)?;
     }
-    temporary.persist(&path).map_err(|error| error.error)?;
+    persist_manifest(temporary, &path)?;
     writes.committed = true;
     // A crash can otherwise restore the old manifest after its sidecars have
     // been pruned. Keep both generations if syncing the rename fails.
