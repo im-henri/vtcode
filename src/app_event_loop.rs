@@ -1497,6 +1497,26 @@ fn analyze_editor_content(
     .expect("test analysis deadline")
 }
 
+/// Viewport bracket scans up to this many characters run before painting.
+/// Ordinary source viewports (plus their 200-line margins) are far smaller;
+/// dense or very wide files keep using the worker.
+const SYNC_VIEWPORT_BRACKET_CHARS: usize = 64 * 1024;
+
+/// Characters `analyze_viewport_brackets` would visit, from Rope metadata.
+fn viewport_bracket_scan_chars(
+    rope: &ropey::Rope,
+    first_line: usize,
+    visible_lines: usize,
+) -> usize {
+    let lines = rope.len_lines();
+    let start = first_line.saturating_sub(200).min(lines);
+    let end = first_line
+        .saturating_add(visible_lines)
+        .saturating_add(200)
+        .min(lines);
+    rope.line_to_char(end) - rope.line_to_char(start)
+}
+
 fn analyze_viewport_brackets(
     rope: &ropey::Rope,
     depth_index: &crate::background::BracketDepthIndex,
@@ -2268,7 +2288,8 @@ mod tests {
         assert!(app.bg_bracket_analysis_running);
 
         // A current snapshot makes scrolling cheap even if an unrelated recent
-        // edit timestamp remains. No document rebuild needs the quiet gate.
+        // edit timestamp remains. No document rebuild needs the quiet gate:
+        // the bounded viewport scan is ready before the frame is painted.
         app.wait_for_background(Duration::from_secs(3), |app| {
             !app.bg_bracket_analysis_running
         });
@@ -2285,7 +2306,9 @@ mod tests {
         app.last_edit_time = std::time::Instant::now();
         refresh_caches(&mut app);
         assert!(!app.editor_analysis_deferred);
-        assert!(app.bg_bracket_analysis_running);
+        assert!(!app.bg_bracket_analysis_running);
+        assert_eq!(app.cached_bracket_guides.as_slice(), &[(0, 1, 1, 1)]);
+        assert!(app.cached_bracket_analysis_target.is_some());
         app.tabs.clear();
         refresh_caches(&mut app);
         assert!(app.cached_bracket_depth_index.is_none());
@@ -4275,7 +4298,29 @@ fn refresh_caches(app: &mut App) {
             .as_ref()
             .filter(|index| app.editor().is_some_and(|editor| index.matches(editor)))
             .cloned();
-        if (app.cached_bracket_analysis_target.as_ref() != Some(&target) || current_index.is_none())
+        let warm_viewport = current_index.as_ref().filter(|_| {
+            app.cached_bracket_analysis_target.as_ref() != Some(&target)
+                && !app.bg_bracket_analysis_running
+        });
+        if let Some(index) = warm_viewport
+            && let Some(editor) = app.editor()
+            && viewport_bracket_scan_chars(&editor.rope, target.first_line, target.visible_lines)
+                <= SYNC_VIEWPORT_BRACKET_CHARS
+        {
+            // The document index is current; only the bounded viewport scan
+            // remains. Doing it before painting avoids drawing the new
+            // viewport without guides and then repainting it for the worker.
+            let (starting_depth, guides) = analyze_viewport_brackets(
+                &editor.rope,
+                index,
+                target.first_line,
+                target.visible_lines,
+            );
+            app.cached_bracket_analysis_target = Some(target);
+            app.cached_bracket_starting_depth = starting_depth;
+            app.cached_bracket_guides = guides.into();
+        } else if (app.cached_bracket_analysis_target.as_ref() != Some(&target)
+            || current_index.is_none())
             && !app.bg_bracket_analysis_running
         {
             if current_index.is_none()

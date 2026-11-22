@@ -1211,16 +1211,18 @@ impl AnimationState {
     }
 
     /// Returns the next finite animation deadline; an idle editor has none.
+    /// Whether the tab underline or a reordered tab is still moving.
+    pub(crate) fn tab_motion_active(&self, settings: &AnimationSettings) -> bool {
+        let tab = self.tab_motion.borrow();
+        settings.enabled(Effect::TabSlide)
+            && ((tab.visible && tab.active) || self.tab_reorder.borrow().active())
+    }
+
     pub fn next_frame_wait(&self, settings: &AnimationSettings, now: Instant) -> Option<Duration> {
         if !settings.any_enabled() {
             return None;
         }
-        let active_tab = {
-            let tab = self.tab_motion.borrow();
-            settings.enabled(Effect::TabSlide)
-                && ((tab.visible && tab.active) || self.tab_reorder.borrow().active())
-        };
-        if !active_tab
+        if !self.tab_motion_active(settings)
             && !self
                 .views
                 .values()

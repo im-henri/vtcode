@@ -306,6 +306,15 @@ fn replay(frame: &mut Frame, app: &mut App, area: Rect, kind: u8) -> bool {
     reused
 }
 
+/// A saved scene is replayed only by cosmetic frames that leave the source
+/// unchanged. Sliding Tabs (on by default) needs one only while a tab moves;
+/// copying the whole viewport on every input frame otherwise buys nothing.
+fn scene_capture_useful(app: &App) -> bool {
+    app.animation_settings.editor_effects_enabled()
+        || app.loading.active()
+        || app.animations.tab_motion_active(&app.animation_settings)
+}
+
 /// Save text, decorations and overview cells before cosmetic overlays modify
 /// them. Only semantic frames pay for this copy or build source geometry.
 pub(crate) fn finish_editor(
@@ -316,7 +325,7 @@ pub(crate) fn finish_editor(
     tooltips: bool,
 ) {
     if !app.copy_animation.active()
-        && (app.animation_settings.any_enabled() || app.loading.active())
+        && scene_capture_useful(app)
         && !app.should_render_diff_for_active_editor()
         && let Some(area) = app.animation_frame_cache.capture_area
         && !area.is_empty()
@@ -375,7 +384,7 @@ pub(crate) fn finish_editor(
 
 pub(crate) fn finish_diff(frame: &mut Frame, app: &mut App, area: Rect, aligned: bool) {
     if !app.copy_animation.active()
-        && (app.animation_settings.any_enabled() || app.loading.active())
+        && scene_capture_useful(app)
         && !area.is_empty()
         && area.intersection(frame.area()) == area
         && usize::from(area.width) * usize::from(area.height) <= MAX_SCENE_CELLS

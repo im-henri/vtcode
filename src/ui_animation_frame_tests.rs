@@ -171,8 +171,21 @@ fn tab_slide_alone_reuses_editor_and_disabled_effects_release_scenes() {
         .set(AnimationEffect::ScopeConnector, false);
     app.animation_settings.set(AnimationEffect::TabSlide, true);
     let mut terminal = Terminal::new(TestBackend::new(100, 22)).unwrap();
+    // Without a moving tab, input frames do not pay for an unused copy.
     let expected = render(&mut app, &mut terminal, false);
+    assert!(app.animation_frame_cache.scenes.is_empty());
     assert_eq!(render(&mut app, &mut terminal, true), expected);
+    assert_eq!(app.animation_frame_cache.replays, 0);
+    // A tab switch starts the slide; its cosmetic frames reuse the editor.
+    let mut second = Editor::test_with_text("fn second() {}\n");
+    second.file_path = Some("second.rs".into());
+    app.tabs.push(Tab::new_file(second));
+    render(&mut app, &mut terminal, false);
+    app.active_tab = 1;
+    render(&mut app, &mut terminal, false);
+    assert!(app.animations.tab_motion_active(&app.animation_settings));
+    assert!(!app.animation_frame_cache.scenes.is_empty());
+    render(&mut app, &mut terminal, true);
     assert_eq!(app.animation_frame_cache.replays, 1);
     app.animation_settings.set(AnimationEffect::TabSlide, false);
     render(&mut app, &mut terminal, false);
