@@ -15,6 +15,28 @@ use crate::vtcomplete_inline::{Caret, Engine, MAX_DOCUMENT_BYTES, Options, Synta
 const MAX_BELOW_BYTES: usize = 256 * 1024;
 /// Longest the word popup waits for a pending prediction.
 const INLINE_HOLD: std::time::Duration = std::time::Duration::from_millis(250);
+/// How long the caret must rest before the language model reads ahead there.
+/// Reading ahead runs the model on several threads; repeated navigation keys
+/// (Ctrl+Down held to scroll) otherwise start and abandon a reading per step.
+/// Each move restarts the wait, so a burst of keys reads nothing until it ends.
+///
+/// Placing the caret precisely (a click, Left/Right, Home/End, word jumps)
+/// usually comes right before typing, so it waits briefly.
+const INLINE_WARM_PRECISE: std::time::Duration = std::time::Duration::from_millis(150);
+/// Moving by lines or pages, or to either end of the file, is mostly reading.
+const INLINE_WARM_BROWSING: std::time::Duration = std::time::Duration::from_millis(800);
+
+/// The rest required after a navigation key before reading ahead.
+fn warm_delay(key: crossterm::event::KeyEvent) -> std::time::Duration {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    match key.code {
+        KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => INLINE_WARM_BROWSING,
+        KeyCode::Home | KeyCode::End if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            INLINE_WARM_BROWSING
+        }
+        _ => INLINE_WARM_PRECISE,
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Availability {
@@ -122,6 +144,8 @@ pub(crate) struct State {
     requested: Option<Target>,
     /// The caret position the language model last read ahead for.
     warmed: Option<Target>,
+    /// A caret position to read ahead for once it has rested until then.
+    warm_due: Option<(Target, Instant)>,
     /// When the pending prediction was asked for, while the word popup is
     /// held back for it: the prediction is the main suggestion, and a popup
     /// that would flash up only to be covered by it is not shown.
@@ -417,6 +441,7 @@ impl App {
         self.vtcomplete_inline.suppressed = None;
         self.vtcomplete_inline.requested = None;
         self.vtcomplete_inline.warmed = None;
+        self.vtcomplete_inline.warm_due = None;
         let pending = {
             let mut queue = self
                 .vtcomplete_inline
@@ -496,7 +521,7 @@ impl App {
 
     /// Called after a key was handled. An edit made by typing requests a new
     /// prediction; text typed along a visible prediction keeps its remainder.
-    pub(crate) fn finish_inline_key(&mut self, trigger: bool) {
+    pub(crate) fn finish_inline_key(&mut self, key: crossterm::event::KeyEvent, trigger: bool) {
         let start = self.vtcomplete_inline.key_start.take();
         let Some(target) = self.inline_target() else {
             self.clear_inline();
@@ -528,13 +553,9 @@ impl App {
             {
                 self.clear_inline();
             }
-            // The caret moved: read its new surroundings ahead of typing.
-            if self.vtcomplete_inline.ghost.is_none()
-                && self.vtcomplete_inline.warmed.as_ref() != Some(&target)
-            {
-                self.vtcomplete_inline.warmed = Some(target.clone());
-                self.submit_inline_job(target, false, true);
-            }
+            // The caret moved: read its new surroundings ahead of typing,
+            // once it rests there.
+            self.schedule_inline_warm(target, warm_delay(key));
             return;
         }
         let remainder = self.vtcomplete_inline.ghost.take().and_then(|ghost| {
@@ -630,8 +651,58 @@ impl App {
         self.inline_ghost_visible() || self.inline_holds_popup()
     }
 
+    /// A click placed the caret: read ahead there soon, as typing usually
+    /// follows.
+    pub(crate) fn note_inline_pointer_caret(&mut self) {
+        if !self.quick_suggestions {
+            return;
+        }
+        if let Some(target) = self.inline_target() {
+            self.schedule_inline_warm(target, INLINE_WARM_PRECISE);
+        }
+    }
+
+    /// Read ahead at `target` once the caret has rested there for `delay`.
+    /// A reading for the previous position stops now.
+    fn schedule_inline_warm(&mut self, target: Target, delay: std::time::Duration) {
+        if self.vtcomplete_inline.ghost.is_some()
+            || self.vtcomplete_inline.warmed.as_ref() == Some(&target)
+        {
+            return;
+        }
+        self.vtcomplete_inline.cancel();
+        self.vtcomplete_inline.warm_due = Some((target, Instant::now() + delay));
+    }
+
+    /// Time until a resting caret is due to be read ahead, for the event loop.
+    pub(crate) fn inline_warm_wait(&self, now: Instant) -> Option<std::time::Duration> {
+        let (_, due) = self.vtcomplete_inline.warm_due.as_ref()?;
+        Some(due.saturating_duration_since(now))
+    }
+
+    /// Read ahead at the caret once it has rested. Nothing is drawn.
+    pub(crate) fn start_due_inline_warm(&mut self, now: Instant) {
+        if self
+            .vtcomplete_inline
+            .warm_due
+            .as_ref()
+            .is_none_or(|(_, due)| *due > now)
+        {
+            return;
+        }
+        let (target, _) = self.vtcomplete_inline.warm_due.take().unwrap();
+        if self.inline_target().as_ref() == Some(&target)
+            && self.vtcomplete_inline.ghost.is_none()
+            && self.vtcomplete_inline.warmed.as_ref() != Some(&target)
+        {
+            self.vtcomplete_inline.warmed = Some(target.clone());
+            self.submit_inline_job(target, false, true);
+        }
+    }
+
     fn submit_inline_job(&mut self, target: Target, explicit: bool, warm: bool) {
         self.vtcomplete_inline.cancel();
+        self.vtcomplete_inline.warm_due = None;
         let Some(editor) = self.editor() else {
             return;
         };

@@ -35,7 +35,7 @@ fn press(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     let key = KeyEvent::new(code, modifiers);
     app.begin_inline_key();
     assert!(!crate::input_keyboard::handle_keyboard_event(app, key));
-    app.finish_inline_key(trigger_key(key));
+    app.finish_inline_key(key, trigger_key(key));
 }
 
 fn text(app: &App) -> String {
@@ -812,4 +812,48 @@ fn the_accepted_text_and_caret_are_worked_out_across_lines() {
     assert_eq!(two.to_string(), "fn a() {\n    b(1);\n    c();\n}\n");
     assert_eq!(caret, (2, 8));
     assert!(accepted(&rope, (9, 0), "x").is_none());
+}
+
+#[test]
+fn caret_read_ahead_waits_until_navigation_rests() {
+    let mut app = app_with(&"fn sample() {\n    work();\n}\n\n".repeat(20));
+    app.editor_mut().unwrap().cursor_line = 0;
+    app.editor_mut().unwrap().cursor_col = 0;
+    // Held Ctrl+Down: each step replaces the pending reading, starting none.
+    for _ in 0..5 {
+        press(&mut app, KeyCode::Down, KeyModifiers::CONTROL);
+        assert!(app.vtcomplete_inline.cancel.is_none());
+        assert!(app.vtcomplete_inline.warmed.is_none());
+        let wait = app.inline_warm_wait(Instant::now()).unwrap();
+        assert!(wait > INLINE_WARM_PRECISE && wait <= INLINE_WARM_BROWSING);
+    }
+    let target = app.inline_target().unwrap();
+    app.start_due_inline_warm(Instant::now());
+    assert!(app.vtcomplete_inline.warmed.is_none(), "not yet rested");
+    app.start_due_inline_warm(Instant::now() + INLINE_WARM_BROWSING);
+    assert_eq!(app.vtcomplete_inline.warmed.as_ref(), Some(&target));
+    assert!(app.vtcomplete_inline.cancel.is_some(), "one reading starts");
+    assert!(app.inline_warm_wait(Instant::now()).is_none());
+    // A reading due for a position the caret has left is dropped.
+    press(&mut app, KeyCode::Down, KeyModifiers::CONTROL);
+    app.editor_mut().unwrap().cursor_line = 0;
+    app.start_due_inline_warm(Instant::now() + INLINE_WARM_BROWSING);
+    assert_eq!(app.vtcomplete_inline.warmed.as_ref(), Some(&target));
+    app.stop_inline_work();
+}
+
+#[test]
+fn precise_caret_moves_read_ahead_sooner_than_browsing() {
+    let mut app = app_with(SETTERS);
+    press(&mut app, KeyCode::Left, KeyModifiers::NONE);
+    let precise = app.inline_warm_wait(Instant::now()).unwrap();
+    assert!(precise <= INLINE_WARM_PRECISE);
+    press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    let browsing = app.inline_warm_wait(Instant::now()).unwrap();
+    assert!(browsing > INLINE_WARM_PRECISE && browsing <= INLINE_WARM_BROWSING);
+    // A click is precise placement.
+    app.editor_mut().unwrap().cursor_line = 1;
+    app.note_inline_pointer_caret();
+    assert!(app.inline_warm_wait(Instant::now()).unwrap() <= INLINE_WARM_PRECISE);
+    app.stop_inline_work();
 }

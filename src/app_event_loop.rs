@@ -887,7 +887,7 @@ pub(crate) fn handle_keyboard_input(
     if !reference_input_batches() {
         app.finish_vtcomplete_batch();
     }
-    app.finish_inline_key(!quit && crate::app_vtcomplete_inline::trigger_key(key));
+    app.finish_inline_key(key, !quit && crate::app_vtcomplete_inline::trigger_key(key));
     quit
 }
 
@@ -3943,6 +3943,9 @@ fn next_event_wait_with_output(
     if let Some(wait) = app.inline_hold_wait() {
         include(wait);
     }
+    if let Some(wait) = app.inline_warm_wait(std::time::Instant::now()) {
+        include(wait);
+    }
     if let Some(deadline) = app.inline_snooze_deadline() {
         include(deadline.saturating_duration_since(std::time::Instant::now()));
     }
@@ -4877,6 +4880,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         if app.expire_inline_hold() {
             needs_redraw = true;
         }
+        app.start_due_inline_warm(std::time::Instant::now());
         if app.expire_inline_snooze(std::time::Instant::now()) {
             if crate::ui_status::gptcomplete_menu_open(app) {
                 app.context_menu_active = false;
@@ -5606,8 +5610,17 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                         unfocused_redraw_pending = true;
                         continue;
                     }
+                    let caret_before = capture_caret_state(app);
                     let changed =
                         handle_mouse_input(app, windows.active_pump(&mut main_events), mouse);
+                    if mouse.kind
+                        == crossterm::event::MouseEventKind::Down(
+                            crossterm::event::MouseButton::Left,
+                        )
+                        && capture_caret_state(app) != caret_before
+                    {
+                        app.note_inline_pointer_caret();
+                    }
                     windows.after_mouse(app, &main_events, mouse);
                     let mouse = crossterm::event::MouseEvent {
                         column: app.mouse_col,
