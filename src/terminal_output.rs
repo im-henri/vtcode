@@ -1082,3 +1082,7 @@ mod viewport_tests;
 #[cfg(all(test, windows))]
 #[path = "terminal_cursor_tests.rs"]
 mod cursor_tests;
+
+#[cfg(test)]
+#[path = "terminal_buffer_patch_tests.rs"]
+mod buffer_patch_tests;
