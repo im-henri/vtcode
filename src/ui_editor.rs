@@ -1622,6 +1622,25 @@ pub(crate) fn editor_columns(area: Rect, gutter: u16, minimap: u16) -> std::rc::
         .split(area)
 }
 
+/// `Paragraph::new(text).style(style)` for one row. Printable ASCII, the
+/// usual sticky-scroll text, maps one byte to one cell, so write the cells
+/// directly instead of building a `Text` and segmenting graphemes.
+fn render_text_row(f: &mut Frame, text: String, style: Style, area: Rect) {
+    if !text.bytes().all(|byte| (b' '..=b'~').contains(&byte)) {
+        f.render_widget(Paragraph::new(text).style(style), area);
+        return;
+    }
+    let buffer = f.buffer_mut();
+    let area = area.intersection(buffer.area);
+    if area.is_empty() {
+        return;
+    }
+    buffer.set_style(area, style);
+    for (offset, byte) in text.bytes().take(usize::from(area.width)).enumerate() {
+        buffer[(area.x + offset as u16, area.y)].set_char(char::from(byte));
+    }
+}
+
 pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     // Vim Insert/Replace mode shows the terminal's own bar/underline caret.
     let bar_caret = crate::vim::ui::bar_caret(app);
@@ -4484,8 +4503,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             for _ in 0..pad {
                 display.push(' ');
             }
-            f.render_widget(
-                Paragraph::new(display).style(sticky_style),
+            render_text_row(
+                f,
+                display,
+                sticky_style,
                 Rect::new(code_area.x, y, code_area.width, 1),
             );
             // Also overlay the gutter for sticky lines
@@ -4496,18 +4517,18 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
                 gutter_buf.push_str("  ");
             }
             gutter_buf.truncate(gw + 2);
-            f.render_widget(
-                Paragraph::new(gutter_buf).style(
-                    sticky_style.fg(app.colors.ui.readable_foreground(
-                        app.colors
-                            .ui
-                            .line_number_foreground
-                            .over(sticky_bg)
-                            .unwrap_or_else(|| app.colors.ui.description_color(sticky_bg)),
-                        sticky_bg,
-                        4.5,
-                    )),
-                ),
+            render_text_row(
+                f,
+                gutter_buf,
+                sticky_style.fg(app.colors.ui.readable_foreground(
+                    app.colors
+                        .ui
+                        .line_number_foreground
+                        .over(sticky_bg)
+                        .unwrap_or_else(|| app.colors.ui.description_color(sticky_bg)),
+                    sticky_bg,
+                    4.5,
+                )),
                 Rect::new(gutter_area.x, y, gutter_area.width, 1),
             );
         }
@@ -4654,6 +4675,55 @@ mod tests {
     use super::*;
     use crate::{app::Tab, editor::Editor};
     use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn text_rows_match_paragraph_rendering() {
+        let styles = [
+            Style::default().fg(Color::Red).bg(Color::Rgb(1, 2, 3)),
+            Style::default()
+                .add_modifier(Modifier::UNDERLINED)
+                .underline_color(Color::Indexed(4)),
+            Style::default(),
+        ];
+        let texts = [
+            "fn sticky_scope(value: usize) {",
+            "  42  ",
+            "",
+            "a line that is much longer than the row it is drawn into",
+            "tab\there",
+            "café 界 🦀",
+        ];
+        for style in styles {
+            for text in texts {
+                for area in [Rect::new(2, 1, 20, 1), Rect::new(0, 0, 0, 1)] {
+                    let draw = |direct: bool| {
+                        let mut terminal = Terminal::new(TestBackend::new(30, 3)).unwrap();
+                        terminal
+                            .draw(|f| {
+                                let full = f.area();
+                                f.render_widget(
+                                    Paragraph::new("#".repeat(90))
+                                        .wrap(ratatui::widgets::Wrap { trim: false })
+                                        .style(Style::default().fg(Color::Green)),
+                                    full,
+                                );
+                                if direct {
+                                    render_text_row(f, text.to_string(), style, area);
+                                } else {
+                                    f.render_widget(
+                                        Paragraph::new(text.to_string()).style(style),
+                                        area,
+                                    );
+                                }
+                            })
+                            .unwrap();
+                        terminal.backend().buffer().clone()
+                    };
+                    assert_eq!(draw(true), draw(false), "{text:?} {style:?} {area:?}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn selected_word_occurrences_remain_visible_alongside_find_matches() {
