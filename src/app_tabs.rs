@@ -2165,7 +2165,11 @@ impl App {
         } else if tab.kind == TabKind::File {
             tab.editor.display_name().width()
         } else {
-            tab.editor.file_display_name().width()
+            let name = tab.editor.file_display_name();
+            match tab.kind {
+                TabKind::ExtensionView => App::extension_view_tab_title(&name).unwrap_or(&name).width(),
+                _ => name.width(),
+            }
         };
         let mod_len: usize = if tab.has_unsaved_changes() { 2 } else { 0 };
         let pin_len: usize = if tab.pinned { "📌".width() } else { 0 };
