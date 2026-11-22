@@ -214,7 +214,16 @@ impl PartialEq for Cell {
             && self.skip == other.skip
             && underline_color_eq
             // Treat None and Some(" ") as equal
-            && self.symbol() == other.symbol()
+            && symbols_eq(self.symbol(), other.symbol())
+    }
+}
+
+/// String equality without a `memcmp` call for the common one-byte symbol.
+#[inline]
+fn symbols_eq(a: &str, b: &str) -> bool {
+    match (a.as_bytes(), b.as_bytes()) {
+        ([a], [b]) => a == b,
+        (a, b) => a == b,
     }
 }
 

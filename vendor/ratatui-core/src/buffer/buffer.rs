@@ -504,24 +504,30 @@ impl Buffer {
         // Cells from the current buffer to skip due to preceding multi-width characters taking
         // their place (the skipped cells should be blank anyway), or due to per-cell-skipping:
         let mut to_skip: usize = 0;
+        // VTCode patch: track the position instead of dividing for every update, and
+        // measure each symbol once (printable ASCII without the Unicode tables).
+        let width = usize::from(self.area.width);
+        let (mut column, mut row) = (0_usize, 0_usize);
         for (i, (current, previous)) in next_buffer.iter().zip(previous_buffer.iter()).enumerate() {
-            if !current.skip && (current != previous || invalidated > 0) && to_skip == 0 {
-                let (x, y) = self.pos_of(i);
-                updates.push((x, y, &next_buffer[i]));
+            let symbol = current.symbol();
+            let cell_width = symbol_width(symbol);
+            if !current.skip && to_skip == 0 && (invalidated > 0 || current != previous) {
+                updates.push((
+                    self.area.x + column as u16,
+                    self.area.y + row as u16,
+                    &next_buffer[i],
+                ));
 
                 // If the current cell is multi-width, ensure the trailing cells are explicitly
                 // cleared when they previously contained non-blank content. Some terminals do not
                 // reliably clear the trailing cell(s) when printing a wide grapheme, which can
                 // result in visual artifacts (e.g., leftover characters). Emitting an explicit
                 // update for the trailing cells avoids this.
-                let symbol = current.symbol();
-                let cell_width = symbol_width(symbol);
                 // Work around terminals that fail to clear the trailing cell of certain
                 // emoji presentation sequences (those containing VS16 / U+FE0F).
                 // Only emit explicit clears for such sequences to avoid bloating diffs
                 // for standard wide characters (e.g., CJK), which terminals handle well.
-                let contains_vs16 = symbol.chars().any(|c| c == '\u{FE0F}');
-                if cell_width > 1 && contains_vs16 {
+                if cell_width > 1 && symbol.contains('\u{FE0F}') {
                     for k in 1..cell_width {
                         let j = i + k;
                         // Make sure that we are still inside the buffer.
@@ -542,13 +548,16 @@ impl Buffer {
                 }
             }
 
-            // VTCode patch: measure each symbol once, and printable ASCII
-            // without a Unicode table lookup. Results are unchanged.
-            let current_width = symbol_width(current.symbol());
-            to_skip = current_width.saturating_sub(1);
+            to_skip = cell_width.saturating_sub(1);
 
-            let affected_width = cmp::max(current_width, symbol_width(previous.symbol()));
+            let affected_width = cmp::max(cell_width, symbol_width(previous.symbol()));
             invalidated = cmp::max(affected_width, invalidated).saturating_sub(1);
+
+            column += 1;
+            if column == width {
+                column = 0;
+                row += 1;
+            }
         }
         updates
     }
