@@ -1533,52 +1533,120 @@ fn analyze_viewport_brackets(
         .saturating_add(visible_lines)
         .saturating_add(200)
         .min(rope.len_lines());
-    let mut depth = depth_index.line_starting_depth(scan_start).unwrap_or(0);
-
-    let mut guides = Vec::with_capacity(64);
-    let mut stack: Vec<(char, usize, usize, i32)> = Vec::with_capacity(32);
-    let mut line_buffer = String::new();
-    for (offset, line) in rope
-        .lines_at(scan_start)
-        .take(scan_end - scan_start)
-        .enumerate()
-    {
-        let line_idx = scan_start + offset;
-        if line.len_chars() > MAX_BRACKET_LINE_CHARS {
-            continue;
-        }
-        let text = line.as_str().unwrap_or_else(|| {
-            line_buffer.clear();
-            for chunk in line.chunks() {
-                line_buffer.push_str(chunk);
+    let mut scan = ViewportBracketScan {
+        depth: depth_index.line_starting_depth(scan_start).unwrap_or(0),
+        line: scan_start,
+        guides: Vec::with_capacity(64),
+        stack: Vec::with_capacity(32),
+        line_undo: Vec::new(),
+        line_start: (0, 0),
+        column: 0,
+        line_chars: 0,
+    };
+    scan.start_line();
+    // One pass over the window's chunks. Iterating Rope lines cost more than
+    // the scan itself. Line breaks follow ropey's `cr_lines` rules: LF, CRLF
+    // and a lone CR. Brackets are ASCII, never part of a multi-byte character.
+    let window = rope.line_to_byte(scan_start)..rope.line_to_byte(scan_end);
+    let mut pending_cr = false;
+    for chunk in rope.byte_slice(window).chunks() {
+        for &byte in chunk.as_bytes() {
+            if pending_cr {
+                pending_cr = false;
+                if byte == b'\n' {
+                    scan.line_chars += 1;
+                    scan.end_line(MAX_BRACKET_LINE_CHARS);
+                    continue;
+                }
+                scan.end_line(MAX_BRACKET_LINE_CHARS);
             }
-            &line_buffer
-        });
-        for (column, character) in text.chars().enumerate() {
-            match character {
-                '(' | '[' | '{' => {
-                    depth = depth.saturating_add(1);
-                    stack.push((character, line_idx, column, depth));
+            match byte {
+                b'\n' => {
+                    scan.line_chars += 1;
+                    scan.end_line(MAX_BRACKET_LINE_CHARS);
+                    continue;
                 }
-                ')' | ']' | '}' => {
-                    if let Some((open, open_line, open_column, guide_depth)) = stack.pop() {
-                        let expected = match character {
-                            ')' => '(',
-                            ']' => '[',
-                            '}' => '{',
-                            _ => unreachable!(),
-                        };
-                        if open == expected && open_line != line_idx {
-                            guides.push((open_column, open_line + 1, line_idx, guide_depth));
-                        }
-                    }
-                    depth = (depth - 1).max(0);
+                b'\r' => {
+                    scan.line_chars += 1;
+                    pending_cr = true;
+                    continue;
                 }
+                b'(' | b'[' | b'{' => scan.open(byte),
+                b')' | b']' | b'}' => scan.close(byte),
                 _ => {}
+            }
+            if byte & 0xC0 != 0x80 {
+                scan.column += 1;
+                scan.line_chars += 1;
             }
         }
     }
-    (starting_depth, guides)
+    // The final line has no terminator; it is still subject to the length cap.
+    scan.end_line(MAX_BRACKET_LINE_CHARS);
+    (starting_depth, scan.guides)
+}
+
+/// State for `analyze_viewport_brackets`. A line longer than the bracket cap
+/// is ignored as a whole, so its stack operations are undone at its end.
+struct ViewportBracketScan {
+    depth: i32,
+    line: usize,
+    guides: Vec<(usize, usize, usize, i32)>,
+    stack: Vec<(u8, usize, usize, i32)>,
+    /// `Some` for a pop (restore it), `None` for a push (remove it).
+    line_undo: Vec<Option<(u8, usize, usize, i32)>>,
+    /// Depth and guide count when the current line began.
+    line_start: (i32, usize),
+    column: usize,
+    line_chars: usize,
+}
+
+impl ViewportBracketScan {
+    fn start_line(&mut self) {
+        self.line_undo.clear();
+        self.line_start = (self.depth, self.guides.len());
+        self.column = 0;
+        self.line_chars = 0;
+    }
+
+    fn open(&mut self, byte: u8) {
+        self.depth = self.depth.saturating_add(1);
+        self.stack.push((byte, self.line, self.column, self.depth));
+        self.line_undo.push(None);
+    }
+
+    fn close(&mut self, byte: u8) {
+        if let Some(entry @ (open, open_line, open_column, guide_depth)) = self.stack.pop() {
+            self.line_undo.push(Some(entry));
+            let expected = match byte {
+                b')' => b'(',
+                b']' => b'[',
+                _ => b'{',
+            };
+            if open == expected && open_line != self.line {
+                self.guides
+                    .push((open_column, open_line + 1, self.line, guide_depth));
+            }
+        }
+        self.depth = (self.depth - 1).max(0);
+    }
+
+    fn end_line(&mut self, max_chars: usize) {
+        if self.line_chars > max_chars {
+            while let Some(operation) = self.line_undo.pop() {
+                match operation {
+                    Some(entry) => self.stack.push(entry),
+                    None => {
+                        self.stack.pop();
+                    }
+                }
+            }
+            (self.depth, _) = self.line_start;
+            self.guides.truncate(self.line_start.1);
+        }
+        self.line += 1;
+        self.start_line();
+    }
 }
 
 #[cfg(test)]
@@ -3362,6 +3430,123 @@ mod tests {
                 .iter()
                 .any(|&(column, start, end, _)| { column == 6 && start == 2 && end == 3 })
         );
+    }
+
+    /// The previous line-by-line implementation, kept as the reference.
+    fn reference_viewport_brackets(
+        rope: &ropey::Rope,
+        depth_index: &crate::background::BracketDepthIndex,
+        first_line: usize,
+        visible_lines: usize,
+    ) -> (i32, Vec<(usize, usize, usize, i32)>) {
+        use crate::background::MAX_BRACKET_LINE_CHARS;
+        let starting_depth = depth_index.line_starting_depth(first_line).unwrap_or(0);
+        if !depth_index.enabled() {
+            return (0, Vec::new());
+        }
+        let scan_start = first_line.saturating_sub(200).min(rope.len_lines());
+        let scan_end = (first_line + visible_lines + 200).min(rope.len_lines());
+        let mut depth = depth_index.line_starting_depth(scan_start).unwrap_or(0);
+        let (mut guides, mut stack) = (Vec::new(), Vec::new());
+        for (offset, line) in rope
+            .lines_at(scan_start)
+            .take(scan_end - scan_start)
+            .enumerate()
+        {
+            let line_idx = scan_start + offset;
+            if line.len_chars() > MAX_BRACKET_LINE_CHARS {
+                continue;
+            }
+            for (column, character) in line.chars().enumerate() {
+                match character {
+                    '(' | '[' | '{' => {
+                        depth = depth.saturating_add(1);
+                        stack.push((character, line_idx, column, depth));
+                    }
+                    ')' | ']' | '}' => {
+                        if let Some((open, open_line, open_column, guide_depth)) = stack.pop() {
+                            let expected = match character {
+                                ')' => '(',
+                                ']' => '[',
+                                _ => '{',
+                            };
+                            if open == expected && open_line != line_idx {
+                                guides.push((open_column, open_line + 1, line_idx, guide_depth));
+                            }
+                        }
+                        depth = (depth - 1).max(0);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        (starting_depth, guides)
+    }
+
+    #[test]
+    fn viewport_bracket_chunk_scan_matches_line_by_line_reference() {
+        use crate::background::MAX_BRACKET_LINE_CHARS;
+        let pieces = [
+            "(", ")", "[", "]", "{", "}", "a", " ", "é", "界", "🦀", "\n", "\r\n", "\r", "x(",
+            "});",
+        ];
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = |bound: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % bound as u64) as usize
+        };
+        let mut with_guides = 0;
+        for round in 0..300 {
+            let mut text = String::new();
+            for _ in 0..next(1500) {
+                text.push_str(pieces[next(pieces.len())]);
+                if next(400) == 0 {
+                    // A line over the cap, with brackets that must be ignored.
+                    text.push_str(&"(]{".repeat(MAX_BRACKET_LINE_CHARS / 3 + next(3)));
+                }
+            }
+            let rope = ropey::Rope::from_str(&text);
+            let index = crate::background::BracketDepthIndex::build(rope.clone(), 0, 0, 0);
+            let lines = rope.len_lines();
+            let first = next(lines + 1);
+            let visible = next(60);
+            let expected = reference_viewport_brackets(&rope, &index, first, visible);
+            with_guides += usize::from(!expected.1.is_empty());
+            assert_eq!(
+                analyze_viewport_brackets(&rope, &index, first, visible),
+                expected,
+                "round {round}"
+            );
+        }
+        assert!(with_guides > 100, "{with_guides} rounds produced guides");
+    }
+
+    #[test]
+    fn viewport_bracket_guides_use_character_columns_on_non_ascii_lines() {
+        let source = "fn café() {\n  «界» map(\n    é\n  );\n  🦀 [\n  ]\n}\n";
+        let rope = ropey::Rope::from_str(source);
+        let index = crate::background::BracketDepthIndex::build(rope.clone(), 0, 0, 0);
+        let (_, guides) = analyze_viewport_brackets(&rope, &index, 0, 7);
+        let mut expected = Vec::new();
+        let mut stack = Vec::new();
+        for (line_idx, line) in source.lines().enumerate() {
+            for (column, character) in line.chars().enumerate() {
+                match character {
+                    '(' | '[' | '{' => stack.push((character, line_idx, column, stack.len() + 1)),
+                    ')' | ']' | '}' => {
+                        let (_, open_line, open_column, depth) = stack.pop().unwrap();
+                        if open_line != line_idx {
+                            expected.push((open_column, open_line + 1, line_idx, depth as i32));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(guides, expected);
+        assert!(guides.contains(&(10, 1, 6, 1)) && guides.contains(&(9, 2, 3, 2)));
     }
 
     #[test]
