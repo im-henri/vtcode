@@ -825,19 +825,19 @@ fn caret_read_ahead_waits_until_navigation_rests() {
         assert!(app.vtcomplete_inline.cancel.is_none());
         assert!(app.vtcomplete_inline.warmed.is_none());
         let wait = app.inline_warm_wait(Instant::now()).unwrap();
-        assert!(wait > INLINE_WARM_PRECISE && wait <= INLINE_WARM_BROWSING);
+        assert!(wait > INLINE_WARM_PRECISE && wait <= INLINE_WARM_READING);
     }
     let target = app.inline_target().unwrap();
     app.start_due_inline_warm(Instant::now());
     assert!(app.vtcomplete_inline.warmed.is_none(), "not yet rested");
-    app.start_due_inline_warm(Instant::now() + INLINE_WARM_BROWSING);
+    app.start_due_inline_warm(Instant::now() + INLINE_WARM_READING);
     assert_eq!(app.vtcomplete_inline.warmed.as_ref(), Some(&target));
     assert!(app.vtcomplete_inline.cancel.is_some(), "one reading starts");
     assert!(app.inline_warm_wait(Instant::now()).is_none());
     // A reading due for a position the caret has left is dropped.
     press(&mut app, KeyCode::Down, KeyModifiers::CONTROL);
     app.editor_mut().unwrap().cursor_line = 0;
-    app.start_due_inline_warm(Instant::now() + INLINE_WARM_BROWSING);
+    app.start_due_inline_warm(Instant::now() + INLINE_WARM_READING);
     assert_eq!(app.vtcomplete_inline.warmed.as_ref(), Some(&target));
     app.stop_inline_work();
 }
@@ -851,6 +851,11 @@ fn precise_caret_moves_read_ahead_sooner_than_browsing() {
     press(&mut app, KeyCode::Up, KeyModifiers::NONE);
     let browsing = app.inline_warm_wait(Instant::now()).unwrap();
     assert!(browsing > INLINE_WARM_PRECISE && browsing <= INLINE_WARM_BROWSING);
+    // Browsing long after the last edit is reading; it waits longer still.
+    app.last_edit_time = Instant::now() - INLINE_RECENT_EDIT - std::time::Duration::from_secs(1);
+    press(&mut app, KeyCode::Up, KeyModifiers::NONE);
+    let reading = app.inline_warm_wait(Instant::now()).unwrap();
+    assert!(reading > INLINE_WARM_BROWSING && reading <= INLINE_WARM_READING);
     // A click is precise placement.
     app.editor_mut().unwrap().cursor_line = 1;
     app.note_inline_pointer_caret();

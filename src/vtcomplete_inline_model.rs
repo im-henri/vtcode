@@ -314,6 +314,26 @@ impl Drop for Withdraw {
     }
 }
 
+thread_local! {
+    /// Set while this thread computes without the helper threads.
+    static ALONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with every long computation on the calling thread only. Results
+/// are the same; the work is not spread over the processor. Reading ahead
+/// while the caret rests uses this: nobody waits for it, and spreading it
+/// briefly loaded up to four cores on every caret move.
+pub(crate) fn alone<R>(f: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ALONE.with(|alone| alone.set(self.0));
+        }
+    }
+    let _restore = Restore(ALONE.with(|alone| alone.replace(true)));
+    f()
+}
+
 /// Call `run` once for every index below `count`, sharing the calls with
 /// the helper threads. Returns when all of them have finished.
 fn parallel(count: usize, run: &(dyn Fn(usize) + Sync)) {
@@ -327,7 +347,7 @@ fn parallel(count: usize, run: &(dyn Fn(usize) + Sync)) {
         count,
     };
     let pool = pool();
-    let turn = if count > 1 && pool.helpers > 0 {
+    let turn = if count > 1 && pool.helpers > 0 && !ALONE.with(std::cell::Cell::get) {
         pool.busy.try_lock().ok()
     } else {
         None

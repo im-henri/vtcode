@@ -25,6 +25,10 @@ const INLINE_HOLD: std::time::Duration = std::time::Duration::from_millis(250);
 const INLINE_WARM_PRECISE: std::time::Duration = std::time::Duration::from_millis(150);
 /// Moving by lines or pages, or to either end of the file, is mostly reading.
 const INLINE_WARM_BROWSING: std::time::Duration = std::time::Duration::from_millis(800);
+/// Browsing with no edit for a while is reading a file, not writing it.
+const INLINE_WARM_READING: std::time::Duration = std::time::Duration::from_secs(2);
+/// Edits within this long make browsing likely part of writing.
+const INLINE_RECENT_EDIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The rest required after a navigation key before reading ahead.
 fn warm_delay(key: crossterm::event::KeyEvent) -> std::time::Duration {
@@ -240,7 +244,7 @@ fn predict(engine: &mut Engine<'_>, job: &Job) -> Option<Option<(String, Option<
         language: job.language,
     };
     if job.warm {
-        engine.warm(caret, &cancelled);
+        crate::vtcomplete_inline::model::alone(|| engine.warm(caret, &cancelled));
         return None;
     }
     let prediction = engine.predict(
@@ -555,7 +559,11 @@ impl App {
             }
             // The caret moved: read its new surroundings ahead of typing,
             // once it rests there.
-            self.schedule_inline_warm(target, warm_delay(key));
+            let mut delay = warm_delay(key);
+            if delay == INLINE_WARM_BROWSING && self.last_edit_time.elapsed() > INLINE_RECENT_EDIT {
+                delay = INLINE_WARM_READING;
+            }
+            self.schedule_inline_warm(target, delay);
             return;
         }
         let remainder = self.vtcomplete_inline.ghost.take().and_then(|ghost| {

@@ -468,3 +468,30 @@ fn writing_into_an_open_block_goes_on_past_line_ends() {
     assert!(lines(&block) <= MAX_WRITTEN_LINES);
     assert!(block.bytes.len() >= line.bytes.len());
 }
+
+#[test]
+fn computing_alone_gives_identical_products_on_the_calling_thread() {
+    use std::sync::Mutex;
+    let (rows, cols, tokens) = (512usize, 512usize, 64usize);
+    let cells: Vec<i8> = (0..rows * cols).map(|i| (i * 11 % 17) as i8 - 8).collect();
+    let weights = Matrix {
+        scale: 0.02,
+        cells: &cells,
+    };
+    let input: Vec<f32> = (0..tokens * cols)
+        .map(|i| ((i * 3 % 7) as f32 - 3.) * 0.1)
+        .collect();
+    let mut shared = Vec::new();
+    matmul(&weights, cols, &input, tokens, &mut shared);
+    let mut solo = Vec::new();
+    alone(|| matmul(&weights, cols, &input, tokens, &mut solo));
+    assert_eq!(shared, solo);
+    // Every index runs on the caller, and the flag is restored afterwards.
+    let caller = std::thread::current().id();
+    let threads = Mutex::new(Vec::new());
+    alone(|| {
+        parallel(64, &|_| threads.lock().unwrap().push(std::thread::current().id()));
+    });
+    assert!(threads.lock().unwrap().iter().all(|&id| id == caller));
+    assert!(!ALONE.with(std::cell::Cell::get));
+}
