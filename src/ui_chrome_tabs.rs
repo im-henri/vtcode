@@ -365,6 +365,11 @@ fn tab_display_name_with_duplicates<'a>(
             );
         return std::borrow::Cow::Owned(name);
     }
+    if tab.kind == crate::app::TabKind::ExtensionView
+        && let Some(title) = crate::app::App::extension_view_tab_title(&name)
+    {
+        return std::borrow::Cow::Owned(title.to_string());
+    }
     if tab.kind == crate::app::TabKind::CommitDetails {
         return std::borrow::Cow::Borrowed("Commit details");
     }

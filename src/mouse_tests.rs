@@ -2054,6 +2054,14 @@ fn tab_display_name_markdown_preview() {
     assert_eq!(&*name, "Preview: readme.md");
 }
 
+#[test]
+fn tab_display_name_extension_view_shows_only_its_title() {
+    let app = App::test_new();
+    let mut tab = make_tab("Extension View vtcode.bitcalc Bitcalc");
+    tab.kind = TabKind::ExtensionView;
+    assert_eq!(&*tab_display_name(&app, 0, &tab), "Bitcalc");
+}
+
 // --- tab_bar_right_indicator_start tests ---
 
 #[test]

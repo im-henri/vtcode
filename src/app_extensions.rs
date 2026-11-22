@@ -483,6 +483,15 @@ impl App {
         PathBuf::from(format!("Extension View {extension_id} {title}"))
     }
 
+    /// The tab label of an extension view: its title, without the internal
+    /// `Extension View <id>` path prefix that keeps views apart.
+    pub(crate) fn extension_view_tab_title(name: &str) -> Option<&str> {
+        name.strip_prefix("Extension View ")?
+            .split_once(' ')
+            .map(|(_, title)| title)
+            .filter(|title| !title.is_empty())
+    }
+
     fn apply_extension_view_to_editor(
         editor: &mut Editor,
         extension_id: &str,
