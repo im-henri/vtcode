@@ -706,6 +706,9 @@ pub(crate) struct Editor {
     /// Bounded decoded viewport text reused across scrolling and redraws.
     pub(crate) render_line_cache: std::cell::RefCell<crate::ui_editor_highlight::RenderLineCache>,
     pub(crate) minimap_cache: std::cell::RefCell<crate::ui_editor_minimap::MinimapCache>,
+    /// Whether this minimap rests on the whole-document overview.
+    pub(crate) minimap_overview: std::cell::Cell<bool>,
+    pub(crate) minimap_zoom: std::cell::Cell<crate::ui_editor_minimap::MinimapZoom>,
     /// Cached wrapped total rows (invalidated on content/fold change)
     pub cached_wrapped_total: Option<(usize, usize)>, // (wrap_width, total_rows)
     /// Visual-row prefix tree, supporting local row-count changes and indexed
@@ -874,6 +877,8 @@ impl Editor {
             conditional_fold_cache: Default::default(),
             render_line_cache: Default::default(),
             minimap_cache: Default::default(),
+            minimap_overview: Default::default(),
+            minimap_zoom: Default::default(),
             cached_wrapped_total: None,
             cached_row_offsets: None,
             scroll_past_end: true,

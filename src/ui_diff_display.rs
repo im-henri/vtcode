@@ -2156,6 +2156,7 @@ pub(crate) fn draw_inline_diff(f: &mut Frame, app: &mut App, area: Rect) {
         );
     }
     if let Some(minimap_area) = layout.minimap_area {
+        editor.minimap_overview.set(app.minimap_overview);
         draw_minimap(
             f,
             MinimapParams {

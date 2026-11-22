@@ -129,6 +129,8 @@ pub(crate) struct App {
     pub(crate) open_editors_scroll_anchor: Option<(usize, u64)>,
     pub show_minimap: bool,
     pub minimap_width: u16,
+    /// Rest the minimap on the whole file and zoom in only while scrolling.
+    pub minimap_overview: bool,
     pub(crate) minimap_resize: crate::ui_minimap_resize::State,
     pub show_panel: bool,
     pub show_line_numbers: bool,
@@ -1287,6 +1289,7 @@ impl App {
             open_editors_scroll_anchor: None,
             show_minimap: true,
             minimap_width: 10,
+            minimap_overview: true,
             minimap_resize: Default::default(),
             show_panel: false,
             show_line_numbers: true,

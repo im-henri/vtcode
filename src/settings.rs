@@ -164,6 +164,8 @@ pub struct Settings {
     pub show_open_editors: Option<bool>,
     pub show_minimap: Option<bool>,
     pub minimap_width: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimap_overview: Option<bool>,
     pub show_line_numbers: Option<bool>,
     pub relative_line_numbers: Option<bool>,
     pub show_indent_guides: Option<bool>,
@@ -526,6 +528,7 @@ impl Settings {
             show_open_editors: other.show_open_editors.or(self.show_open_editors),
             show_minimap: other.show_minimap.or(self.show_minimap),
             minimap_width: other.minimap_width.or(self.minimap_width),
+            minimap_overview: other.minimap_overview.or(self.minimap_overview),
             show_line_numbers: other.show_line_numbers.or(self.show_line_numbers),
             relative_line_numbers: other.relative_line_numbers.or(self.relative_line_numbers),
             show_indent_guides: other.show_indent_guides.or(self.show_indent_guides),

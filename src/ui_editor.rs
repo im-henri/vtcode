@@ -1531,6 +1531,7 @@ fn draw_large_file_editor(f: &mut Frame, app: &mut App, layout: LargeFileEditorL
             colors.ui.fg_overview_border,
             colors.bg_editor,
         );
+        editor.minimap_overview.set(app.minimap_overview);
         draw_minimap(
             f,
             MinimapParams {
@@ -3068,6 +3069,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
             );
         }
         if minimap_width > 0 {
+            editor.minimap_overview.set(app.minimap_overview);
             draw_minimap(
                 f,
                 MinimapParams {
@@ -4556,6 +4558,7 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Draw minimap
     if minimap_width > 0 {
+        app.tabs[app.active_tab].editor.minimap_overview.set(app.minimap_overview);
         draw_minimap(
             f,
             MinimapParams {

@@ -92,6 +92,7 @@ impl App {
             | "cursor_blinking"
             | "cursor_surrounding_lines"
             | "minimap"
+            | "minimap_overview"
             | "minimap_width" => 1,
             "heading_features"
             | "indent_rainbow"
@@ -210,6 +211,7 @@ impl App {
             | "show_open_editors"
             | "sidebar_auto_hide"
             | "minimap"
+            | "minimap_overview"
             | "line_numbers"
             | "relative_lines"
             | "panel"
@@ -306,6 +308,7 @@ impl App {
             "show_open_editors" => "showOpenEditors",
             "minimap" => "showMinimap",
             "minimap_width" => "minimapWidth",
+            "minimap_overview" => "minimapOverview",
             "line_numbers" => "showLineNumbers",
             "relative_lines" => "relativeLineNumbers",
             "indent_guides" => "showIndentGuides",
@@ -644,6 +647,9 @@ impl App {
             "show_open_editors" => "Show the Open Editors section above the file tree.",
             "minimap" => "Show or hide the minimap preview in editor panes.",
             "minimap_width" => "Set the minimap width in characters.",
+            "minimap_overview" => {
+                "Show the whole file in the minimap while idle, with every change marked. Scrolling zooms in to the detailed view, which zooms back out shortly after scrolling stops."
+            }
             "line_numbers" => "Show absolute line numbers in the editor gutter.",
             "relative_lines" => "Show relative line numbers for faster motion navigation.",
             "panel" => "Show or hide the bottom panel (Output/Problems/Terminal).",
@@ -1136,6 +1142,11 @@ impl App {
                 "Minimap Width".into(),
                 self.minimap_width.to_string(),
                 "minimap_width".into(),
+            ),
+            (
+                "Minimap Whole-File Overview".into(),
+                on_off(self.minimap_overview),
+                "minimap_overview".into(),
             ),
             (
                 "Show Line Numbers".into(),

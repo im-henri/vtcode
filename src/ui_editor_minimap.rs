@@ -14,6 +14,10 @@ mod cache;
 use cache::Glyph;
 pub(crate) use cache::MinimapCache;
 
+#[path = "ui_minimap_zoom.rs"]
+mod zoom;
+pub(crate) use zoom::{MinimapZoom, take_zoom_wake, zoom_wake};
+
 #[cfg(test)]
 use ratatui::{
     text::{Line, Span},
@@ -307,6 +311,10 @@ mod performance_tests;
 #[path = "ui_minimap_ux_tests.rs"]
 mod ux_tests;
 
+#[cfg(test)]
+#[path = "ui_minimap_zoom_tests.rs"]
+mod zoom_tests;
+
 pub(crate) fn scrollbar_change_rows_indexed(
     editor: &crate::editor::Editor,
     height: usize,
@@ -399,11 +407,58 @@ fn minimap_window(
     }
 }
 
+/// Blend the whole-document overview (`zoom` 0) into the detail window
+/// (`zoom` 1). The length moves geometrically so every frame changes the
+/// apparent scale by the same ratio, and the viewport keeps its relative
+/// place in the minimap so the slider glides instead of jumping.
+fn zoomed_minimap_window(
+    total_lines: usize,
+    scroll: usize,
+    visible_lines: usize,
+    height: usize,
+    zoom: f32,
+) -> MinimapWindow {
+    let detail = minimap_window(total_lines, scroll, visible_lines, height);
+    if zoom >= 1.0 || detail.len() >= total_lines || detail.len() == 0 {
+        return detail;
+    }
+    if zoom <= 0.0 {
+        return MinimapWindow {
+            start: 0,
+            end: total_lines,
+        };
+    }
+    let zoom = f64::from(zoom);
+    let overview = total_lines as f64;
+    let len = (overview.ln() * (1.0 - zoom) + (detail.len() as f64).ln() * zoom)
+        .exp()
+        .round()
+        .clamp(detail.len() as f64, overview) as usize;
+    let visible = visible_lines.max(1).min(total_lines);
+    let center = scroll as f64 + visible as f64 / 2.0;
+    let overview_place = center / overview;
+    let detail_place = (center - detail.start as f64) / detail.len() as f64;
+    let place = overview_place * (1.0 - zoom) + detail_place * zoom;
+    // The detail window may pad its final band beyond the document.
+    let limit = total_lines.max(detail.end);
+    let start = (center - place * len as f64).round().max(0.0) as usize;
+    // Keep the whole viewport inside the window at every step.
+    let start = start
+        .min(scroll)
+        .max((scroll + visible).saturating_sub(len))
+        .min(limit.saturating_sub(len));
+    MinimapWindow {
+        start,
+        end: start + len,
+    }
+}
+
 /// Shared geometry for painting, hit testing, and dragging the viewport.
 #[derive(Clone, Copy)]
 pub(crate) struct MinimapLayout {
     window: MinimapWindow,
     height: usize,
+    zoom: f32,
     extent: usize,
     visible: usize,
     scroll: usize,
@@ -414,21 +469,35 @@ pub(crate) struct MinimapLayout {
 
 impl MinimapLayout {
     fn for_editor(editor: &crate::editor::Editor, height: usize) -> Self {
-        Self::new(
+        // Hit testing must use the zoom the user is looking at.
+        Self::zoomed(
             editor.visible_line_count(),
             editor.visible_scroll_offset(),
             editor.minimap_source_rows(editor.viewport_height),
             height,
             editor.scroll_past_end,
+            editor.minimap_zoom.get().painted(),
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn new(
         total_lines: usize,
         scroll: usize,
         visible_lines: usize,
         height: usize,
         scroll_past_end: bool,
+    ) -> Self {
+        Self::zoomed(total_lines, scroll, visible_lines, height, scroll_past_end, 1.0)
+    }
+
+    pub(crate) fn zoomed(
+        total_lines: usize,
+        scroll: usize,
+        visible_lines: usize,
+        height: usize,
+        scroll_past_end: bool,
+        zoom: f32,
     ) -> Self {
         // Match the editor's range: the last line can reach the top of the
         // viewport. Include the remaining blank rows in both the content map
@@ -441,7 +510,7 @@ impl MinimapLayout {
         let visible = visible_lines.max(1).min(scrollable_lines);
         let max_scroll = scrollable_lines.saturating_sub(visible);
         let scroll = scroll.min(max_scroll);
-        let window = minimap_window(scrollable_lines, scroll, visible, height);
+        let window = zoomed_minimap_window(scrollable_lines, scroll, visible, height, zoom);
         // The first and last visible lines may share bands with offscreen
         // text. Include those bands using the same boundaries as the markers.
         let view_start =
@@ -450,6 +519,7 @@ impl MinimapLayout {
         Self {
             window,
             height,
+            zoom,
             extent: scrollable_lines,
             visible,
             scroll,
@@ -473,7 +543,8 @@ impl MinimapLayout {
     /// accumulate drift. The slider can traverse the entire document.
     pub(crate) fn drag_scroll(&self, start_row: usize, row: usize) -> usize {
         let view_start = |scroll| {
-            let window = minimap_window(self.extent, scroll, self.visible, self.height);
+            let window =
+                zoomed_minimap_window(self.extent, scroll, self.visible, self.height, self.zoom);
             minimap_row_after(scroll.saturating_add(1), window, self.height).saturating_sub(1)
         };
         let last = view_start(self.max_scroll);
@@ -685,13 +756,38 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
         return;
     }
 
-    let layout = MinimapLayout::new(
+    let visible_scroll = editor.visible_row_for_line(scroll);
+    let detail = MinimapLayout::zoomed(
         visible_total,
-        editor.visible_row_for_line(scroll),
+        visible_scroll,
         visible_lines,
         height,
         editor.scroll_past_end,
+        1.0,
     );
+    // Only a document longer than the detail window has an overview to show.
+    let zoomable = detail.window.len() < detail.extent;
+    let mut clock = editor.minimap_zoom.get();
+    let zoom = clock.advance(
+        editor.minimap_overview.get(),
+        (visible_scroll, editor.wrap_scroll_offset),
+        active,
+        zoomable,
+        std::time::Instant::now(),
+    );
+    editor.minimap_zoom.set(clock);
+    let layout = if zoom >= 1.0 || !zoomable {
+        detail
+    } else {
+        MinimapLayout::zoomed(
+            visible_total,
+            visible_scroll,
+            visible_lines,
+            height,
+            editor.scroll_past_end,
+            zoom,
+        )
+    };
     let window = layout.window;
     let view_start_row = layout.view_start;
     let view_end_row = layout.view_end;

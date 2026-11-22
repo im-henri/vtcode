@@ -240,6 +240,7 @@ impl App {
             sticky_scroll: Some(self.sticky_scroll),
             sticky_scroll_max: Some(self.sticky_scroll_max),
             scroll_past_end: Some(self.scroll_past_end),
+            minimap_overview: Some(self.minimap_overview),
             focus_mode: Some(self.focus_mode),
             show_word_count: Some(self.show_word_count),
             screencast_mode: Some(self.screencast_mode),
@@ -705,6 +706,9 @@ impl App {
         }
         if let Some(v) = s.scroll_past_end {
             self.scroll_past_end = v;
+        }
+        if let Some(v) = s.minimap_overview {
+            self.minimap_overview = v;
         }
         if let Some(v) = s.focus_mode {
             self.focus_mode = v;

@@ -330,6 +330,9 @@ impl App {
             "scroll_past_end" => {
                 self.scroll_past_end = !self.scroll_past_end;
             }
+            "minimap_overview" => {
+                self.minimap_overview = !self.minimap_overview;
+            }
             "word_count" => {
                 self.show_word_count = !self.show_word_count;
             }

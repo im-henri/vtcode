@@ -3958,6 +3958,16 @@ fn next_event_wait_with_output(
     if output_ready && let Some(wait) = app.copy_animation_next_wait(std::time::Instant::now()) {
         include(wait);
     }
+    if output_ready
+        && app.terminal_has_focus
+        && let Some(at) = crate::ui_editor_minimap::zoom_wake()
+    {
+        let now = std::time::Instant::now();
+        include(
+            at.saturating_duration_since(now)
+                .max(app.animations.background_frame_wait(now)),
+        );
+    }
     // Vim mapping timeouts ('timeoutlen') and the yank highlight.
     if let Some(deadline) = crate::vim::feedback::next_deadline(app) {
         include(deadline.saturating_duration_since(std::time::Instant::now()));
@@ -5026,6 +5036,14 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             .background_draw_wait(app.terminal_has_focus, std::time::Instant::now())
             == Some(Duration::ZERO);
         needs_redraw |= background_due;
+        // The minimap overview zoom changes geometry, so its few transition
+        // frames take the ordinary path; the hold between them is one timer.
+        if app.terminal_has_focus
+            && crate::ui_editor_minimap::zoom_wake()
+                .is_some_and(|at| at <= std::time::Instant::now())
+        {
+            needs_redraw = true;
+        }
 
         let activity_now = std::time::Instant::now();
         app.background.refresh_activity(activity_now);
@@ -5057,6 +5075,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             let frame_started = std::time::Instant::now();
             app.rendering_animation_frame = !needs_redraw;
             if needs_redraw {
+                // Painting a minimap that is still moving arms this again.
+                crate::ui_editor_minimap::take_zoom_wake();
                 app.sync_duplicate_file_tabs();
                 windows.invalidate_pending_workspace_redraw(app);
                 app.ensure_active_tab_visible();
