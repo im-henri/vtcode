@@ -217,6 +217,46 @@ fn cursor_smear_runs_on_navigation_and_only_animates_typing_when_enabled() {
 }
 
 #[test]
+fn a_loading_file_shows_its_first_caret_in_place_then_smears_later_moves() {
+    use std::time::Instant;
+
+    let mut app = fixture("first\nsecond\nthird line\nfourth\n");
+    app.show_minimap = false;
+    app.animation_settings.set(AnimationEffect::TabSlide, false);
+    app.animation_settings
+        .set(AnimationEffect::CursorSmear, true);
+    app.animation_settings
+        .set_duration(AnimationEffect::CursorSmear, 1500);
+    let id = app.tabs[0].editor.navigation_id;
+    // A search result opens a file whose text is still loading: the
+    // placeholder caret sits at the origin while the target position waits.
+    app.tabs[0].editor.bg_loading = true;
+    app.tabs[0].editor.pending_cursor_position = Some((2, 4));
+    render(&mut app, 100, 20);
+    app.tabs[0].editor.bg_loading = false;
+    app.tabs[0].editor.pending_cursor_position = None;
+    app.tabs[0].editor.cursor_line = 2;
+    app.tabs[0].editor.cursor_col = 4;
+    let probe = Instant::now();
+    render(&mut app, 100, 20);
+    assert!(
+        !app.animations
+            .cursor_smear_active(id, &app.animation_settings, probe),
+        "the first caret of a freshly loaded file appears without a smear"
+    );
+
+    app.tabs[0].editor.cursor_line = 0;
+    app.tabs[0].editor.cursor_col = 2;
+    let probe = Instant::now();
+    render(&mut app, 100, 20);
+    assert!(
+        app.animations
+            .cursor_smear_active(id, &app.animation_settings, probe),
+        "moving to the next result in the open file still smears"
+    );
+}
+
+#[test]
 fn cursor_effects_animate_the_first_move_from_eol_in_every_editor_path() {
     use std::time::{Duration, Instant};
 

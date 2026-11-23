@@ -2090,6 +2090,14 @@ fn draw_at(frame: &mut Frame, app: &mut App, geometry: &Geometry, gutter: Rect, 
     let Some(editor) = app.tabs.get(app.active_tab).map(|tab| &tab.editor) else {
         return;
     };
+    // A file still loading shows its placeholder caret at the origin while
+    // the requested position waits. Observing it would smear from the top-left
+    // once the load lands, so the first real caret appears in place instead.
+    if editor.bg_loading || editor.pending_cursor_position.is_some() {
+        let id = editor.navigation_id;
+        app.animations.forget_view(id);
+        return;
+    }
     let snapshot = Snapshot {
         id: editor.navigation_id,
         rope: editor.rope.clone(),
