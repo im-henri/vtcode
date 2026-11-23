@@ -96,10 +96,10 @@ impl Surface {
         self.output.ready.load(Ordering::Acquire)
     }
 
-    fn background_ready(&self, focused: bool) -> bool {
-        // The first frame must reach a new terminal even if its focus report
-        // arrives after registration.
-        self.dirty && self.ready() && (focused || self.title.is_empty())
+    /// Visible windows repaint their changes whether or not any vtcode
+    /// window has focus; pacing keeps background bursts cheap.
+    fn background_ready(&self) -> bool {
+        self.dirty && self.ready()
     }
 
     fn resize(&mut self, width: u16, height: u16) {
@@ -345,19 +345,19 @@ impl Windows {
         }
     }
 
-    pub(crate) fn background_draw_ready(&self, focused: bool) -> bool {
-        (!self.is_main() && self.main_dirty && focused)
+    pub(crate) fn background_draw_ready(&self) -> bool {
+        (!self.is_main() && self.main_dirty)
             || self.windows.iter().any(|(&id, window)| {
                 id != self.id
                     && window
                         .surface
                         .as_ref()
-                        .is_some_and(|surface| surface.background_ready(focused))
+                        .is_some_and(|surface| surface.background_ready())
             })
     }
 
-    pub(crate) fn background_draw_wait(&self, focused: bool, now: Instant) -> Option<Duration> {
-        self.background_draw_ready(focused)
+    pub(crate) fn background_draw_wait(&self, now: Instant) -> Option<Duration> {
+        self.background_draw_ready()
             .then(|| self.next_background_paint.saturating_duration_since(now))
     }
 
@@ -392,7 +392,7 @@ impl Windows {
         terminal: &mut Terminal<B>,
         app: &mut App,
     ) -> Result<(), B::Error> {
-        if self.is_main() || !self.main_dirty || !app.terminal_has_focus {
+        if self.is_main() || !self.main_dirty {
             return Ok(());
         }
         if let Some(owner) = workspace_mut(app, self.main_workspace) {
@@ -410,7 +410,6 @@ impl Windows {
 
     pub(crate) fn paint_background(&mut self, app: &mut App) {
         let budget = std::time::Instant::now() + std::time::Duration::from_millis(5);
-        let focused = app.terminal_has_focus;
         let mut ready: Vec<_> = self
             .windows
             .iter()
@@ -419,7 +418,7 @@ impl Windows {
                     && window
                         .surface
                         .as_ref()
-                        .is_some_and(|surface| surface.background_ready(focused)))
+                        .is_some_and(|surface| surface.background_ready()))
                 .then_some(id)
             })
             .collect();

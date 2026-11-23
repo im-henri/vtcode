@@ -479,22 +479,18 @@ fn background_frames_wait_only_for_damaged_windows_in_the_changed_workspace() {
     windows.id = 1;
     let now = Instant::now();
     windows.invalidate_workspace(windows.main_workspace + 1);
-    assert_eq!(windows.background_draw_wait(true, now), None);
+    assert_eq!(windows.background_draw_wait(now), None);
     windows.invalidate_workspace(windows.main_workspace);
-    assert_eq!(
-        windows.background_draw_wait(true, now),
-        Some(Duration::ZERO)
-    );
+    assert_eq!(windows.background_draw_wait(now), Some(Duration::ZERO));
     windows.pace_background_draws(now);
     assert!(
         windows
-            .background_draw_wait(true, now)
+            .background_draw_wait(now)
             .is_some_and(|delay| !delay.is_zero())
     );
-    assert_eq!(windows.background_draw_wait(false, now), None);
     let mut main = Terminal::new(TestBackend::new(80, 24)).unwrap();
     windows.paint_main_background(&mut main, &mut app).unwrap();
-    assert_eq!(windows.background_draw_wait(true, now), None);
+    assert_eq!(windows.background_draw_wait(now), None);
 
     app.highlight_words_across_tabs = true;
     let mut detached = Terminal::new(TestBackend::new(90, 24)).unwrap();
@@ -502,9 +498,9 @@ fn background_frames_wait_only_for_damaged_windows_in_the_changed_workspace() {
         .draw(|frame| crate::ui::draw(frame, &mut app))
         .unwrap();
     windows.invalidate_pending_workspace_redraw(&mut app);
-    assert!(windows.background_draw_ready(true));
+    assert!(windows.background_draw_ready());
     windows.paint_main_background(&mut main, &mut app).unwrap();
-    assert!(!windows.background_draw_ready(true));
+    assert!(!windows.background_draw_ready());
 }
 
 #[test]
@@ -519,7 +515,7 @@ fn theme_previews_from_a_detached_window_repaint_the_main_window_every_time() {
     let mut main = Terminal::new(TestBackend::new(100, 24)).unwrap();
     windows.invalidate_background();
     windows.paint_main_background(&mut main, &mut app).unwrap();
-    assert!(!windows.background_draw_ready(true));
+    assert!(!windows.background_draw_ready());
 
     // Revisiting themes leaves their highlights cached, so no document
     // change can hide a missing repaint.
@@ -528,7 +524,7 @@ fn theme_previews_from_a_detached_window_repaint_the_main_window_every_time() {
     ] {
         assert!(app.set_theme_by_key(key));
         windows.invalidate_pending_workspace_redraw(&mut app);
-        assert!(windows.background_draw_ready(true), "{key}");
+        assert!(windows.background_draw_ready(), "{key}");
         windows.paint_main_background(&mut main, &mut app).unwrap();
         let background = app.colors.bg_editor;
         assert!(
@@ -539,7 +535,7 @@ fn theme_previews_from_a_detached_window_repaint_the_main_window_every_time() {
                 .any(|cell| cell.bg == background),
             "main window kept the previous palette after previewing {key}"
         );
-        assert!(!windows.background_draw_ready(true));
+        assert!(!windows.background_draw_ready());
     }
     assert_eq!(windows.active(), 1);
 }
@@ -575,7 +571,7 @@ fn theme_previews_from_a_detached_window_rehighlight_the_main_window_syntax() {
         loop {
             app.poll_background_results();
             windows.invalidate_pending_workspace_redraw(&mut app);
-            if windows.background_draw_ready(true) {
+            if windows.background_draw_ready() {
                 windows.paint_main_background(&mut main, &mut app).unwrap();
             }
             let expected = app
@@ -684,19 +680,16 @@ fn background_main_refreshes_its_own_sidebar_while_the_detached_editor_keeps_foc
             original_path: None,
         });
         windows.invalidate_background();
+        // A visible window repaints changes even while vtcode is unfocused.
         app.terminal_has_focus = false;
-        assert!(!windows.background_draw_ready(false));
+        assert!(windows.background_draw_ready());
         windows.paint_main_background(&mut main, &mut app).unwrap();
-        assert!(!screen_text(&main).contains("fresh-change.txt"));
-
         app.terminal_has_focus = true;
-        assert!(windows.background_draw_ready(true));
-        windows.paint_main_background(&mut main, &mut app).unwrap();
         assert!(
             screen_text(&main).contains("fresh-change.txt"),
             "{sidebar:?}"
         );
-        assert!(!windows.background_draw_ready(true));
+        assert!(!windows.background_draw_ready());
         assert_eq!(windows.active(), 1);
         assert_eq!(app.detached_window_id(), Some(1));
         assert_eq!(app.editor().unwrap().navigation_id, view);

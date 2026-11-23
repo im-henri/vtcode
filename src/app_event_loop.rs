@@ -114,14 +114,6 @@ const SCREENCAST_LIFETIME: Duration = Duration::from_secs(3);
 const TAB_TOOLTIP_DELAY: Duration = Duration::from_millis(500);
 const SAVING_FLASH_LIFETIME: Duration = Duration::from_millis(1_500);
 
-fn background_chat_redraw(app: &App, was_running: bool, changed: bool) -> bool {
-    app.terminal_has_focus
-        || was_running
-        || changed
-        || app.chat.any_agent_running()
-        || app.chat.rollback.busy()
-}
-
 fn open_disk_sources(
     app: &App,
 ) -> impl Iterator<
@@ -1852,6 +1844,130 @@ mod tests {
         assert_eq!(app.wheel_scroll.as_ref().unwrap().next_wait(later), None);
     }
 
+    /// Hosts deliver wheel input to a window under the pointer without
+    /// focusing it. Its result must paint then, not after a later click.
+    #[test]
+    fn unfocused_wheel_scroll_paints_without_regaining_focus() {
+        // Animated and single-step scrolls take different redraw paths.
+        unfocused_wheel_scroll_paints(3);
+        unfocused_wheel_scroll_paints(1);
+    }
+
+    /// Unfocused frames are no longer filtered, so an idle unfocused window
+    /// must stop requesting them by itself once startup work settles.
+    #[test]
+    fn idle_unfocused_window_stops_painting_after_settling() {
+        use crossterm::event::Event;
+        use ratatui::{
+            Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect,
+        };
+        let mut app = crate::app::App::test_new();
+        app.tabs.push(crate::app::Tab::new_file(
+            crate::editor::Editor::test_with_text(
+                &"let value = 1;
+"
+                .repeat(200),
+            ),
+        ));
+        app.active_pane = crate::app::ActivePane::Editor;
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(Vec::<u8>::new()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 120, 30)),
+            },
+        )
+        .unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let wake = app.background.wake_handle();
+        // (focus lost at, last unfocused frame at)
+        let frames = std::rc::Rc::new(std::cell::Cell::new(None));
+        let counted = frames.clone();
+        super::pointer_event_loop_latency_tests::observe(move |app| {
+            let now = std::time::Instant::now();
+            if app.terminal_has_focus {
+                counted.set(Some((now, now)));
+                sender.send(Ok(Event::FocusLost)).unwrap();
+                let (stop, stop_wake) = (sender.clone(), wake.clone());
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(600));
+                    let _ = stop.send(Err(std::io::Error::other("idle window observed")));
+                    stop_wake.notify();
+                });
+                wake.notify();
+            } else if let Some((lost, _)) = counted.get() {
+                counted.set(Some((lost, now)));
+            }
+            false
+        });
+        let pump = super::TerminalEventPump::from_receiver(receiver);
+        let result = super::run_app(&mut terminal, &mut app, pump, None);
+        super::pointer_event_loop_latency_tests::clear_observer();
+        assert_eq!(result.unwrap_err().to_string(), "idle window observed");
+        let (lost, last) = frames.get().unwrap();
+        assert!(last > lost, "the focus change was never painted");
+        assert!(
+            last - lost < Duration::from_millis(300),
+            "unfocused window kept painting for {:?}",
+            last - lost
+        );
+    }
+
+    fn unfocused_wheel_scroll_paints(scroll_speed: usize) {
+        use crossterm::event::Event;
+        use ratatui::{
+            Terminal, TerminalOptions, Viewport, backend::CrosstermBackend, layout::Rect,
+        };
+        let mut app = animation_fixture();
+        app.tabs[0].editor.rope = ropey::Rope::from_str(
+            &"line
+"
+            .repeat(100),
+        );
+        app.source_control_enabled = false;
+        app.scroll_speed = scroll_speed;
+        let mut terminal = Terminal::with_options(
+            CrosstermBackend::new(Vec::<u8>::new()),
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, 100, 24)),
+            },
+        )
+        .unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let (done, finished) = std::sync::mpsc::channel();
+        let wake = app.background.wake_handle();
+        let watchdog = {
+            let sender = sender.clone();
+            let wake = wake.clone();
+            std::thread::spawn(move || {
+                if finished.recv_timeout(Duration::from_secs(5)).is_err() {
+                    let _ = sender.send(Err(std::io::Error::other(
+                        "unfocused wheel scroll was never painted",
+                    )));
+                    wake.notify();
+                }
+            })
+        };
+        let mut sent = false;
+        super::pointer_event_loop_latency_tests::observe(move |app| {
+            if !sent {
+                sender.send(Ok(Event::FocusLost)).unwrap();
+                sender.send(Ok(Event::Mouse(scroll_event()))).unwrap();
+                wake.notify();
+                sent = true;
+                return false;
+            }
+            !app.terminal_has_focus && app.editor().unwrap().scroll_offset == scroll_speed
+        });
+        let pump = super::TerminalEventPump::from_receiver(receiver);
+        let result = super::run_app(&mut terminal, &mut app, pump, None);
+        super::pointer_event_loop_latency_tests::clear_observer();
+        let _ = done.send(());
+        watchdog.join().unwrap();
+        result.unwrap();
+        assert!(!app.terminal_has_focus);
+        assert_eq!(app.editor().unwrap().scroll_offset, scroll_speed);
+    }
+
     #[test]
     fn wheel_animation_completes_in_the_event_loop_without_more_input() {
         use crossterm::event::Event;
@@ -3131,17 +3247,12 @@ mod tests {
             next_event_wait(&app, false, false)
                 .is_some_and(|wait| wait <= Duration::from_millis(120))
         );
-        assert!(super::background_chat_redraw(&app, false, false));
         app.terminal_has_focus = true;
         app.chat
             .session_mut()
             .unwrap()
             .finish(Some(p::StopReason::EndTurn));
         assert_eq!(next_event_wait(&app, false, false), None);
-        app.terminal_has_focus = false;
-        assert!(super::background_chat_redraw(&app, true, true));
-        assert!(super::background_chat_redraw(&app, false, true));
-        assert!(!super::background_chat_redraw(&app, false, false));
     }
 
     #[test]
@@ -4804,7 +4915,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     let mut last_title_key: Option<(u64, bool)> = None; // (view identity, modified)
     let mut needs_redraw = true;
     let mut input_redraw = true;
-    let mut unfocused_redraw_pending = false;
     let mut service_scheduler = crate::ui_work::Scheduler::default();
     let mut startup_assets_requested = false;
     let mut input_started: Option<std::time::Instant> = None;
@@ -4837,7 +4947,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         if windows.poll_drag(app, &main_events, false) | windows.poll(app) {
             needs_redraw = true;
             input_redraw = true;
-            unfocused_redraw_pending = true;
         }
         if previous_window != windows.active() {
             selection_drag = None;
@@ -4848,9 +4957,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             last_active_view = None;
             periodic_disk_paths_cache = PeriodicDiskPaths::default();
         }
-        if app.terminal_has_focus {
-            app.wheel_scroll.get_or_insert_with(Default::default);
-        }
+        app.wheel_scroll.get_or_insert_with(Default::default);
         if let Some(started) = input_started.take() {
             app.background.activity.ui.input_handled(
                 started,
@@ -4901,8 +5008,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         // One shared wall-clock budget, interrupted by queued input. Giving
         // every producer its own full budget used to add up before a key or
         // mouse event could be handled, especially when the OS was busy.
-        let agent_was_running = app.chat.any_agent_running();
-        let mut agent_changed = false;
         let mut service_turn = crate::ui_work::Turn::new(std::time::Instant::now());
         while let Some(service) = service_scheduler.next(
             &mut service_turn,
@@ -4925,12 +5030,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             needs_redraw |= changed;
             for workspace in changed_workspaces.drain(..) {
                 windows.invalidate_workspace(workspace);
-            }
-            if matches!(service, Service::Terminals | Service::Agents) || !windows.is_main() {
-                unfocused_redraw_pending |= changed;
-            }
-            if service == Service::Agents {
-                agent_changed = changed;
             }
             let finished = std::time::Instant::now();
             let phase = match service {
@@ -5025,16 +5124,11 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             }
         }
 
-        // A resize invalidates the displayed frame even without focus. Keep
-        // it and terminal/agent output pending until a frame is actually drawn.
-        if !unfocused_redraw_pending
-            && !background_chat_redraw(app, agent_was_running, agent_changed)
-        {
-            needs_redraw = false;
-        }
-        let background_due = windows
-            .background_draw_wait(app.terminal_has_focus, std::time::Instant::now())
-            == Some(Duration::ZERO);
+        // Real state changes paint whether or not the terminal has focus: the
+        // window stays visible, and hosts deliver wheel and click input to an
+        // unfocused window. Only cosmetic timers above are focus-gated.
+        let background_due =
+            windows.background_draw_wait(std::time::Instant::now()) == Some(Duration::ZERO);
         needs_redraw |= background_due;
         // The minimap overview zoom changes geometry, so its few transition
         // frames take the ordinary path; the hold between them is one timer.
@@ -5064,7 +5158,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                     && background_frame_wait.is_zero()));
         // Advance the actual viewport only when it can be painted. Clicks
         // and selection hit tests must still see the last presented rows.
-        if can_draw && app.terminal_has_focus {
+        if can_draw {
             needs_redraw |= app.advance_wheel_scroll(now);
         }
         let draw_changed = needs_redraw && can_draw;
@@ -5252,7 +5346,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             let switched_windows = windows.active() != active_window;
             needs_redraw = switched_windows;
             input_redraw = switched_windows;
-            unfocused_redraw_pending = switched_windows;
         }
 
         // Handle mouse-triggered exit (from clicking exit confirm buttons)
@@ -5481,9 +5574,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             // rather than periodically walking the application state.
             let output_ready = windows.ready_to_draw();
             let background_wait = output_ready
-                .then(|| {
-                    windows.background_draw_wait(app.terminal_has_focus, std::time::Instant::now())
-                })
+                .then(|| windows.background_draw_wait(std::time::Instant::now()))
                 .flatten();
             let redraw_ready =
                 output_ready && (needs_redraw || background_wait == Some(Duration::ZERO));
@@ -5566,7 +5657,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 windows.defer_input_until_focused_frame(next_event);
                 needs_redraw = true;
                 input_redraw = true;
-                unfocused_redraw_pending = true;
                 selection_drag = None;
                 last_active_view = None;
                 last_caret_state = capture_caret_state(app);
@@ -5594,7 +5684,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                     // that the input pump coalesced back to the current size.
                     terminal.clear()?;
                 }
-                unfocused_redraw_pending = true;
             }
             if matches!(&next_event, Event::Key(key) if key.kind != KeyEventKind::Release && !matches!(key.code, KeyCode::Modifier(_)))
                 || matches!(&next_event, Event::Mouse(_) | Event::Paste(_))
@@ -5627,7 +5716,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                         && windows.poll_drag(app, &main_events, true)
                     {
                         needs_redraw = true;
-                        unfocused_redraw_pending = true;
                         continue;
                     }
                     let caret_before = capture_caret_state(app);
@@ -5680,7 +5768,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                     app.update_link_hover_modifiers(KeyModifiers::NONE);
                     app.animations.clear();
                     app.copy_animation.clear();
-                    app.wheel_scroll = None;
                     app.minimap_resize.cancel();
                     app.forward_terminal_focus(false);
                     app.idle_quiescent = true;
