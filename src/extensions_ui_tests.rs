@@ -267,6 +267,57 @@ fn extensions_ui_info_actions_target_the_open_page_and_protect_it_from_edits() {
 }
 
 #[test]
+fn extensions_ui_manifest_buttons_show_registered_commands_and_run_them() {
+    let (_root, mut app) = fixture(3);
+    let record = &mut app.extension_manager.records[0];
+    record.manifest.buttons = vec![
+        crate::extension_manifest::ManifestButton {
+            command: "calc.open".into(),
+            title: None,
+        },
+        crate::extension_manifest::ManifestButton {
+            command: "calc.missing".into(),
+            title: Some("Never Shown".into()),
+        },
+    ];
+    app.open_extension_info_tab("test.ext00");
+    let mut terminal = Terminal::new(TestBackend::new(110, 35)).unwrap();
+    info(&mut app, &mut terminal);
+    assert!(!text(&terminal).contains("Open Calculator"));
+
+    // A button appears once the running extension registers its command.
+    app.extension_manager.records[0].commands = vec![crate::extension_manifest::ExtensionCommand {
+        id: "calc.open".into(),
+        title: "Open Calculator".into(),
+        runtime_index: 0,
+    }];
+    info(&mut app, &mut terminal);
+    assert!(!text(&terminal).contains("Never Shown"));
+    let (x, y) = find(&terminal, "Open Calculator");
+    let (_, management_y) = find(&terminal, "Disable");
+    assert!(y > management_y, "extension buttons sit on their own row");
+    crate::mouse::handle_mouse(
+        &mut app,
+        event(MouseEventKind::Down(MouseButton::Left), x, y),
+    );
+    // The fixture has no runtime, so the invocation reports it for this extension.
+    let last = &app.notification_history.last().unwrap().0;
+    assert_eq!(last, "Extension is not loaded: Test Extension 00");
+
+    // The button is part of the Tab cycle: 5 management actions, 1 extension
+    // button and 3 sections bring focus back to it.
+    app.notification_history.clear();
+    for _ in 0..9 {
+        key(&mut app, KeyCode::Tab);
+    }
+    key(&mut app, KeyCode::Enter);
+    assert_eq!(
+        app.notification_history.last().unwrap().0,
+        "Extension is not loaded: Test Extension 00"
+    );
+}
+
+#[test]
 fn extensions_ui_tiny_and_offset_layouts_keep_hit_regions_inside_their_surface() {
     let (_root, mut app) = fixture(3);
     for width in [1, 5, 16, 24, 38, 60] {

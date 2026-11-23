@@ -349,6 +349,25 @@ impl ExtensionManager {
                 status_text: record.status_text.clone(),
                 commands: record.commands.clone(),
                 views: record.views.clone(),
+                buttons: record
+                    .manifest
+                    .buttons
+                    .iter()
+                    .filter_map(|button| {
+                        let command = record
+                            .commands
+                            .iter()
+                            .find(|command| command.id == button.command)?;
+                        Some(extension_manifest::ExtensionCommand {
+                            title: button
+                                .title
+                                .clone()
+                                .filter(|title| !title.trim().is_empty())
+                                .unwrap_or_else(|| command.title.clone()),
+                            ..command.clone()
+                        })
+                    })
+                    .collect(),
                 _overlays: record.overlays.clone(),
                 last_error: record.last_error.clone(),
                 logs: record.logs.clone(),
@@ -995,6 +1014,7 @@ mod tests {
                 api_version: "1".to_string(),
                 lsp: None,
                 bundle: None,
+                buttons: Vec::new(),
             },
             manifest_path: project_root
                 .join("extensions")

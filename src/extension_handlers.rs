@@ -922,6 +922,7 @@ mod tests {
             api_version: "0.1".to_string(),
             lsp: None,
             bundle: None,
+            buttons: Vec::new(),
         }
     }
 

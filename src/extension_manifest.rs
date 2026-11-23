@@ -50,6 +50,20 @@ pub(crate) struct ExtensionManifest {
     /// Optional bundle configuration for self-contained extensions
     #[serde(default)]
     pub bundle: Option<BundleConfig>,
+    /// Commands shown as buttons on the extension's page in the Extensions tab.
+    #[serde(default)]
+    pub buttons: Vec<ManifestButton>,
+}
+
+/// A manifest-declared shortcut to one of the extension's registered commands.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManifestButton {
+    /// Id passed to `register_command`.
+    pub command: String,
+    /// Button label; defaults to the registered command's title.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 // ── Bundle configuration ────────────────────────────────────────────
@@ -252,6 +266,8 @@ pub(crate) struct ExtensionRecordView {
     pub status_text: String,
     pub commands: Vec<ExtensionCommand>,
     pub views: HashMap<String, ExtensionView>,
+    /// Manifest buttons whose commands the running extension has registered.
+    pub buttons: Vec<ExtensionCommand>,
     pub _overlays: HashMap<String, ExtensionOverlay>,
     pub last_error: Option<String>,
     pub logs: Vec<String>,
@@ -513,6 +529,7 @@ mod tests {
             api_version: api.into(),
             lsp: None,
             bundle: None,
+            buttons: Vec::new(),
         }
     }
 

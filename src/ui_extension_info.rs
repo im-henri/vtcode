@@ -37,6 +37,8 @@ enum Action {
     Versions,
     Repository,
     CopyId,
+    /// An extension-declared button: index into `ExtensionRecordView::buttons`.
+    Command(usize),
 }
 #[derive(Default)]
 struct Page {
@@ -156,6 +158,12 @@ fn run_action(app: &mut App, action: Action) {
                 app.open_external(crate::external_open::Request::Url(url));
             }
         }
+        Action::Command(button) => {
+            if let Some(command) = ext.buttons.get(button) {
+                let command_id = format!("ext_cmd:{id}:{}", command.id);
+                app.execute_extension_command_id(&command_id);
+            }
+        }
         Action::CopyId => match crate::clipboard::set_text(&id) {
             Ok(()) => app.notify("Extension identifier copied"),
             Err(error) => app.notify(format!("Could not copy identifier: {error}")),
@@ -260,9 +268,11 @@ fn page_lines(
                     clean(&command.id)
                 ));
             }
-            text.push_str(
-                "\nRun extension commands from the command palette (F1).\n\n## Views\n\n",
-            );
+            text.push_str(if ext.buttons.is_empty() {
+                "\nRun extension commands from the command palette (F1).\n\n## Views\n\n"
+            } else {
+                "\nRun extension commands from the command palette (F1) or the buttons above.\n\n## Views\n\n"
+            });
             if ext.views.is_empty() {
                 text.push_str("No views are currently registered.\n");
             }
@@ -500,6 +510,46 @@ pub(crate) fn draw_extension_info(f: &mut Frame, app: &mut App, area: Rect) {
         );
         action_hits.push((action, rect));
         x += width + 1;
+    }
+    // Buttons the extension declares get their own row, apart from management.
+    if !ext.buttons.is_empty() {
+        x = title_x;
+        y += 2;
+        for (button, command) in ext.buttons.iter().enumerate() {
+            let label = clean(&command.title);
+            let width = (label.width() as u16 + 2).min(title_w);
+            if x > title_x && x + width > inner.right() {
+                x = title_x;
+                y += 2;
+            }
+            if y >= inner.bottom().saturating_sub(3) || width == 0 {
+                break;
+            }
+            let rect = Rect::new(x, y, width, 1);
+            let hovered = rect.contains((app.mouse_col, app.mouse_row).into());
+            let focused = interactive
+                && app.active_pane == ActivePane::Editor
+                && app.ext_info.focus == Some(action_hits.len());
+            let button_style = crate::ui_widgets::action_button_style(
+                &app.colors,
+                bg,
+                true,
+                hovered || focused,
+                true,
+            );
+            f.render_widget(
+                Paragraph::new(clip(&format!(" {label} "), width)).style(
+                    button_style.add_modifier(if focused {
+                        Modifier::UNDERLINED
+                    } else {
+                        Modifier::empty()
+                    }),
+                ),
+                rect,
+            );
+            action_hits.push((Action::Command(button), rect));
+            x += width + 1;
+        }
     }
     y = (y + 2).min(inner.bottom());
     let (note, color) = match ext.state {

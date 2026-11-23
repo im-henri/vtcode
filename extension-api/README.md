@@ -16,6 +16,22 @@ Host calls are available when compiling for `wasm32`. Shared editor data types
 also compile natively, so extension logic can be unit-tested without linking
 the editor's Wasm host imports into a native test executable.
 
+## Page buttons
+
+An optional `buttons` list puts shortcuts to the extension's commands on its
+page in the Extensions tab, so users need not find them in the command palette:
+
+```json
+"buttons": [
+  { "command": "calc.open" },
+  { "command": "calc.reset", "title": "Reset" }
+]
+```
+
+`command` is an id passed to `register_command`; `title` defaults to the title
+registered with it. A button appears only while the extension is loaded and has
+registered that command.
+
 ## Tagged runtime packages
 
 Each extension has a GitHub repository and versioned GitHub releases.
