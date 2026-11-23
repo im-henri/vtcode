@@ -1,6 +1,6 @@
 use crate::line_changes::LineChanges;
 use crate::merge_conflict_ui::{self, CONFLICT_MARKER, marker_badge, marker_color};
-use crate::ui_colors::{ChangeSurface, ensure_contrast};
+use crate::ui_colors::ChangeSurface;
 use rustc_hash::FxHashMap;
 use std::ops::Range;
 
@@ -248,17 +248,7 @@ fn minimap_row_markers(
         cells[..count].fill(("█", style));
     }
     if let Some(color) = staged {
-        let ink = ensure_contrast(
-            background,
-            color,
-            4.5,
-            &[
-                colors.fg_text,
-                Color::Rgb(0, 0, 0),
-                Color::Rgb(255, 255, 255),
-            ],
-        );
-        cells[count] = ("•", marker_style(color).fg(ink));
+        cells[count] = (" ", marker_style(color));
         count += 1;
     }
     if let Some(color) = working {
@@ -1344,7 +1334,7 @@ mod tests {
                     .iter()
                     .map(|cell| cell.0)
                     .collect::<Vec<_>>(),
-                ["█", "•", " "]
+                ["█", " ", " "]
             );
             assert_eq!(markers.cells[0].1.fg, Some(colors.ui.fg_minimap_warning));
             assert_eq!(
@@ -1363,7 +1353,7 @@ mod tests {
                 &colors,
             );
             assert_eq!(replacement.width, 1);
-            assert_eq!(replacement.cells[0].0, "•");
+            assert_eq!(replacement.cells[0].0, " ");
             assert_eq!(
                 replacement.cells[0].1.bg,
                 Some(colors.ui.fg_gutter_modified_secondary)
@@ -1688,7 +1678,7 @@ mod tests {
     // -- diagnostic_marker_color --
 
     #[test]
-    fn minimap_uses_gutter_colors_and_only_staged_changes_get_a_symbol_at_viewport_border() {
+    fn minimap_uses_gutter_colors_at_viewport_border() {
         let mut editor = crate::editor::Editor::new();
         editor.rope = ropey::Rope::from_str(&format!("{}line", "line\n".repeat(99)));
         let mut colors = test_colors();
@@ -1706,7 +1696,7 @@ mod tests {
             ('A', colors.ui.fg_gutter_added, " "),
             ('M', colors.ui.fg_gutter_modified, " "),
             ('D', colors.ui.fg_gutter_deleted, " "),
-            ('S', colors.ui.fg_gutter_modified_secondary, "•"),
+            ('S', colors.ui.fg_gutter_modified_secondary, " "),
         ] {
             let overview_expected =
                 crate::ui_colors::overview_marker_color(status, &colors).unwrap();
