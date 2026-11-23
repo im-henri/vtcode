@@ -353,7 +353,15 @@ pub(crate) fn code_area_to_buffer_pos(
             ed.effective_wrap_width(),
         );
     }
-    let line = unwrapped_pointer_line(ed, screen_row);
+    let Some(line) = (screen_row < ed.viewport_height)
+        .then(|| ed.visible_line_at(ed.scroll_offset, screen_row))
+        .flatten()
+    else {
+        // Below the last row: land at the very end of the file, like the
+        // wrapped layout does, instead of under the pointer on the last line.
+        let line = ed.line_count().saturating_sub(1);
+        return (line, ed.line_len(line));
+    };
     let col = ed
         .source_column_at_cell(line, ed.horizontal_scroll, ed.line_len(line), screen_col)
         .0;
@@ -1791,6 +1799,20 @@ mod tests {
         // should clamp to the last line index.
         let (line, _col) = code_area_to_buffer_pos(ed, area, 5, 22);
         assert!(line < ed.line_count(), "line should be within bounds");
+    }
+
+    #[test]
+    fn click_below_last_row_lands_at_end_of_file() {
+        let mut app = app_with_content("aaa\nbbbbbb");
+        let ed = app.editor_mut().unwrap();
+        ed.viewport_height = 24;
+        let area = code_rect();
+        // Directly under the short last line's start, the caret still goes
+        // to the very end of the file rather than to column 0.
+        assert_eq!(
+            code_area_to_buffer_pos(ed, area, area.x, area.y + 5),
+            (1, 6)
+        );
     }
 
     // ── with horizontal scroll offset ──────────────────────────────────

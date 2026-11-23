@@ -71,10 +71,10 @@ fn reference_hit(editor: &mut Editor, area: Rect, col: u16, row: u16) -> (usize,
         );
     }
     let visible = editor.visible_lines(editor.scroll_offset, editor.viewport_height);
-    let line = visible
-        .get(row.saturating_sub(area.y) as usize)
-        .copied()
-        .unwrap_or_else(|| editor.line_count().saturating_sub(1));
+    let Some(line) = visible.get(row.saturating_sub(area.y) as usize).copied() else {
+        let line = editor.line_count().saturating_sub(1);
+        return (line, editor.line_len(line));
+    };
     let col = editor
         .source_column_at_cell(
             line,
