@@ -38,6 +38,9 @@ thread_local! {
 #[path = "highlight_coordinate_tests.rs"]
 mod coordinate_tests;
 #[cfg(test)]
+#[path = "highlight_fuzz_tests.rs"]
+mod fuzz_tests;
+#[cfg(test)]
 #[path = "highlight_load_tests.rs"]
 mod load_tests;
 #[cfg(test)]
@@ -168,7 +171,14 @@ struct DocumentCache {
     /// Entries before the latest edit remain valid without rewriting thousands
     /// of version stamps on the UI thread. Keep this bound after convergence:
     /// unvisited entries in a changed suffix may still contain old styles.
+    /// It only moves up while an edit is pending, never past stale rows.
     unchanged_prefix: usize,
+    /// The last version whose retained entries were all exact (no pending
+    /// edit). While `dirty_from` is set, only entries stamped with this
+    /// version describe one consistent parse, so only they may be adopted
+    /// when the parser state converges. Entries written by passes over an
+    /// intermediate version are mixed with older rows after their frontier.
+    base_version: u64,
     checkpoints: LineIndex<CachedCheckpoint, 0>,
     lines: LineIndex<CachedLine>,
     line_bytes: usize,
@@ -199,6 +209,7 @@ impl DocumentCache {
             dirty_from: None,
             dirty_through: None,
             unchanged_prefix: 0,
+            base_version: version,
             checkpoints: LineIndex::default(),
             lines: LineIndex::default(),
             line_bytes: 0,
@@ -252,12 +263,71 @@ impl DocumentCache {
     }
 
     fn line_is_current(&self, line: usize, version: u64) -> bool {
-        line < self.unchanged_prefix || version == self.version
+        line < self.unchanged_prefix
+            || version == self.version
+            || (version == self.base_version && self.dirty_from.is_some_and(|from| line < from))
     }
 
     fn checkpoint_is_current(&self, line: usize, version: u64) -> bool {
         // Checkpoints describe the parser state *before* their source line.
-        line <= self.unchanged_prefix || version == self.version
+        line <= self.unchanged_prefix
+            || version == self.version
+            || (version == self.base_version && self.dirty_from.is_some_and(|from| line <= from))
+    }
+
+    /// Stale checkpoints that still describe the base version exactly.
+    fn checkpoint_can_converge(&self, line: usize, version: u64) -> bool {
+        self.dirty_from.is_some()
+            && version == self.base_version
+            && !self.checkpoint_is_current(line, version)
+    }
+
+    /// The pending edits are fully propagated at the current version. Fold
+    /// base-version rows above the first edit into it, so the closed form
+    /// "below the prefix or stamped with the current version" stays exact.
+    fn finish_propagation(&mut self, converged_at: Option<usize>) {
+        let (version, base) = (self.version, self.base_version);
+        if let Some(from) = self.dirty_from {
+            let start = self.unchanged_prefix.min(from);
+            let mut exact = true;
+            self.lines.for_each_mut(start..from, |_, cached| {
+                if cached.version == base {
+                    cached.version = version;
+                    cached.display_version = version;
+                }
+                exact &= cached.version == version;
+            });
+            self.checkpoints
+                .for_each_mut(start..=from, |_, checkpoint| {
+                    if checkpoint.version == base {
+                        checkpoint.version = version;
+                    }
+                    exact &= checkpoint.version == version;
+                });
+            // With no stale leftovers above the edit, the prefix can cover
+            // them again; later edits then skip this restamping entirely.
+            if exact {
+                self.unchanged_prefix = from;
+            }
+        }
+        if let Some(converged) = converged_at {
+            // Only base rows form one parse with the matching checkpoint.
+            // Rows after an intermediate pass's frontier never do.
+            self.checkpoints.for_each_mut(converged.., |_, checkpoint| {
+                if checkpoint.version == base {
+                    checkpoint.version = version;
+                }
+            });
+            self.lines.for_each_mut(converged.., |_, cached| {
+                if cached.version == base {
+                    cached.version = version;
+                    cached.display_version = version;
+                }
+            });
+        }
+        self.base_version = version;
+        self.dirty_from = None;
+        self.dirty_through = None;
     }
 
     /// Carry unchanged prefix entries into a new content version and retain
@@ -288,24 +358,44 @@ impl DocumentCache {
         let effective_through =
             carried_through.map_or(changed_through, |old| old.max(changed_through));
 
+        // Rows between the new edit and the old prefix were exact through the
+        // prefix rule. Restamp them as base rows before the prefix shrinks so
+        // they stay renderable above later edits and adoptable below them.
+        // Rows past the old prefix are left alone: they can be stale leftovers
+        // of an earlier edit and must never become current by position.
+        if self.dirty_from.is_none() {
+            self.base_version = self.version;
+        }
+        let base = self.base_version;
+        if changed_from < self.unchanged_prefix {
+            let prefix = self.unchanged_prefix;
+            self.lines.for_each_mut(changed_from..prefix, |_, cached| {
+                cached.version = base;
+                cached.display_version = base;
+            });
+            self.checkpoints
+                .for_each_mut(changed_from..=prefix, |_, checkpoint| {
+                    checkpoint.version = base;
+                });
+        }
+        self.unchanged_prefix = self.unchanged_prefix.min(changed_from);
         self.version = version;
         self.line_count = line_count;
         self.dirty_from = Some(effective_dirty);
         self.dirty_through = Some(effective_through);
-        self.unchanged_prefix = effective_dirty;
         if delta == 0 {
             // Ordinary typing changes neither coordinates nor the prefix.
             // Validate retained entries lazily when a viewport requests them.
             #[cfg(test)]
             if REFERENCE_EAGER_PREFIX.get() {
-                self.lines.for_each_mut(..effective_dirty, |_, cached| {
-                    cached.version = version;
-                    cached.display_version = version;
+                let prefix = self.unchanged_prefix;
+                self.lines.for_each_mut(..prefix, |_, cached| {
+                    cached.version = base;
+                    cached.display_version = base;
                 });
-                self.checkpoints
-                    .for_each_mut(..=effective_dirty, |_, checkpoint| {
-                        checkpoint.version = version;
-                    });
+                self.checkpoints.for_each_mut(..=prefix, |_, checkpoint| {
+                    checkpoint.version = base;
+                });
                 self.unchanged_prefix = 0;
             }
             return;
@@ -1309,6 +1399,7 @@ impl Highlighter {
         // colors remain a valid display fallback until the new batch arrives.
         for cache in self.documents.values_mut() {
             cache.checkpoints.clear();
+            cache.unchanged_prefix = 0;
             cache.dirty_from = Some(0);
             cache.dirty_through = Some(cache.line_count);
             cache.lines.for_each_mut(.., |_, line| {
@@ -1516,7 +1607,7 @@ impl Highlighter {
         cache
             .checkpoints
             .for_each(parse_start..=hard_end, |line, checkpoint| {
-                if !cache.checkpoint_is_current(line, checkpoint.version) {
+                if cache.checkpoint_can_converge(line, checkpoint.version) {
                     stale_checkpoints.push((line, checkpoint.clone()));
                 }
             });
@@ -1663,12 +1754,13 @@ impl Highlighter {
 
         if batch.provisional {
             let mut visual_changes = false;
-            let unchanged_prefix = cache.unchanged_prefix;
             for entry in batch.entries {
+                let current = cache
+                    .lines
+                    .get(&entry.line)
+                    .is_some_and(|cached| cache.line_is_current(entry.line, cached.version));
                 if let Some(cached) = cache.lines.get_mut(&entry.line) {
-                    if (entry.line < unchanged_prefix || cached.version == batch.content_version)
-                        && cached.authoritative
-                    {
+                    if current && cached.authoritative {
                         continue;
                     }
                     if cached.hash == entry.hash {
@@ -1749,21 +1841,8 @@ impl Highlighter {
             );
         }
 
-        if let Some(converged) = batch.converged_at {
-            cache
-                .checkpoints
-                .for_each_mut(converged.., |_, checkpoint| {
-                    checkpoint.version = batch.content_version;
-                });
-            cache.lines.for_each_mut(converged.., |_, cached| {
-                cached.version = batch.content_version;
-                cached.display_version = batch.content_version;
-            });
-            cache.dirty_from = None;
-            cache.dirty_through = None;
-        } else if batch.parsed_to >= batch.line_count {
-            cache.dirty_from = None;
-            cache.dirty_through = None;
+        if batch.converged_at.is_some() || batch.parsed_to >= batch.line_count {
+            cache.finish_propagation(batch.converged_at);
         }
 
         // A checkpoint pass targets the last line, not the viewport; trimming
@@ -1920,9 +1999,12 @@ impl Highlighter {
         cache.last_used = self.use_counter;
         let can_project = cache.dirty_from.is_some_and(|start| line_idx >= start)
             && cache.dirty_through.is_some_and(|end| line_idx <= end);
-        let unchanged = line_idx < cache.unchanged_prefix;
+        let current = cache
+            .lines
+            .get(&line_idx)
+            .is_some_and(|entry| cache.line_is_current(line_idx, entry.display_version));
         let entry = cache.lines.get_mut(&line_idx)?;
-        if unchanged || entry.display_version == content_version {
+        if current {
             return Some(entry.rendered());
         }
 
