@@ -37,6 +37,8 @@ enum Action {
     Versions,
     Repository,
     CopyId,
+    /// Deletes an editor-installed extension; the first press only arms it.
+    Remove,
     /// An extension-declared button: index into `ExtensionRecordView::buttons`.
     Command(usize),
 }
@@ -54,6 +56,8 @@ pub(crate) struct State {
     views: Vec<View>,
     focus: Option<usize>,
     pressed: Option<MouseButton>,
+    /// The extension whose Remove button awaits its confirming second press.
+    remove_armed: Option<String>,
 }
 #[derive(Default)]
 struct View {
@@ -131,7 +135,22 @@ fn run_action(app: &mut App, action: Action) {
         return;
     };
     let ext = &views[index];
+    let armed = app.ext_info.remove_armed.take();
     match action {
+        Action::Remove if armed.as_deref() == Some(id.as_str()) => {
+            let result = app.extension_manager.remove_extension(index);
+            app.notify(result.unwrap_or_else(|error| error));
+            app.refresh_palette_commands();
+            app.refresh_open_extension_view_tabs();
+            app.clamp_extensions_selection();
+        }
+        Action::Remove => {
+            app.ext_info.remove_armed = Some(id);
+            app.notify(format!(
+                "Press Confirm Remove to delete {} from disk",
+                ext.name
+            ));
+        }
         Action::Toggle | Action::Reload => {
             // The page can stay open while another extension is selected in the sidebar.
             let result = match action {
@@ -466,15 +485,25 @@ pub(crate) fn draw_extension_info(f: &mut Frame, app: &mut App, area: Rect) {
         ExtensionState::Error => "Retry",
         ExtensionState::Unloaded => "Enable",
     };
+    let remove_armed = app.ext_info.remove_armed.as_deref() == Some(ext.id.as_str());
     let labels = [
         (Action::Toggle, toggle),
         (Action::Reload, "Reload"),
         (Action::Versions, "Versions"),
         (Action::Repository, "Repository ↗"),
         (Action::CopyId, "Copy ID"),
+        (
+            Action::Remove,
+            if remove_armed {
+                "Confirm Remove"
+            } else {
+                "Remove"
+            },
+        ),
     ];
     for (action, label) in labels {
         if matches!(action, Action::Versions | Action::Repository) && repository_url(&ext).is_none()
+            || action == Action::Remove && !ext.removable
         {
             continue;
         }
@@ -494,7 +523,8 @@ pub(crate) fn draw_extension_info(f: &mut Frame, app: &mut App, area: Rect) {
         let button_style = crate::ui_widgets::action_button_style(
             &app.colors,
             bg,
-            action == Action::Toggle && ext.state != ExtensionState::Loaded,
+            action == Action::Toggle && ext.state != ExtensionState::Loaded
+                || action == Action::Remove && remove_armed,
             hovered || focused,
             true,
         );
@@ -561,7 +591,7 @@ pub(crate) fn draw_extension_info(f: &mut Frame, app: &mut App, area: Rect) {
         ExtensionState::Unloaded if !ext.enabled => {
             ("○ This extension is disabled by its configuration.", dim)
         }
-        ExtensionState::Unloaded => ("○ This extension is disabled for this session.", dim),
+        ExtensionState::Unloaded => ("○ This extension is disabled.", dim),
     };
     if y < inner.bottom() {
         f.render_widget(

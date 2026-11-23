@@ -41,7 +41,7 @@ impl ExtensionManager {
     pub(crate) fn reload_all(&mut self) -> Vec<String> {
         let mut notices = Vec::new();
         for index in 0..self.records.len() {
-            if !self.records[index].manifest.enabled {
+            if !self.records[index].manifest.enabled || self.records[index].user_unloaded {
                 continue;
             }
             match self.reload_extension(index) {
@@ -53,15 +53,7 @@ impl ExtensionManager {
     }
 
     pub(crate) fn reload_extension(&mut self, index: usize) -> Result<String, String> {
-        if self.records.get(index).is_some_and(|record| {
-            Self::record_has_unsaved_documents(record)
-                || record.views.values().any(|view| view.input_pending)
-                || self.busy_extension_ids.contains(&record.manifest.id)
-                || self
-                    .pending_view_events
-                    .iter()
-                    .any(|event| event.extension_id == record.manifest.id)
-        }) {
+        if self.record_is_busy(index) {
             return Err("Save or close modified extension documents and wait for pending operations before reloading".into());
         }
         let record = self
@@ -72,25 +64,19 @@ impl ExtensionManager {
         if record.runtime.is_some() {
             let _ = Self::deactivate_record(record); // Error OK: deactivation failure is non-fatal
         }
-        match Self::activate_record(&self.engine, record, &self.settings_file) {
+        let id = record.manifest.id.clone();
+        let result = match Self::activate_record(&self.engine, record, &self.settings_file) {
             Ok(()) => Ok(format!("Reloaded extension: {}", record.manifest.name)),
             Err(err) => {
                 Self::set_record_error(record, &err, "Reload failed");
                 Err(err)
             }
-        }
+        };
+        self.remember_disabled(&id, false, result)
     }
 
     pub(crate) fn unload_extension(&mut self, index: usize) -> Result<String, String> {
-        if self.records.get(index).is_some_and(|record| {
-            Self::record_has_unsaved_documents(record)
-                || record.views.values().any(|view| view.input_pending)
-                || self.busy_extension_ids.contains(&record.manifest.id)
-                || self
-                    .pending_view_events
-                    .iter()
-                    .any(|event| event.extension_id == record.manifest.id)
-        }) {
+        if self.record_is_busy(index) {
             return Err("Save or close modified extension documents and wait for pending operations before unloading".into());
         }
         let record = self
@@ -101,7 +87,122 @@ impl ExtensionManager {
         Self::deactivate_record(record)?;
         record.state = ExtensionState::Unloaded;
         record.status_text = "Unloaded by user".to_string();
-        Ok(format!("Unloaded extension: {}", record.manifest.name))
+        let message = format!("Unloaded extension: {}", record.manifest.name);
+        let id = record.manifest.id.clone();
+        self.remember_disabled(&id, true, Ok(message))
+    }
+
+    fn record_is_busy(&self, index: usize) -> bool {
+        self.records.get(index).is_some_and(|record| {
+            Self::record_has_unsaved_documents(record)
+                || record.views.values().any(|view| view.input_pending)
+                || self.busy_extension_ids.contains(&record.manifest.id)
+                || self
+                    .pending_view_events
+                    .iter()
+                    .any(|event| event.extension_id == record.manifest.id)
+        })
+    }
+
+    /// Save the user's enable/disable choice so the next session keeps it.
+    /// An enable whose activation fails still counts: the user asked for it.
+    fn remember_disabled(
+        &mut self,
+        id: &str,
+        disabled: bool,
+        result: Result<String, String>,
+    ) -> Result<String, String> {
+        let changed = if disabled {
+            self.disabled_ids.insert(id.to_owned())
+        } else {
+            self.disabled_ids.remove(id)
+        };
+        if !changed {
+            return result;
+        }
+        match crate::extension_state::write_disabled(&self.state_file, &self.disabled_ids) {
+            Ok(()) => result,
+            Err(error) => {
+                let note = format!(" (could not save this for the next session: {error})");
+                result
+                    .map(|message| message + &note)
+                    .map_err(|message| message + &note)
+            }
+        }
+    }
+
+    /// The installed directory of an extension the editor manages, if any.
+    /// Extensions in the project's own folders are project files and stay.
+    pub(crate) fn removal_dir(&self, record: &ExtensionRecord) -> Option<std::path::PathBuf> {
+        let dir = record.manifest_path.parent()?;
+        let root = dir.parent()?;
+        self.managed_roots
+            .iter()
+            .any(|managed| managed == root)
+            .then(|| dir.to_path_buf())
+    }
+
+    /// Unload an editor-installed extension and delete its directory.
+    pub(crate) fn remove_extension(&mut self, index: usize) -> Result<String, String> {
+        if self.record_is_busy(index) {
+            return Err("Save or close modified extension documents and wait for pending operations before removing".into());
+        }
+        let record = self
+            .records
+            .get(index)
+            .ok_or_else(|| "No extension selected".to_string())?;
+        let dir = self
+            .removal_dir(record)
+            .ok_or("Only extensions installed by VTCode can be removed here")?;
+        let root = dir
+            .parent()
+            .ok_or("Invalid extension directory")?
+            .to_path_buf();
+        if std::fs::symlink_metadata(&dir)
+            .map_err(|error| error.to_string())?
+            .file_type()
+            .is_symlink()
+        {
+            return Err("The installed extension directory cannot be a symlink.".into());
+        }
+        let lock_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(root.join(".install-lock"))
+            .map_err(|error| error.to_string())?;
+        let _lock = vtcode::file_source::ExclusiveFileLock::try_acquire(lock_file).map_err(
+            |_| "An extension installation is running. Wait for it to finish, then retry.",
+        )?;
+        let staging = tempfile::Builder::new()
+            .prefix(".remove-")
+            .tempdir_in(&root)
+            .map_err(|error| error.to_string())?;
+        let mut record = self.records.remove(index);
+        let name = record.manifest.name.clone();
+        let id = record.manifest.id.clone();
+        let _ = Self::deactivate_record(&mut record); // Error OK: the files are deleted next
+        // Move the directory out of discovery's reach first (staged files sit
+        // too deep to be found), so a partial delete never leaves half an
+        // extension installed.
+        if let Err(error) = std::fs::rename(&dir, staging.path().join("extension")) {
+            // Still installed: keep it listed, unloaded until enabled again.
+            record.state = ExtensionState::Unloaded;
+            record.status_text = "Removal failed".to_string();
+            record.user_unloaded = true;
+            self.records.insert(index, record);
+            self.rebuild_index();
+            return Err(format!(
+                "Could not remove {name}; close files using it and retry: {error}"
+            ));
+        }
+        self.rebuild_index();
+        self.view_resize_requests
+            .retain(|(owner, _), _| owner != &id);
+        self.tick_yield_to_input.remove(&id);
+        drop(staging); // Deletes the moved files.
+        self.remember_disabled(&id, false, Ok(format!("Removed extension: {name}")))
     }
 
     pub(crate) fn load_extension(&mut self, index: usize) -> Result<String, String> {
@@ -117,13 +218,15 @@ impl ExtensionManager {
             .get_mut(index)
             .ok_or_else(|| "No extension selected".to_string())?;
         record.user_unloaded = false;
-        match Self::activate_record(&self.engine, record, &self.settings_file) {
+        let id = record.manifest.id.clone();
+        let result = match Self::activate_record(&self.engine, record, &self.settings_file) {
             Ok(()) => Ok(format!("Loaded extension: {}", record.manifest.name)),
             Err(err) => {
                 Self::set_record_error(record, &err, "Load failed");
                 Err(err)
             }
-        }
+        };
+        self.remember_disabled(&id, false, result)
     }
 
     pub(crate) fn set_record_error(record: &mut ExtensionRecord, error: &str, status: &str) {

@@ -150,6 +150,7 @@ mod extension_module_cache;
 mod extension_recovery;
 mod extension_release_source;
 mod extension_scheduler;
+mod extension_state;
 mod extension_surface;
 #[cfg(test)]
 mod extension_tabular_tests;

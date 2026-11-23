@@ -75,6 +75,12 @@ pub(crate) struct ExtensionManager {
     pub(crate) records: Vec<ExtensionRecord>,
     pub(crate) index_by_id: HashMap<String, usize>,
     pub(crate) settings_file: PathBuf,
+    /// Roots the editor installs into; only extensions directly inside them
+    /// can be removed from the Extensions page.
+    pub(crate) managed_roots: Vec<PathBuf>,
+    /// Persists which extensions the user disabled across sessions.
+    pub(crate) state_file: PathBuf,
+    pub(crate) disabled_ids: HashSet<String>,
     pub(crate) busy_extension_ids: HashSet<String>,
     pub(crate) pending_view_events:
         std::collections::VecDeque<crate::extension_handlers::PendingViewEvent>,
@@ -84,26 +90,44 @@ pub(crate) struct ExtensionManager {
 
 impl ExtensionManager {
     pub(crate) fn new(project_root: &Path) -> Self {
-        let mut search_roots = vec![crate::portable::data_dir().join("extensions")];
+        let user_root = crate::portable::data_dir().join("extensions");
+        let mut search_roots = vec![user_root.clone()];
+        let mut managed_roots = vec![user_root];
         if !project_root.as_os_str().is_empty() {
+            let workspace_root = crate::portable::workspace_dir(project_root).join("extensions");
+            managed_roots.push(workspace_root.clone());
             search_roots.extend([
-                crate::portable::workspace_dir(project_root).join("extensions"),
+                workspace_root,
                 project_root.join("extensions"),
                 project_root.join(".vtcode").join("extensions"),
             ]);
         }
         let settings_file =
             crate::portable::workspace_dir(project_root).join("extension-settings.json");
-        Self::with_paths(search_roots, settings_file)
+        // Tests share one portable data directory, so each keeps its own state.
+        #[cfg(not(test))]
+        let state_file = crate::portable::data_dir().join("extension-state.json");
+        #[cfg(test)]
+        let state_file = crate::portable::workspace_dir(project_root).join("extension-state.json");
+        Self::with_paths(search_roots, settings_file, managed_roots, state_file)
     }
 
-    fn with_paths(search_roots: Vec<PathBuf>, settings_file: PathBuf) -> Self {
+    fn with_paths(
+        search_roots: Vec<PathBuf>,
+        settings_file: PathBuf,
+        managed_roots: Vec<PathBuf>,
+        state_file: PathBuf,
+    ) -> Self {
+        let disabled_ids = crate::extension_state::read_disabled(&state_file);
         Self {
             engine: Default::default(),
             search_roots,
             records: Vec::new(),
             index_by_id: HashMap::new(),
             settings_file,
+            managed_roots,
+            state_file,
+            disabled_ids,
             busy_extension_ids: HashSet::new(),
             pending_view_events: std::collections::VecDeque::new(),
             view_resize_requests: HashMap::new(),
@@ -114,7 +138,12 @@ impl ExtensionManager {
     /// An owned, empty manager for initial background activation. The live
     /// manager stays available to the UI until the completed snapshot arrives.
     pub(crate) fn initial_scan_manager(&self) -> Self {
-        let mut manager = Self::with_paths(self.search_roots.clone(), self.settings_file.clone());
+        let mut manager = Self::with_paths(
+            self.search_roots.clone(),
+            self.settings_file.clone(),
+            self.managed_roots.clone(),
+            self.state_file.clone(),
+        );
         manager.engine = self.engine.clone();
         manager
     }
@@ -238,7 +267,10 @@ impl ExtensionManager {
                     published_diagnostics: HashMap::new(),
                     diagnostics_version: 0,
                 };
-                if record.manifest.enabled {
+                if record.manifest.enabled && self.disabled_ids.contains(&record.manifest.id) {
+                    record.user_unloaded = true;
+                    record.status_text = "Unloaded by user".to_string();
+                } else if record.manifest.enabled {
                     match Self::activate_record(&self.engine, &mut record, &self.settings_file) {
                         Ok(()) => {
                             notices.push(format!("Loaded extension: {}", record.manifest.name))
@@ -372,6 +404,7 @@ impl ExtensionManager {
                 last_error: record.last_error.clone(),
                 logs: record.logs.clone(),
                 enabled: record.manifest.enabled,
+                removable: self.removal_dir(record).is_some(),
             })
             .collect()
     }
@@ -646,7 +679,7 @@ impl ExtensionManager {
     // activate_record, deactivate_record, set_record_error, pull_runtime_state)
     // are in extension_lifecycle.rs
 
-    fn rebuild_index(&mut self) {
+    pub(crate) fn rebuild_index(&mut self) {
         self.index_by_id.clear();
         for (index, record) in self.records.iter().enumerate() {
             self.index_by_id.insert(record.manifest.id.clone(), index);
@@ -710,6 +743,79 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(project_root); // Error OK: dir may not exist
+    }
+
+    fn install_probe(root: &Path, id: &str) -> std::path::PathBuf {
+        let dir = root.join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("extension.json"),
+            format!(
+                r#"{{"id":"{id}","name":"Probe","version":"0.1.0","repository":"https://github.com/im-henri/vtcode","apiVersion":"1","main":"probe.wat"}}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("probe.wat"),
+            r#"(module (func (export "vtcode_activate") (result i32) i32.const 0))"#,
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn disabling_an_extension_persists_into_the_next_session() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project_root = temporary.path().join("project");
+        install_probe(&project_root.join("extensions"), "test.persisted");
+        let mut manager = ExtensionManager::new(&project_root);
+        manager.scan_and_sync();
+        assert_eq!(manager.views()[0].state, ExtensionState::Loaded);
+        manager.unload_extension(0).unwrap();
+
+        let mut next = ExtensionManager::new(&project_root);
+        next.scan_and_sync();
+        assert_eq!(next.views()[0].state, ExtensionState::Unloaded);
+        // Reload All must not quietly enable what the user disabled.
+        next.reload_all();
+        assert_eq!(next.views()[0].state, ExtensionState::Unloaded);
+        next.load_extension(0).unwrap();
+
+        let mut third = ExtensionManager::new(&project_root);
+        third.scan_and_sync();
+        assert_eq!(third.views()[0].state, ExtensionState::Loaded);
+        let _ = std::fs::remove_file(&third.state_file); // Error OK: shared base dir cleanup
+    }
+
+    #[test]
+    fn only_editor_installed_extensions_can_be_removed() {
+        let temporary = tempfile::tempdir().unwrap();
+        let project_root = temporary.path().join("project");
+        let managed = crate::portable::workspace_dir(&project_root).join("extensions");
+        let installed = install_probe(&managed, "test.installed");
+        let project_owned = install_probe(&project_root.join("extensions"), "test.project");
+        let mut manager = ExtensionManager::new(&project_root);
+        manager.scan_and_sync();
+        let views = manager.views();
+        let index = |id: &str| views.iter().position(|view| view.id == id).unwrap();
+        assert!(views[index("test.installed")].removable);
+        assert!(!views[index("test.project")].removable);
+        assert!(manager.remove_extension(index("test.project")).is_err());
+        assert!(project_owned.exists());
+
+        manager.unload_extension(index("test.installed")).unwrap();
+        let message = manager.remove_extension(index("test.installed")).unwrap();
+        assert!(message.contains("Removed"));
+        assert!(!installed.exists());
+        assert_eq!(manager.views().len(), 1);
+        assert!(!manager.disabled_ids.contains("test.installed"));
+        manager.scan_and_sync();
+        assert_eq!(
+            manager.views().len(),
+            1,
+            "staged leftovers stay undiscovered"
+        );
+        let _ = std::fs::remove_dir_all(crate::portable::workspace_dir(&project_root)); // Error OK: cleanup
     }
 
     #[test]

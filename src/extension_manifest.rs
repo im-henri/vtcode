@@ -272,6 +272,8 @@ pub(crate) struct ExtensionRecordView {
     pub last_error: Option<String>,
     pub logs: Vec<String>,
     pub enabled: bool,
+    /// Installed by the editor, so the Extensions page can delete it.
+    pub removable: bool,
 }
 
 #[derive(Debug, Clone, Default)]

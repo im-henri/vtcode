@@ -318,6 +318,48 @@ fn extensions_ui_manifest_buttons_show_registered_commands_and_run_them() {
 }
 
 #[test]
+fn extensions_ui_remove_needs_a_second_press_and_deletes_installed_files() {
+    let (root, mut app) = fixture(3);
+    app.open_extension_info_tab("test.ext00");
+    let mut terminal = Terminal::new(TestBackend::new(110, 35)).unwrap();
+    info(&mut app, &mut terminal);
+    assert!(
+        !text(&terminal).contains("Remove"),
+        "extensions outside the install folders cannot be removed here"
+    );
+
+    app.extension_manager.managed_roots = vec![root.path().to_path_buf()];
+    info(&mut app, &mut terminal);
+    let click = |app: &mut App, (x, y): (u16, u16)| {
+        crate::mouse::handle_mouse(app, event(MouseEventKind::Down(MouseButton::Left), x, y));
+        crate::mouse::handle_mouse(app, event(MouseEventKind::Up(MouseButton::Left), x, y));
+    };
+    click(&mut app, find(&terminal, "Remove"));
+    info(&mut app, &mut terminal);
+    assert!(
+        root.path().join("ext00").exists(),
+        "the first press only arms"
+    );
+
+    // Any other action disarms it.
+    click(&mut app, find(&terminal, "Copy ID"));
+    info(&mut app, &mut terminal);
+    assert!(!text(&terminal).contains("Confirm Remove"));
+
+    click(&mut app, find(&terminal, "Remove"));
+    info(&mut app, &mut terminal);
+    click(&mut app, find(&terminal, "Confirm Remove"));
+    assert!(!root.path().join("ext00").exists());
+    assert_eq!(app.extension_manager.len(), 2);
+    assert!(
+        app.extension_manager
+            .views()
+            .iter()
+            .all(|view| view.id != "test.ext00")
+    );
+}
+
+#[test]
 fn extensions_ui_tiny_and_offset_layouts_keep_hit_regions_inside_their_surface() {
     let (_root, mut app) = fixture(3);
     for width in [1, 5, 16, 24, 38, 60] {
