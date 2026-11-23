@@ -215,14 +215,14 @@ fn extensions_ui_scroll_does_not_change_selection_and_filter_clicks_preserve_sea
         .ext_sidebar
         .actions
         .iter()
-        .find(|(action, _)| *action == Action::Collapse)
+        .find(|(action, _)| *action == Action::Collapse(1))
         .copied()
         .unwrap();
     ui_extensions::handle_click(&mut app, collapse.x, collapse.y);
     sidebar(&mut app, &mut terminal);
     assert!(app.ext_sidebar.rows.is_empty());
     key(&mut app, KeyCode::Down);
-    assert!(!app.ext_sidebar.collapsed);
+    assert_eq!(app.ext_sidebar.collapsed, [false; 3]);
 }
 
 #[test]
@@ -509,4 +509,58 @@ fn extensions_ui_presentation() {
         assert!(text(&terminal).contains("Getting started"));
         crate::ui_control_visibility_tests::snapshot(terminal.backend().buffer(), name);
     }
+}
+
+#[test]
+fn extensions_ui_groups_installed_disabled_and_failed_extensions() {
+    let (_root, mut app) = fixture(6);
+    let mut terminal = Terminal::new(TestBackend::new(44, 40)).unwrap();
+    sidebar(&mut app, &mut terminal);
+    let headers: Vec<u16> = ["INSTALLED", "DISABLED", "ERRORS"]
+        .iter()
+        .map(|label| find(&terminal, label).1)
+        .collect();
+    assert!(
+        headers.windows(2).all(|pair| pair[0] < pair[1]),
+        "{headers:?}"
+    );
+    let order: Vec<usize> = app
+        .ext_sidebar
+        .rows
+        .iter()
+        .map(|(index, _)| *index)
+        .collect();
+    assert_eq!(order, [0, 3, 2, 5, 1, 4]);
+    // Each card sits below its own header and above the next one.
+    for (index, area) in &app.ext_sidebar.rows {
+        let group = ui_extensions::group_of(app.extension_manager.records[*index].state);
+        assert!(area.y > headers[group]);
+        assert!(headers.get(group + 1).is_none_or(|next| area.y < *next));
+    }
+    // Keyboard browsing follows the drawn order and skips folded sections.
+    app.ext_sidebar.search_focused = false;
+    key(&mut app, KeyCode::Home);
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Down);
+    assert_eq!(app.extensions_selected, 2);
+    let (_, fold) = app
+        .ext_sidebar
+        .actions
+        .iter()
+        .find(|(action, _)| *action == Action::Collapse(1))
+        .copied()
+        .unwrap();
+    ui_extensions::handle_click(&mut app, fold.x, fold.y);
+    sidebar(&mut app, &mut terminal);
+    assert!(text(&terminal).contains("DISABLED"));
+    assert!(app.ext_sidebar.rows.iter().all(|(index, _)| index % 3 != 2));
+    key(&mut app, KeyCode::Home);
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::Down);
+    assert_eq!(app.extensions_selected, 1);
+    // Sections with no matches are hidden.
+    app.extensions_filter = "@error".into();
+    sidebar(&mut app, &mut terminal);
+    assert!(!text(&terminal).contains("INSTALLED"));
+    assert!(text(&terminal).contains("ERRORS"));
 }

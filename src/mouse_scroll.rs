@@ -318,14 +318,10 @@ pub(crate) fn handle_scroll_down(app: &mut App, col: u16, row: u16, modifiers: K
                     app.global_search_scroll = app.global_search_scroll.saturating_add(spd);
                 }
             } else if app.sidebar_view == crate::app::SidebarView::Extensions {
-                let visible = usize::from(
-                    app.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT,
-                )
-                .max(1);
-                let max = app
-                    .filtered_extension_indices()
-                    .len()
-                    .saturating_sub(visible);
+                let max = crate::ui_extensions::max_scroll(
+                    &crate::ui_extensions::items(app),
+                    app.ext_sidebar.list_area.height,
+                );
                 app.extensions_scroll = app.extensions_scroll.saturating_add(spd).min(max);
             } else if !crate::ui_chrome::scroll_open_editors(app, exp_area, row, true) {
                 app.explorer.scroll_down(spd);

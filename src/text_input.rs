@@ -1427,7 +1427,7 @@ impl App {
             TextInputId::ExtensionsFilter => {
                 self.extensions_selected = 0;
                 self.extensions_scroll = 0;
-                self.ext_sidebar.collapsed = false;
+                self.ext_sidebar.collapsed = [false; crate::ui_extensions::GROUPS.len()];
                 self.clamp_extensions_selection();
             }
             TextInputId::SearchReplace

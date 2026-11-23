@@ -699,36 +699,29 @@ impl App {
         self.move_extensions_selection(-1);
     }
 
+    /// Extensions matching the filter, in sidebar section order (folded ones included).
     pub(crate) fn filtered_extension_indices(&self) -> Vec<usize> {
-        self.extension_views()
-            .iter()
-            .enumerate()
-            .filter(|(_, ext)| crate::ui_extensions::matches(ext, &self.extensions_filter))
-            .map(|(index, _)| index)
-            .collect()
+        crate::ui_extensions::grouped(&self.extension_views(), &self.extensions_filter)
     }
 
     pub(crate) fn move_extensions_selection(&mut self, delta: isize) {
         self.clamp_extensions_selection();
-        let filtered = self.filtered_extension_indices();
-        let Some(position) = filtered
+        // Browse the cards as drawn: section by section, skipping folded sections.
+        let items = crate::ui_extensions::items(self);
+        let cards: Vec<usize> = items.iter().filter_map(|item| item.card()).collect();
+        if cards.is_empty() {
+            return;
+        }
+        let next = match cards
             .iter()
             .position(|index| *index == self.extensions_selected)
-        else {
-            return;
+        {
+            Some(position) => position.saturating_add_signed(delta).min(cards.len() - 1),
+            None if delta == isize::MAX => cards.len() - 1,
+            None => 0,
         };
-        let next = position
-            .saturating_add_signed(delta)
-            .min(filtered.len() - 1);
-        self.extensions_selected = filtered[next];
-        let visible =
-            usize::from(self.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT)
-                .max(1);
-        if next < self.extensions_scroll {
-            self.extensions_scroll = next;
-        } else if next >= self.extensions_scroll + visible {
-            self.extensions_scroll = next + 1 - visible;
-        }
+        self.extensions_selected = cards[next];
+        crate::ui_extensions::scroll_to_selected(self, &items);
     }
 
     pub(crate) fn extensions_rescan(&mut self) {
@@ -816,12 +809,10 @@ impl App {
         if !filtered.contains(&self.extensions_selected) {
             self.extensions_selected = filtered[0];
         }
-        let visible =
-            usize::from(self.ext_sidebar.list_area.height / crate::ui_extensions::CARD_HEIGHT)
-                .max(1);
-        self.extensions_scroll = self
-            .extensions_scroll
-            .min(filtered.len().saturating_sub(visible));
+        self.extensions_scroll = self.extensions_scroll.min(crate::ui_extensions::max_scroll(
+            &crate::ui_extensions::items(self),
+            self.ext_sidebar.list_area.height,
+        ));
     }
 
     pub(crate) fn apply_extension_text_edits(&mut self) -> bool {

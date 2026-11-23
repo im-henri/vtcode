@@ -26,12 +26,14 @@ pub(crate) enum Action {
     ReloadAll,
     Clear,
     Filter(&'static str),
-    Collapse,
+    /// Fold or unfold one of [`GROUPS`].
+    Collapse(usize),
 }
 
 pub(crate) struct Sidebar {
     pub search_focused: bool,
-    pub collapsed: bool,
+    /// Folded state of each of [`GROUPS`].
+    pub collapsed: [bool; GROUPS.len()],
     search_area: Rect,
     pub list_area: Rect,
     pub rows: Vec<(usize, Rect)>,
@@ -43,7 +45,7 @@ impl Default for Sidebar {
     fn default() -> Self {
         Self {
             search_focused: true,
-            collapsed: false,
+            collapsed: [false; GROUPS.len()],
             search_area: Rect::default(),
             list_area: Rect::default(),
             rows: vec![],
@@ -92,6 +94,125 @@ pub(crate) fn status(ext: &ExtensionRecordView) -> &'static str {
         ExtensionState::Loaded => "Enabled",
         ExtensionState::Error => "Failed",
         ExtensionState::Unloaded => "Disabled",
+    }
+}
+
+/// Sidebar sections, in display order.
+pub(crate) const GROUPS: [(ExtensionState, &str); 3] = [
+    (ExtensionState::Loaded, "INSTALLED"),
+    (ExtensionState::Unloaded, "DISABLED"),
+    (ExtensionState::Error, "ERRORS"),
+];
+
+pub(crate) fn group_of(state: ExtensionState) -> usize {
+    GROUPS
+        .iter()
+        .position(|(group, _)| *group == state)
+        .unwrap_or(0)
+}
+
+/// One row of the sidebar list: a section header or an extension card.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Item {
+    Header {
+        group: usize,
+        matched: usize,
+        total: usize,
+    },
+    Card(usize),
+}
+
+impl Item {
+    pub(crate) fn height(self) -> u16 {
+        match self {
+            Item::Header { .. } => 1,
+            Item::Card(_) => CARD_HEIGHT,
+        }
+    }
+
+    pub(crate) fn card(self) -> Option<usize> {
+        match self {
+            Item::Card(index) => Some(index),
+            Item::Header { .. } => None,
+        }
+    }
+}
+
+/// Matching extension indices, grouped by section, including folded ones.
+pub(crate) fn grouped(views: &[ExtensionRecordView], query: &str) -> Vec<usize> {
+    let mut indices: Vec<usize> = (0..views.len())
+        .filter(|index| matches(&views[*index], query))
+        .collect();
+    indices.sort_by_key(|index| group_of(views[*index].state));
+    indices
+}
+
+/// The list rows: a header per non-empty section, then its cards unless folded.
+pub(crate) fn items(app: &App) -> Vec<Item> {
+    let views = app.extension_views();
+    let mut items = Vec::new();
+    for (group, (state, _)) in GROUPS.iter().enumerate() {
+        let total = views.iter().filter(|ext| ext.state == *state).count();
+        let cards: Vec<usize> = (0..views.len())
+            .filter(|index| {
+                views[*index].state == *state && matches(&views[*index], &app.extensions_filter)
+            })
+            .collect();
+        if cards.is_empty() {
+            continue;
+        }
+        items.push(Item::Header {
+            group,
+            matched: cards.len(),
+            total,
+        });
+        if !app.ext_sidebar.collapsed[group] {
+            items.extend(cards.into_iter().map(Item::Card));
+        }
+    }
+    items
+}
+
+/// The first item index from which the rest of the list fits in `height`.
+pub(crate) fn max_scroll(items: &[Item], height: u16) -> usize {
+    if height == 0 {
+        return items.len().saturating_sub(1);
+    }
+    let mut used = 0u16;
+    for (position, item) in items.iter().enumerate().rev() {
+        used = used.saturating_add(item.height());
+        if used > height {
+            return position + 1;
+        }
+    }
+    0
+}
+
+/// Scroll so the selected card, and its section header when it leads one, is visible.
+pub(crate) fn scroll_to_selected(app: &mut App, items: &[Item]) {
+    let Some(position) = items
+        .iter()
+        .position(|item| *item == Item::Card(app.extensions_selected))
+    else {
+        return;
+    };
+    let height = app.ext_sidebar.list_area.height;
+    let top = if position > 0 && items[position - 1].card().is_none() {
+        position - 1
+    } else {
+        position
+    };
+    if top < app.extensions_scroll {
+        app.extensions_scroll = top;
+    }
+    while app.extensions_scroll < position
+        && items[app.extensions_scroll..=position]
+            .iter()
+            .map(|item| item.height())
+            .sum::<u16>()
+            > height
+    {
+        app.extensions_scroll += 1;
     }
 }
 
@@ -300,48 +421,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
     app.clamp_extensions_selection();
     let views = app.extension_views();
-    let filtered: Vec<_> = views
-        .iter()
-        .enumerate()
-        .filter(|(_, ext)| matches(ext, &app.extensions_filter))
-        .collect();
-    let count = if app.extensions_filter.is_empty() {
-        format!("{}", views.len())
-    } else {
-        format!("{} / {}", filtered.len(), views.len())
-    };
-    let section = Rect::new(inner.x, y, inner.width, 1);
-    let section_style = app
-        .colors
-        .ui
-        .toolbar_layer_style(
-            app.colors.ui.section_foreground,
-            bg,
-            section.contains((app.mouse_col, app.mouse_row).into()),
-            false,
-            false,
-        )
-        .add_modifier(Modifier::BOLD);
-    f.render_widget(
-        Paragraph::new(format!(
-            "{} INSTALLED",
-            if app.ext_sidebar.collapsed {
-                "›"
-            } else {
-                "⌄"
-            }
-        ))
-        .style(section_style),
-        section,
-    );
-    let count_width = (count.width() as u16).min(inner.width);
-    f.render_widget(
-        Paragraph::new(count).style(base.fg(dim)),
-        Rect::new(inner.right() - count_width, y, count_width, 1),
-    );
-    app.ext_sidebar.actions.push((Action::Collapse, section));
-    y += 1;
-    let footer_h = u16::from(inner.bottom().saturating_sub(y) >= 6);
+    let any_match = views.iter().any(|ext| matches(ext, &app.extensions_filter));
+    let footer_h = u16::from(inner.bottom().saturating_sub(y) >= 7);
     let list = Rect::new(
         inner.x,
         y,
@@ -349,16 +430,17 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         inner.bottom().saturating_sub(y + footer_h),
     );
     app.ext_sidebar.list_area = list;
-    if app.ext_sidebar.collapsed {
-        return;
-    }
-    if filtered.is_empty() {
+    if !any_match {
         let empty = if views.is_empty() && app.bg_extension_scan_running {
             "Loading extensions…"
         } else if views.is_empty() {
-            "Build your workspace\n\nInstall an extension from a tagged GitHub release to add tools and language support."
+            "Build your workspace
+
+Install an extension from a tagged GitHub release to add tools and language support."
         } else {
-            "No extensions found\n\nTry another search or clear your filters."
+            "No extensions found
+
+Try another search or clear your filters."
         };
         f.render_widget(
             Paragraph::new(empty)
@@ -397,137 +479,63 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             );
         }
     } else {
-        let visible = usize::from(list.height / CARD_HEIGHT).max(1);
-        app.extensions_scroll = app
-            .extensions_scroll
-            .min(filtered.len().saturating_sub(visible));
+        let items = items(app);
+        app.extensions_scroll = app.extensions_scroll.min(max_scroll(&items, list.height));
         let scroll = app.extensions_scroll;
-        for (position, (index, ext)) in filtered.iter().enumerate().skip(scroll).take(visible) {
-            let card_y = list.y + ((position - scroll) as u16) * CARD_HEIGHT;
-            let card = Rect::new(
-                list.x,
-                card_y,
-                list.width,
-                CARD_HEIGHT.min(list.bottom().saturating_sub(card_y)),
-            );
-            if card.is_empty() {
+        let mut row_y = list.y;
+        for item in &items[scroll..] {
+            if row_y >= list.bottom() {
                 break;
             }
-            let selected = *index == app.extensions_selected;
-            let hovered = card.contains((app.mouse_col, app.mouse_row).into());
-            let row_style = app.colors.ui.list_row_style(
-                app.colors.ui.sidebar_foreground,
-                bg,
-                selected,
-                app.active_pane == ActivePane::Explorer,
-                hovered,
-            );
-            let style = row_style.remove_modifier(Modifier::UNDERLINED);
-            let row_bg = style.bg.unwrap_or(bg);
-            let row_fg = style.fg.unwrap_or(fg);
-            let secondary = if selected {
-                row_fg
-            } else {
-                app.colors.ui.description_color(row_bg)
-            };
-            f.render_widget(Block::default().style(style), card);
-            let wide = card.width >= 24;
-            let text_x = card.x + if wide { 6 } else { 1 };
-            let text_width = card.right().saturating_sub(text_x + 2);
-            if wide && card.height >= 3 {
-                let initial = ext
-                    .name
-                    .graphemes(true)
-                    .find(|g| g.width() == 1 && !g.trim().is_empty())
-                    .unwrap_or("+");
-                let badge = format!("┌─┐\n│{initial}│\n└─┘");
-                f.render_widget(
-                    Paragraph::new(badge).style(style.fg(secondary)),
-                    Rect::new(card.x + 1, card.y, 3, 3),
-                );
+            let height = item.height().min(list.bottom() - row_y);
+            match *item {
+                Item::Header {
+                    group,
+                    matched,
+                    total,
+                } => draw_header(
+                    f,
+                    app,
+                    Rect::new(list.x, row_y, list.width, 1),
+                    group,
+                    matched,
+                    total,
+                ),
+                Item::Card(index) => {
+                    draw_card(
+                        f,
+                        app,
+                        Rect::new(list.x, row_y, list.width, height),
+                        index,
+                        &views[index],
+                        bg,
+                        fg,
+                    );
+                }
             }
-            let version = format!("v{}", clean(&ext.version));
-            let version_w = if text_width >= 30 {
-                (version.width() as u16).min(text_width / 3)
-            } else {
-                0
-            };
-            f.render_widget(
-                Paragraph::new(clip(
-                    &ext.name,
-                    text_width.saturating_sub(version_w + u16::from(version_w > 0)),
-                ))
-                .style(style.add_modifier(Modifier::BOLD)),
-                Rect::new(text_x, card.y, text_width.saturating_sub(version_w), 1),
-            );
-            if version_w > 0 {
-                f.render_widget(
-                    Paragraph::new(clip(&version, version_w)).style(style.fg(secondary)),
-                    Rect::new(text_x + text_width - version_w, card.y, version_w, 1),
-                );
-            }
-            if card.height >= 2 {
-                let description = if ext.description.is_empty() {
-                    "No description provided"
-                } else {
-                    &ext.description
-                };
-                let description_fg = if ext.last_error.is_some() && !selected {
-                    app.colors.ui.list_error_color(row_bg)
-                } else {
-                    secondary
-                };
-                f.render_widget(
-                    Paragraph::new(clip(description, text_width)).style(
-                        style.fg(app
-                            .colors
-                            .ui
-                            .readable_foreground(description_fg, row_bg, 4.5)),
-                    ),
-                    Rect::new(text_x, card.y + 1, text_width, 1),
-                );
-            }
-            if card.height >= 3 {
-                let icon = match ext.state {
-                    ExtensionState::Loaded => "●",
-                    ExtensionState::Error => "✖",
-                    ExtensionState::Unloaded => "○",
-                };
-                let color = match ext.state {
-                    ExtensionState::Loaded => app.colors.fg_success,
-                    ExtensionState::Error => app.colors.ui.list_error_color(row_bg),
-                    ExtensionState::Unloaded => secondary,
-                };
-                let state = format!("{icon} {}", status(ext));
-                let state_w = (state.width() as u16).min(text_width);
-                let publisher_w = text_width.saturating_sub(state_w + 2);
-                f.render_widget(
-                    Paragraph::new(clip(publisher(ext), publisher_w)).style(style.fg(secondary)),
-                    Rect::new(text_x, card.y + 2, publisher_w, 1),
-                );
-                f.render_widget(
-                    Paragraph::new(clip(&state, state_w))
-                        .style(style.fg(app.colors.ui.readable_foreground(color, row_bg, 4.5))),
-                    Rect::new(text_x + text_width - state_w, card.y + 2, state_w, 1),
-                );
-            }
-            if selected {
-                f.render_widget(
-                    Paragraph::new("▏\n".repeat(usize::from(card.height)))
-                        .style(style.fg(row_style.underline_color.unwrap_or(row_fg))),
-                    Rect::new(card.x, card.y, 1, card.height),
-                );
-            }
-            app.ext_sidebar.rows.push((*index, card));
+            row_y += height;
         }
-        if filtered.len() > visible && list.width > 0 && list.height > 0 {
-            let thumb_h = (usize::from(list.height) * visible / filtered.len()).max(1) as u16;
+        let total: u16 = items.iter().map(|item| item.height()).sum();
+        if total > list.height && list.width > 0 && list.height > 0 {
+            let offset: u16 = items[..scroll].iter().map(|item| item.height()).sum();
+            let thumb_h =
+                (u32::from(list.height) * u32::from(list.height) / u32::from(total)).max(1) as u16;
+            let max_offset: u16 = items[..max_scroll(&items, list.height)]
+                .iter()
+                .map(|item| item.height())
+                .sum();
             let thumb_y = list.y
-                + ((usize::from(list.height - thumb_h) * scroll)
-                    / filtered.len().saturating_sub(visible).max(1)) as u16;
+                + (u32::from(list.height - thumb_h) * u32::from(offset)
+                    / u32::from(max_offset.max(1)))
+                .min(u32::from(list.height - thumb_h)) as u16;
             let scrollbar_fg = app.colors.ui.description_color(bg);
             f.render_widget(
-                Paragraph::new("▏\n".repeat(usize::from(thumb_h))).style(base.fg(scrollbar_fg)),
+                Paragraph::new(
+                    "▏
+"
+                    .repeat(usize::from(thumb_h)),
+                )
+                .style(base.fg(scrollbar_fg)),
                 Rect::new(list.right() - 1, thumb_y, 1, thumb_h),
             );
         }
@@ -539,6 +547,170 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
         );
     }
+}
+
+fn draw_header(
+    f: &mut Frame,
+    app: &mut App,
+    section: Rect,
+    group: usize,
+    matched: usize,
+    total: usize,
+) {
+    let bg = app.colors.bg_sidebar;
+    let dim = app.colors.ui.description_color(bg);
+    let style = app
+        .colors
+        .ui
+        .toolbar_layer_style(
+            app.colors.ui.section_foreground,
+            bg,
+            section.contains((app.mouse_col, app.mouse_row).into()),
+            false,
+            false,
+        )
+        .add_modifier(Modifier::BOLD);
+    let arrow = if app.ext_sidebar.collapsed[group] {
+        "›"
+    } else {
+        "⌄"
+    };
+    f.render_widget(
+        Paragraph::new(clip(&format!("{arrow} {}", GROUPS[group].1), section.width)).style(style),
+        section,
+    );
+    let count = if matched == total {
+        format!("{total}")
+    } else {
+        format!("{matched} / {total}")
+    };
+    let count_width = count.width() as u16;
+    if count_width + 12 <= section.width {
+        f.render_widget(
+            Paragraph::new(count).style(style.fg(dim).remove_modifier(Modifier::BOLD)),
+            Rect::new(section.right() - count_width, section.y, count_width, 1),
+        );
+    }
+    app.ext_sidebar
+        .actions
+        .push((Action::Collapse(group), section));
+}
+
+fn draw_card(
+    f: &mut Frame,
+    app: &mut App,
+    card: Rect,
+    index: usize,
+    ext: &ExtensionRecordView,
+    bg: ratatui::style::Color,
+    fg: ratatui::style::Color,
+) {
+    let selected = index == app.extensions_selected;
+    let hovered = card.contains((app.mouse_col, app.mouse_row).into());
+    let row_style = app.colors.ui.list_row_style(
+        app.colors.ui.sidebar_foreground,
+        bg,
+        selected,
+        app.active_pane == ActivePane::Explorer,
+        hovered,
+    );
+    let style = row_style.remove_modifier(Modifier::UNDERLINED);
+    let row_bg = style.bg.unwrap_or(bg);
+    let row_fg = style.fg.unwrap_or(fg);
+    let secondary = if selected {
+        row_fg
+    } else {
+        app.colors.ui.description_color(row_bg)
+    };
+    f.render_widget(Block::default().style(style), card);
+    let wide = card.width >= 24;
+    let text_x = card.x + if wide { 6 } else { 1 };
+    let text_width = card.right().saturating_sub(text_x + 2);
+    if wide && card.height >= 3 {
+        let initial = ext
+            .name
+            .graphemes(true)
+            .find(|g| g.width() == 1 && !g.trim().is_empty())
+            .unwrap_or("+");
+        let badge = format!("┌─┐\n│{initial}│\n└─┘");
+        f.render_widget(
+            Paragraph::new(badge).style(style.fg(secondary)),
+            Rect::new(card.x + 1, card.y, 3, 3),
+        );
+    }
+    let version = format!("v{}", clean(&ext.version));
+    let version_w = if text_width >= 30 {
+        (version.width() as u16).min(text_width / 3)
+    } else {
+        0
+    };
+    f.render_widget(
+        Paragraph::new(clip(
+            &ext.name,
+            text_width.saturating_sub(version_w + u16::from(version_w > 0)),
+        ))
+        .style(style.add_modifier(Modifier::BOLD)),
+        Rect::new(text_x, card.y, text_width.saturating_sub(version_w), 1),
+    );
+    if version_w > 0 {
+        f.render_widget(
+            Paragraph::new(clip(&version, version_w)).style(style.fg(secondary)),
+            Rect::new(text_x + text_width - version_w, card.y, version_w, 1),
+        );
+    }
+    if card.height >= 2 {
+        let description = if ext.description.is_empty() {
+            "No description provided"
+        } else {
+            &ext.description
+        };
+        let description_fg = if ext.last_error.is_some() && !selected {
+            app.colors.ui.list_error_color(row_bg)
+        } else {
+            secondary
+        };
+        f.render_widget(
+            Paragraph::new(clip(description, text_width)).style(
+                style.fg(app
+                    .colors
+                    .ui
+                    .readable_foreground(description_fg, row_bg, 4.5)),
+            ),
+            Rect::new(text_x, card.y + 1, text_width, 1),
+        );
+    }
+    if card.height >= 3 {
+        let icon = match ext.state {
+            ExtensionState::Loaded => "●",
+            ExtensionState::Error => "✖",
+            ExtensionState::Unloaded => "○",
+        };
+        let color = match ext.state {
+            ExtensionState::Loaded => app.colors.fg_success,
+            ExtensionState::Error => app.colors.ui.list_error_color(row_bg),
+            ExtensionState::Unloaded => secondary,
+        };
+        let state = format!("{icon} {}", status(ext));
+        let state_w = (state.width() as u16).min(text_width);
+        let publisher_w = text_width.saturating_sub(state_w + 2);
+        f.render_widget(
+            Paragraph::new(clip(publisher(ext), publisher_w)).style(style.fg(secondary)),
+            Rect::new(text_x, card.y + 2, publisher_w, 1),
+        );
+        f.render_widget(
+            Paragraph::new(clip(&state, state_w))
+                .style(style.fg(app.colors.ui.readable_foreground(color, row_bg, 4.5))),
+            Rect::new(text_x + text_width - state_w, card.y + 2, state_w, 1),
+        );
+    }
+    if selected {
+        f.render_widget(
+            Paragraph::new("▏\n".repeat(usize::from(card.height)))
+                .style(style.fg(row_style.underline_color.unwrap_or(row_fg))),
+            Rect::new(card.x, card.y, 1, card.height),
+        );
+    }
+    app.ext_sidebar.rows.push((index, card));
 }
 
 pub(crate) fn handle_click(app: &mut App, col: u16, row: u16) {
@@ -582,10 +754,13 @@ pub(crate) fn handle_click(app: &mut App, col: u16, row: u16) {
                 app.extensions_filter_cursor = app.extensions_filter.chars().count();
                 app.extensions_filter_selection_anchor = None;
                 app.extensions_scroll = 0;
-                app.ext_sidebar.collapsed = false;
+                app.ext_sidebar.collapsed = [false; GROUPS.len()];
                 app.clamp_extensions_selection();
             }
-            Action::Collapse => app.ext_sidebar.collapsed = !app.ext_sidebar.collapsed,
+            Action::Collapse(group) => {
+                app.ext_sidebar.collapsed[group] = !app.ext_sidebar.collapsed[group];
+                app.clamp_extensions_selection();
+            }
         }
         return;
     }
@@ -633,7 +808,10 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
     match code {
         KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
             app.ext_sidebar.search_focused = false;
-            app.ext_sidebar.collapsed = false;
+            // With every section folded, browsing unfolds them rather than doing nothing.
+            if !items(app).iter().any(|item| item.card().is_some()) {
+                app.ext_sidebar.collapsed = [false; GROUPS.len()];
+            }
             let page = isize::try_from((app.ext_sidebar.list_area.height / CARD_HEIGHT).max(1))
                 .unwrap_or(1);
             match code {
