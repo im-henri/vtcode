@@ -183,12 +183,10 @@ impl App {
             "toggle_vim_mode" => {
                 let on = !self.vim.enabled;
                 crate::vim::app_host::set_enabled(self, on);
-                self.notify(if on { "Vim Mode: On" } else { "Vim Mode: Off" });
                 return true;
             }
             "vim_reload_rc" => {
                 crate::vim::app_host::load_vimrc(self);
-                self.notify("vimrc reloaded");
                 return true;
             }
             "vim_open_rc" => {
@@ -329,7 +327,6 @@ impl App {
         // Handle theme commands: theme_dark, theme_one_dark_pro, etc.
         if let Some(config_key) = config_key_from_command_id(id) {
             if self.set_theme_by_key(&config_key) {
-                self.notify(format!("Theme: {}", self.theme_name));
                 return true;
             }
         }
@@ -350,7 +347,6 @@ impl App {
             "extensions_install" => self.open_extension_install_prompt(),
             "reload_color_themes" => {
                 self.request_external_themes_async();
-                self.notify("Reloading color themes...");
             }
             "cancel_file_deletion" => self.cancel_file_deletion(),
             "save" => self.save_current_file(),
@@ -402,8 +398,6 @@ impl App {
                     self.notify_error(format!(
                         "Saving {saved}; {untitled} untitled file(s) need Save As"
                     ));
-                } else {
-                    self.notify(format!("Saving {saved} file(s)..."));
                 }
             }
             "tab_close_all" => self.close_all_tabs(),
@@ -472,17 +466,14 @@ impl App {
             "close_others" => {
                 let active = self.active_tab;
                 self.close_saved_tabs_matching(|i| i != active);
-                self.notify("Closed other tabs");
             }
             "close_right" => {
                 let active = self.active_tab;
                 self.close_saved_tabs_matching(|i| i > active);
-                self.notify("Closed tabs to the right");
             }
             "close_left" => {
                 let active = self.active_tab;
                 self.close_saved_tabs_matching(|i| i < active);
-                self.notify("Closed tabs to the left");
             }
             "duplicate_tab" => self.duplicate_tab(self.active_tab),
             "switch_header_source" => {
@@ -624,15 +615,11 @@ impl App {
             "add_cursor_above" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.add_cursor_above();
-                    let count = ed.extra_cursors.len() + 1;
-                    self.notify(format!("{count} cursors"));
                 }
             }
             "add_cursor_below" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.add_cursor_below();
-                    let count = ed.extra_cursors.len() + 1;
-                    self.notify(format!("{count} cursors"));
                 }
             }
             "macro_start" => {
@@ -1105,7 +1092,6 @@ impl App {
                             ed.clear_selection();
                             ed.set_cursor(line, col);
                         }
-                        self.notify("Jumped to last edit location");
                     }
                 } else {
                     self.notify("No edit history");
@@ -1115,19 +1101,7 @@ impl App {
                 if self.tabs.len() >= 2 {
                     // Compare active tab with the next tab using split view
                     let next = (self.active_tab + 1) % self.tabs.len();
-                    if let (Some(name1), Some(name2)) = (
-                        self.tabs
-                            .get(self.active_tab)
-                            .map(|tab| tab.editor.file_name().to_string()),
-                        self.tabs
-                            .get(next)
-                            .map(|tab| tab.editor.file_name().to_string()),
-                    ) {
-                        self.create_split_group(next);
-                        self.notify(format!("Comparing: {name1} ↔ {name2}"));
-                    } else {
-                        self.notify("Need at least 2 tabs to compare");
-                    }
+                    self.create_split_group(next);
                 } else {
                     self.notify("Need at least 2 tabs to compare");
                 }
@@ -1142,8 +1116,6 @@ impl App {
                 if let Some(ed) = self.editor_mut() {
                     ed.toggle_bookmark();
                 }
-                let count = self.editor().map_or(0, |e| e.bookmarks.len());
-                self.notify(format!("Bookmarks: {count}"));
             }
             "next_bookmark" => {
                 if let Some(ed) = self.editor_mut() {
@@ -1165,7 +1137,6 @@ impl App {
                 if let Some(ed) = self.editor_mut() {
                     ed.clear_bookmarks();
                 }
-                self.notify("All bookmarks cleared");
             }
             "rename_symbol" => {
                 // Try prepareRename first if LSP is available
@@ -1293,8 +1264,6 @@ impl App {
             "toggle_pin_tab" => {
                 if let Some(tab) = self.tabs.get_mut(self.active_tab) {
                     tab.pinned = !tab.pinned;
-                    let state = if tab.pinned { "pinned" } else { "unpinned" };
-                    self.notify(format!("Tab {state}"));
                 }
             }
             id if id
@@ -1328,14 +1297,12 @@ impl App {
                 if self.active_tab > 0 {
                     self.swap_tabs(self.active_tab, self.active_tab - 1);
                     self.active_tab -= 1;
-                    self.notify("Tab moved left");
                 }
             }
             "move_tab_right" => {
                 if self.active_tab + 1 < self.tabs.len() {
                     self.swap_tabs(self.active_tab, self.active_tab + 1);
                     self.active_tab += 1;
-                    self.notify("Tab moved right");
                 }
             }
             "open_folder" => {
@@ -1357,7 +1324,6 @@ impl App {
                 if let Some(ed) = self.editor() {
                     let name = ed.file_name().to_string();
                     let _ = crate::clipboard::set_text(&name); // Error OK: clipboard may be unavailable
-                    self.notify(format!("Copied: {name}"));
                 }
             }
             "copy_filepath" => {
@@ -1365,7 +1331,6 @@ impl App {
                     if let Some(path) = &ed.file_path {
                         let path_str = path.display().to_string();
                         let _ = crate::clipboard::set_text(&path_str); // Error OK: clipboard may be unavailable
-                        self.notify(format!("Copied: {path_str}"));
                     } else {
                         self.notify("No file path to copy");
                     }
@@ -1380,7 +1345,6 @@ impl App {
                             |p| p.display().to_string(),
                         );
                         let _ = crate::clipboard::set_text(&relative); // Error OK: clipboard may be unavailable
-                        self.notify(format!("Copied: {relative}"));
                     } else {
                         self.notify("No file path to copy");
                     }
@@ -1418,7 +1382,6 @@ impl App {
                 if let Some(path) = self.editor().and_then(|e| e.file_path.as_ref()) {
                     let path_str = path.display().to_string();
                     let _ = crate::clipboard::set_text(&path_str); // Error OK: clipboard may be unavailable
-                    self.notify(format!("Copied: {path_str}"));
                 }
             }
             "reveal_in_explorer" => {
@@ -1428,7 +1391,6 @@ impl App {
                     self.show_explorer = true;
                     self.explorer.select_path(&target);
                     self.active_pane = ActivePane::Explorer;
-                    self.notify("Revealed in explorer");
                 }
             }
             id if id.starts_with("ext_cmd:") => {
@@ -1695,13 +1657,7 @@ mod tests {
                 .iter()
                 .any(|g| g.tabs.iter().any(|t| t.editor.file_name() == "first.txt"))
         );
-        let last_msg = app
-            .notification_history
-            .last()
-            .map(|(msg, _, _)| msg.as_str())
-            .unwrap_or("");
-        assert!(last_msg.contains("first.txt"));
-        assert!(last_msg.contains("second.txt"));
+        assert!(app.notification_history.is_empty());
     }
 
     #[test]
@@ -1715,13 +1671,7 @@ mod tests {
         assert!(app.split_active());
         assert_eq!(app.tabs.len(), 1);
         assert_eq!(app.tabs[0].editor.file_name(), "first.txt");
-        let last_msg = app
-            .notification_history
-            .last()
-            .map(|(msg, _, _)| msg.as_str())
-            .unwrap_or("");
-        assert!(last_msg.contains("second.txt"));
-        assert!(last_msg.contains("first.txt"));
+        assert!(app.notification_history.is_empty());
     }
 
     #[test]

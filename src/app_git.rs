@@ -1393,7 +1393,7 @@ impl App {
                 self.refresh_source_control_async();
                 self.refresh_git_line_status_async();
                 match reload {
-                    Ok(()) => self.notify(format!("Discarded hunk in {label}")),
+                    Ok(()) => {}
                     Err(err) => {
                         self.queue_file_reload(file.to_path_buf());
                         self.notify_error(format!(
@@ -2277,7 +2277,6 @@ impl App {
         if !self.queue_background_save_job(request) {
             return Err("The save could not start. Your edits remain unsaved; wait for the current file operation to finish.".into());
         }
-        self.notify("Saving...");
         self.status_message = String::from("Saving...");
         self.saving_flash = Some(std::time::Instant::now());
         Ok(())

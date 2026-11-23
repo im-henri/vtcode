@@ -345,9 +345,7 @@ pub(crate) fn handle_tab_context_key(app: &mut App, key: KeyEvent) -> Option<boo
                             app.tabs.get(tab).and_then(|t| t.editor.file_path.as_ref())
                         {
                             let path_str = path.display().to_string();
-                            if crate::clipboard::set_text(&path_str).is_ok() {
-                                app.notify(format!("Copied: {path_str}"));
-                            }
+                            let _ = crate::clipboard::set_text(&path_str);
                         }
                     }
                     "tab_copy_rel_path" => {
@@ -356,9 +354,7 @@ pub(crate) fn handle_tab_context_key(app: &mut App, key: KeyEvent) -> Option<boo
                         {
                             let rel = path.strip_prefix(&app.explorer.root).unwrap_or(path);
                             let path_str = rel.display().to_string();
-                            if crate::clipboard::set_text(&path_str).is_ok() {
-                                app.notify(format!("Copied: {path_str}"));
-                            }
+                            let _ = crate::clipboard::set_text(&path_str);
                         }
                     }
                     "tab_pin" => {

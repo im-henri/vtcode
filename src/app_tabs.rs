@@ -1450,7 +1450,6 @@ impl App {
         self.touch_tab_mru(self.active_tab);
         self.validate_diff_state_for_active_tab();
         self.ensure_active_tab_visible();
-        self.notify("Tab duplicated");
     }
 
     /// Open settings as a tab, reusing an existing Settings tab in any pane.
@@ -1657,7 +1656,6 @@ impl App {
             .is_some_and(|t| t.kind == TabKind::MarkdownPreview)
         {
             self.close_tab(self.active_tab);
-            self.notify("Markdown preview closed");
             return;
         }
 
@@ -1722,7 +1720,6 @@ impl App {
         });
         self.markdown_preview = true;
         self.activate_markdown_preview_tab(preview_idx);
-        self.notify("Markdown preview opened");
     }
 
     pub(crate) fn sync_markdown_preview_state(&mut self) -> bool {
@@ -2141,7 +2138,6 @@ impl App {
             if self.quick_open_active {
                 self.update_quick_open();
             }
-            self.notify(format!("Opened folder: {}", self.display_path(path)));
         } else {
             self.notify(format!("Not a directory: {}", path.display()));
         }

@@ -382,7 +382,6 @@ impl App {
             let _ = sender.send(result);
             wake.notify();
         });
-        self.notify("Preparing folder…");
     }
     pub(crate) fn confirm_workspace_set(&mut self) {
         self.validate_workspace_set(true);
@@ -599,7 +598,6 @@ impl App {
             let _ = sender.send(result);
             wake.notify();
         });
-        self.notify("Preparing workspace…");
     }
 
     pub(super) fn poll_workspace_sets(&mut self) -> bool {

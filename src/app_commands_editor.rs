@@ -8,7 +8,6 @@ impl App {
         }
         if let Some(language) = crate::app_menu::language_from_command_id(id) {
             self.set_editor_language(Some(language));
-            self.notify(format!("Language: {language}"));
             return false;
         }
         match id {
@@ -53,13 +52,11 @@ impl App {
                 if let Some(ed) = self.editor_mut() {
                     ed.fold_all();
                 }
-                self.notify("All regions folded");
             }
             "unfold_all" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.unfold_all();
                 }
-                self.notify("All regions unfolded");
             }
             id @ ("fold_level_1" | "fold_level_2" | "fold_level_3" | "fold_level_4"
             | "fold_level_5" | "fold_level_6" | "fold_level_7" | "fold_level_8"
@@ -68,7 +65,6 @@ impl App {
                 if let Some(ed) = self.editor_mut() {
                     ed.fold_at_level(level);
                 }
-                self.notify(format!("Folded at level {level}"));
             }
             "remove_empty_lines" => {
                 if let Some(ed) = self.editor_mut_writable() {
@@ -94,7 +90,6 @@ impl App {
                     ed.modified = true;
                     ed.clamp_cursor();
                 }
-                self.notify("Empty lines removed");
             }
             "merge_blank_lines" => {
                 if let Some(ed) = self.editor_mut_writable() {
@@ -124,7 +119,6 @@ impl App {
                     ed.modified = true;
                     ed.clamp_cursor();
                 }
-                self.notify("Consecutive blank lines merged");
             }
             "toggle_comment" => {
                 if let Some(ed) = self.editor_mut_writable() {
@@ -191,7 +185,6 @@ impl App {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.sort_imports();
                 }
-                self.notify("Imports sorted");
             }
             "change_language" => {
                 self.clear_drag_states();
@@ -206,54 +199,45 @@ impl App {
             }
             "lang_auto" => {
                 self.set_editor_language(None);
-                self.notify("Language: Auto-detect");
             }
             "eol_lf" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.convert_line_endings_to_lf();
-                    self.notify("Line endings: LF");
                 }
             }
             "eol_crlf" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.convert_line_endings_to_crlf();
-                    self.notify("Line endings: CRLF");
                 }
             }
             "encoding_utf8" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.set_encoding("UTF-8");
-                    self.notify("Encoding set to UTF-8 (save to re-encode)");
                 }
             }
             "encoding_utf8bom" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.set_encoding("UTF-8 with BOM");
-                    self.notify("Encoding set to UTF-8 with BOM (save to re-encode)");
                 }
             }
             "encoding_utf16le" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.set_encoding("UTF-16 LE");
-                    self.notify("Encoding set to UTF-16 LE (save to re-encode)");
                 }
             }
             "encoding_utf16be" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.set_encoding("UTF-16 BE");
-                    self.notify("Encoding set to UTF-16 BE (save to re-encode)");
                 }
             }
             "encoding_ascii" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.set_encoding("ASCII");
-                    self.notify("Encoding set to ASCII (save to re-encode)");
                 }
             }
             "encoding_latin1" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.set_encoding("ISO-8859-1");
-                    self.notify("Encoding set to ISO-8859-1 (save to re-encode)");
                 }
             }
             "reopen_with_encoding" => {
@@ -301,25 +285,20 @@ impl App {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.transform_selection(str::to_uppercase);
                 }
-                self.notify("Converted to UPPERCASE");
             }
             "to_lowercase" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.transform_selection(str::to_lowercase);
                 }
-                self.notify("Converted to lowercase");
             }
             "toggle_case" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.toggle_case();
                 }
-                self.notify("Case toggled");
             }
             "trim_trailing" => {
                 if let Some(ed) = self.editor_mut_writable() {
-                    if ed.trim_trailing_whitespace() {
-                        self.notify("Trailing whitespace trimmed");
-                    } else {
+                    if !ed.trim_trailing_whitespace() {
                         self.notify("No trailing whitespace found");
                     }
                 }
@@ -358,31 +337,26 @@ impl App {
                 if let Some(ed) = self.editor_mut() {
                     ed.center_cursor();
                 }
-                self.notify("Cursor centered in viewport");
             }
             "join_lines" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.join_lines();
-                    self.notify("Lines joined");
                 }
             }
             "indent_2" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.tab_size = 2;
                 }
-                self.notify("Indent: 2 Spaces");
             }
             "indent_4" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.tab_size = 4;
                 }
-                self.notify("Indent: 4 Spaces");
             }
             "indent_8" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.tab_size = 8;
                 }
-                self.notify("Indent: 8 Spaces");
             }
             "expand_selection" => {
                 self.expand_editor_selection();
@@ -400,61 +374,51 @@ impl App {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.remove_duplicate_lines();
                 }
-                self.notify("Duplicate lines removed");
             }
             "remove_blank_lines" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.remove_blank_lines();
                 }
-                self.notify("Blank lines removed");
             }
             "reverse_lines" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.reverse_lines();
                 }
-                self.notify("Lines reversed");
             }
             "shuffle_lines" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.shuffle_lines();
                 }
-                self.notify("Lines shuffled");
             }
             "to_camel" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.convert_to_camel_case();
                 }
-                self.notify("Converted to camelCase");
             }
             "to_pascal" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.convert_to_pascal_case();
                 }
-                self.notify("Converted to PascalCase");
             }
             "to_snake" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.convert_to_snake_case();
                 }
-                self.notify("Converted to snake_case");
             }
             "to_constant" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.convert_to_constant_case();
                 }
-                self.notify("Converted to CONSTANT_CASE");
             }
             "to_kebab" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.convert_to_kebab_case();
                 }
-                self.notify("Converted to kebab-case");
             }
             "to_title_case" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.convert_to_title_case();
                 }
-                self.notify("Converted to Title Case");
             }
             "indent_line" => {
                 if let Some(ed) = self.editor_mut_writable() {
@@ -468,36 +432,28 @@ impl App {
             }
             "base64_encode" => {
                 if let Some(ed) = self.editor_mut_writable() {
-                    if ed.base64_encode_selection() {
-                        self.notify("Base64 encoded");
-                    } else {
+                    if !ed.base64_encode_selection() {
                         self.notify("Select text to encode");
                     }
                 }
             }
             "base64_decode" => {
                 if let Some(ed) = self.editor_mut_writable() {
-                    if ed.base64_decode_selection() {
-                        self.notify("Base64 decoded");
-                    } else {
+                    if !ed.base64_decode_selection() {
                         self.notify("Select text to decode");
                     }
                 }
             }
             "url_encode" => {
                 if let Some(ed) = self.editor_mut_writable() {
-                    if ed.url_encode_selection() {
-                        self.notify("URL encoded");
-                    } else {
+                    if !ed.url_encode_selection() {
                         self.notify("Select text to encode");
                     }
                 }
             }
             "url_decode" => {
                 if let Some(ed) = self.editor_mut_writable() {
-                    if ed.url_decode_selection() {
-                        self.notify("URL decoded");
-                    } else {
+                    if !ed.url_decode_selection() {
                         self.notify("Select text to decode");
                     }
                 }
@@ -584,36 +540,25 @@ impl App {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.convert_indentation_to_spaces();
                 }
-                self.notify("Converted indentation to spaces");
             }
             "indent_to_tabs" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.convert_indentation_to_tabs();
                 }
-                self.notify("Converted indentation to tabs");
             }
             "toggle_indent_mode" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.use_tabs = !ed.use_tabs;
-                    let mode = if ed.use_tabs { "Tabs" } else { "Spaces" };
-                    self.notify(format!("Indent mode: {mode}"));
                 }
             }
             "reindent_lines" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     ed.reindent_lines();
-                    self.notify("Reindented lines");
                 }
             }
             "toggle_typewriter" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.typewriter_mode = !ed.typewriter_mode;
-                    let state = if ed.typewriter_mode {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    };
-                    self.notify(format!("Typewriter mode {state}"));
                 }
             }
             "toggle_read_only" => {
@@ -622,8 +567,6 @@ impl App {
                 }
                 if let Some(ed) = self.editor_mut() {
                     ed.set_read_only(!ed.read_only);
-                    let state = if ed.read_only { "enabled" } else { "disabled" };
-                    self.notify(format!("Read-only mode {state}"));
                 }
             }
             "prev_change" => {
@@ -642,7 +585,7 @@ impl App {
             "format_json" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     match ed.format_json() {
-                        Ok(()) => self.notify("JSON formatted"),
+                        Ok(()) => {}
                         Err(e) => self.notify(e),
                     }
                 }
@@ -650,7 +593,7 @@ impl App {
             "minify_json" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     match ed.minify_json() {
-                        Ok(()) => self.notify("JSON minified"),
+                        Ok(()) => {}
                         Err(e) => self.notify(e),
                     }
                 }
@@ -658,7 +601,7 @@ impl App {
             "sort_json_keys" => {
                 if let Some(ed) = self.editor_mut_writable() {
                     match ed.sort_json_keys() {
-                        Ok(()) => self.notify("JSON keys sorted"),
+                        Ok(()) => {}
                         Err(e) => self.notify(e),
                     }
                 }
@@ -667,29 +610,20 @@ impl App {
                 if let Some(ed) = self.editor_mut() {
                     ed.tab_size = 2;
                 }
-                self.notify("Tab size: 2");
             }
             "tab_size_4" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.tab_size = 4;
                 }
-                self.notify("Tab size: 4");
             }
             "tab_size_8" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.tab_size = 8;
                 }
-                self.notify("Tab size: 8");
             }
             "detect_indentation" => {
                 if let Some(ed) = self.editor_mut() {
                     ed.detect_indentation();
-                    let style = if ed.use_tabs {
-                        "Tabs".to_string()
-                    } else {
-                        format!("{} Spaces", ed.tab_size)
-                    };
-                    self.notify(format!("Detected: {style}"));
                 }
             }
             _ => return false,
@@ -1313,7 +1247,7 @@ mod tests {
             app.editor().unwrap().language_override.as_deref(),
             Some("YAML")
         );
-        assert_eq!(app.notification_history.last().unwrap().0, "Language: YAML");
+        assert!(app.notification_history.is_empty());
     }
 
     #[test]

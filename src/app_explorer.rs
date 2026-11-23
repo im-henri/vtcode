@@ -376,12 +376,6 @@ impl App {
                 }
                 if !targets.is_empty() {
                     let cut = action == "Cut File";
-                    let copied_count = targets.len();
-                    let copied_name = targets[0]
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("file")
-                        .to_string();
                     let mut terminal_text = String::new();
                     for (index, path) in targets.iter().enumerate() {
                         if index > 0 {
@@ -397,12 +391,6 @@ impl App {
                         cut,
                         terminal_text: terminal_text.into(),
                     });
-                    let verb = if cut { "Cut" } else { "Copied" };
-                    if copied_count == 1 {
-                        self.notify(format!("{verb}: {copied_name}"));
-                    } else {
-                        self.notify(format!("{verb} {copied_count} items"));
-                    }
                 }
             }
             "Paste File" => {
@@ -549,9 +537,7 @@ impl App {
                         .as_ref()
                         .and_then(|remote| remote.context_path(target).ok())
                         .unwrap_or_else(|| target.display().to_string());
-                    if crate::clipboard::set_text(path).is_ok() {
-                        self.notify("Path copied to clipboard");
-                    }
+                    let _ = crate::clipboard::set_text(path);
                 }
             }
             "Copy Relative Path" => {
@@ -567,9 +553,7 @@ impl App {
                         .and_then(|remote| remote.remote_path(target).ok())
                         .map(|path| path.display())
                         .unwrap_or(rel);
-                    if crate::clipboard::set_text(rel).is_ok() {
-                        self.notify("Relative path copied to clipboard");
-                    }
+                    let _ = crate::clipboard::set_text(rel);
                 }
             }
             "Select for Compare" => {
@@ -585,22 +569,18 @@ impl App {
             "Sort by Name" => {
                 self.explorer.sort_mode = crate::explorer::ExplorerSortMode::Name;
                 self.refresh_explorer_tree_async();
-                self.notify("Explorer: Sort by Name");
             }
             "Sort by Size" => {
                 self.explorer.sort_mode = crate::explorer::ExplorerSortMode::Size;
                 self.refresh_explorer_tree_async();
-                self.notify("Explorer: Sort by Size");
             }
             "Sort by Date Modified" => {
                 self.explorer.sort_mode = crate::explorer::ExplorerSortMode::Modified;
                 self.refresh_explorer_tree_async();
-                self.notify("Explorer: Sort by Date Modified");
             }
             "Sort by Type" => {
                 self.explorer.sort_mode = crate::explorer::ExplorerSortMode::Type;
                 self.refresh_explorer_tree_async();
-                self.notify("Explorer: Sort by Type");
             }
             _ => {}
         }
@@ -726,10 +706,7 @@ impl App {
             if creating_file || creating_folder {
                 self.refresh_explorer_after_edit(Some(&new_path));
                 if creating_file {
-                    self.notify(format!("Created: {}", new_path.display()));
                     self.open_file(&new_path);
-                } else {
-                    self.notify(format!("Created folder: {}", new_path.display()));
                 }
             } else if new_path != target {
                 // Update paths in every group only after the move succeeds.
@@ -764,7 +741,6 @@ impl App {
                 self.lsp_manager.did_close(&target);
                 self.lsp_manager.did_rename_files(&target, &new_path);
                 self.navigation.rename_path(&target, &new_path);
-                self.notify(format!("Renamed to: {}", new_path.display()));
                 self.refresh_explorer_after_edit(Some(&new_path));
             }
         }
@@ -867,7 +843,6 @@ impl App {
                     tab.editor.break_undo_group();
                 }
             }
-            self.notify(format!("Saving as: {path_str}..."));
             self.status_message = format!("Saving: {path_str}...");
             self.save_as_active = false;
         } else {

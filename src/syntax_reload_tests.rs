@@ -159,7 +159,7 @@ fn syntax_reload_builds_on_first_launch_and_recolors_open_files_without_restarti
     assert_eq!(app.editor().unwrap().rope.to_string(), "magic\n");
     assert_eq!(app.editor().unwrap().cursor_col, 2);
     assert!(
-        app.notification_history
+        !app.notification_history
             .iter()
             .any(|notice| notice.0 == "Syntaxes reloaded")
     );

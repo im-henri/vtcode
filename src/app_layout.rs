@@ -207,7 +207,6 @@ impl App {
         } else {
             self.create_split_group_at(index, zone);
         }
-        self.notify("Split editor opened");
     }
 
     /// Move a tab into a new pane on the requested side of the active group.

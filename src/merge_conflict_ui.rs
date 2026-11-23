@@ -270,7 +270,6 @@ impl App {
         }
         let Some(index) = editor.merge_conflicts.current(&editor.rope) else {
             self.prepare_merge_conflicts();
-            self.notify("Checking merge conflicts…");
             return;
         };
         let regions = &index.regions;

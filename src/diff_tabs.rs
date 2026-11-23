@@ -552,7 +552,7 @@ impl App {
         match self.patch_settings_scope(scope, "diffEditor.diffAlgorithm", |settings| {
             settings.diff_algorithm = Some(algorithm);
         }) {
-            Ok(()) => self.notify(format!("Diff Algorithm: {}", self.diff_algorithm.label())),
+            Ok(()) => {}
             Err(error) => self.notify_error(format!("Could not save diff algorithm: {error}")),
         }
     }

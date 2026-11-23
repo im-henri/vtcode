@@ -99,7 +99,6 @@ impl App {
                         }
                     }
                 }
-                self.notify(format!("Tab size: {new_size}"));
             }
             "use_tabs" => {
                 self.default_use_tabs = !self.default_use_tabs;
@@ -136,8 +135,6 @@ impl App {
                         }
                     }
                 }
-                let state = if self.default_word_wrap { "On" } else { "Off" };
-                self.notify(format!("Word Wrap: {state}"));
             }
             "word_wrap_column" => {
                 // Cycle through: 0 (viewport) -> 80 -> 120 -> 0
@@ -155,12 +152,6 @@ impl App {
                         tab.editor.word_wrap_column = new_col;
                     }
                 }
-                let label = if new_col == 0 {
-                    "viewport".to_string()
-                } else {
-                    new_col.to_string()
-                };
-                self.notify(format!("Word Wrap Column: {label}"));
             }
             "whitespace" => {
                 let next_mode = self.default_whitespace_mode.next();
@@ -177,7 +168,6 @@ impl App {
                         }
                     }
                 }
-                self.notify(format!("Render Whitespace: {}", next_mode.name()));
             }
             "read_only" => {
                 self.default_read_only = !self.default_read_only;
@@ -193,8 +183,6 @@ impl App {
                         }
                     }
                 }
-                let state = if self.default_read_only { "On" } else { "Off" };
-                self.notify(format!("Read Only: {state}"));
             }
             "quick_suggestions" => {
                 self.quick_suggestions = !self.quick_suggestions;
@@ -226,7 +214,6 @@ impl App {
             }
             "theme" => {
                 self.next_theme();
-                self.notify(format!("Theme: {}", self.theme_name));
             }
             "explorer" => {
                 self.show_explorer = !self.show_explorer;
@@ -234,11 +221,6 @@ impl App {
             "sidebar_auto_hide" => self.set_sidebar_auto_hide(!self.sidebar_auto_hide.enabled),
             "show_open_editors" => {
                 self.show_open_editors = !self.show_open_editors;
-                self.notify(if self.show_open_editors {
-                    "Open Editors: On"
-                } else {
-                    "Open Editors: Off"
-                });
             }
             "collapse_explorer" => {
                 self.collapse_all_explorer_async();
@@ -277,7 +259,6 @@ impl App {
                     15 => 20,
                     _ => 6,
                 };
-                self.notify(format!("Panel height: {}", self.panel_height));
             }
             "sidebar_pos" => {
                 self.sidebar_right = !self.sidebar_right;
@@ -428,26 +409,12 @@ impl App {
             }
             "trim_trailing" => {
                 self.trim_trailing_on_save = !self.trim_trailing_on_save;
-                let state = if self.trim_trailing_on_save {
-                    "On"
-                } else {
-                    "Off"
-                };
-                self.notify(format!("Trim trailing whitespace: {state}"));
             }
             "format_on_save" => {
                 self.format_on_save = !self.format_on_save;
-                let state = if self.format_on_save { "On" } else { "Off" };
-                self.notify(format!("Format on save: {state}"));
             }
             "final_newline" => {
                 self.insert_final_newline = !self.insert_final_newline;
-                let state = if self.insert_final_newline {
-                    "On"
-                } else {
-                    "Off"
-                };
-                self.notify(format!("Insert final newline: {state}"));
             }
             "indent_guides" => {
                 self.show_indent_guides = !self.show_indent_guides;
@@ -527,7 +494,6 @@ impl App {
                     2000 => 5000,
                     _ => 100,
                 };
-                self.notify(format!("Auto-save delay: {}ms", self.auto_save_delay));
             }
             "search_case_sensitive" => {
                 self.search_case_sensitive = !self.search_case_sensitive;
@@ -581,14 +547,7 @@ impl App {
                 if let Some(idx_str) = id.strip_prefix("diff_compare_") {
                     if let Ok(tab_idx) = idx_str.parse::<usize>() {
                         if tab_idx < self.tabs.len() {
-                            let base_name = self.tabs[tab_idx].editor.file_name().to_string();
-                            let target_name = self
-                                .editor()
-                                .map(|e| e.file_name().to_string())
-                                .unwrap_or_default();
-                            if self.begin_tab_compare(tab_idx) {
-                                self.notify(format!("Preparing diff: {base_name} ↔ {target_name}"));
-                            }
+                            self.begin_tab_compare(tab_idx);
                         }
                     }
                 }
@@ -942,7 +901,6 @@ impl App {
             "theme" => {
                 if let Some(key) = self.settings_theme_key(value) {
                     self.set_theme_by_key(&key);
-                    self.notify(format!("Theme: {}", self.theme_name));
                 }
             }
             "sidebar_pos" => {
@@ -982,7 +940,6 @@ impl App {
                     "Underline" => crate::app::CursorStyle::Underline,
                     _ => crate::app::CursorStyle::Line,
                 };
-                self.notify(format!("Cursor Style: {value}"));
             }
             "auto_save_mode" => {
                 self.auto_save = match value {
@@ -991,7 +948,6 @@ impl App {
                     "On Window Change" => crate::app::AutoSaveMode::OnWindowChange,
                     _ => crate::app::AutoSaveMode::Off,
                 };
-                self.notify(format!("Auto Save: {value}"));
             }
             _ => {}
         }

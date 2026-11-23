@@ -158,7 +158,6 @@ impl App {
         self.new_terminal_tab();
         self.detach_terminal_to_tab();
         self.ensure_active_tab_visible();
-        self.notify("New terminal opened in editor tab");
     }
 
     pub(crate) fn terminal_is_in_dock(&self, index: usize, dock: TerminalDock) -> bool {
@@ -201,7 +200,6 @@ impl App {
             self.show_terminal_sidebar = false;
             self.terminal_sidebar.hide();
             self.terminal_panel_focused = false;
-            self.notify("Terminal collapsed");
             return;
         }
 
@@ -217,7 +215,6 @@ impl App {
         self.show_terminal_sidebar = true;
         self.terminal_panel_focused = true;
         self.active_pane = ActivePane::Editor;
-        self.notify("Terminal opened on the right");
     }
 
     /// Close the active terminal. Keep one empty terminal slot because the rest
@@ -614,7 +611,6 @@ impl App {
             self.switch_group(target_group);
         }
 
-        let name = self.terminals[index].name.clone();
         let mut editor = Editor::new();
         editor.file_path = None;
         editor.read_only = true;
@@ -637,7 +633,6 @@ impl App {
             }
             _ => {}
         }
-        self.notify(format!("Terminal \"{name}\" moved to editor tab"));
         true
     }
 
@@ -660,7 +655,6 @@ impl App {
 
         self.terminal_sidebar_revealed = true;
         self.show_terminal_sidebar = true;
-        self.notify("Terminal moved to the right side");
         true
     }
 

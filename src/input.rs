@@ -1411,8 +1411,6 @@ pub(crate) fn handle_editor_key(app: &mut App, code: KeyCode, modifiers: KeyModi
                 if let Some(ed) = app.editor_mut() {
                     ed.toggle_bookmark();
                 }
-                let count = app.editor().map_or(0, |e| e.bookmarks.len());
-                app.notify(format!("Bookmarks: {count}"));
             } else if shift {
                 app.execute_palette_command("prev_bookmark");
             }

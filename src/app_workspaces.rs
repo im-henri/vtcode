@@ -521,9 +521,6 @@ impl App {
                                 self.insert_workspace(next);
                             } else {
                                 self.park_new_workspace(next);
-                                if close_after.is_none() {
-                                    self.notify("Folder added");
-                                }
                             }
                             changed = true;
                         }
@@ -687,7 +684,6 @@ impl App {
             id: self.workspaces.next_id,
             app: Box::new(next),
         });
-        self.notify("Folder opened in the background");
     }
 
     pub(crate) fn start_workspace_services(&mut self) {
@@ -974,13 +970,13 @@ impl App {
     // workbench uses its existing asynchronous custom-document/save/recovery
     // path, so no hidden unsaved document can disappear at shutdown.
     fn begin_close_folder(&mut self, id: u64) {
-        let Some(entry) = self
+        if !self
             .workspace_entries()
             .into_iter()
-            .find(|entry| entry.id == id && !entry.path.is_empty())
-        else {
+            .any(|entry| entry.id == id && !entry.path.is_empty())
+        {
             return;
-        };
+        }
         let target = if id == self.workspaces.active {
             Some(&*self)
         } else {
@@ -1007,7 +1003,6 @@ impl App {
         let previous = self.workspaces.active;
         if self.workspaces.parked.is_empty() {
             self.prepare_empty_window_for_close();
-            self.notify(format!("Closing folder: {}", entry.name));
             return;
         }
         if id != previous && !self.switch_workspace(id) {

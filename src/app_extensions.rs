@@ -76,10 +76,7 @@ impl App {
             context_path.map(std::path::Path::to_path_buf),
             Some(editor_context),
         ) {
-            Ok(()) => {
-                self.notify("Running extension command...");
-                true
-            }
+            Ok(()) => true,
             Err(err) => {
                 self.notify(err);
                 false
@@ -641,7 +638,6 @@ impl App {
             self.active_tab = existing_idx;
             self.active_pane = crate::app::ActivePane::Editor;
             self.touch_tab_mru(self.active_tab);
-            self.notify(format!("Focused extension view: {}", view.title));
             return true;
         }
 
@@ -666,7 +662,6 @@ impl App {
         self.active_tab = self.tabs.len() - 1;
         self.active_pane = crate::app::ActivePane::Editor;
         self.touch_tab_mru(self.active_tab);
-        self.notify(format!("Opened extension view: {}", view.title));
         true
     }
 
@@ -689,7 +684,7 @@ impl App {
             None,
             Some(editor_context),
         ) {
-            Ok(()) => self.notify("Running extension command...".to_string()),
+            Ok(()) => {}
             Err(err) => self.notify(err),
         }
         self.refresh_open_extension_view_tabs();
@@ -738,7 +733,6 @@ impl App {
 
     pub(crate) fn extensions_rescan(&mut self) {
         self.request_extension_scan();
-        self.notify("Scanning extensions...");
     }
 
     pub(crate) fn extensions_reload_all(&mut self) {
@@ -852,7 +846,6 @@ impl App {
                     editor.modified = true;
                     editor.mark_syntax_dirty_range(0, editor.rope.len_lines());
                 }
-                self.notify("Export opened. Save As chooses its destination.");
             }
             crate::extensions::TextEditRequest::InsertText { line, col, text } => {
                 if let Some(editor) = self.editor_mut() {

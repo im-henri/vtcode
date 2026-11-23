@@ -3521,11 +3521,6 @@ impl App {
                             self.binary_open_prompt_selected = 1.min(open_commands.len());
                             self.binary_open_prompt_commands = open_commands;
                             self.binary_open_prompt_open_normally = encoding != "Binary";
-                            self.notify(if encoding == "Binary" {
-                                "Binary file detected"
-                            } else {
-                                "Additional open options available"
-                            });
                             has_visual_changes = true;
                         }
                         continue;
@@ -3644,7 +3639,7 @@ impl App {
                             self.queue_file_disk_checks(std::iter::once(path.clone()));
                         }
                         if encoding == "Binary" {
-                            self.notify("Binary file — editing disabled");
+                            // Binary files are not synced to language servers.
                         } else if !loaded_large_file_mode && applied_file {
                             self.queue_lsp_document_sync(
                                 path.clone(),
@@ -4766,7 +4761,6 @@ impl App {
                             self.finish_save_as(source_document_id, &path);
                         }
                         self.auto_save_attempted_versions.remove(&path);
-                        self.notify("File saved");
                         self.status_message = String::from("File saved.");
                         let saved_rope = saved_rope.unwrap_or_default();
                         let large_file_threshold_bytes =

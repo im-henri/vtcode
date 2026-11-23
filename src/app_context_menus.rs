@@ -631,7 +631,6 @@ impl App {
             let next = self.hunk_peek.as_ref().map_or(0, |peek| peek.selected);
             match self.revert_unsaved_hunk() {
                 Ok(()) => {
-                    self.notify("Reverted unsaved hunk");
                     if self.editor().is_some_and(|editor| !editor.modified) {
                         self.close_hunk_popup();
                     } else {

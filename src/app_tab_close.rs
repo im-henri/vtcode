@@ -3,7 +3,6 @@ use crate::app::{ActivePane, App, Tab, TabKind};
 pub(crate) struct CloseTabs {
     views: Vec<u64>,
     deferred: Option<u64>,
-    notify: bool,
 }
 
 struct ClosedTab {
@@ -139,7 +138,7 @@ impl App {
             self.confirm_close_active = true;
             self.confirm_close_tab = idx;
         } else {
-            self.request_tab_close(vec![(self.active_group, vec![idx])], None, false);
+            self.request_tab_close(vec![(self.active_group, vec![idx])], None);
         }
     }
 
@@ -167,7 +166,7 @@ impl App {
     pub(crate) fn close_tabs_matching(&mut self, matches: impl Fn(usize) -> bool) {
         let (close, blocked) = self.plan_tab_closes(matches);
         let deferred = blocked.map(|idx| self.tabs[idx].editor.navigation_id);
-        self.request_tab_close(vec![(self.active_group, close)], deferred, false);
+        self.request_tab_close(vec![(self.active_group, close)], deferred);
     }
 
     pub(crate) fn force_close_tab(&mut self, idx: usize) {
@@ -207,7 +206,7 @@ impl App {
                 .then_some(index)
             })
             .collect();
-        self.request_tab_close(vec![(self.active_group, close)], None, false);
+        self.request_tab_close(vec![(self.active_group, close)], None);
     }
 
     fn saved_tab_closes(&self, include_active: bool) -> Vec<(usize, Vec<usize>)> {
@@ -244,7 +243,7 @@ impl App {
     }
 
     pub(crate) fn close_saved_tabs(&mut self) {
-        self.request_tab_close(self.saved_tab_closes(true), None, true);
+        self.request_tab_close(self.saved_tab_closes(true), None);
     }
 
     pub(crate) fn close_all_tabs(&mut self) {
@@ -254,15 +253,10 @@ impl App {
         let deferred = blocked.map(|idx| self.tabs[idx].editor.navigation_id);
         let mut plan = self.saved_tab_closes(false);
         plan.push((self.active_group, close));
-        self.request_tab_close(plan, deferred, false);
+        self.request_tab_close(plan, deferred);
     }
 
-    fn request_tab_close(
-        &mut self,
-        plan: Vec<(usize, Vec<usize>)>,
-        deferred: Option<u64>,
-        notify: bool,
-    ) {
+    fn request_tab_close(&mut self, plan: Vec<(usize, Vec<usize>)>, deferred: Option<u64>) {
         let mut terminals = Vec::new();
         let mut views = Vec::new();
         for (group, indices) in &plan {
@@ -283,15 +277,11 @@ impl App {
         if !names.is_empty() {
             self.request_terminal_close(
                 names,
-                crate::app_terminal::TerminalCloseAction::Tabs(CloseTabs {
-                    views,
-                    deferred,
-                    notify,
-                }),
+                crate::app_terminal::TerminalCloseAction::Tabs(CloseTabs { views, deferred }),
             );
             return;
         }
-        self.finish_tab_close(plan, deferred, notify);
+        self.finish_tab_close(plan, deferred);
     }
 
     pub(crate) fn resume_terminal_tab_close(&mut self, request: CloseTabs) {
@@ -321,19 +311,11 @@ impl App {
             }
             plan.push((group, indices));
         }
-        self.finish_tab_close(plan, deferred, request.notify);
+        self.finish_tab_close(plan, deferred);
     }
 
-    fn finish_tab_close(
-        &mut self,
-        plan: Vec<(usize, Vec<usize>)>,
-        deferred: Option<u64>,
-        notify: bool,
-    ) {
-        let count = self.close_tab_batch(plan);
-        if notify {
-            self.notify(format!("Closed {count} saved tabs"));
-        }
+    fn finish_tab_close(&mut self, plan: Vec<(usize, Vec<usize>)>, deferred: Option<u64>) {
+        self.close_tab_batch(plan);
         if let Some(id) = deferred {
             if let Some((group, index)) = self.tab_location(id) {
                 if group != self.active_group {

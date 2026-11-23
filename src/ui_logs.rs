@@ -1124,7 +1124,7 @@ impl App {
             return;
         };
         match crate::clipboard::set_text(log.report()) {
-            Ok(()) => self.notify("Connection log copied"),
+            Ok(()) => {}
             Err(error) => self.notify_error(format!("Could not copy connection log: {error}")),
         }
     }

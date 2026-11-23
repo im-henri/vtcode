@@ -1055,9 +1055,7 @@ impl App {
             self.notify("Select a file to compare");
             return;
         }
-        let label = self.compare_path_label(Some(&path), "file");
         self.selected_compare_path = Some(path);
-        self.notify(format!("Selected for compare: {label}"));
     }
 
     pub(crate) fn can_compare_with_selected(&self, path: &Path) -> bool {
@@ -1691,13 +1689,10 @@ impl App {
             self.request_syntax_assets_async();
             return false;
         }
-        let explicit_reload = std::mem::take(&mut self.syntax_reload_requested);
+        self.syntax_reload_requested = false;
         let loaded = match result {
             Ok(Some(loaded)) => loaded,
             Ok(None) => {
-                if explicit_reload {
-                    self.notify("Syntaxes reloaded");
-                }
                 return was_running;
             }
             Err(error) => {
@@ -1712,8 +1707,6 @@ impl App {
         }
         if let Some(warning) = loaded.warning.as_deref() {
             self.notify_warn(warning);
-        } else if explicit_reload {
-            self.notify("Syntaxes reloaded");
         }
         self.apply_loaded_syntax_assets(loaded);
         // Redraw to remove the loading indicator and update language lists.

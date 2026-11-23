@@ -85,7 +85,6 @@ impl App {
                 result: Box::new(result),
             });
         });
-        self.notify(format!("Git {op} started..."));
     }
 
     pub(crate) fn git_fetch_async(&mut self) {

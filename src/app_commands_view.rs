@@ -15,53 +15,26 @@ impl App {
                 if is_maximized {
                     self.show_explorer = true;
                     self.show_panel = true;
-                    self.notify("Editor restored");
                 } else {
                     self.show_explorer = false;
                     crate::ui_panels::hide_for_layout(self);
-                    self.notify("Editor maximized");
                 }
             }
             "toggle_word_count" => {
                 self.show_word_count = !self.show_word_count;
                 self.set_status_bar_item_pinned("word_count", self.show_word_count);
-                self.notify(if self.show_word_count {
-                    "Word count: ON"
-                } else {
-                    "Word count: OFF"
-                });
             }
             "toggle_indent_rainbow" => {
                 self.indent_rainbow = !self.indent_rainbow;
-                self.notify(if self.indent_rainbow {
-                    "Indent rainbow: ON"
-                } else {
-                    "Indent rainbow: OFF"
-                });
             }
             "toggle_color_preview" => {
                 self.show_color_preview = !self.show_color_preview;
-                self.notify(if self.show_color_preview {
-                    "Color preview: ON"
-                } else {
-                    "Color preview: OFF"
-                });
             }
             "toggle_bracket_pair_colorization" => {
                 self.bracket_pair_colorization = !self.bracket_pair_colorization;
-                self.notify(if self.bracket_pair_colorization {
-                    "Bracket pair colorization: ON"
-                } else {
-                    "Bracket pair colorization: OFF"
-                });
             }
             "toggle_error_lens" => {
                 self.error_lens = !self.error_lens;
-                self.notify(if self.error_lens {
-                    "Error Lens: ON — TODO/FIXME/HACK/BUG/NOTE and language-server diagnostics"
-                } else {
-                    "Error Lens: OFF"
-                });
             }
             "toggle_inlay_hints" => {
                 self.show_inlay_hints = !self.show_inlay_hints;
@@ -69,11 +42,6 @@ impl App {
                     self.lsp_inlay_hints.clear();
                 }
                 self.lsp_inlay_hint_last_scroll = usize::MAX;
-                self.notify(if self.show_inlay_hints {
-                    "Inlay Hints: ON"
-                } else {
-                    "Inlay Hints: OFF"
-                });
             }
             "toggle_code_lens" => {
                 self.show_code_lenses = !self.show_code_lenses;
@@ -81,19 +49,9 @@ impl App {
                     self.lsp_code_lenses.clear();
                 }
                 self.lsp_code_lens_last_version = u64::MAX;
-                self.notify(if self.show_code_lenses {
-                    "Code Lens: ON"
-                } else {
-                    "Code Lens: OFF"
-                });
             }
             "toggle_on_type_formatting" => {
                 self.on_type_formatting_enabled = !self.on_type_formatting_enabled;
-                self.notify(if self.on_type_formatting_enabled {
-                    "On-Type Formatting: ON"
-                } else {
-                    "On-Type Formatting: OFF"
-                });
             }
             "toggle_semantic_tokens" => {
                 self.show_semantic_tokens = !self.show_semantic_tokens;
@@ -101,30 +59,15 @@ impl App {
                     self.lsp_semantic_tokens.clear();
                 }
                 self.lsp_semantic_tokens_last_version = u64::MAX;
-                self.notify(if self.show_semantic_tokens {
-                    "Semantic Highlighting: ON"
-                } else {
-                    "Semantic Highlighting: OFF"
-                });
             }
             "toggle_sticky_scroll" => {
                 self.sticky_scroll = !self.sticky_scroll;
-                self.notify(if self.sticky_scroll {
-                    "Sticky Scroll: ON"
-                } else {
-                    "Sticky Scroll: OFF"
-                });
             }
             "toggle_screencast_mode" => {
                 self.screencast_mode = !self.screencast_mode;
                 if !self.screencast_mode {
                     self.screencast_keys.clear();
                 }
-                self.notify(if self.screencast_mode {
-                    "Screencast Mode: ON"
-                } else {
-                    "Screencast Mode: OFF"
-                });
             }
             "show_explorer" => {
                 self.show_explorer_view();
@@ -134,43 +77,28 @@ impl App {
             "toggle_explorer" | "toggle_sidebar" => self.toggle_explorer(),
             "toggle_sidebar_auto_hide" => {
                 self.set_sidebar_auto_hide(!self.sidebar_auto_hide.enabled);
-                self.notify(if self.sidebar_auto_hide.enabled {
-                    "Sidebar auto-hide: On"
-                } else {
-                    "Sidebar auto-hide: Off"
-                });
             }
             "toggle_minimap" => {
                 self.show_minimap = !self.show_minimap;
-                self.notify(if self.show_minimap {
-                    "Minimap: On"
-                } else {
-                    "Minimap: Off"
-                });
             }
             "ruler_80" => {
                 if let Some(pos) = self.rulers.iter().position(|&r| r == 80) {
                     self.rulers.remove(pos);
-                    self.notify("Ruler at 80 removed");
                 } else {
                     self.rulers.push(80);
                     self.rulers.sort_unstable();
-                    self.notify("Ruler at 80 added");
                 }
             }
             "ruler_120" => {
                 if let Some(pos) = self.rulers.iter().position(|&r| r == 120) {
                     self.rulers.remove(pos);
-                    self.notify("Ruler at 120 removed");
                 } else {
                     self.rulers.push(120);
                     self.rulers.sort_unstable();
-                    self.notify("Ruler at 120 added");
                 }
             }
             "ruler_clear" => {
                 self.rulers.clear();
-                self.notify("All rulers cleared");
             }
             "center_screen" => {
                 if let Some(ed) = self.editor_mut() {
@@ -183,11 +111,6 @@ impl App {
                     self.terminal_panel_focused = false;
                     crate::ui_panels::close_panel(self);
                 }
-                self.notify(if self.show_panel {
-                    "Panel: On"
-                } else {
-                    "Panel: Off"
-                });
             }
             "show_notifications" => {
                 self.show_panel = true;
@@ -196,79 +119,36 @@ impl App {
             "toggle_problems" => crate::ui_panels::toggle_problems(self),
             "toggle_line_numbers" => {
                 self.show_line_numbers = !self.show_line_numbers;
-                self.notify(if self.show_line_numbers {
-                    "Line Numbers: On"
-                } else {
-                    "Line Numbers: Off"
-                });
             }
             "toggle_indent_guides" => {
                 self.show_indent_guides = !self.show_indent_guides;
-                self.notify(if self.show_indent_guides {
-                    "Indent Guides: On"
-                } else {
-                    "Indent Guides: Off"
-                });
             }
             "toggle_breadcrumbs" => {
                 self.show_breadcrumbs = !self.show_breadcrumbs;
-                self.notify(if self.show_breadcrumbs {
-                    "Breadcrumbs: On"
-                } else {
-                    "Breadcrumbs: Off"
-                });
             }
             "toggle_activity_bar" => {
-                let visible = if self.zen_mode {
+                if self.zen_mode {
                     let mut state = self
                         .zen_pre_state
                         .unwrap_or((true, true, false, true, true, true));
                     state.5 = !state.5;
-                    let visible = state.5;
                     self.zen_pre_state = Some(state);
                     self.show_activity_bar = false;
-                    visible
                 } else {
                     self.show_activity_bar = !self.show_activity_bar;
-                    self.show_activity_bar
-                };
-                self.notify(if visible {
-                    "Activity Bar: On"
-                } else {
-                    "Activity Bar: Off"
-                });
+                }
             }
             "toggle_status_bar" => {
                 self.show_status_bar = !self.show_status_bar;
-                self.notify(if self.show_status_bar {
-                    "Status Bar: On"
-                } else {
-                    "Status Bar: Off"
-                });
             }
             "toggle_tab_bar" => {
                 self.show_tab_bar = !self.show_tab_bar;
-                self.notify(if self.show_tab_bar {
-                    "Tab Bar: On"
-                } else {
-                    "Tab Bar: Off"
-                });
             }
             "toggle_menu_bar" => {
                 self.show_menu_bar = !self.show_menu_bar;
-                self.notify(if self.show_menu_bar {
-                    "Menu Bar: On"
-                } else {
-                    "Menu Bar: Off"
-                });
             }
             "toggle_relative_lines" => {
                 self.relative_line_numbers = !self.relative_line_numbers;
-                self.notify(if self.relative_line_numbers {
-                    "Relative Line Numbers: On"
-                } else {
-                    "Line Numbers: Absolute"
-                });
             }
             "toggle_word_wrap" => {
                 let diff = self.row_diff_active();
@@ -345,7 +225,6 @@ impl App {
                         }
                     }
                 }
-                self.notify(format!("Render Whitespace: {}", next_mode.name()));
             }
             "toggle_cursor_style" => {
                 use crate::app::CursorStyle;
@@ -354,28 +233,12 @@ impl App {
                     CursorStyle::Block => CursorStyle::Underline,
                     CursorStyle::Underline => CursorStyle::Line,
                 };
-                let name = match self.cursor_style {
-                    CursorStyle::Line => "Line",
-                    CursorStyle::Block => "Block",
-                    CursorStyle::Underline => "Underline",
-                };
-                self.notify(format!("Cursor Style: {name}"));
             }
             "toggle_cursor_blinking" => {
                 self.cursor_blinking = !self.cursor_blinking;
-                self.notify(if self.cursor_blinking {
-                    "Cursor Blinking: On"
-                } else {
-                    "Cursor Blinking: Off"
-                });
             }
             "toggle_focus_mode" => {
                 self.focus_mode = !self.focus_mode;
-                self.notify(if self.focus_mode {
-                    "Focus mode: ON"
-                } else {
-                    "Focus mode: OFF"
-                });
             }
             "toggle_sidebar_position" => {
                 self.sidebar_right = !self.sidebar_right;
@@ -413,7 +276,6 @@ impl App {
                     self.show_tab_bar = false;
                     self.show_status_bar = false;
                     self.show_activity_bar = false;
-                    self.notify("Zen Mode: On");
                 } else {
                     if let Some((exp, mini, panel, tabs, status, activity)) =
                         self.zen_pre_state.take()
@@ -431,7 +293,6 @@ impl App {
                         self.show_status_bar = true;
                         self.show_activity_bar = true;
                     }
-                    self.notify("Zen Mode: Off");
                 }
             }
             "toggle_diff_algorithm" => {
@@ -492,16 +353,13 @@ impl App {
                 match self.diff_mode {
                     DiffMode::Off => {
                         self.clear_diff_state();
-                        self.notify("Diff view disabled");
                     }
                     DiffMode::SideBySide => {
                         self.refresh_git_line_status_async();
-                        self.notify("Diff: side-by-side");
                     }
                     DiffMode::Inline => {
                         self.refresh_git_line_status_async();
                         self.scroll_to_first_diff_change();
-                        self.notify("Diff: inline");
                     }
                 }
                 self.save_diff_layout_preference();
@@ -616,29 +474,23 @@ impl App {
             "compare_with_git" => {
                 if !self.request_compare_with_git_async() {
                     self.notify("No git version found for this file");
-                } else {
-                    self.notify("Preparing Git diff");
                 }
             }
             "explorer_sort_name" => {
                 self.explorer.sort_mode = crate::explorer::ExplorerSortMode::Name;
                 self.refresh_explorer_tree_async();
-                self.notify("Explorer: Sort by Name");
             }
             "explorer_sort_size" => {
                 self.explorer.sort_mode = crate::explorer::ExplorerSortMode::Size;
                 self.refresh_explorer_tree_async();
-                self.notify("Explorer: Sort by Size");
             }
             "explorer_sort_modified" => {
                 self.explorer.sort_mode = crate::explorer::ExplorerSortMode::Modified;
                 self.refresh_explorer_tree_async();
-                self.notify("Explorer: Sort by Date Modified");
             }
             "explorer_sort_type" => {
                 self.explorer.sort_mode = crate::explorer::ExplorerSortMode::Type;
                 self.refresh_explorer_tree_async();
-                self.notify("Explorer: Sort by Type");
             }
             "markdown_preview" => {
                 self.toggle_markdown_preview_tab();
@@ -666,7 +518,6 @@ impl App {
             "split_editor_up" => self.split_editor_tab(self.active_tab, TabDropZone::Top),
             "close_split" => {
                 self.close_all_splits();
-                self.notify("Split editor closed");
             }
             "close_group_tabs" => {
                 self.close_tabs_matching(|_| true);
@@ -889,13 +740,7 @@ mod tests {
         assert!(!app.error_lens);
         exec(&mut app, "toggle_error_lens");
         assert!(app.error_lens);
-        assert!(
-            app.notification_history
-                .last()
-                .unwrap()
-                .0
-                .contains("TODO/FIXME/HACK/BUG/NOTE")
-        );
+        assert!(app.notification_history.is_empty());
         exec(&mut app, "toggle_error_lens");
         assert!(!app.error_lens);
     }

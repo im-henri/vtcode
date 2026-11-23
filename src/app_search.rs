@@ -1251,12 +1251,6 @@ impl App {
         }
         let found = matches[index];
         drop(matches);
-        if forward && (found.0, found.1) < (el, ec) {
-            self.notify("Wrapped past end of file");
-        }
-        if !forward && end_position(&found) > (sl, sc) {
-            self.notify("Wrapped past beginning of file");
-        }
         self.search_current = match self.search_matches.binary_search(&found) {
             Ok(index) => index,
             Err(_) => {
@@ -2240,9 +2234,7 @@ impl App {
             );
             self.poll_lsp_workspace_edits();
         } else if let Some((path, command)) = command {
-            if self.lsp_manager.execute_command(&path, &command) {
-                self.notify(format!("Running: {}", action.title));
-            } else {
+            if !self.lsp_manager.execute_command(&path, &command) {
                 self.notify_error("Language server command is unavailable");
             }
         } else {

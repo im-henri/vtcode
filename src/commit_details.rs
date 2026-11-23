@@ -819,7 +819,6 @@ impl App {
             from_inspector: self.is_commit_details_tab(),
             request: request.clone(),
         });
-        self.notify("Opening commit diff…");
         self.load_commit_file_diff(index, file, Some(request));
     }
 
@@ -902,7 +901,6 @@ impl App {
             Ok(diff) => {
                 let path = file.path.clone();
                 self.open_commit_snapshot_diff(diff, &path);
-                self.notify(format!("Opened commit diff: {path}"));
             }
             Err(error) => {
                 self.status_message = error.clone();
