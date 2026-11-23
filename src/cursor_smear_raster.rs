@@ -69,32 +69,51 @@ const CELL_CORNERS: [Point; 4] = [
     Point { x: -0.5, y: 0.5 },
 ];
 
-/// Clip a stretched ribbon to a band around its heading (`tail` to `head`) so a
-/// slanted body is only as thick as a continuous line needs: one column
-/// across on steep moves and one row across on shallow ones. A straight
-/// ribbon already has exactly that thickness and is unchanged, and the band
-/// fades out as the ribbon contracts so the cursor settles into a whole cell.
-fn slim(hull: Polygon, tail: MotionPoint, head: MotionPoint) -> Polygon {
-    // Physical metric: one row is two columns.
-    let dx = f64::from(head.x - tail.x);
-    let dy = f64::from(head.y - tail.y) * 2.0;
-    let length = (dx * dx + dy * dy).sqrt();
-    if length <= 0.0001 || hull.len == 0 {
+/// Clip a stretched ribbon to a band around its long axis so a slanted body
+/// is only as thick as a continuous line needs: one column across on steep
+/// moves and one row across on shallow ones. A straight ribbon already has
+/// exactly that thickness and is unchanged, and the band fades out as the
+/// ribbon contracts so the cursor settles into a whole cell.
+///
+/// The axis comes from the corners themselves (their principal direction),
+/// not from the shading heading, which turns over a fraction of the duration
+/// after a reversal and would briefly cut across the visible body.
+fn slim(hull: Polygon, corners: [MotionPoint; 4]) -> Polygon {
+    if hull.len == 0 {
         return hull;
     }
-    let (ux, uy) = (dx / length, dy / length);
+    // Physical metric: one row is two columns.
+    let physical = corners.map(|corner| Point {
+        x: f64::from(corner.x),
+        y: f64::from(corner.y) * 2.0,
+    });
+    let center = Point {
+        x: physical.iter().map(|point| point.x).sum::<f64>() * 0.25,
+        y: physical.iter().map(|point| point.y).sum::<f64>() * 0.25,
+    };
+    let (mut xx, mut yy, mut xy) = (0.0, 0.0, 0.0);
+    for point in physical {
+        let (dx, dy) = (point.x - center.x, point.y - center.y);
+        xx += dx * dx;
+        yy += dy * dy;
+        xy += dx * dy;
+    }
+    let angle = 0.5 * (2.0 * xy).atan2(xx - yy);
+    let (uy, ux) = angle.sin_cos();
     let (px, py) = (-uy, ux);
-    // A settled cell already spans `ux + 2 uy` along the heading.
+    let along = physical.map(|point| (point.x - center.x) * ux + (point.y - center.y) * uy);
+    let length = along.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+        - along.iter().copied().fold(f64::INFINITY, f64::min);
+    // A settled cell already spans `ux + 2 uy` along the axis.
     let stretch = length - (ux.abs() + 2.0 * uy.abs());
     let fade = (stretch / 2.0).clamp(0.0, 1.0);
     let fade = fade * fade * (3.0 - 2.0 * fade);
-    if fade <= 0.0 {
+    if fade.is_nan() || fade <= 0.0 {
         return hull;
     }
     let across = |point: Point| point.x * px + point.y * 2.0 * py;
-    let points = &hull.points[..hull.len];
-    let middle = across(Point::from(head));
-    let reach = points
+    let middle = center.x * px + center.y * py;
+    let reach = hull.points[..hull.len]
         .iter()
         .map(|&point| (across(point) - middle).abs())
         .fold(0.0, f64::max);
@@ -563,13 +582,7 @@ pub(crate) fn rasterize_swept_with(
     emit: impl FnMut(SmearCell),
 ) {
     if finite(area, corners, tail, head) {
-        rasterize_hull(
-            area,
-            slim(swept_hull(corners), tail, head),
-            tail,
-            head,
-            emit,
-        );
+        rasterize_hull(area, slim(swept_hull(corners), corners), tail, head, emit);
     }
 }
 
@@ -787,6 +800,40 @@ mod tests {
         );
         assert_eq!(settled.len(), 1);
         assert_eq!((settled[0].x, settled[0].y, settled[0].symbol), (1, 1, "█"));
+    }
+
+    #[test]
+    fn reversing_mid_flight_changes_coverage_smoothly() {
+        use crate::{animation_config::AnimationSettings, cursor_smear::SmearMotion};
+        use std::time::Duration;
+        let settings = AnimationSettings::default();
+        let a = point(2.0, 20.0);
+        let b = point(6.0, 2.0);
+        for reverse_at in [40, 90, 150] {
+            let first = SmearMotion::retarget(a, b, None, false);
+            let before = first.sample(&settings, Duration::from_millis(reverse_at));
+            let back = SmearMotion::retarget(b, a, Some(before), false);
+            let mut previous: Option<f32> = None;
+            for milliseconds in 0..=300 {
+                let sample = back.sample(&settings, Duration::from_millis(milliseconds));
+                let mut area = 0.0;
+                rasterize_swept_with(
+                    Rect::new(0, 0, 12, 26),
+                    sample.corners,
+                    sample.tail,
+                    sample.head,
+                    |cell| area += cell.coverage,
+                );
+                if let Some(previous) = previous {
+                    assert!(
+                        (area - previous).abs() < 0.6,
+                        "coverage jumped {previous} -> {area} at {milliseconds}ms \
+                         after reversing at {reverse_at}ms"
+                    );
+                }
+                previous = Some(area);
+            }
+        }
     }
 
     fn one_cell(corners: [MotionPoint; 4]) -> SmearCell {

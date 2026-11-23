@@ -23,6 +23,9 @@ const SHORT_MOVE_FULL: f32 = 5.0;
 const SHORT_MOVE_FLOOR: f32 = 0.1;
 /// Fraction of the duration over which the destination hold takes effect.
 const HOLD_FADE_IN: f32 = 0.12;
+/// Fraction of the duration spent visibly accelerating on a long jump. Single
+/// steps and typing keep an instant start.
+const EASE_IN: f32 = 0.07;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SmearSample {
@@ -47,6 +50,7 @@ pub(crate) struct SmearMotion {
     raw_velocities: [MotionPoint; 4],
     corner_rates: [f32; 4],
     center_rate: f32,
+    ease_in: f32,
     limit_from: f32,
     limit_to: f32,
     shade_from: MotionPoint,
@@ -109,22 +113,45 @@ fn norm(points: &[MotionPoint; 4]) -> f32 {
         .sqrt()
 }
 
+/// Critically damped spring toward `target`, with the pull from the starting
+/// offset run on an eased clock `τ = t² / (t + ease)`. That clock starts at
+/// rest, so a move visibly accelerates before the spring's own deceleration
+/// takes over, and it lags real time by at most `ease`. The inherited velocity
+/// keeps real time, so a retarget preserves both position and velocity.
 fn spring(
     origin: MotionPoint,
     target: MotionPoint,
     velocity: MotionPoint,
     omega: f32,
     time: f32,
+    ease: f32,
 ) -> (MotionPoint, MotionPoint) {
     let displacement = sub(origin, target);
-    let coefficient = add(velocity, scale(displacement, omega));
     let decay = (-omega * time).exp();
+    let carried = scale(velocity, time * decay);
+    let carried_velocity = scale(velocity, (1.0 - omega * time) * decay);
+    let (eased, eased_rate) = if ease > 0.0 {
+        let denominator = time + ease;
+        (
+            time * time / denominator,
+            time * (time + 2.0 * ease) / (denominator * denominator),
+        )
+    } else {
+        (time, 1.0)
+    };
+    let eased_decay = (-omega * eased).exp();
     (
         add(
-            target,
-            scale(add(displacement, scale(coefficient, time)), decay),
+            add(target, carried),
+            scale(displacement, (1.0 + omega * eased) * eased_decay),
         ),
-        scale(sub(velocity, scale(coefficient, omega * time)), decay),
+        add(
+            carried_velocity,
+            scale(
+                displacement,
+                -omega * omega * eased * eased_decay * eased_rate,
+            ),
+        ),
     )
 }
 
@@ -261,6 +288,7 @@ impl SmearMotion {
         // travels instead of covering most of the distance in one frame.
         let glide = (damping - SHORT_MOVE_FLOOR) / (1.0 - SHORT_MOVE_FLOOR);
         let center_rate = if editing { 24.0 } else { 18.0 - 6.0 * glide };
+        let ease_in = if editing { 0.0 } else { EASE_IN * glide };
         let contrast = (if editing { 0.5 } else { 0.9 })
             * (0.5 + 0.5 * (travel_length / 3.0).clamp(0.0, 1.0))
             * damping;
@@ -289,6 +317,7 @@ impl SmearMotion {
             }),
             corner_rates,
             center_rate,
+            ease_in,
             limit_from,
             limit_to,
             shade_from,
@@ -326,6 +355,7 @@ impl SmearMotion {
             self.center_velocity,
             self.center_rate / seconds,
             time,
+            self.ease_in * seconds,
         );
         let raw_samples: [(MotionPoint, MotionPoint); 4] = std::array::from_fn(|index| {
             spring(
@@ -334,6 +364,7 @@ impl SmearMotion {
                 self.raw_velocities[index],
                 self.corner_rates[index] / seconds,
                 time,
+                self.ease_in * seconds,
             )
         });
         let mut deformation = std::array::from_fn(|index| {
