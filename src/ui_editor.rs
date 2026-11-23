@@ -5607,12 +5607,7 @@ mod tests {
                     (offset + 1).to_string()
                 );
                 let cell = &buffer[(minimap_col, minimap.y + offset)];
-                let symbol = if (3..=5).contains(&offset) {
-                    "•"
-                } else {
-                    " "
-                };
-                assert_eq!((cell.bg, cell.symbol()), (color, symbol));
+                assert_eq!((cell.bg, cell.symbol()), (color, " "));
             }
             let overlap = &buffer[(marker_col, gutter.y + 6)];
             assert_eq!(overlap.symbol(), "▐");
@@ -5620,7 +5615,7 @@ mod tests {
             let y = minimap.y + 6;
             let staged = &buffer[(minimap_col - 1, y)];
             let working = &buffer[(minimap_col, y)];
-            assert_eq!((staged.bg, staged.symbol()), (staged_removed, "•"));
+            assert_eq!((staged.bg, staged.symbol()), (staged_removed, " "));
             assert_eq!((working.bg, working.symbol()), (added, " "));
             assert_eq!(buffer[(marker_col, gutter.y + 8)].symbol(), " ");
 

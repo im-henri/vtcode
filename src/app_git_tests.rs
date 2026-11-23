@@ -1285,7 +1285,7 @@ fn source_control_staged_and_unstaged_diffs_use_separate_revisions_and_tabs() {
         app.show_minimap = true;
         app.scroll_past_end = false;
         let (color, symbol) = if staged {
-            (app.colors.ui.fg_gutter_modified_secondary, "•")
+            (app.colors.ui.fg_gutter_modified_secondary, " ")
         } else {
             (app.colors.ui.fg_gutter_modified, " ")
         };
