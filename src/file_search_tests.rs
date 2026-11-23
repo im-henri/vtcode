@@ -84,6 +84,22 @@ fn detached_editors_keep_their_own_find_queries_and_results() {
     assert_eq!(app.search_matches.len(), 2);
 }
 
+#[test]
+fn escape_closes_find_without_jumping_back_to_the_pre_search_cursor() {
+    let mut app = app();
+    app.tabs[0].editor = Editor::test_with_text("one\ntwo\nthree target\n");
+    find(&mut app, "target");
+    let at_match = {
+        let ed = app.editor().unwrap();
+        (ed.cursor_line, ed.cursor_col)
+    };
+    assert_eq!(at_match.0, 2);
+    key(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+    assert!(!app.search_active);
+    let ed = app.editor().unwrap();
+    assert_eq!((ed.cursor_line, ed.cursor_col), at_match);
+}
+
 fn middle_mouse(app: &mut App, kind: MouseEventKind, column: u16, row: u16) {
     crate::mouse::handle_mouse(
         app,

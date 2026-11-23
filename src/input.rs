@@ -172,16 +172,8 @@ pub(crate) fn handle_search_key(app: &mut App, code: KeyCode, modifiers: KeyModi
         KeyCode::Esc => {
             // Save non-empty query to history before closing
             app.push_search_history();
-            // Restore pre-search cursor position if no replacement was made
-            if let Some((line, col, scroll)) = app.search_pre_cursor.take() {
-                if let Some(ed) = app.editor_mut() {
-                    ed.cursor_line = line.min(ed.line_count().saturating_sub(1));
-                    ed.cursor_col = col;
-                    ed.scroll_offset = scroll;
-                    ed.clear_selection();
-                    ed.ensure_visible();
-                }
-            }
+            // Stay on the match the search moved to; never jump back.
+            app.search_pre_cursor = None;
             app.search_active = false;
             app.search_input_focused = false;
             app.clear_file_search_results();
