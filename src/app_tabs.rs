@@ -2167,7 +2167,9 @@ impl App {
         } else {
             let name = tab.editor.file_display_name();
             match tab.kind {
-                TabKind::ExtensionView => App::extension_view_tab_title(&name).unwrap_or(&name).width(),
+                TabKind::ExtensionView => App::extension_view_tab_title(&name)
+                    .unwrap_or(&name)
+                    .width(),
                 _ => name.width(),
             }
         };

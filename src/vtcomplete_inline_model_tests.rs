@@ -490,7 +490,9 @@ fn computing_alone_gives_identical_products_on_the_calling_thread() {
     let caller = std::thread::current().id();
     let threads = Mutex::new(Vec::new());
     alone(|| {
-        parallel(64, &|_| threads.lock().unwrap().push(std::thread::current().id()));
+        parallel(64, &|_| {
+            threads.lock().unwrap().push(std::thread::current().id())
+        });
     });
     assert!(threads.lock().unwrap().iter().all(|&id| id == caller));
     assert!(!ALONE.with(std::cell::Cell::get));

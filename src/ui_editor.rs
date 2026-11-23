@@ -4558,7 +4558,10 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Draw minimap
     if minimap_width > 0 {
-        app.tabs[app.active_tab].editor.minimap_overview.set(app.minimap_overview);
+        app.tabs[app.active_tab]
+            .editor
+            .minimap_overview
+            .set(app.minimap_overview);
         draw_minimap(
             f,
             MinimapParams {

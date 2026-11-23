@@ -43,7 +43,10 @@ fn render(editor: &Editor, scroll: usize, changes: &ChangeLineIndex) -> Buffer {
 /// Rows whose right edge carries a change marker cell.
 fn marked_rows(buffer: &Buffer) -> Vec<usize> {
     let track = crate::app_theme::EditorTheme::Dark.colors().ui.bg_minimap;
-    let slider = crate::app_theme::EditorTheme::Dark.colors().ui.bg_minimap_slider;
+    let slider = crate::app_theme::EditorTheme::Dark
+        .colors()
+        .ui
+        .bg_minimap_slider;
     (0..HEIGHT)
         .filter(|&row| {
             let bg = buffer[(WIDTH - 1, row)].bg;
@@ -134,7 +137,10 @@ fn whole_file_overview_of_a_huge_file_decodes_only_sampled_lines() {
     // Repainting the resting overview decodes nothing new.
     render(&overview, 0, &index);
     assert_eq!(overview.minimap_cache.borrow().builds, first);
-    assert_eq!(marked_rows(&render(&overview, 0, &index)).len(), usize::from(HEIGHT));
+    assert_eq!(
+        marked_rows(&render(&overview, 0, &index)).len(),
+        usize::from(HEIGHT)
+    );
 }
 
 #[test]

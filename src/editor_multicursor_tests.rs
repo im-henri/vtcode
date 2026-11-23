@@ -1,4 +1,3 @@
-
 use ropey::Rope;
 
 use crate::editor::Editor;

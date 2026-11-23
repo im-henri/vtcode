@@ -488,7 +488,14 @@ impl MinimapLayout {
         height: usize,
         scroll_past_end: bool,
     ) -> Self {
-        Self::zoomed(total_lines, scroll, visible_lines, height, scroll_past_end, 1.0)
+        Self::zoomed(
+            total_lines,
+            scroll,
+            visible_lines,
+            height,
+            scroll_past_end,
+            1.0,
+        )
     }
 
     pub(crate) fn zoomed(

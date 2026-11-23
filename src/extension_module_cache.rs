@@ -16,7 +16,11 @@ const MAX_ENTRIES: usize = 32;
 
 #[cfg(not(test))]
 pub(crate) fn load(engine: &Engine, wasm: &Path) -> wasmtime::Result<Module> {
-    load_in(&crate::portable::data_dir().join("wasm-cache"), engine, wasm)
+    load_in(
+        &crate::portable::data_dir().join("wasm-cache"),
+        engine,
+        wasm,
+    )
 }
 
 fn load_in(dir: &Path, engine: &Engine, wasm: &Path) -> wasmtime::Result<Module> {
@@ -38,7 +42,9 @@ fn load_in(dir: &Path, engine: &Engine, wasm: &Path) -> wasmtime::Result<Module>
 fn entry_name(engine: &Engine, bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut engine_hash = std::hash::DefaultHasher::new();
-    engine.precompile_compatibility_hash().hash(&mut engine_hash);
+    engine
+        .precompile_compatibility_hash()
+        .hash(&mut engine_hash);
     let digest = Sha256::new()
         .chain_update(engine_hash.finish().to_le_bytes())
         .chain_update(bytes)

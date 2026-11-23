@@ -169,7 +169,10 @@ mod tests {
         let start = Instant::now();
         let mut zoom = MinimapZoom::default();
         assert_eq!(zoom.advance(true, (0, 0), false, true, start), 0.0);
-        assert_eq!(zoom.advance(true, (0, 0), false, true, start + ms(500)), 0.0);
+        assert_eq!(
+            zoom.advance(true, (0, 0), false, true, start + ms(500)),
+            0.0
+        );
         let t = start + ms(1000);
         assert_eq!(zoom.advance(true, (3, 0), false, true, t), 0.0);
         let halfway = zoom.advance(true, (3, 0), false, true, t + ms(75));
@@ -190,7 +193,9 @@ mod tests {
         zoom.advance(true, (0, 0), false, true, t);
         zoom.advance(true, (1, 0), false, true, t);
         for step in 1..20 {
-            assert!(zoom.advance(true, (1 + step, 0), false, true, t + ms(step as u64 * 100)) > 0.0);
+            assert!(
+                zoom.advance(true, (1 + step, 0), false, true, t + ms(step as u64 * 100)) > 0.0
+            );
         }
         assert_eq!(zoom.advance(true, (20, 0), false, true, t + ms(2300)), 1.0);
         // Zooming out halfway, then scrolling again starts from that level.

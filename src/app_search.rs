@@ -117,7 +117,11 @@ struct QuickOpenFileIndex {
 }
 
 impl QuickOpenFileIndex {
-    fn reusable(&self, root: &std::path::Path, excludes: &crate::settings::ExcludePatterns) -> bool {
+    fn reusable(
+        &self,
+        root: &std::path::Path,
+        excludes: &crate::settings::ExcludePatterns,
+    ) -> bool {
         self.root == root
             && self.excludes == *excludes
             && !excludes.values().any(serde_json::Value::is_object)
@@ -2018,8 +2022,10 @@ impl App {
                 if cancel.is_cancelled() {
                     return;
                 }
-                let _ = sender
-                    .send(crate::background::BackgroundResult::QuickOpenFiles { files, generation }); // Error OK: receiver dropped means no listener
+                let _ = sender.send(crate::background::BackgroundResult::QuickOpenFiles {
+                    files,
+                    generation,
+                }); // Error OK: receiver dropped means no listener
             }
             let Some(entries) = index.files_with_remote(
                 &root,
@@ -2041,7 +2047,10 @@ impl App {
             };
             if stale.is_some_and(|stale| {
                 stale.len() == entries.len()
-                    && stale.iter().zip(entries.iter()).all(|(a, b)| a.path == b.path)
+                    && stale
+                        .iter()
+                        .zip(entries.iter())
+                        .all(|(a, b)| a.path == b.path)
             }) {
                 return;
             }

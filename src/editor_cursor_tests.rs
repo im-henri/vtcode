@@ -1,4 +1,3 @@
-
 use super::Editor;
 use ropey::Rope;
 
