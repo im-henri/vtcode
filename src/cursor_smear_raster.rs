@@ -69,41 +69,57 @@ const CELL_CORNERS: [Point; 4] = [
     Point { x: -0.5, y: 0.5 },
 ];
 
-/// Fraction of the cursor cell swept along a fully diagonal ribbon. A full
-/// cell keeps axis-aligned ribbons solid, but on diagonals it adds a whole
-/// extra cell of width on top of the ribbon's own and looks bloated.
-const DIAGONAL_SWEEP: f64 = 0.35;
-
-/// How much of the cursor cell to sweep for a ribbon heading from `tail` to
-/// `head`: all of it along an axis, shrinking smoothly toward
-/// [`DIAGONAL_SWEEP`] as the physical direction (one row is two columns)
-/// turns diagonal.
-fn sweep_scale(tail: MotionPoint, head: MotionPoint) -> f64 {
+/// Clip a stretched ribbon to a band around its heading (`tail` to `head`) so a
+/// slanted body is only as thick as a continuous line needs: one column
+/// across on steep moves and one row across on shallow ones. A straight
+/// ribbon already has exactly that thickness and is unchanged, and the band
+/// fades out as the ribbon contracts so the cursor settles into a whole cell.
+fn slim(hull: Polygon, tail: MotionPoint, head: MotionPoint) -> Polygon {
+    // Physical metric: one row is two columns.
     let dx = f64::from(head.x - tail.x);
     let dy = f64::from(head.y - tail.y) * 2.0;
-    let length_squared = dx * dx + dy * dy;
-    if length_squared <= f64::EPSILON {
-        return 1.0;
+    let length = (dx * dx + dy * dy).sqrt();
+    if length <= 0.0001 || hull.len == 0 {
+        return hull;
     }
-    // sin(2θ): 0 along either axis, 1 at 45°.
-    let diagonal = (2.0 * (dx * dy).abs() / length_squared).clamp(0.0, 1.0);
-    1.0 - (1.0 - DIAGONAL_SWEEP) * diagonal
+    let (ux, uy) = (dx / length, dy / length);
+    let (px, py) = (-uy, ux);
+    // A settled cell already spans `ux + 2 uy` along the heading.
+    let stretch = length - (ux.abs() + 2.0 * uy.abs());
+    let fade = (stretch / 2.0).clamp(0.0, 1.0);
+    let fade = fade * fade * (3.0 - 2.0 * fade);
+    if fade <= 0.0 {
+        return hull;
+    }
+    let across = |point: Point| point.x * px + point.y * 2.0 * py;
+    let points = &hull.points[..hull.len];
+    let middle = across(Point::from(head));
+    let reach = points
+        .iter()
+        .map(|&point| (across(point) - middle).abs())
+        .fold(0.0, f64::max);
+    let half = px.abs().max(2.0 * py.abs()) * 0.5;
+    if reach <= half {
+        return hull;
+    }
+    let half = reach + (half - reach) * fade;
+    hull.clipped_across(px, py, middle + half, false)
+        .clipped_across(px, py, middle - half, true)
 }
 
 /// The cursor cell swept along the ribbon: each corner names where the cell
-/// center would be if that corner were in place, and the hull of those cells,
-/// each shrunk by `scale` toward its own corner, is drawn. A diagonal ribbon
-/// keeps some thickness instead of collapsing into a thin slanted stick,
-/// while axis-aligned ribbons of at least one cell and a settled cursor are
-/// unchanged at any scale.
-fn swept_hull(corners: [MotionPoint; 4], scale: f64) -> Polygon {
+/// center would be if that corner were in place, and the hull of those cells
+/// is drawn. [`slim`] then sets the diagonal thickness. A diagonal ribbon
+/// keeps an even thickness instead of a jagged stick, while axis-aligned
+/// ribbons of at least one cell and a settled cursor are unchanged.
+fn swept_hull(corners: [MotionPoint; 4]) -> Polygon {
     let mut points = [Point::default(); 16];
     for (index, corner) in corners.iter().enumerate() {
         let anchor = Point::from(*corner);
         for (offset_index, offset) in CELL_CORNERS.iter().enumerate() {
             points[index * 4 + offset_index] = Point {
-                x: anchor.x + (offset.x - CELL_CORNERS[index].x) * scale,
-                y: anchor.y + (offset.y - CELL_CORNERS[index].y) * scale,
+                x: anchor.x + offset.x - CELL_CORNERS[index].x,
+                y: anchor.y + offset.y - CELL_CORNERS[index].y,
             };
         }
     }
@@ -150,18 +166,21 @@ fn hull_of(points: &mut [Point]) -> Polygon {
     lower
 }
 
-/// A convex quadrilateral clipped against a rectangle has at most eight points.
-/// Two small stack buffers avoid allocations for each candidate terminal cell.
+/// The swept hull has at most eight points; the two diagonal slab clips, the
+/// area clip and a cell clip add at most one point per edge, giving eighteen.
+const POLYGON_POINTS: usize = 18;
+
+/// Small stack buffers avoid allocations for each candidate terminal cell.
 #[derive(Clone, Copy)]
 struct Polygon {
-    points: [Point; 12],
+    points: [Point; POLYGON_POINTS],
     len: usize,
 }
 
 impl Polygon {
     fn empty() -> Self {
         Self {
-            points: [Point::default(); 12],
+            points: [Point::default(); POLYGON_POINTS],
             len: 0,
         }
     }
@@ -173,9 +192,44 @@ impl Polygon {
         }
     }
 
+    /// Keep the side of the line `x px + 2 y py = boundary` (physical metric)
+    /// above it when `greater`, else below.
+    fn clipped_across(self, px: f64, py: f64, boundary: f64, greater: bool) -> Self {
+        let mut result = Self::empty();
+        if self.len == 0 {
+            return result;
+        }
+        let value = |point: Point| point.x * px + point.y * 2.0 * py - boundary;
+        let inside = |offset: f64| {
+            if greater {
+                offset >= 0.0
+            } else {
+                offset <= 0.0
+            }
+        };
+        let mut previous = self.points[self.len - 1];
+        let mut previous_value = value(previous);
+        for &current in &self.points[..self.len] {
+            let current_value = value(current);
+            if inside(current_value) != inside(previous_value) {
+                let t = (previous_value / (previous_value - current_value)).clamp(0.0, 1.0);
+                result.push(Point {
+                    x: previous.x + (current.x - previous.x) * t,
+                    y: previous.y + (current.y - previous.y) * t,
+                });
+            }
+            if inside(current_value) {
+                result.push(current);
+            }
+            previous = current;
+            previous_value = current_value;
+        }
+        result
+    }
+
     fn clipped(self, axis_x: bool, boundary: f64, greater: bool) -> Self {
         let mut result = Self {
-            points: [Point::default(); 12],
+            points: [Point::default(); POLYGON_POINTS],
             len: 0,
         };
         if self.len == 0 {
@@ -500,7 +554,7 @@ pub(crate) fn rasterize_with(
 }
 
 /// Like [`rasterize_with`], but draws the cursor cell swept along the ribbon,
-/// thinner on diagonals (see [`sweep_scale`]).
+/// slimmed on diagonals (see [`slim`]).
 pub(crate) fn rasterize_swept_with(
     area: Rect,
     corners: [MotionPoint; 4],
@@ -511,7 +565,7 @@ pub(crate) fn rasterize_swept_with(
     if finite(area, corners, tail, head) {
         rasterize_hull(
             area,
-            swept_hull(corners, sweep_scale(tail, head)),
+            slim(swept_hull(corners), tail, head),
             tail,
             head,
             emit,
@@ -643,7 +697,7 @@ mod tests {
     }
 
     #[test]
-    fn swept_ribbon_stays_slim_but_continuous_on_diagonals() {
+    fn swept_ribbon_is_one_line_thick_on_diagonals() {
         // A thin slanted stick: trailing corner top-left, leading bottom-right.
         let corners = [
             point(0.0, 0.0),
@@ -670,16 +724,16 @@ mod tests {
         let mut full = Vec::new();
         rasterize_hull(
             Rect::new(0, 0, 8, 8),
-            swept_hull(corners, 1.0),
+            swept_hull(corners),
             point(0.0, 0.0),
             point(5.0, 5.0),
             |cell| full.push(cell),
         );
         let area = |cells: &[SmearCell]| cells.iter().map(|cell| cell.coverage).sum::<f32>();
         assert!(area(&swept) > area(&thin) * 1.5);
-        assert!(area(&swept) < area(&full) * 0.75);
+        assert!(area(&swept) < area(&full) * 0.5);
         // Every row the ribbon crosses stays visibly covered: no gaps.
-        for row in 0..5 {
+        for row in 1..4 {
             let covered: f32 = swept
                 .iter()
                 .filter(|cell| cell.y == row)
@@ -687,9 +741,41 @@ mod tests {
                 .sum();
             assert!(covered >= 0.5, "row {row} covers only {covered}");
         }
-        // Axis-aligned ribbons still sweep the whole cell.
-        assert_eq!(sweep_scale(point(0.0, 0.0), point(9.0, 0.0)), 1.0);
-        assert_eq!(sweep_scale(point(0.0, 0.0), point(0.0, 4.0)), 1.0);
+        // A steep ribbon (as from a jump up a few columns and many rows)
+        // is about one column across, not two or three.
+        let steep = [
+            point(0.0, 10.0),
+            point(1.6, 4.0),
+            point(4.0, 0.0),
+            point(2.4, 6.0),
+        ];
+        let mut cells = Vec::new();
+        rasterize_swept_with(
+            Rect::new(0, 0, 8, 12),
+            steep,
+            point(0.5, 10.0),
+            point(3.5, 0.0),
+            |cell| cells.push(cell),
+        );
+        for row in 2..9 {
+            let covered: f32 = cells
+                .iter()
+                .filter(|cell| cell.y == row)
+                .map(|cell| cell.coverage)
+                .sum();
+            assert!((0.9..=1.1).contains(&covered), "row {row} covers {covered}");
+        }
+        // A straight ribbon keeps its full cell of thickness.
+        let mut straight = Vec::new();
+        rasterize_swept_with(
+            Rect::new(0, 0, 10, 3),
+            rectangle(1.0, 1.0, 8.0, 2.0),
+            point(1.0, 1.5),
+            point(8.0, 1.5),
+            |cell| straight.push(cell),
+        );
+        assert_eq!(straight.len(), 7);
+        assert!(straight.iter().all(|cell| cell.coverage > 0.999));
         // A settled cell sweeps to exactly itself.
         let mut settled = Vec::new();
         rasterize_swept_with(
