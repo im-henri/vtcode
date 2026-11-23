@@ -69,23 +69,41 @@ const CELL_CORNERS: [Point; 4] = [
     Point { x: -0.5, y: 0.5 },
 ];
 
+/// Fraction of the cursor cell swept along a fully diagonal ribbon. A full
+/// cell keeps axis-aligned ribbons solid, but on diagonals it adds a whole
+/// extra cell of width on top of the ribbon's own and looks bloated.
+const DIAGONAL_SWEEP: f64 = 0.35;
+
+/// How much of the cursor cell to sweep for a ribbon heading from `tail` to
+/// `head`: all of it along an axis, shrinking smoothly toward
+/// [`DIAGONAL_SWEEP`] as the physical direction (one row is two columns)
+/// turns diagonal.
+fn sweep_scale(tail: MotionPoint, head: MotionPoint) -> f64 {
+    let dx = f64::from(head.x - tail.x);
+    let dy = f64::from(head.y - tail.y) * 2.0;
+    let length_squared = dx * dx + dy * dy;
+    if length_squared <= f64::EPSILON {
+        return 1.0;
+    }
+    // sin(2θ): 0 along either axis, 1 at 45°.
+    let diagonal = (2.0 * (dx * dy).abs() / length_squared).clamp(0.0, 1.0);
+    1.0 - (1.0 - DIAGONAL_SWEEP) * diagonal
+}
+
 /// The cursor cell swept along the ribbon: each corner names where the cell
-/// center would be if that corner were in place, and the hull of those four
-/// cells is drawn. A diagonal ribbon keeps a full cell of thickness instead of
-/// collapsing into a thin slanted stick, while axis-aligned ribbons of at
-/// least one cell are unchanged.
-fn swept_hull(corners: [MotionPoint; 4]) -> Polygon {
+/// center would be if that corner were in place, and the hull of those cells,
+/// each shrunk by `scale` toward its own corner, is drawn. A diagonal ribbon
+/// keeps some thickness instead of collapsing into a thin slanted stick,
+/// while axis-aligned ribbons of at least one cell and a settled cursor are
+/// unchanged at any scale.
+fn swept_hull(corners: [MotionPoint; 4], scale: f64) -> Polygon {
     let mut points = [Point::default(); 16];
     for (index, corner) in corners.iter().enumerate() {
         let anchor = Point::from(*corner);
-        let center = Point {
-            x: anchor.x - CELL_CORNERS[index].x,
-            y: anchor.y - CELL_CORNERS[index].y,
-        };
         for (offset_index, offset) in CELL_CORNERS.iter().enumerate() {
             points[index * 4 + offset_index] = Point {
-                x: center.x + offset.x,
-                y: center.y + offset.y,
+                x: anchor.x + (offset.x - CELL_CORNERS[index].x) * scale,
+                y: anchor.y + (offset.y - CELL_CORNERS[index].y) * scale,
             };
         }
     }
@@ -481,7 +499,8 @@ pub(crate) fn rasterize_with(
     }
 }
 
-/// Like [`rasterize_with`], but draws the cursor cell swept along the ribbon.
+/// Like [`rasterize_with`], but draws the cursor cell swept along the ribbon,
+/// thinner on diagonals (see [`sweep_scale`]).
 pub(crate) fn rasterize_swept_with(
     area: Rect,
     corners: [MotionPoint; 4],
@@ -490,7 +509,13 @@ pub(crate) fn rasterize_swept_with(
     emit: impl FnMut(SmearCell),
 ) {
     if finite(area, corners, tail, head) {
-        rasterize_hull(area, swept_hull(corners), tail, head, emit);
+        rasterize_hull(
+            area,
+            swept_hull(corners, sweep_scale(tail, head)),
+            tail,
+            head,
+            emit,
+        );
     }
 }
 
@@ -618,7 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn swept_ribbon_keeps_a_full_cell_of_thickness_on_diagonals() {
+    fn swept_ribbon_stays_slim_but_continuous_on_diagonals() {
         // A thin slanted stick: trailing corner top-left, leading bottom-right.
         let corners = [
             point(0.0, 0.0),
@@ -642,17 +667,29 @@ mod tests {
             point(5.0, 5.0),
             |cell| swept.push(cell),
         );
+        let mut full = Vec::new();
+        rasterize_hull(
+            Rect::new(0, 0, 8, 8),
+            swept_hull(corners, 1.0),
+            point(0.0, 0.0),
+            point(5.0, 5.0),
+            |cell| full.push(cell),
+        );
         let area = |cells: &[SmearCell]| cells.iter().map(|cell| cell.coverage).sum::<f32>();
-        assert!(area(&swept) > area(&thin) * 2.0);
-        // Every row the ribbon crosses holds at least one full cell of coverage.
+        assert!(area(&swept) > area(&thin) * 1.5);
+        assert!(area(&swept) < area(&full) * 0.75);
+        // Every row the ribbon crosses stays visibly covered: no gaps.
         for row in 0..5 {
             let covered: f32 = swept
                 .iter()
                 .filter(|cell| cell.y == row)
                 .map(|cell| cell.coverage)
                 .sum();
-            assert!(covered >= 0.99, "row {row} covers only {covered}");
+            assert!(covered >= 0.5, "row {row} covers only {covered}");
         }
+        // Axis-aligned ribbons still sweep the whole cell.
+        assert_eq!(sweep_scale(point(0.0, 0.0), point(9.0, 0.0)), 1.0);
+        assert_eq!(sweep_scale(point(0.0, 0.0), point(0.0, 4.0)), 1.0);
         // A settled cell sweeps to exactly itself.
         let mut settled = Vec::new();
         rasterize_swept_with(
