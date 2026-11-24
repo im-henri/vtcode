@@ -744,6 +744,13 @@ impl App {
         self.text_input_regions.retain(|region| !matches(region.id));
     }
 
+    /// The focused text field's contents, for tests comparing input routing.
+    #[cfg(test)]
+    pub(crate) fn focused_text_for_test(&mut self) -> Option<String> {
+        let id = self.focused_text_input_id()?;
+        Some(self.text_input_state_mut(id).0.clone())
+    }
+
     fn text_input_state_mut(
         &mut self,
         id: TextInputId,

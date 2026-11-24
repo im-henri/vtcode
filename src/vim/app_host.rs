@@ -957,15 +957,35 @@ fn explorer_action(app: &mut App, label: &str) -> Option<bool> {
 pub(crate) fn focus_editor(app: &mut App) {
     app.active_pane = ActivePane::Editor;
     app.terminal_panel_focused = false;
-    if let Some(tab) = app.tabs.get(app.active_tab)
-        && tab.kind == TabKind::Terminal
-        && let Some(i) = app
+    if app
+        .tabs
+        .get(app.active_tab)
+        .is_some_and(|tab| tab.kind == TabKind::Terminal)
+    {
+        // The most recent other tab, else the nearest one.
+        let not_terminal = |i: usize| app.tabs.get(i).is_some_and(|t| t.kind != TabKind::Terminal);
+        let here = app.active_tab;
+        let target = app
             .tab_mru_order
             .iter()
             .copied()
-            .find(|&i| app.tabs.get(i).is_some_and(|t| t.kind != TabKind::Terminal))
-    {
-        activate_tab(app, i);
+            .find(|&i| not_terminal(i))
+            .or_else(|| {
+                (1..app.tabs.len())
+                    .flat_map(|d| [here.checked_sub(d), Some(here + d)])
+                    .flatten()
+                    .find(|&i| not_terminal(i))
+            });
+        match target {
+            Some(i) => activate_tab(app, i),
+            // Only terminals are open: the Explorer takes the keyboard.
+            None => {
+                if !app.sidebar_is_visible() {
+                    app.show_explorer_view();
+                }
+                app.active_pane = ActivePane::Explorer;
+            }
+        }
     }
 }
 
@@ -1100,6 +1120,7 @@ fn focus_target(app: &mut App, t: Target) {
             }
             app.active_pane = ActivePane::Editor;
             app.terminal_panel_focused = false;
+            crate::ui_chat::focus_editor_chat(app);
         }
         Target::Explorer => {
             // Keep the view that is showing (Source Control, Search...).
@@ -1333,6 +1354,8 @@ pub(crate) fn activate_tab(app: &mut App, idx: usize) {
     app.active_pane = ActivePane::Editor;
     app.terminal_panel_focused = false;
     app.ensure_active_tab_visible();
+    // A conversation tab: its input box takes the next key, not the editor.
+    crate::ui_chat::focus_editor_chat(app);
 }
 
 fn any_modified(app: &App) -> bool {

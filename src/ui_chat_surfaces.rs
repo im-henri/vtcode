@@ -42,23 +42,8 @@ pub(crate) fn draw_surfaces(f: &mut Frame, app: &mut App, dock: Option<Rect>) {
         });
         placements.push((None, agent, app.active_group, area, id));
     }
-    if !app.rendering_background_window
-        && app.active_pane == ActivePane::Editor
-        && !app.terminal_panel_focused
-        && let Some(TabKind::Chat(key)) = app.tabs.get(app.active_tab).map(|tab| tab.kind)
-        && let Some(view) = app.chat.layout.editors.get(&key).cloned()
-    {
-        app.chat.switch_connection(view.agent);
-        if app.chat.layout.active != Some(key) || app.chat.selected.as_ref() != Some(&view.session)
-        {
-            app.chat.select_tab(Some(view.session.clone()));
-        }
-        app.chat.layout.active = Some(key);
-        if app.terminal_has_focus {
-            app.chat.acknowledge_selected_activity();
-        }
-        app.chat.visible = true;
-        app.active_pane = ActivePane::Chat;
+    if !app.rendering_background_window {
+        focus_editor_chat(app);
     }
     let selected = app.chat.selected.clone();
     let agent = app.chat.active_agent;
@@ -107,5 +92,27 @@ pub(crate) fn draw_surfaces(f: &mut Frame, app: &mut App, dock: Option<Rect>) {
         app.chat.area = None;
         app.chat.hits.clear();
         app.chat.scrollbars.clear();
+    }
+}
+
+/// A conversation in the active editor tab takes the keyboard when that tab
+/// has the editor focus: its input box is what the tab shows.
+pub(crate) fn focus_editor_chat(app: &mut App) {
+    if app.active_pane == ActivePane::Editor
+        && !app.terminal_panel_focused
+        && let Some(TabKind::Chat(key)) = app.tabs.get(app.active_tab).map(|tab| tab.kind)
+        && let Some(view) = app.chat.layout.editors.get(&key).cloned()
+    {
+        app.chat.switch_connection(view.agent);
+        if app.chat.layout.active != Some(key) || app.chat.selected.as_ref() != Some(&view.session)
+        {
+            app.chat.select_tab(Some(view.session.clone()));
+        }
+        app.chat.layout.active = Some(key);
+        if app.terminal_has_focus {
+            app.chat.acknowledge_selected_activity();
+        }
+        app.chat.visible = true;
+        app.active_pane = ActivePane::Chat;
     }
 }

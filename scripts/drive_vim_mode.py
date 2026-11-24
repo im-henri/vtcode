@@ -905,6 +905,30 @@ def scenario_palette_everywhere(e, d):
     return results
 
 
+def scenario_terminal_tab(e, d):
+    # A terminal in an editor tab: the shell gets `:`, Ctrl-\ Ctrl-N leaves,
+    # :b N returns and typing reaches the shell again.
+    e.keys(":VT new_terminal_in_editor_tab" + CR)
+    e.settle(2.5)
+    e.keys("echo vt:marker" + CR)
+    shown = wait_for(e, lambda: sum("vt:marker" in l for l in e.lines()) >= 2, 6)
+    e.process.write(ctrl("\\"))
+    e.settle(0.1)
+    e.process.write(ctrl("n"))
+    e.settle(0.8)
+    e.keys("A~" + ESC + ":w" + CR)
+    left = wait_for(e, lambda: "~" in (d / "a.txt").read_text())
+    e.keys(":b2" + CR)
+    e.settle(1.0)
+    e.keys("echo back:again" + CR)
+    back = wait_for(e, lambda: sum("back:again" in l for l in e.lines()) >= 2, 6)
+    return [
+        ("':' and text reach the shell in a terminal tab", shown),
+        ("Ctrl-\\ Ctrl-N leaves it for the file", left),
+        (":b2 returns and typing reaches the shell", back),
+    ]
+
+
 SCENARIOS = [
     ("edit and :w", scenario_edit_and_write, {"a.txt": "alpha beta\ngamma\n"}),
     ("mode indicators", scenario_modes_in_status, {"a.txt": "alpha\ngamma\n"}),
@@ -939,6 +963,7 @@ SCENARIOS = [
     ("no file open", scenario_no_file_open, {"a.txt": "alpha\n", "@nofile": ""}),
     ("commit details", scenario_commit_details, {"a.txt": "alpha\ngamma\n"}),
     ("palette everywhere", scenario_palette_everywhere, {"a.txt": "alpha\ngamma\n"}),
+    ("terminal tab", scenario_terminal_tab, {"a.txt": "alpha\ngamma\n"}),
 ]
 
 VIMRC = 'let mapleader = " "\ninoremap jk <Esc>\nnnoremap <leader>w :w<CR>\n'

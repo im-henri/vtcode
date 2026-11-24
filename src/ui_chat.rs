@@ -27,7 +27,7 @@ use vtcode::acp::{ChatEntry, Session, content_text, protocol as p};
 mod context;
 #[path = "ui_chat_surfaces.rs"]
 mod surfaces;
-pub(crate) use surfaces::{draw_surfaces, queue_editor};
+pub(crate) use surfaces::{draw_surfaces, focus_editor_chat, queue_editor};
 #[path = "ui_chat_activity.rs"]
 mod activity;
 #[path = "ui_chat_agents.rs"]

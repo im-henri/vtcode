@@ -597,3 +597,350 @@ fn a_diff_tab_moves_with_vim_keys_like_the_arrows() {
     }
     assert!(failed.is_empty(), "{failed:#?}");
 }
+
+/// Views reached less often: other tab kinds, Settings and Commit Details
+/// with the keyboard off their default field, and a split.
+fn rare_views() -> Vec<(&'static str, App, bool)> {
+    // (name, app, ':' should open the command line)
+    let mut out = Vec::new();
+    for (name, kind) in [
+        ("amend commit tab", TabKind::AmendCommit),
+        ("extension view tab", TabKind::ExtensionView),
+        ("remote connection tab", TabKind::RemoteConnection(0)),
+    ] {
+        out.push((name, with_tab(kind), true));
+    }
+    for (name, categories, control) in [
+        ("settings categories", true, false),
+        ("settings control", false, true),
+    ] {
+        let mut app = with_tab(TabKind::Settings);
+        app.settings_focus_categories = categories;
+        app.settings_focus_control = control;
+        out.push((name, app, true));
+    }
+    use crate::commit_details::Focus;
+    for (name, focus) in [
+        ("commit files", Focus::Files),
+        ("commit message", Focus::Message),
+        ("commit diff", Focus::Diff),
+        ("commit action", Focus::Action(0)),
+    ] {
+        let mut app = with_tab(TabKind::CommitDetails);
+        app.commit_details.focus = focus;
+        out.push((name, app, true));
+    }
+    let mut split = with_tab(TabKind::CommitDetails);
+    split.create_split_group_dir(1, crate::app::SplitDirection::Horizontal);
+    out.push(("commit details in a split", split, true));
+    let mut split = base();
+    split.create_split_group_dir(0, crate::app::SplitDirection::Horizontal);
+    out.push(("editor in a split", split, true));
+    out
+}
+
+#[test]
+fn colon_and_shortcuts_in_rare_views() {
+    let mut failed = Vec::new();
+    for (name, mut app, opens) in rare_views() {
+        draw(&mut app);
+        keys(&mut app, ":");
+        draw(&mut app);
+        if app.vim.cmdline.is_some() != opens {
+            failed.push(format!(
+                "{name}: ':' opened the command line: {}",
+                app.vim.cmdline.is_some()
+            ));
+        }
+        if opens && app.vim.cmdline.is_some() {
+            let before = app.relative_line_numbers;
+            keys(&mut app, "set rnu!<CR>");
+            if app.relative_line_numbers == before {
+                failed.push(format!("{name}: ':set rnu!' did not run"));
+            }
+        }
+    }
+    let cs = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+    for (stroke, code, mods) in [
+        ("Ctrl+Shift+P", KeyCode::Char('P'), cs),
+        ("F1", KeyCode::F(1), KeyModifiers::NONE),
+        ("Ctrl+Shift+G", KeyCode::Char('G'), cs),
+        ("Ctrl+P", KeyCode::Char('p'), KeyModifiers::CONTROL),
+        ("Ctrl+Shift+/", KeyCode::Char('/'), cs),
+    ] {
+        for ((name, mut app, _), (_, mut off, _)) in rare_views().into_iter().zip(rare_views()) {
+            super::app_host::set_enabled(&mut off, false);
+            draw(&mut app);
+            draw(&mut off);
+            press(&mut app, code, mods);
+            press(&mut off, code, mods);
+            let (a, b) = (fingerprint(&app), fingerprint(&off));
+            if a != b {
+                failed.push(format!("{name}: {stroke}\n   vim:   {a}\n   plain: {b}"));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+fn chat_tab_app() -> App {
+    use vtcode::acp::{Session, protocol as p};
+    let mut app = base();
+    app.chat.initialized = Some(p::InitializeResponse::new(vtcode::acp::ProtocolVersion::V1));
+    let id = p::SessionId::new("first");
+    app.chat
+        .sessions
+        .insert(id.clone(), Session::new(id.clone()));
+    app.chat.open_tabs.push(id.clone());
+    app.chat.session_order.push(id.clone());
+    app.chat.selected = Some(id.clone());
+    app.place_chat_in_editor(id, 0, None);
+    draw(&mut app);
+    // Back on the file tab, in the editor.
+    super::app_host::activate_tab(&mut app, 0);
+    draw(&mut app);
+    assert_eq!(app.active_pane, ActivePane::Editor);
+    app
+}
+
+#[test]
+fn a_chat_tab_reached_with_vim_commands_takes_typing() {
+    for how in ["gt", ":bn<CR>", ":tabnext<CR>"] {
+        let mut app = chat_tab_app();
+        keys(&mut app, how);
+        // No frame in between: the very next key must reach the chat.
+        assert!(
+            matches!(app.tabs[app.active_tab].kind, TabKind::Chat(_)),
+            "{how} switches to the chat tab"
+        );
+        keys(&mut app, "a:b");
+        assert!(app.vim.cmdline.is_none(), "{how}: ':' is text in the chat");
+        assert_eq!(app.chat.input, "a:b", "{how}: typing reaches the chat");
+        // And back out with Ctrl-\ Ctrl-N, as from the docked chat.
+        keys(&mut app, r"<C-\><C-n>");
+        assert_ne!(
+            app.active_pane,
+            ActivePane::Chat,
+            "{how}: Ctrl-Backslash Ctrl-N leaves the chat"
+        );
+    }
+}
+
+fn popup_state(app: &mut App) -> String {
+    format!(
+        "popup={} field={:?} text={:?} palette={} quick_open={} goto={} shortcuts={} file={:?} pane={:?}",
+        super::app_host::popup_open(app),
+        app.focused_text_input_id(),
+        app.focused_text_for_test(),
+        app.palette.active,
+        app.quick_open_active,
+        app.goto_line_active,
+        app.shortcuts_active,
+        app.tabs.first().map(|t| t.editor.rope.to_string()),
+        app.active_pane,
+    )
+}
+
+/// Every popup behaves as it does without Vim mode: typing goes into its
+/// field, Ctrl-U/W still edit it, Esc closes it, and the editor's Vim
+/// state comes back as it was.
+#[test]
+fn popups_take_keys_as_without_vim_mode() {
+    let openers: [(&str, fn(&mut App)); 10] = [
+        ("palette", |a| press(a, KeyCode::F(1), KeyModifiers::NONE)),
+        ("quick open", |a| {
+            press(a, KeyCode::Char('p'), KeyModifiers::CONTROL)
+        }),
+        ("go to line", |a| a.open_goto_line()),
+        ("shortcuts", |a| {
+            a.execute_palette_command("show_shortcuts");
+        }),
+        ("clipboard history", |a| {
+            a.push_clipboard_history("copied text");
+            a.execute_palette_command("clipboard_history");
+        }),
+        ("workspaces", |a| crate::ui_workspaces::open(a)),
+        ("desk switcher", |a| {
+            crate::ui_desks::open(a, crate::ui_desks::Mode::Switch)
+        }),
+        ("new desk", |a| {
+            crate::ui_desks::open(a, crate::ui_desks::Mode::New)
+        }),
+        ("close unsaved tab", |a| {
+            a.tabs[0].editor.modified = true;
+            a.tabs.push(Tab::new_file(Editor::test_with_text(
+                "other
+",
+            )));
+            a.active_tab = 0;
+            a.close_tab(0);
+        }),
+        ("menu bar", |a| {
+            // Opened with the mouse; the keyboard drives it from there.
+            a.menu_active = true;
+            a.menu_open = true;
+        }),
+    ];
+    let sequences: [(&str, &[(KeyCode, KeyModifiers)]); 4] = [
+        (
+            "type",
+            &[
+                (KeyCode::Char('a'), KeyModifiers::NONE),
+                (KeyCode::Char(':'), KeyModifiers::NONE),
+                (KeyCode::Char('j'), KeyModifiers::NONE),
+                (KeyCode::Char('k'), KeyModifiers::NONE),
+            ],
+        ),
+        (
+            "esc",
+            &[
+                (KeyCode::Char('a'), KeyModifiers::NONE),
+                (KeyCode::Esc, KeyModifiers::NONE),
+            ],
+        ),
+        (
+            "palette key",
+            &[(
+                KeyCode::Char('P'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            )],
+        ),
+        (
+            "down enter",
+            &[
+                (KeyCode::Down, KeyModifiers::NONE),
+                (KeyCode::Esc, KeyModifiers::NONE),
+            ],
+        ),
+    ];
+    let mut failed = Vec::new();
+    for (popup, open) in openers {
+        for (seq, strokes) in sequences {
+            let mut app = base();
+            let mut off = base();
+            super::app_host::set_enabled(&mut off, false);
+            for a in [&mut app, &mut off] {
+                draw(a);
+                open(a);
+                draw(a);
+            }
+            let opened = (popup_state(&mut app), popup_state(&mut off));
+            if !super::app_host::popup_open(&off) {
+                failed.push(format!("{popup}: the test did not open it: {}", opened.1));
+                continue;
+            }
+            if opened.0 != opened.1 {
+                failed.push(format!(
+                    "{popup}: opening\n   vim:   {}\n   plain: {}",
+                    opened.0, opened.1
+                ));
+                continue;
+            }
+            for &(code, mods) in strokes {
+                press(&mut app, code, mods);
+                press(&mut off, code, mods);
+                draw(&mut app);
+                draw(&mut off);
+            }
+            let (a, b) = (popup_state(&mut app), popup_state(&mut off));
+            if a != b {
+                failed.push(format!("{popup}: {seq}\n   vim:   {a}\n   plain: {b}"));
+            }
+            if !super::app_host::popup_open(&app) && app.vim.mode != super::Mode::Normal {
+                failed.push(format!("{popup}: {seq}: Vim left in {:?}", app.vim.mode));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+fn terminal_tab_app(vim: bool) -> (App, std::sync::Arc<std::sync::Mutex<Vec<u8>>>) {
+    let mut app = base();
+    let mut pty = crate::terminal::TerminalEmulator::test_with_output(40, 20, "");
+    let input = pty.test_capture_input();
+    app.terminals[0].terminal_pty = Some(pty);
+    app.show_terminal_sidebar = true;
+    app.terminal_panel_focused = true;
+    app.detach_terminal_to_tab();
+    super::app_host::set_enabled(&mut app, vim);
+    draw(&mut app);
+    (app, input)
+}
+
+#[test]
+fn a_terminal_tab_gets_keys_and_shortcuts_as_without_vim_mode() {
+    let (mut app, input) = terminal_tab_app(true);
+    assert!(matches!(app.tabs[app.active_tab].kind, TabKind::Terminal));
+    assert!(
+        app.focused_terminal_index().is_some(),
+        "the tab's terminal has the keyboard"
+    );
+    keys(&mut app, ":ls jk");
+    assert!(app.vim.cmdline.is_none());
+    assert_eq!(&*input.lock().unwrap(), b":ls jk", "keys reach the shell");
+    for (name, code, mods) in [
+        (
+            "Ctrl+Shift+P",
+            KeyCode::Char('P'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        ("F1", KeyCode::F(1), KeyModifiers::NONE),
+        ("Ctrl+P", KeyCode::Char('p'), KeyModifiers::CONTROL),
+    ] {
+        let (mut app, a_in) = terminal_tab_app(true);
+        let (mut off, b_in) = terminal_tab_app(false);
+        press(&mut app, code, mods);
+        press(&mut off, code, mods);
+        assert_eq!(fingerprint(&app), fingerprint(&off), "{name}");
+        assert_eq!(
+            *a_in.lock().unwrap(),
+            *b_in.lock().unwrap(),
+            "{name}: same bytes to the shell"
+        );
+    }
+    // Leave it and come back with Vim tab commands; typing reaches the shell again.
+    let (mut app, input) = terminal_tab_app(true);
+    keys(&mut app, r"<C-\>");
+    let after_prefix = (
+        app.vim_terminal_prefix,
+        app.active_tab,
+        app.tab_mru_order.clone(),
+    );
+    keys(&mut app, "<C-n>");
+    assert!(
+        app.focused_terminal_index().is_none(),
+        "Ctrl-Backslash Ctrl-N leaves the terminal: prefix/tab/mru {after_prefix:?} now tab {} pane {:?} sidebar_focus {} in={:?}",
+        app.active_tab,
+        app.active_pane,
+        app.terminal_panel_focused,
+        input.lock().unwrap()
+    );
+    assert!(!matches!(app.tabs[app.active_tab].kind, TabKind::Terminal));
+    input.lock().unwrap().clear();
+    let terminal_tab = app
+        .tabs
+        .iter()
+        .position(|t| t.kind == TabKind::Terminal)
+        .unwrap();
+    keys(&mut app, &format!(":b{}<CR>", terminal_tab + 1));
+    keys(&mut app, "echo");
+    assert_eq!(
+        &*input.lock().unwrap(),
+        b"echo",
+        ":b N onto the terminal tab: typing reaches the shell"
+    );
+}
+
+#[test]
+fn leaving_the_only_tab_a_terminal_moves_to_the_explorer() {
+    let (mut app, _input) = terminal_tab_app(true);
+    let terminal = app.active_tab;
+    app.tabs.retain(|t| t.kind == TabKind::Terminal);
+    app.active_tab = 0;
+    let _ = terminal;
+    keys(&mut app, r"<C-\><C-n>");
+    assert!(app.focused_terminal_index().is_none());
+    assert_eq!(app.active_pane, ActivePane::Explorer);
+    keys(&mut app, ":");
+    assert!(app.vim.cmdline.is_some(), "and ':' works from there");
+}
