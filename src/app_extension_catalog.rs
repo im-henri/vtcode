@@ -12,11 +12,12 @@ const STARTUP_DELAY: Duration = Duration::from_secs(30);
 pub(crate) struct CatalogState {
     pub catalog: Catalog,
     generation: u64,
+    /// The newest request's generation, so a delayed launch check that a
+    /// manual check has replaced skips its network pass.
+    latest: std::sync::Arc<std::sync::atomic::AtomicU64>,
     pub refreshing: bool,
-    /// A startup check (cache now, network later) has been queued.
+    /// The launch check (cache now, network later) has been queued.
     started: bool,
-    /// Marketplace indexes were asked for in this session.
-    fetched: bool,
     /// Repository keys with a one-click install or update in progress.
     pub installing: Vec<String>,
 }
@@ -41,9 +42,12 @@ impl App {
         }
         let state = &mut self.ext_catalog;
         state.generation = state.generation.wrapping_add(1);
-        state.fetched |= mode != Refresh::Cached;
         state.refreshing = mode != Refresh::Cached && delay.is_none();
         let generation = state.generation;
+        state
+            .latest
+            .store(generation, std::sync::atomic::Ordering::Relaxed);
+        let latest = state.latest.clone();
         let configured = self
             .settings_effective
             .extension_marketplaces
@@ -77,6 +81,9 @@ impl App {
                         return;
                     }
                     std::thread::sleep(delay);
+                    if latest.load(std::sync::atomic::Ordering::Relaxed) != generation {
+                        return;
+                    }
                 }
                 let catalog = crate::extension_catalog::refresh(
                     mode,
@@ -95,8 +102,10 @@ impl App {
         }
     }
 
-    /// After extensions are discovered: read the cache, and check for updates
-    /// once the window has settled (at most every 12 hours, see `UPDATE_INTERVAL`).
+    /// The only automatic network check: once per launch, after the window has
+    /// settled, on a low-priority thread. Release lookups are further limited
+    /// to every 12 hours (`UPDATE_INTERVAL`); anything else waits for the
+    /// user's "Check for Extension Updates".
     pub(crate) fn start_extension_catalog(&mut self) {
         if self.ext_catalog.started {
             return;
@@ -105,13 +114,11 @@ impl App {
         self.request_extension_catalog_after(Refresh::Due, Some(STARTUP_DELAY));
     }
 
-    /// Opening the Extensions sidebar asks each marketplace whether its index
-    /// changed, once per session.
+    /// Opening the Extensions sidebar shows the cached catalog and never goes
+    /// to the network itself; it only starts the launch check if extension
+    /// discovery has not already done so (for example in an empty window).
     pub(crate) fn ensure_extension_catalog(&mut self) {
-        if !self.ext_catalog.fetched {
-            self.ext_catalog.started = true;
-            self.request_extension_catalog(Refresh::Due);
-        }
+        self.start_extension_catalog();
     }
 
     pub(crate) fn finish_extension_catalog(&mut self, generation: u64, catalog: Catalog) {
