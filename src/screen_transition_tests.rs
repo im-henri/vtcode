@@ -12,16 +12,32 @@ fn workbench(width: u16, height: u16) -> Buffer {
         for x in 20..width {
             buffer[(x, y)].set_style(style);
         }
+        // An underline with no text under it, like an active tab's.
+        for x in 22..30.min(width) {
+            buffer[(x, y)].set_style(style.add_modifier(Modifier::UNDERLINED));
+        }
     }
     buffer
 }
 
-/// Cells showing any glyph: backgrounds never count.
+fn startup_frame_plain(target: &Buffer, out: &mut Buffer, progress: f32, flicker: u64) {
+    startup_frame(target, out, progress, flicker, &[]);
+}
+
+fn exit_frame_plain(snapshot: &Buffer, out: &mut Buffer, progress: f32, flicker: u64) {
+    exit_frame(snapshot, out, progress, flicker, &[]);
+}
+
+/// Cells showing any text: a glyph, or an underline/strikethrough line.
+fn shows_text(cell: &Cell) -> bool {
+    has_content(cell)
+}
+
 fn revealed(buffer: &Buffer) -> usize {
     buffer
         .content
         .iter()
-        .filter(|cell| !cell.symbol().trim().is_empty())
+        .filter(|cell| shows_text(cell))
         .count()
 }
 
@@ -36,7 +52,7 @@ fn assert_backgrounds_exact(out: &Buffer, target: &Buffer, progress: f32) {
 fn startup_shows_backgrounds_at_once_and_text_rises_from_the_bottom() {
     let target = workbench(60, 20);
     let mut out = target.clone();
-    startup_frame(&target, &mut out, 0.0, 0);
+    startup_frame_plain(&target, &mut out, 0.0, 0);
     assert_eq!(revealed(&out), 0, "no text before the first front");
     assert_backgrounds_exact(&out, &target, 0.0);
 
@@ -45,7 +61,7 @@ fn startup_shows_backgrounds_at_once_and_text_rises_from_the_bottom() {
     for step in 1..=100 {
         let progress = step as f32 / 100.0;
         let mut out = target.clone();
-        startup_frame(&target, &mut out, progress, step);
+        startup_frame_plain(&target, &mut out, progress, step);
         assert_backgrounds_exact(&out, &target, progress);
         let count = revealed(&out);
         assert!(count >= previous, "text never retreats ({progress})");
@@ -53,11 +69,7 @@ fn startup_shows_backgrounds_at_once_and_text_rises_from_the_bottom() {
         if count > 0 && count < revealed(&target) {
             saw_partial = true;
             // The bottom row leads the top row.
-            let row = |y: u16| {
-                (0..60)
-                    .filter(|&x| !out[(x, y)].symbol().trim().is_empty())
-                    .count()
-            };
+            let row = |y: u16| (0..60).filter(|&x| shows_text(&out[(x, y)])).count();
             assert!(row(19) >= row(0), "rises from the bottom ({progress})");
         }
         if progress >= 1.0 - SETTLE {
@@ -71,14 +83,14 @@ fn startup_shows_backgrounds_at_once_and_text_rises_from_the_bottom() {
 fn exit_keeps_backgrounds_and_text_drains_down() {
     let snapshot = workbench(60, 20);
     let mut out = snapshot.clone();
-    exit_frame(&snapshot, &mut out, 0.0, 0);
+    exit_frame_plain(&snapshot, &mut out, 0.0, 0);
     assert_eq!(out, snapshot, "the first exit frame is the workbench");
 
     let mut previous = revealed(&snapshot);
     for step in 1..=100 {
         let progress = step as f32 / 100.0;
         out = snapshot.clone();
-        exit_frame(&snapshot, &mut out, progress, step);
+        exit_frame_plain(&snapshot, &mut out, progress, step);
         assert_backgrounds_exact(&out, &snapshot, progress);
         let count = revealed(&out);
         assert!(count <= previous, "text only drains ({progress})");
@@ -86,15 +98,17 @@ fn exit_keeps_backgrounds_and_text_drains_down() {
         // Text moves down, never up: a column's text never sits above the
         // highest row it occupied in the snapshot.
         for x in 0..60 {
-            let top =
-                |buffer: &Buffer| (0..20).position(|y| !buffer[(x, y)].symbol().trim().is_empty());
+            let top = |buffer: &Buffer| (0..20).position(|y| shows_text(&buffer[(x, y)]));
             if let (Some(now), Some(before)) = (top(&out), top(&snapshot)) {
                 assert!(now >= before, "column {x} at {progress}");
             }
         }
     }
     assert_eq!(previous, 0);
-    assert!(out.content.iter().all(|cell| cell.symbol() == " "));
+    assert!(
+        out.content.iter().all(|cell| !shows_text(cell)),
+        "no glyph or underline is left behind"
+    );
     assert_backgrounds_exact(&out, &snapshot, 1.0);
 }
 
@@ -109,12 +123,12 @@ fn wide_glyphs_never_split_across_differently_timed_columns() {
     for step in 0..=60 {
         let progress = step as f32 / 60.0;
         let mut out = target.clone();
-        startup_frame(&target, &mut out, progress, step);
+        startup_frame_plain(&target, &mut out, progress, step);
         // The trailing cell stays blank, so a narrow stand-in for the wide
         // glyph never shows stray text beside it.
         assert_eq!(out[(x + 1, 3)].symbol(), " ", "{progress}");
         let mut out = target.clone();
-        exit_frame(&target, &mut out, progress, step);
+        exit_frame_plain(&target, &mut out, progress, step);
         for y in 0..12 {
             for x in 0..39 {
                 if UnicodeWidthStr::width(out[(x, y)].symbol()) > 1 {
@@ -321,11 +335,18 @@ fn dump_screen_transition_frames() {
         crate::editor::Editor::test_with_text(&text),
     )];
     app.active_tab = 0;
+    // A selection over a few lines shows how highlights move with text.
+    let editor = app.editor_mut().unwrap();
+    editor.selection_anchor = Some((2, 3));
+    editor.cursor_line = 6;
+    editor.cursor_col = 20;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 28)).unwrap();
     terminal
         .draw(|frame| crate::ui::draw(frame, &mut app))
         .unwrap();
     let target = terminal.backend().buffer().clone();
+    let mut state = State::default();
+    state.set_highlights(&app.colors);
     let css = |color: Color, fallback: &str| match color {
         Color::Rgb(r, g, b) => format!("rgb({r},{g},{b})"),
         _ => fallback.to_string(),
@@ -340,9 +361,9 @@ fn dump_screen_transition_frames() {
         for p in progress {
             let mut out = target.clone();
             if name == "startup" {
-                startup_frame(&target, &mut out, p, (p * 25.0) as u64);
+                startup_frame(&target, &mut out, p, (p * 25.0) as u64, &state.highlights);
             } else {
-                exit_frame(&target, &mut out, p, (p * 25.0) as u64);
+                exit_frame(&target, &mut out, p, (p * 25.0) as u64, &state.highlights);
             }
             write!(html, "<h3>{name} {p}</h3><pre style='line-height:1.15'>").unwrap();
             for y in 0..out.area.height {
@@ -407,6 +428,7 @@ fn startup_ticks_reuse_the_last_real_frame_until_the_final_frame() {
         &mut expected,
         elapsed.as_secs_f32() / 0.3,
         (elapsed.as_millis() / 60) as u64,
+        &[],
     );
     assert_eq!(cached, expected);
     assert!(!state.startup_due(tick + Duration::from_millis(5)));
@@ -419,4 +441,54 @@ fn startup_ticks_reuse_the_last_real_frame_until_the_final_frame() {
     state.paint_startup(&mut last, end);
     assert_eq!(last, target);
     assert!(!state.startup_active());
+}
+
+#[test]
+fn text_highlights_arrive_and_leave_with_their_text() {
+    let panel = Color::Rgb(30, 32, 40);
+    let selection = Color::Rgb(38, 79, 120);
+    let blended = Color::Rgb(70, 60, 30);
+    let area = Rect::new(0, 0, 50, 10);
+    let mut target = Buffer::empty(area);
+    for y in 0..10 {
+        let style = Style::default().fg(Color::Rgb(220, 220, 220)).bg(panel);
+        target.set_string(0, y, " ".repeat(50), style);
+        target.set_string(2, y, "let value = compute(input);", style);
+    }
+    // A theme selection (including a selected space) and a blended match.
+    for x in 6..14 {
+        target[(x, 4)].set_bg(selection);
+    }
+    for x in 14..19 {
+        target[(x, 6)].set_bg(blended);
+    }
+    let highlights = [selection];
+    let bases = highlight_bases(&target, &highlights);
+    let highlighted = |x: u16, y: u16| bases[usize::from(y) * 50 + usize::from(x)];
+    assert_eq!(highlighted(6, 4), Some(panel));
+    assert_eq!(highlighted(15, 6), Some(panel), "enclosed run counts too");
+    assert_eq!(highlighted(2, 4), None);
+    assert!(
+        highlight_bases(&workbench(60, 20), &[])
+            .iter()
+            .all(Option::is_none),
+        "panel backgrounds never count"
+    );
+
+    let mut out = target.clone();
+    startup_frame(&target, &mut out, 0.0, 0, &highlights);
+    assert!(
+        out.content.iter().all(|cell| cell.bg == panel),
+        "no highlight before its text"
+    );
+    let mut out = target.clone();
+    startup_frame(&target, &mut out, 1.0 - SETTLE, 9, &highlights);
+    assert_eq!(out, target);
+
+    let mut out = target.clone();
+    exit_frame(&target, &mut out, 1.0, 9, &highlights);
+    assert!(
+        out.content.iter().all(|cell| cell.bg == panel),
+        "no highlight is left behind"
+    );
 }

@@ -4939,6 +4939,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     // refreshing the tree never runs a repository status scan on the UI.
     app.refresh_explorer_async();
     app.ensure_initial_source_control_status();
+    app.screen_transition.set_highlights(&app.colors);
     app.screen_transition.arm_startup();
     loop {
         // Include workspace-loader completions in the same wake ticket as
@@ -5451,6 +5452,12 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         }
 
         // Optional exit animation: the last frame drains down the screen.
+        if app.shutdown_anim_active
+            && app.screen_transition.settings.exit
+            && app.screen_transition.exit_needs_snapshot_or_inactive()
+        {
+            app.screen_transition.set_highlights(&app.colors);
+        }
         if app.shutdown_anim_active && app.screen_transition.begin_exit(app.shutdown_anim_start) {
             let now = std::time::Instant::now();
             // Quitting discards further input; a key press or click skips.
