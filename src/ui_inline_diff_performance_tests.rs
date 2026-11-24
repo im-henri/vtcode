@@ -304,7 +304,10 @@ fn dense_inline_frames_match_full_remapping_with_unicode_and_collapsed_rows() {
                 editor.scroll_offset = line;
                 editor.horizontal_scroll = column;
                 draw(&mut app, width, height, true); // Establish identical layout state.
+                // Compare both renderers at the same steady minimap zoom.
+                app.editor().unwrap().minimap_zoom.set(Default::default());
                 let expected = draw(&mut app, width, height, true);
+                app.editor().unwrap().minimap_zoom.set(Default::default());
                 assert_eq!(
                     draw(&mut app, width, height, false),
                     expected,
