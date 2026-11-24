@@ -188,7 +188,13 @@ theme roles rather than embedded ANSI escape sequences.
 Foreground roles: `text`, `muted`, `accent`, `offset`, `changed`, `warning`,
 `error`, `success`, `selection`, `cursor`, and eight distinguishable plot colors
 `chart1` through `chart8`. Background roles: `panel`, `header`,
-`selection`, `cursor`, `match`. Unknown roles use the editor defaults. Bold and
+`selection`, `cursor`, `match`, `hover`. Controls use the workbench's own
+colors: `button`, `buttonHover`, `buttonPrimary`, `buttonPrimaryHover` and
+`input` (text on them defaults to the control's foreground; other foreground
+roles still apply). Scrollbars use `scrollbar` for the track and
+`scrollbarThumb`, `scrollbarThumbHover`, `scrollbarThumbActive` for the thumb;
+draw them as spaces. Older hosts render these as the editor background, so keep
+a visible label such as brackets if that matters. Unknown roles use the editor defaults. Bold and
 underline are supported. The host uses the active theme's colors and clips drawing
 to the viewport. Control characters in span text are rejected. Use Unicode
 terminal column widths when computing layout.

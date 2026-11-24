@@ -143,8 +143,6 @@ mod extension_editor_host;
 mod extension_engineer_tests;
 mod extension_handlers;
 #[cfg(test)]
-mod extension_hex_preview_tests;
-#[cfg(test)]
 mod extension_hex_tests;
 mod extension_host;
 mod extension_install;

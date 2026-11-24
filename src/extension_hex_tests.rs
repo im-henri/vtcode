@@ -474,7 +474,7 @@ fn hex_wasm_views_focus_existing_split_and_receive_the_first_click_in_inactive_p
         &mut app,
         crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: area.x + 13,
+            column: area.x + 14,
             row: area.y + 2,
             modifiers: KeyModifiers::NONE,
         },
@@ -507,7 +507,7 @@ fn hex_wasm_find_replace_all_undo_and_save_as_use_real_keyboard_dispatch() {
     open(&mut app, &path);
     workbench_key(&mut app, KeyCode::Char('f'), KeyModifiers::CONTROL);
     drain(&mut app);
-    assert!(text(&app).contains("Find [HEX]"));
+    assert!(text(&app).contains("hex bytes, e.g."));
     assert!(app.paste_into_extension_editor("61 62 63"));
     workbench_key(&mut app, KeyCode::Enter, KeyModifiers::NONE);
     drain(&mut app);
@@ -617,8 +617,8 @@ fn hex_wasm_renders_themed_wide_narrow_and_tiny_surfaces() {
                 .iter()
                 .map(|cell| cell.symbol())
                 .collect();
-            assert!(shown.contains("OFFSET"));
-            assert!(shown.contains("DATA INSPECTOR"));
+            assert!(shown.contains("Offset"));
+            assert!(shown.contains("Data inspector"));
         }
         if let Some(output) = std::env::var_os("VTCODE_HEX_VISUAL_DIR") {
             let directory = PathBuf::from(output);
@@ -718,9 +718,10 @@ fn hex_wasm_edited_and_search_surfaces_match_workbench_theme_contrast() {
     assert!(text(&app).contains("Offset 0x0 (0)"));
     click(&mut app, code.x + 16, code.y + 2, KeyModifiers::SHIFT);
     drain(&mut app);
-    assert!(text(&app).contains("2 selected"));
+    assert!(text(&app).contains("Selected 2 bytes"));
     let shown = text(&app);
-    let save_column = shown.lines().next().unwrap().find("Save").unwrap() as u16;
+    let toolbar = shown.lines().next().unwrap();
+    let save_column = toolbar[..toolbar.find("Save").unwrap()].chars().count() as u16;
     click(&mut app, code.x + save_column, code.y, KeyModifiers::NONE);
     drain(&mut app);
     assert_eq!(

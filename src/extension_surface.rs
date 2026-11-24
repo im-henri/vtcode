@@ -36,21 +36,50 @@ pub(crate) struct ViewSpan {
     pub underline: bool,
 }
 
+/// Controls take the workbench's own button and input colors, drawn over the
+/// panel surface they normally sit on. Many themes give secondary buttons
+/// almost the panel's color (they rely on hover or borders), so a fill that
+/// would vanish is tinted toward the text color to still read as a button.
+fn control_style(
+    colors: &crate::app_theme::ThemeColors,
+    background: &str,
+) -> Option<ratatui::style::Style> {
+    use ratatui::style::Color;
+    let ui = &colors.ui;
+    let surface = colors.bg_sidebar;
+    let (primary, hovered) = match background {
+        "button" => (false, false),
+        "buttonHover" => (false, true),
+        "buttonPrimary" => (true, false),
+        "buttonPrimaryHover" => (true, true),
+        "input" => return Some(ui.input_style(surface)),
+        _ => return None,
+    };
+    let mut style = ui.button_style(surface, primary, hovered, true);
+    let fill = style.bg.unwrap_or(surface);
+    let faint = match (fill, surface) {
+        (Color::Rgb(r, g, b), Color::Rgb(sr, sg, sb)) => {
+            r.abs_diff(sr).max(g.abs_diff(sg)).max(b.abs_diff(sb)) < 18
+        }
+        _ => fill == surface,
+    };
+    if faint && let Color::Rgb(r, g, b) = colors.fg_text {
+        let alpha = if hovered { 60 } else { 34 };
+        if let Some(tinted) = crate::theme_workbench::ColorLayer::rgba(r, g, b, alpha).over(surface)
+        {
+            let fg = style.fg.unwrap_or(colors.fg_text);
+            style = style.bg(tinted).fg(ui.readable_foreground(fg, tinted, 4.5));
+        }
+    }
+    Some(style)
+}
+
 fn surface_colors(
     colors: &crate::app_theme::ThemeColors,
     span: &ViewSpan,
 ) -> (ratatui::style::Color, ratatui::style::Color) {
     let ui = &colors.ui;
-    // Controls take the workbench's own button and input colors, drawn over
-    // the panel surface they normally sit on.
-    let control = match span.background.as_str() {
-        "button" => Some(ui.button_style(colors.bg_sidebar, false, false, true)),
-        "buttonHover" => Some(ui.button_style(colors.bg_sidebar, false, true, true)),
-        "buttonPrimary" => Some(ui.button_style(colors.bg_sidebar, true, false, true)),
-        "buttonPrimaryHover" => Some(ui.button_style(colors.bg_sidebar, true, true, true)),
-        "input" => Some(ui.input_style(colors.bg_sidebar)),
-        _ => None,
-    };
+    let control = control_style(colors, &span.background);
     let bg = match span.background.as_str() {
         "panel" | "header" => colors.bg_sidebar,
         "selection" => colors.bg_selection,
@@ -133,8 +162,13 @@ pub(crate) fn render_frame(
                 break;
             }
             let (fg, bg) = surface_colors(colors, span);
+            // Themes that outline buttons (high contrast) draw the border as
+            // an underline, as the workbench's own buttons do.
+            let border = control_style(colors, &span.background)
+                .filter(|style| style.add_modifier.contains(Modifier::UNDERLINED))
+                .map(|style| style.underline_color);
             let style = *styles
-                .entry((fg, bg, span.bold, span.underline))
+                .entry((fg, bg, span.bold, span.underline, border))
                 .or_insert_with(|| {
                     let mut style = Style::default()
                         .fg(colors.ui.readable_foreground(fg, bg, 4.5))
@@ -142,8 +176,11 @@ pub(crate) fn render_frame(
                     if span.bold {
                         style = style.add_modifier(Modifier::BOLD);
                     }
-                    if span.underline {
+                    if span.underline || border.is_some() {
                         style = style.add_modifier(Modifier::UNDERLINED);
+                    }
+                    if let Some(Some(color)) = border {
+                        style = style.underline_color(color);
                     }
                     style
                 });
