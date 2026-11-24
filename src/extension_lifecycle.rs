@@ -131,18 +131,31 @@ impl ExtensionManager {
         }
     }
 
-    /// The installed directory of an extension the editor manages, if any.
-    /// Extensions in the project's own folders are project files and stay.
+    /// The directory uninstalling deletes: the extension's own folder, directly
+    /// inside one of the roots extensions are discovered in. Never anything
+    /// wider, so a manifest placed elsewhere cannot point removal at a parent.
     pub(crate) fn removal_dir(&self, record: &ExtensionRecord) -> Option<std::path::PathBuf> {
         let dir = record.manifest_path.parent()?;
         let root = dir.parent()?;
-        self.managed_roots
+        self.search_roots
             .iter()
-            .any(|managed| managed == root)
+            .chain(&self.managed_roots)
+            .any(|known| known == root)
             .then(|| dir.to_path_buf())
     }
 
-    /// Unload an editor-installed extension and delete its directory.
+    /// Installed by the editor (from a release), rather than a local copy such
+    /// as a project's `.vtcode/extensions` folder. Only these receive updates.
+    pub(crate) fn is_managed(&self, record: &ExtensionRecord) -> bool {
+        record
+            .manifest_path
+            .parent()
+            .and_then(std::path::Path::parent)
+            .is_some_and(|root| self.managed_roots.iter().any(|managed| managed == root))
+    }
+
+    /// Unload an extension and permanently delete its directory. A directory
+    /// that is a link (a development checkout linked in) loses only the link.
     pub(crate) fn remove_extension(&mut self, index: usize) -> Result<String, String> {
         if self.record_is_busy(index) {
             return Err("Save or close modified extension documents and wait for pending operations before removing".into());
@@ -151,9 +164,10 @@ impl ExtensionManager {
             .records
             .get(index)
             .ok_or_else(|| "No extension selected".to_string())?;
-        let dir = self
-            .removal_dir(record)
-            .ok_or("Only extensions installed by VTCode can be removed here")?;
+        let dir = self.removal_dir(record).ok_or(
+            "This extension is not inside an extensions folder, so it cannot be uninstalled.",
+        )?;
+        let managed = self.is_managed(record);
         let root = dir
             .parent()
             .ok_or("Invalid extension directory")?
@@ -163,18 +177,28 @@ impl ExtensionManager {
             .file_type()
             .is_symlink()
         {
-            return Err("The installed extension directory cannot be a symlink.".into());
+            if managed {
+                return Err("The installed extension directory cannot be a symlink.".into());
+            }
+            return self.remove_linked_extension(index, &dir);
         }
-        let lock_file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(root.join(".install-lock"))
-            .map_err(|error| error.to_string())?;
-        let _lock = vtcode::file_source::ExclusiveFileLock::try_acquire(lock_file).map_err(
-            |_| "An extension installation is running. Wait for it to finish, then retry.",
-        )?;
+        // Installs only ever write the editor's own folders.
+        let _lock = if managed {
+            let lock_file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(root.join(".install-lock"))
+                .map_err(|error| error.to_string())?;
+            Some(
+                vtcode::file_source::ExclusiveFileLock::try_acquire(lock_file).map_err(
+                    |_| "An extension installation is running. Wait for it to finish, then retry.",
+                )?,
+            )
+        } else {
+            None
+        };
         let staging = tempfile::Builder::new()
             .prefix(".remove-")
             .tempdir_in(&root)
@@ -202,6 +226,32 @@ impl ExtensionManager {
             .retain(|(owner, _), _| owner != &id);
         self.tick_yield_to_input.remove(&id);
         drop(staging); // Deletes the moved files.
+        self.remember_disabled(&id, false, Ok(format!("Removed extension: {name}")))
+    }
+
+    /// Remove a linked-in extension: the link goes, its target is untouched.
+    fn remove_linked_extension(
+        &mut self,
+        index: usize,
+        link: &std::path::Path,
+    ) -> Result<String, String> {
+        let mut record = self.records.remove(index);
+        let name = record.manifest.name.clone();
+        let id = record.manifest.id.clone();
+        let _ = Self::deactivate_record(&mut record); // Error OK: the link is removed next
+        // A directory symlink or junction is removed as a directory on Windows.
+        if let Err(error) = std::fs::remove_dir(link).or_else(|_| std::fs::remove_file(link)) {
+            record.state = ExtensionState::Unloaded;
+            record.status_text = "Removal failed".to_string();
+            record.user_unloaded = true;
+            self.records.insert(index, record);
+            self.rebuild_index();
+            return Err(format!("Could not remove the link to {name}: {error}"));
+        }
+        self.rebuild_index();
+        self.view_resize_requests
+            .retain(|(owner, _), _| owner != &id);
+        self.tick_yield_to_input.remove(&id);
         self.remember_disabled(&id, false, Ok(format!("Removed extension: {name}")))
     }
 

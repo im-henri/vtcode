@@ -307,10 +307,10 @@ fn extensions_ui_manifest_buttons_show_registered_commands_and_run_them() {
     let last = &app.notification_history.last().unwrap().0;
     assert_eq!(last, "Extension is not loaded: Test Extension 00");
 
-    // The button is part of the Tab cycle: 5 management actions, 1 extension
-    // button and 3 sections bring focus back to it.
+    // The button is part of the Tab cycle: 6 management actions (Uninstall
+    // included), 1 extension button and 3 sections bring focus back to it.
     app.notification_history.clear();
-    for _ in 0..9 {
+    for _ in 0..10 {
         key(&mut app, KeyCode::Tab);
     }
     key(&mut app, KeyCode::Enter);
@@ -327,8 +327,8 @@ fn extensions_ui_remove_needs_a_second_press_and_deletes_installed_files() {
     let mut terminal = Terminal::new(TestBackend::new(110, 35)).unwrap();
     info(&mut app, &mut terminal);
     assert!(
-        !text(&terminal).contains("Uninstall"),
-        "extensions outside the install folders cannot be removed here"
+        text(&terminal).contains("Uninstall"),
+        "local copies in an extensions folder can be uninstalled too"
     );
 
     app.extension_manager.managed_roots = vec![root.path().to_path_buf()];
@@ -788,15 +788,16 @@ fn installed_cards_uninstall_after_a_confirming_second_press() {
             .find(|(action, _)| *action == Action::Uninstall(0))
             .map(|(_, rect)| *rect)
     };
-    // Only the selected (or hovered) card offers it, in place of its status.
-    let button = uninstall(&app).expect("selected card offers Uninstall");
+    // Every card offers it all the time, in place of a redundant "Enabled".
+    let button = uninstall(&app).expect("card offers Uninstall");
     assert!(
-        !app.ext_sidebar
+        app.ext_sidebar
             .actions
             .iter()
             .any(|(action, _)| *action == Action::Uninstall(1))
     );
     assert!(text(&terminal).contains(" Uninstall "));
+    assert!(!text(&terminal).contains("● Enabled"));
 
     // First press asks to confirm; clicking anything else cancels.
     ui_extensions::handle_click(&mut app, button.x, button.y);

@@ -26,7 +26,7 @@ impl App {
     fn release_installed_repositories(&self) -> Vec<String> {
         self.extension_views()
             .into_iter()
-            .filter(|view| view.removable && !view.repository.is_empty())
+            .filter(|view| view.managed && !view.repository.is_empty())
             .map(|view| view.repository)
             .collect()
     }
@@ -147,7 +147,7 @@ impl App {
         &self,
         view: &crate::extension_manifest::ExtensionRecordView,
     ) -> Option<crate::extension_versions::ReleaseVersion> {
-        if !view.removable {
+        if !view.managed {
             return None;
         }
         self.ext_catalog
@@ -230,18 +230,20 @@ impl App {
         let Some(index) = views.iter().position(|view| view.id == id) else {
             return;
         };
-        if !views[index].removable {
+        let view = &views[index];
+        let Some(directory) = view.directory.as_ref().filter(|_| view.removable) else {
             self.notify_error(format!(
-                "{} was not installed by VTCode, so it cannot be uninstalled here.",
-                views[index].name
+                "{} is not inside an extensions folder, so it cannot be uninstalled.",
+                view.name
             ));
             return;
-        }
+        };
         if self.ext_info.remove_armed.as_deref() != Some(id) {
             self.ext_info.remove_armed = Some(id.to_owned());
-            self.notify(format!(
-                "Press again to confirm uninstalling {}",
-                views[index].name
+            self.notify_warn(format!(
+                "Press again to permanently delete {} ({})",
+                view.name,
+                directory.display()
             ));
             return;
         }

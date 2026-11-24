@@ -405,6 +405,8 @@ impl ExtensionManager {
                 logs: record.logs.clone(),
                 enabled: record.manifest.enabled,
                 removable: self.removal_dir(record).is_some(),
+                managed: self.is_managed(record),
+                directory: self.removal_dir(record),
             })
             .collect()
     }
@@ -788,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn only_editor_installed_extensions_can_be_removed() {
+    fn installed_and_local_extensions_can_both_be_removed() {
         let temporary = tempfile::tempdir().unwrap();
         let project_root = temporary.path().join("project");
         let managed = crate::portable::workspace_dir(&project_root).join("extensions");
@@ -799,20 +801,28 @@ mod tests {
         let views = manager.views();
         let index = |id: &str| views.iter().position(|view| view.id == id).unwrap();
         assert!(views[index("test.installed")].removable);
-        assert!(!views[index("test.project")].removable);
-        assert!(manager.remove_extension(index("test.project")).is_err());
-        assert!(project_owned.exists());
+        assert!(views[index("test.installed")].managed);
+        // A local copy in the project can be uninstalled too, but gets no updates.
+        assert!(views[index("test.project")].removable);
+        assert!(!views[index("test.project")].managed);
+        assert!(manager.remove_extension(index("test.project")).is_ok());
+        assert!(!project_owned.exists());
+        assert!(
+            project_root.join("extensions").exists(),
+            "only its own folder goes"
+        );
+        let views = manager.views();
+        let index = |id: &str| views.iter().position(|view| view.id == id).unwrap();
 
         manager.unload_extension(index("test.installed")).unwrap();
         let message = manager.remove_extension(index("test.installed")).unwrap();
         assert!(message.contains("Removed"));
         assert!(!installed.exists());
-        assert_eq!(manager.views().len(), 1);
+        assert!(manager.views().is_empty());
         assert!(!manager.disabled_ids.contains("test.installed"));
         manager.scan_and_sync();
-        assert_eq!(
-            manager.views().len(),
-            1,
+        assert!(
+            manager.views().is_empty(),
             "staged leftovers stay undiscovered"
         );
         let _ = std::fs::remove_dir_all(crate::portable::workspace_dir(&project_root)); // Error OK: cleanup

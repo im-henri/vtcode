@@ -855,7 +855,8 @@ fn draw_card(
             ExtensionState::Unloaded => secondary,
         };
         let armed = app.ext_info.remove_armed.as_deref() == Some(ext.id.as_str());
-        let uninstall = ext.removable && (selected || hovered || armed);
+        // Always offered: the section header already tells enabled, disabled and failed apart.
+        let uninstall = ext.removable;
         let state = if uninstall {
             if armed { " Confirm? " } else { " Uninstall " }.to_string()
         } else {

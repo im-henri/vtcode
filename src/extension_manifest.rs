@@ -272,8 +272,12 @@ pub(crate) struct ExtensionRecordView {
     pub last_error: Option<String>,
     pub logs: Vec<String>,
     pub enabled: bool,
-    /// Installed by the editor, so the Extensions page can delete it.
+    /// In an extensions folder, so the Extensions page can uninstall it.
     pub removable: bool,
+    /// Installed by the editor from a release (not a local copy), so it gets updates.
+    pub managed: bool,
+    /// The folder uninstalling deletes.
+    pub directory: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
