@@ -112,6 +112,11 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
     if crate::ui_performance_details::handle_key(app, key) {
         return false;
     }
+    // Vim mode: `:` and the command line before Commit Details, which
+    // otherwise reads every character.
+    if let Some(quit) = crate::vim::app_host::early_key(app, key) {
+        return quit;
+    }
     if let Some(quit) = input_keyboard_dialogs::handle_commit_details_key(app, key) {
         return quit;
     }

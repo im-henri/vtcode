@@ -74,8 +74,11 @@ impl Key {
         }
     }
 
+    /// `<C-c>` exactly. Ctrl+Shift+letter is never a Vim key: Vim cannot
+    /// tell it from `<C-c>`, and the workbench binds those strokes (Ctrl+Shift+P
+    /// is the Command Palette), so it must not move a list like `<C-p>`.
     pub(crate) fn is_ctrl(self, c: char) -> bool {
-        self.ctrl && !self.alt && self.k == K::Char(c)
+        self.ctrl && !self.alt && !self.shift && self.k == K::Char(c)
     }
 
     /// Vim treats `<C-[>` as `<Esc>` and `<C-c>` as an interrupt that also

@@ -9,6 +9,8 @@
 pub(crate) mod app_host;
 #[cfg(test)]
 mod app_tests;
+#[cfg(test)]
+mod app_views_tests;
 pub(crate) mod cmdline;
 pub(crate) mod ex;
 pub(crate) mod exec;
@@ -866,6 +868,15 @@ impl VimState {
                 register::Reg::new(text, register::RegKind::Char),
                 &mut clip,
             );
+            return;
+        }
+        // Ctrl+Shift+letter is a workbench shortcut (Ctrl+Shift+P, G, F, X...),
+        // never a Vim key: Vim can't tell it from Ctrl+letter. It cancels a
+        // pending count or operator, as any key that isn't a motion does.
+        if key.ctrl && key.shift && matches!(key.k, K::Char(c) if c.is_ascii_alphabetic()) {
+            self.pending.clear();
+            host.native_key(key);
+            exec::after_native(self, host);
             return;
         }
         self.pending.push(key);

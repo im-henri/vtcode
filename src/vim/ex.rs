@@ -521,10 +521,27 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
     if s[i] == '"' {
         return Ok(());
     }
-    if host.ed_ref().is_none() {
+    let view_command = host.ed_ref().is_none() && {
+        // A tab with no Vim buffer behind it (Commit Details, Settings, a
+        // preview or diff): window, tab and buffer commands still act on it.
+        let name: String = s[i..]
+            .iter()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+        !host.buffers().is_empty() && resolve(&name).is_some_and(view_safe)
+    };
+    if host.ed_ref().is_none() && !view_command {
         return run_without_buffer(vim, host, &s[i..].iter().collect::<String>());
     }
-    let range = parse_range(vim, host, &s, &mut i)?;
+    let range = if view_command {
+        Range {
+            start: 0,
+            end: 0,
+            given: 0,
+        }
+    } else {
+        parse_range(vim, host, &s, &mut i)?
+    };
     while i < s.len() && s[i] == ' ' {
         i += 1;
     }
@@ -1334,6 +1351,54 @@ fn split_strings(s: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Commands that work on a tab that has no text buffer: they act on tabs,
+/// windows and editor-wide state, never on lines.
+fn view_safe(full: &str) -> bool {
+    matches!(
+        full,
+        "quit"
+            | "close"
+            | "xit"
+            | "exit"
+            | "tabnext"
+            | "tabprevious"
+            | "tabNext"
+            | "tabfirst"
+            | "tabrewind"
+            | "tablast"
+            | "tabclose"
+            | "tabonly"
+            | "tabnew"
+            | "tabedit"
+            | "bnext"
+            | "bprevious"
+            | "bNext"
+            | "bfirst"
+            | "brewind"
+            | "blast"
+            | "buffer"
+            | "bdelete"
+            | "bwipeout"
+            | "buffers"
+            | "files"
+            | "ls"
+            | "only"
+            | "split"
+            | "vsplit"
+            | "new"
+            | "vnew"
+            | "wincmd"
+            | "cd"
+            | "lcd"
+            | "tcd"
+            | "pwd"
+            | "nohlsearch"
+            | "registers"
+            | "display"
+            | "messages"
+    )
 }
 
 fn run_without_buffer(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {

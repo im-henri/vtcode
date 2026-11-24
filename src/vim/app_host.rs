@@ -274,6 +274,73 @@ pub(crate) fn handle_key(app: &mut App, event: KeyEvent) -> Option<bool> {
     Some(std::mem::take(&mut app.vim_quit))
 }
 
+/// `:` in an empty search box that has the keyboard by default (Settings,
+/// the Extensions filter) opens the command line: a search can't start with
+/// one, and these boxes are focused whenever the view is.
+fn colon_over_empty_field(app: &App, key: Key) -> bool {
+    use crate::text_input::TextInputId;
+    key.char() == Some(':')
+        && match app.focused_text_input_id() {
+            Some(TextInputId::SettingsSearch) => app.settings_editor_search.is_empty(),
+            Some(TextInputId::ExtensionsFilter) => app.extensions_filter.is_empty(),
+            _ => false,
+        }
+}
+
+/// Keys Vim takes before views that read the keyboard ahead of the Vim
+/// layer (Commit Details owns every character): an open command line gets
+/// its keys, and `:` opens one, unless the view is taking text.
+pub(crate) fn early_key(app: &mut App, event: KeyEvent) -> Option<bool> {
+    if !app.vim.enabled || app.vim_bypass || popup_open(app) {
+        return None;
+    }
+    if !crate::ui_commit_details::focused(app) {
+        return None;
+    }
+    let key = Key::from_event(event)?;
+    if app.vim.cmdline.is_some() || app.vim_window_prefix || app.vim_terminal_prefix {
+        return handle_key(app, event);
+    }
+    use crate::commit_details::Focus;
+    let typing = matches!(app.commit_details.focus, Focus::Filter | Focus::Action(14));
+    if typing {
+        return None;
+    }
+    if key.char() == Some(':') || key.is_ctrl('w') && app.vim.opts.ctrl_keys {
+        return handle_key(app, event);
+    }
+    commit_details_key(app, key)
+}
+
+/// Vim movement in Commit Details: j/k (and Ctrl-N/P) move through the
+/// focused list, gg/G jump to its ends, Ctrl-D/U page.
+fn commit_details_key(app: &mut App, key: Key) -> Option<bool> {
+    let pending = std::mem::take(&mut app.vim_explorer_pending);
+    if key.is_ctrl('d') {
+        return translate(app, KeyCode::PageDown);
+    }
+    if key.is_ctrl('u') {
+        return translate(app, KeyCode::PageUp);
+    }
+    if key.is_ctrl('n') {
+        return translate(app, KeyCode::Down);
+    }
+    if key.is_ctrl('p') {
+        return translate(app, KeyCode::Up);
+    }
+    match key.char()? {
+        'g' if pending == Some('g') => translate(app, KeyCode::Home),
+        'g' => {
+            app.vim_explorer_pending = Some('g');
+            Some(false)
+        }
+        'G' => translate(app, KeyCode::End),
+        'j' => translate(app, KeyCode::Down),
+        'k' => translate(app, KeyCode::Up),
+        _ => None,
+    }
+}
+
 /// Feed a command-line key to the engine while no editor owns the keyboard.
 fn feed_without_editor(app: &mut App, key: Key) -> bool {
     with_vim(app, |vim, host| {
@@ -510,7 +577,7 @@ fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
         app.vim_window_prefix = true;
         return Some(false);
     }
-    if app.focused_text_input_id().is_some() {
+    if app.focused_text_input_id().is_some() && !colon_over_empty_field(app, key) {
         // The Extensions filter: Esc leaves it for the list, like leaving Insert mode.
         if key == Key::ESC
             && app.active_pane == ActivePane::Explorer
@@ -598,7 +665,9 @@ fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
         return Some(feed_without_editor(app, key));
     }
     if key.char() == Some(':') {
-        focus_editor(app);
+        if app.active_pane != ActivePane::Editor || vim_tab(app) {
+            focus_editor(app);
+        }
         if owns_editor(app) {
             sync_focus(app);
             with_vim(app, |vim, host| {
@@ -607,7 +676,10 @@ fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
             });
             return Some(std::mem::take(&mut app.vim_quit));
         }
-        return Some(false);
+        // A view with no Vim buffer (commit details, Settings, previews, a
+        // diff): the command line opens over it, so `:q`, `:VT ...`, `:set`
+        // and buffer commands still work from there.
+        return Some(feed_without_editor(app, key));
     }
     if crate::ui_logs::focused(app) {
         // The Output panel: scroll and leave from the keyboard.
@@ -908,8 +980,13 @@ fn rect_center(r: ratatui::layout::Rect) -> (i32, i32) {
 
 fn visible_targets(app: &App) -> Vec<(Target, ratatui::layout::Rect)> {
     let mut out = Vec::new();
+    // The Source Control tab draws without an editor area; its viewport is
+    // the window Ctrl-W moves from.
+    let editor_area = app
+        .editor_area
+        .or_else(|| (!app.tabs.is_empty()).then_some(app.viewport).flatten());
     if app.groups.is_empty() {
-        if let Some(r) = app.editor_area {
+        if let Some(r) = editor_area {
             out.push((Target::Group(app.active_group), r));
         }
     } else {
@@ -922,7 +999,7 @@ fn visible_targets(app: &App) -> Vec<(Target, ratatui::layout::Rect)> {
         }
         for i in leaves {
             let area = if i == app.active_group {
-                app.editor_area
+                editor_area
             } else {
                 app.groups
                     .get(i)

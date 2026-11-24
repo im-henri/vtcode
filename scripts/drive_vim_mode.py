@@ -796,6 +796,40 @@ def scenario_crlf(e, d):
     return results
 
 
+def scenario_commit_details(e, d):
+    # Click a commit in the Source Control graph, then drive Commit Details
+    # from the keyboard: `:` commands, the Command Palette, `:q`.
+    import subprocess
+    git = lambda *args: subprocess.run(["git", "-C", str(d), *args], capture_output=True, text=True)
+    git("init", "-q")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "add", "a.txt")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "graphcommit")
+    e.keys(":VT source_control" + CR)
+    e.keys("r")
+    listed = wait_for(e, lambda: cell_of(e, "graphcommit") is not None, 10)
+    results = [("the graph lists the commit", listed)]
+    if not listed:
+        return results
+    cell = cell_of(e, "graphcommit")
+    mouse(e, 0, *cell)
+    mouse(e, 0, *cell, release=True)
+    opened = wait_for(e, lambda: sum("graphcommit" in line for line in e.lines()) >= 2, 8)
+    results.append(("a click opens Commit Details", opened))
+    e.settle(0.5)
+    e.keys(":")
+    results.append(("':' opens the command line there", wait_for(e, lambda: e.status().startswith(":"), 3)))
+    e.keys("set rnu" + CR)
+    e.settle(0.4)
+    results.append((":set runs from Commit Details", not e.status().startswith(":") and "E" != e.status()[:1]))
+    e.process.write("OP")  # F1
+    results.append(("F1 opens the Command Palette", wait_for(e, lambda: screen_has(e, "Command Palette") or screen_has(e, ">"), 3)))
+    e.keys(ESC)
+    e.keys(":q" + CR)
+    closed = wait_for(e, lambda: sum("graphcommit" in line for line in e.lines()) <= 1, 4)
+    results.append((":q closes Commit Details", closed))
+    return results
+
+
 SCENARIOS = [
     ("edit and :w", scenario_edit_and_write, {"a.txt": "alpha beta\ngamma\n"}),
     ("mode indicators", scenario_modes_in_status, {"a.txt": "alpha\ngamma\n"}),
@@ -828,6 +862,7 @@ SCENARIOS = [
     ("sidebar views", scenario_sidebar_views, {"a.txt": "alpha\n"}),
     ("crlf", scenario_crlf, {"a.txt": "alpha\r\ngamma\r\nbeta\r\n"}),
     ("no file open", scenario_no_file_open, {"a.txt": "alpha\n", "@nofile": ""}),
+    ("commit details", scenario_commit_details, {"a.txt": "alpha\ngamma\n"}),
 ]
 
 VIMRC = 'let mapleader = " "\ninoremap jk <Esc>\nnnoremap <leader>w :w<CR>\n'
