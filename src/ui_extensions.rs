@@ -894,7 +894,8 @@ fn draw_card(
         );
         let state_rect = Rect::new(text_x + text_width - state_w, card.y + 2, state_w, 1);
         if uninstall {
-            button(f, app, state_rect, &state, Action::Uninstall(index), armed);
+            // Filled like Install, so it reads as a button and not as a label.
+            button(f, app, state_rect, &state, Action::Uninstall(index), true);
         } else {
             f.render_widget(
                 Paragraph::new(clip(&state, state_w))

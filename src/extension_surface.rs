@@ -40,13 +40,36 @@ fn surface_colors(
     colors: &crate::app_theme::ThemeColors,
     span: &ViewSpan,
 ) -> (ratatui::style::Color, ratatui::style::Color) {
+    let ui = &colors.ui;
+    // Controls take the workbench's own button and input colors, drawn over
+    // the panel surface they normally sit on.
+    let control = match span.background.as_str() {
+        "button" => Some(ui.button_style(colors.bg_sidebar, false, false, true)),
+        "buttonHover" => Some(ui.button_style(colors.bg_sidebar, false, true, true)),
+        "buttonPrimary" => Some(ui.button_style(colors.bg_sidebar, true, false, true)),
+        "buttonPrimaryHover" => Some(ui.button_style(colors.bg_sidebar, true, true, true)),
+        "input" => Some(ui.input_style(colors.bg_sidebar)),
+        _ => None,
+    };
     let bg = match span.background.as_str() {
         "panel" | "header" => colors.bg_sidebar,
         "selection" => colors.bg_selection,
         "cursor" => colors.bg_cursor,
         "match" => colors.bg_search_match,
-        _ => colors.bg_editor,
+        "hover" => colors.bg_hover,
+        "scrollbar" => ui.scrollbar_colors(colors.bg_editor, false, false).0,
+        "scrollbarThumb" => ui.scrollbar_colors(colors.bg_editor, false, false).1,
+        "scrollbarThumbHover" => ui.scrollbar_colors(colors.bg_editor, true, false).1,
+        "scrollbarThumbActive" => ui.scrollbar_colors(colors.bg_editor, false, true).1,
+        _ => control
+            .and_then(|style| style.bg)
+            .unwrap_or(colors.bg_editor),
     };
+    if let Some(style) = control
+        && matches!(span.role.as_str(), "" | "text")
+    {
+        return (style.fg.unwrap_or(colors.fg_text), bg);
+    }
     let selection_foreground = (span.background == "selection" || span.role == "selection")
         .then(|| colors.ui.editor_selection_foreground.over(bg))
         .flatten();

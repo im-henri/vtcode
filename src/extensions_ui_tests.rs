@@ -798,6 +798,17 @@ fn installed_cards_uninstall_after_a_confirming_second_press() {
     );
     assert!(text(&terminal).contains(" Uninstall "));
     assert!(!text(&terminal).contains("● Enabled"));
+    // It looks like the Install button, not like a status label.
+    let install = app
+        .ext_sidebar
+        .actions
+        .iter()
+        .find(|(action, _)| *action == Action::InstallListing(0))
+        .map(|(_, rect)| *rect)
+        .unwrap();
+    let cell = |rect: Rect| terminal.backend().buffer()[(rect.x + 2, rect.y)].style();
+    assert_eq!(cell(button).bg, cell(install).bg);
+    assert_eq!(cell(button).fg, cell(install).fg);
 
     // First press asks to confirm; clicking anything else cancels.
     ui_extensions::handle_click(&mut app, button.x, button.y);

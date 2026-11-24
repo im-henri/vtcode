@@ -377,6 +377,17 @@ pub(crate) fn call_noarg_export(
         ))
     };
     store.data_mut().task_deadline = None;
+    if std::env::var_os("VT_FUEL_TRACE").is_some() {
+        eprintln!(
+            "FUEL {export}: used {}",
+            (if task {
+                EXTENSION_TASK_FUEL
+            } else {
+                EXTENSION_CALL_FUEL
+            })
+            .saturating_sub(store.get_fuel().unwrap_or(0))
+        );
+    }
     result
 }
 
