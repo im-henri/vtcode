@@ -161,6 +161,61 @@ impl GitHubClient {
         }
         request.call().map_err(request_error)
     }
+
+    /// GET with `If-None-Match`. `Ok(None)` means GitHub answered 304: the
+    /// cached copy is current, and the request did not count against the rate limit.
+    pub(crate) fn get_if_changed(
+        &self,
+        url: &str,
+        accept: &str,
+        etag: Option<&str>,
+        limit: u64,
+    ) -> Result<Option<Fetched>, String> {
+        if !url::Url::parse(url).is_ok_and(|url| {
+            url.scheme() == "https"
+                && url.host_str() == Some("api.github.com")
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.port().is_none()
+        }) {
+            return Err("GitHub credentials can only be sent to the GitHub HTTPS API.".into());
+        }
+        let mut request = self.agent.get(url).header("Accept", accept);
+        if let Some(token) = &self.token {
+            request = request.header("Authorization", format!("Bearer {token}"));
+        }
+        if let Some(etag) =
+            etag.filter(|etag| etag.len() <= 256 && etag.bytes().all(|b| b.is_ascii_graphic()))
+        {
+            request = request.header("If-None-Match", etag);
+        }
+        let mut response = request.call().map_err(request_error)?;
+        if response.status() == ureq::http::StatusCode::NOT_MODIFIED {
+            return Ok(None);
+        }
+        let etag = response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| value.len() <= 256)
+            .map(str::to_owned);
+        let mut body = Vec::new();
+        response
+            .body_mut()
+            .as_reader()
+            .take(limit + 1)
+            .read_to_end(&mut body)
+            .map_err(request_error)?;
+        if body.len() as u64 > limit {
+            return Err(format!("GitHub response exceeded {limit} bytes."));
+        }
+        Ok(Some(Fetched { etag, body }))
+    }
+}
+
+pub(crate) struct Fetched {
+    pub etag: Option<String>,
+    pub body: Vec<u8>,
 }
 
 fn valid_token(value: &str) -> Option<String> {

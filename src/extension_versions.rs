@@ -5,7 +5,8 @@ use std::{io::Read, path::Path};
 
 pub(crate) const PACKAGE_ASSET: &str = "vtcode-extension.zip";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ReleaseVersion {
     pub name: String,
     pub release_id: u64,
@@ -201,6 +202,14 @@ fn catalog(
         versions,
         installed: Vec::new(),
     })
+}
+
+/// The installable package of one release (`releases/latest` JSON), if it has one.
+pub(crate) fn release_version(source: &ExtensionSource, bytes: &[u8]) -> Option<ReleaseVersion> {
+    let release: Release = serde_json::from_slice(bytes).ok()?;
+    catalog(&source.repository, source.clone(), vec![release])
+        .ok()
+        .and_then(|catalog| catalog.versions.into_iter().next())
 }
 
 #[cfg(test)]

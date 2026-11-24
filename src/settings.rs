@@ -128,6 +128,13 @@ pub struct Settings {
     /// User-configured ACP executables. Connections are started explicitly.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub acp_agents: Option<Vec<vtcode::acp::AgentConfig>>,
+    /// Extra extension marketplaces (GitHub repositories with a
+    /// `marketplace.json`). The official marketplace is always included.
+    #[serde(
+        rename = "extensions.marketplaces",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub extension_marketplaces: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat_output_detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -507,6 +514,10 @@ impl Settings {
                 .clone()
                 .or_else(|| self.lsp_servers.clone()),
             acp_agents: other.acp_agents.clone().or_else(|| self.acp_agents.clone()),
+            extension_marketplaces: other
+                .extension_marketplaces
+                .clone()
+                .or_else(|| self.extension_marketplaces.clone()),
             chat_output_detail: other
                 .chat_output_detail
                 .clone()

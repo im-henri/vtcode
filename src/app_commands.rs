@@ -345,6 +345,8 @@ impl App {
             "install_color_theme" => self.open_theme_install_prompt(),
             "install_syntax" => self.open_syntax_install_prompt(),
             "extensions_install" => self.open_extension_install_prompt(),
+            "extensions_check_updates" => self.check_extension_updates(),
+            "extensions_update_all" => self.update_all_extensions(),
             "reload_color_themes" => {
                 self.request_external_themes_async();
             }

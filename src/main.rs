@@ -24,6 +24,7 @@ mod app_event_loop;
 mod app_exit_backup;
 mod app_explorer;
 mod app_explorer_hover;
+mod app_extension_catalog;
 mod app_extension_install;
 mod app_extensions;
 mod app_external_open;
@@ -135,6 +136,7 @@ mod editorconfig;
 mod explorer;
 mod explorer_find;
 mod extension_buffer;
+mod extension_catalog;
 mod extension_documents;
 mod extension_editor_host;
 #[cfg(test)]

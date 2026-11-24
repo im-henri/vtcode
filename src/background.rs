@@ -810,6 +810,16 @@ pub enum BackgroundResult {
         result: Result<Vec<crate::extension_install::InstalledExtension>, String>,
     },
     ExtensionRecoveries(Vec<crate::extension_recovery::RecoveryRecord>),
+    /// Marketplace listings and latest releases, from the low-priority catalog thread.
+    ExtensionCatalog {
+        generation: u64,
+        catalog: crate::extension_catalog::Catalog,
+    },
+    /// A one-click install or update of the latest release finished.
+    ExtensionQuickInstalled {
+        key: String,
+        result: Result<Vec<crate::extension_install::InstalledExtension>, String>,
+    },
     /// Installed cache validation/rebuild and custom grammar parsing completed.
     SyntaxAssetsLoaded {
         root: PathBuf,

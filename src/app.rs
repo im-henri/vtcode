@@ -925,6 +925,7 @@ pub(crate) struct App {
     pub extensions_filter_cursor: usize,
     pub extensions_filter_selection_anchor: Option<usize>,
     pub ext_sidebar: crate::ui_extensions::Sidebar,
+    pub(crate) ext_catalog: crate::app_extension_catalog::CatalogState,
     pub ext_info: crate::ui_extension_info::State,
     pub extension_palette_action_map: rustc_hash::FxHashMap<usize, ExtensionPaletteAction>,
     /// Active extension overlays with their extension IDs and drag state
@@ -1956,6 +1957,7 @@ impl App {
             extensions_filter_cursor: 0,
             extensions_filter_selection_anchor: None,
             ext_sidebar: crate::ui_extensions::Sidebar::default(),
+            ext_catalog: Default::default(),
             ext_info: crate::ui_extension_info::State::default(),
             extension_palette_action_map: rustc_hash::FxHashMap::default(),
             extension_overlay_drag: None,
@@ -4040,6 +4042,17 @@ impl App {
                 }
                 crate::background::BackgroundResult::ExtensionInstalled { request, result } => {
                     self.finish_extension_install(request, result);
+                }
+                crate::background::BackgroundResult::ExtensionCatalog {
+                    generation,
+                    catalog,
+                } => {
+                    self.finish_extension_catalog(generation, catalog);
+                    has_visual_changes = true;
+                }
+                crate::background::BackgroundResult::ExtensionQuickInstalled { key, result } => {
+                    self.finish_extension_quick_install(key, result);
+                    has_visual_changes = true;
                 }
                 crate::background::BackgroundResult::ExtensionRecoveries(recoveries) => {
                     self.pending_custom_recoveries = recoveries;

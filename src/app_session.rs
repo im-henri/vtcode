@@ -175,6 +175,7 @@ impl App {
         let keybindings = Self::shortcut_snapshot(&self.keybindings);
         Settings {
             acp_agents: self.settings_effective.acp_agents.clone(),
+            extension_marketplaces: self.settings_effective.extension_marketplaces.clone(),
             lsp_enabled: Some(self.lsp_enabled),
             source_control_enabled: Some(self.source_control_enabled),
             source_control_show_untracked: Some(self.sc_visibility.untracked),

@@ -219,6 +219,7 @@ impl App {
         self.rebuild_keybinding_settings_cache();
         self.refresh_open_extension_view_tabs();
         self.refresh_language_servers(false);
+        self.start_extension_catalog();
         if let Some(first) = notices
             .iter()
             .find(|notice| !notice.starts_with("Loaded extension:"))
@@ -320,6 +321,7 @@ impl App {
         self.activity_bar_selected = 4;
         self.active_pane = crate::app::ActivePane::Explorer;
         self.ext_sidebar.search_focused = true;
+        self.ensure_extension_catalog();
         Self::normalize_inline_cursor(
             &self.extensions_filter,
             &mut self.extensions_filter_cursor,
@@ -380,9 +382,25 @@ impl App {
                 None,
             ),
         ];
+        commands.push((
+            PaletteCommand {
+                name: "Extensions: Check for Extension Updates".to_string(),
+                shortcut: String::new(),
+                id: std::borrow::Cow::Borrowed("extensions_check_updates"),
+            },
+            None,
+        ));
         if self.extension_manager.is_empty() {
             return commands;
         }
+        commands.push((
+            PaletteCommand {
+                name: "Extensions: Update All Extensions".to_string(),
+                shortcut: String::new(),
+                id: std::borrow::Cow::Borrowed("extensions_update_all"),
+            },
+            None,
+        ));
 
         commands.extend([
             (
@@ -800,7 +818,7 @@ impl App {
     }
 
     pub(crate) fn clamp_extensions_selection(&mut self) {
-        let filtered = self.filtered_extension_indices();
+        let filtered = crate::ui_extensions::selectable(self);
         if filtered.is_empty() {
             self.extensions_selected = 0;
             self.extensions_scroll = 0;

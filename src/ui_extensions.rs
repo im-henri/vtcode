@@ -26,14 +26,21 @@ pub(crate) enum Action {
     ReloadAll,
     Clear,
     Filter(&'static str),
-    /// Fold or unfold one of [`GROUPS`].
+    /// Fold or unfold one of the [`SECTIONS`].
     Collapse(usize),
+    /// Install the newest release of a marketplace listing.
+    InstallListing(usize),
+    /// Choose which release of a marketplace listing to install.
+    ChooseVersion(usize),
+    /// Update an installed extension (by view index) to its newest release.
+    Update(usize),
+    UpdateAll,
 }
 
 pub(crate) struct Sidebar {
     pub search_focused: bool,
-    /// Folded state of each of [`GROUPS`].
-    pub collapsed: [bool; GROUPS.len()],
+    /// Folded state of each of the [`SECTIONS`].
+    pub collapsed: [bool; SECTIONS],
     search_area: Rect,
     pub list_area: Rect,
     pub rows: Vec<(usize, Rect)>,
@@ -45,7 +52,7 @@ impl Default for Sidebar {
     fn default() -> Self {
         Self {
             search_focused: true,
-            collapsed: [false; GROUPS.len()],
+            collapsed: [false; SECTIONS],
             search_area: Rect::default(),
             list_area: Rect::default(),
             rows: vec![],
@@ -104,6 +111,19 @@ pub(crate) const GROUPS: [(ExtensionState, &str); 3] = [
     (ExtensionState::Error, "ERRORS"),
 ];
 
+/// The marketplace section follows the installed ones.
+pub(crate) const MARKETPLACE: usize = GROUPS.len();
+pub(crate) const SECTIONS: usize = GROUPS.len() + 1;
+
+/// Selection keys at and above this are marketplace listings, not installed extensions.
+pub(crate) const LISTING: usize = 1 << 24;
+
+fn section_label(section: usize) -> &'static str {
+    GROUPS
+        .get(section)
+        .map_or("MARKETPLACE", |(_, label)| label)
+}
+
 pub(crate) fn group_of(state: ExtensionState) -> usize {
     GROUPS
         .iter()
@@ -120,19 +140,23 @@ pub(crate) enum Item {
         total: usize,
     },
     Card(usize),
+    /// A marketplace listing that is not installed.
+    Listing(usize),
 }
 
 impl Item {
     pub(crate) fn height(self) -> u16 {
         match self {
             Item::Header { .. } => 1,
-            Item::Card(_) => CARD_HEIGHT,
+            Item::Card(_) | Item::Listing(_) => CARD_HEIGHT,
         }
     }
 
+    /// The selection key of a card: a view index, or [`LISTING`] + listing index.
     pub(crate) fn card(self) -> Option<usize> {
         match self {
             Item::Card(index) => Some(index),
+            Item::Listing(index) => Some(LISTING + index),
             Item::Header { .. } => None,
         }
     }
@@ -150,12 +174,15 @@ pub(crate) fn grouped(views: &[ExtensionRecordView], query: &str) -> Vec<usize> 
 /// The list rows: a header per non-empty section, then its cards unless folded.
 pub(crate) fn items(app: &App) -> Vec<Item> {
     let views = app.extension_views();
+    let updates_only = app.extensions_filter.to_lowercase().contains("@updates");
     let mut items = Vec::new();
     for (group, (state, _)) in GROUPS.iter().enumerate() {
         let total = views.iter().filter(|ext| ext.state == *state).count();
         let cards: Vec<usize> = (0..views.len())
             .filter(|index| {
-                views[*index].state == *state && matches(&views[*index], &app.extensions_filter)
+                views[*index].state == *state
+                    && matches(&views[*index], &app.extensions_filter)
+                    && (!updates_only || app.extension_update(&views[*index]).is_some())
             })
             .collect();
         if cards.is_empty() {
@@ -170,7 +197,60 @@ pub(crate) fn items(app: &App) -> Vec<Item> {
             items.extend(cards.into_iter().map(Item::Card));
         }
     }
+    let listings = app.marketplace_listings();
+    let cards = listing_indices(&listings, &app.extensions_filter);
+    if !cards.is_empty() {
+        items.push(Item::Header {
+            group: MARKETPLACE,
+            matched: cards.len(),
+            total: listings.len(),
+        });
+        if !app.ext_sidebar.collapsed[MARKETPLACE] {
+            items.extend(cards.into_iter().map(Item::Listing));
+        }
+    }
     items
+}
+
+/// Marketplace listings matching the search, folded ones included.
+pub(crate) fn listing_indices(
+    listings: &[crate::extension_catalog::Listing],
+    query: &str,
+) -> Vec<usize> {
+    (0..listings.len())
+        .filter(|index| listing_matches(&listings[*index], query))
+        .collect()
+}
+
+pub(crate) fn listing_matches(listing: &crate::extension_catalog::Listing, query: &str) -> bool {
+    let haystack = format!(
+        "{} {} {} {} {}",
+        listing.name, listing.description, listing.id, listing.repository, listing.marketplace
+    )
+    .to_lowercase();
+    query
+        .to_lowercase()
+        .split_whitespace()
+        .all(|word| match word {
+            "@marketplace" => true,
+            "@installed" | "@enabled" | "@disabled" | "@error" | "@errors" | "@updates" => false,
+            _ => haystack.contains(word),
+        })
+}
+
+/// Every selectable key matching the search, in sidebar order, folded sections included.
+pub(crate) fn selectable(app: &App) -> Vec<usize> {
+    let mut keys = grouped(&app.extension_views(), &app.extensions_filter);
+    if app.extensions_filter.to_lowercase().contains("@updates") {
+        let views = app.extension_views();
+        keys.retain(|index| app.extension_update(&views[*index]).is_some());
+    }
+    keys.extend(
+        listing_indices(&app.marketplace_listings(), &app.extensions_filter)
+            .into_iter()
+            .map(|index| LISTING + index),
+    );
+    keys
 }
 
 /// The first item index from which the rest of the list fits in `height`.
@@ -230,6 +310,9 @@ pub(crate) fn matches(ext: &ExtensionRecordView, query: &str) -> bool {
             "@enabled" => ext.state == ExtensionState::Loaded,
             "@disabled" => ext.state == ExtensionState::Unloaded,
             "@error" | "@errors" => ext.state == ExtensionState::Error,
+            "@marketplace" => false,
+            // Narrowed further by `selectable`, which knows the update catalog.
+            "@updates" => true,
             _ => haystack.contains(word),
         })
 }
@@ -270,6 +353,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     app.start_empty_window_extension_services();
+    app.ensure_extension_catalog();
     let bg = app.colors.bg_sidebar;
     let fg = app.colors.ui.sidebar_text_color(bg);
     let dim = app.colors.ui.description_color(bg);
@@ -287,11 +371,20 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         " + "
     };
-    let header_buttons = [
+    let views = app.extension_views();
+    let updates = views
+        .iter()
+        .filter(|view| app.extension_update(view).is_some())
+        .count();
+    let update_all = format!(" ↑{updates} ");
+    let mut header_buttons = vec![
         (install, Action::Install),
         (" ↻ ", Action::Refresh),
         (" ⟳ ", Action::ReloadAll),
     ];
+    if updates > 0 {
+        header_buttons.insert(0, (update_all.as_str(), Action::UpdateAll));
+    }
     let button_width: u16 = header_buttons
         .iter()
         .map(|(label, _)| label.width() as u16)
@@ -356,7 +449,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             .viewport(app.text_input_viewport(TextInputId::ExtensionsFilter))
             .theme_colors(&app.colors)
             .prefix(" ⌕ ", app.colors.ui.icon_color(input_bg))
-            .placeholder_text("Search installed extensions")
+            .placeholder_text("Search extensions and marketplace")
             .cursor_marker(if focused && app.cursor_visible {
                 "│"
             } else {
@@ -420,8 +513,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     app.clamp_extensions_selection();
-    let views = app.extension_views();
-    let any_match = views.iter().any(|ext| matches(ext, &app.extensions_filter));
+    let listings = app.marketplace_listings();
+    let any_match = !selectable(app).is_empty();
     let footer_h = u16::from(inner.bottom().saturating_sub(y) >= 7);
     let list = Rect::new(
         inner.x,
@@ -431,7 +524,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     );
     app.ext_sidebar.list_area = list;
     if !any_match {
-        let empty = if views.is_empty() && app.bg_extension_scan_running {
+        let empty = if views.is_empty()
+            && listings.is_empty()
+            && (app.bg_extension_scan_running || app.ext_catalog.refreshing)
+        {
             "Loading extensions…"
         } else if views.is_empty() {
             "Build your workspace
@@ -501,6 +597,15 @@ Try another search or clear your filters."
                     matched,
                     total,
                 ),
+                Item::Listing(index) => draw_listing(
+                    f,
+                    app,
+                    Rect::new(list.x, row_y, list.width, height),
+                    index,
+                    &listings[index],
+                    bg,
+                    fg,
+                ),
                 Item::Card(index) => {
                     draw_card(
                         f,
@@ -542,8 +647,15 @@ Try another search or clear your filters."
     }
     if footer_h > 0 {
         f.render_widget(
-            Paragraph::new(clip("↑↓ Browse  Enter Open  Tab Search", inner.width))
-                .style(base.fg(dim)),
+            Paragraph::new(clip(
+                if app.extensions_selected >= LISTING {
+                    "↑↓ Browse  Enter Install  Tab Search"
+                } else {
+                    "↑↓ Browse  Enter Open  Tab Search"
+                },
+                inner.width,
+            ))
+            .style(base.fg(dim)),
             Rect::new(inner.x, inner.bottom() - 1, inner.width, 1),
         );
     }
@@ -576,7 +688,11 @@ fn draw_header(
         "⌄"
     };
     f.render_widget(
-        Paragraph::new(clip(&format!("{arrow} {}", GROUPS[group].1), section.width)).style(style),
+        Paragraph::new(clip(
+            &format!("{arrow} {}", section_label(group)),
+            section.width,
+        ))
+        .style(style),
         section,
     );
     let count = if matched == total {
@@ -692,7 +808,31 @@ fn draw_card(
         };
         let state = format!("{icon} {}", status(ext));
         let state_w = (state.width() as u16).min(text_width);
-        let publisher_w = text_width.saturating_sub(state_w + 2);
+        let mut publisher_w = text_width.saturating_sub(state_w + 2);
+        let installing = app.extension_installing(&ext.repository);
+        let label = if installing {
+            Some(" Updating… ".to_string())
+        } else {
+            app.extension_update(ext)
+                .map(|update| format!(" ↑ {} ", clean(&update.name)))
+        };
+        if let Some(label) = label {
+            let width = label.width() as u16;
+            if width + state_w < text_width {
+                let rect = Rect::new(
+                    text_x + text_width - state_w - 1 - width,
+                    card.y + 2,
+                    width,
+                    1,
+                );
+                if installing {
+                    f.render_widget(Paragraph::new(label).style(style.fg(secondary)), rect);
+                } else {
+                    button(f, app, rect, &label, Action::Update(index), true);
+                }
+                publisher_w = publisher_w.saturating_sub(width + 1);
+            }
+        }
         f.render_widget(
             Paragraph::new(clip(publisher(ext), publisher_w)).style(style.fg(secondary)),
             Rect::new(text_x, card.y + 2, publisher_w, 1),
@@ -713,6 +853,130 @@ fn draw_card(
     app.ext_sidebar.rows.push((index, card));
 }
 
+/// A marketplace card: like an installed one, with Install and a version menu.
+fn draw_listing(
+    f: &mut Frame,
+    app: &mut App,
+    card: Rect,
+    index: usize,
+    listing: &crate::extension_catalog::Listing,
+    bg: ratatui::style::Color,
+    fg: ratatui::style::Color,
+) {
+    let key = LISTING + index;
+    let selected = key == app.extensions_selected;
+    let hovered = card.contains((app.mouse_col, app.mouse_row).into());
+    let row_style = app.colors.ui.list_row_style(
+        app.colors.ui.sidebar_foreground,
+        bg,
+        selected,
+        app.active_pane == ActivePane::Explorer,
+        hovered,
+    );
+    let style = row_style.remove_modifier(Modifier::UNDERLINED);
+    let row_bg = style.bg.unwrap_or(bg);
+    let row_fg = style.fg.unwrap_or(fg);
+    let secondary = if selected {
+        row_fg
+    } else {
+        app.colors.ui.description_color(row_bg)
+    };
+    f.render_widget(Block::default().style(style), card);
+    let wide = card.width >= 24;
+    let text_x = card.x + if wide { 6 } else { 1 };
+    let text_width = card.right().saturating_sub(text_x + 2);
+    if wide && card.height >= 3 {
+        let initial = listing
+            .name
+            .graphemes(true)
+            .find(|g| g.width() == 1 && !g.trim().is_empty())
+            .unwrap_or("+");
+        f.render_widget(
+            Paragraph::new(format!("┌─┐\n│{initial}│\n└─┘")).style(style.fg(secondary)),
+            Rect::new(card.x + 1, card.y, 3, 3),
+        );
+    }
+    f.render_widget(
+        Paragraph::new(clip(&listing.name, text_width)).style(style.add_modifier(Modifier::BOLD)),
+        Rect::new(text_x, card.y, text_width, 1),
+    );
+    if card.height >= 2 {
+        let description = if listing.description.is_empty() {
+            &listing.repository
+        } else {
+            &listing.description
+        };
+        f.render_widget(
+            Paragraph::new(clip(description, text_width))
+                .style(style.fg(app.colors.ui.readable_foreground(secondary, row_bg, 4.5))),
+            Rect::new(text_x, card.y + 1, text_width, 1),
+        );
+    }
+    if card.height >= 3 {
+        let mut right = text_x + text_width;
+        if app.extension_installing(&listing.repository) {
+            let label = "Installing…";
+            let width = (label.width() as u16).min(text_width);
+            right -= width;
+            f.render_widget(
+                Paragraph::new(label).style(style.fg(secondary)),
+                Rect::new(right, card.y + 2, width, 1),
+            );
+        } else if text_width >= 14 {
+            right -= 3;
+            button(
+                f,
+                app,
+                Rect::new(right, card.y + 2, 3, 1),
+                "▏▾ ",
+                Action::ChooseVersion(index),
+                true,
+            );
+            right -= 9;
+            button(
+                f,
+                app,
+                Rect::new(right, card.y + 2, 9, 1),
+                " Install ",
+                Action::InstallListing(index),
+                true,
+            );
+        }
+        let publisher = listing
+            .id
+            .split_once('.')
+            .map_or(listing.marketplace.as_str(), |(publisher, _)| publisher);
+        let publisher = if listing.official {
+            format!("{publisher} ✓")
+        } else {
+            format!("{publisher} · {}", listing.marketplace)
+        };
+        let publisher_w = right.saturating_sub(text_x + 1);
+        f.render_widget(
+            Paragraph::new(clip(&publisher, publisher_w)).style(style.fg(secondary)),
+            Rect::new(text_x, card.y + 2, publisher_w, 1),
+        );
+    }
+    if selected {
+        f.render_widget(
+            Paragraph::new("▏\n".repeat(usize::from(card.height)))
+                .style(style.fg(row_style.underline_color.unwrap_or(row_fg))),
+            Rect::new(card.x, card.y, 1, card.height),
+        );
+    }
+    app.ext_sidebar.rows.push((key, card));
+}
+
+fn install_listing(app: &mut App, index: usize, choose: bool) {
+    if let Some(listing) = app.marketplace_listings().get(index) {
+        if choose {
+            app.choose_extension_version(&listing.repository);
+        } else {
+            app.install_latest_extension(&listing.repository);
+        }
+    }
+}
+
 pub(crate) fn handle_click(app: &mut App, col: u16, row: u16) {
     app.active_pane = ActivePane::Explorer;
     if let Some((action, _)) = app
@@ -725,7 +989,18 @@ pub(crate) fn handle_click(app: &mut App, col: u16, row: u16) {
         app.ext_sidebar.last_click = None;
         match action {
             Action::Install => app.open_extension_install_prompt(),
-            Action::Refresh => app.extensions_rescan(),
+            Action::Refresh => {
+                app.extensions_rescan();
+                app.check_extension_updates();
+            }
+            Action::InstallListing(index) => install_listing(app, index, false),
+            Action::ChooseVersion(index) => install_listing(app, index, true),
+            Action::Update(index) => {
+                if let Some(view) = app.extension_views().get(index) {
+                    app.install_latest_extension(&view.repository);
+                }
+            }
+            Action::UpdateAll => app.update_all_extensions(),
             Action::ReloadAll => app.extensions_reload_all(),
             Action::Clear => {
                 app.extensions_filter.clear();
@@ -742,7 +1017,13 @@ pub(crate) fn handle_click(app: &mut App, col: u16, row: u16) {
                     .filter(|word| {
                         !matches!(
                             word.to_ascii_lowercase().as_str(),
-                            "@installed" | "@enabled" | "@disabled" | "@error" | "@errors"
+                            "@installed"
+                                | "@enabled"
+                                | "@disabled"
+                                | "@error"
+                                | "@errors"
+                                | "@marketplace"
+                                | "@updates"
                         )
                     })
                     .collect();
@@ -754,7 +1035,7 @@ pub(crate) fn handle_click(app: &mut App, col: u16, row: u16) {
                 app.extensions_filter_cursor = app.extensions_filter.chars().count();
                 app.extensions_filter_selection_anchor = None;
                 app.extensions_scroll = 0;
-                app.ext_sidebar.collapsed = [false; GROUPS.len()];
+                app.ext_sidebar.collapsed = [false; SECTIONS];
                 app.clamp_extensions_selection();
             }
             Action::Collapse(group) => {
@@ -781,7 +1062,11 @@ pub(crate) fn handle_click(app: &mut App, col: u16, row: u16) {
         });
         app.extensions_selected = index;
         app.ext_sidebar.search_focused = false;
-        if let Some(ext) = app.extension_views().get(index) {
+        if index >= LISTING {
+            if double {
+                install_listing(app, index - LISTING, false);
+            }
+        } else if let Some(ext) = app.extension_views().get(index) {
             if double {
                 app.open_extension_info_tab(&ext.id);
             } else {
@@ -810,7 +1095,7 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
             app.ext_sidebar.search_focused = false;
             // With every section folded, browsing unfolds them rather than doing nothing.
             if !items(app).iter().any(|item| item.card().is_some()) {
-                app.ext_sidebar.collapsed = [false; GROUPS.len()];
+                app.ext_sidebar.collapsed = [false; SECTIONS];
             }
             let page = isize::try_from((app.ext_sidebar.list_area.height / CARD_HEIGHT).max(1))
                 .unwrap_or(1);
@@ -829,6 +1114,11 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
                 isize::MAX
             });
             preview_selected(app);
+        }
+        KeyCode::Enter if app.extensions_selected >= LISTING => {
+            if selectable(app).contains(&app.extensions_selected) {
+                install_listing(app, app.extensions_selected - LISTING, false);
+            }
         }
         KeyCode::Enter => {
             if let Some(ext) = app
@@ -879,7 +1169,11 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
     };
     let text = match action {
         Action::Install => "Install extension from a tagged GitHub release",
-        Action::Refresh => "Rescan installed extensions",
+        Action::Refresh => "Rescan installed extensions and check marketplaces for updates",
+        Action::InstallListing(_) => "Install the latest release",
+        Action::ChooseVersion(_) => "Install another version…",
+        Action::Update(_) => "Update to the latest release",
+        Action::UpdateAll => "Update all extensions",
         Action::ReloadAll => "Reload all enabled extensions",
         Action::Clear => "Clear search and filters (Esc)",
         _ => return,

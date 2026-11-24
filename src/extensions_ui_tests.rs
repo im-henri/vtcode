@@ -222,7 +222,10 @@ fn extensions_ui_scroll_does_not_change_selection_and_filter_clicks_preserve_sea
     sidebar(&mut app, &mut terminal);
     assert!(app.ext_sidebar.rows.is_empty());
     key(&mut app, KeyCode::Down);
-    assert_eq!(app.ext_sidebar.collapsed, [false; 3]);
+    assert_eq!(
+        app.ext_sidebar.collapsed,
+        [false; crate::ui_extensions::SECTIONS]
+    );
 }
 
 #[test]
@@ -605,4 +608,123 @@ fn extensions_ui_groups_installed_disabled_and_failed_extensions() {
     sidebar(&mut app, &mut terminal);
     assert!(!text(&terminal).contains("INSTALLED"));
     assert!(text(&terminal).contains("ERRORS"));
+}
+
+fn marketplace_fixture() -> (tempfile::TempDir, App) {
+    let (root, mut app) = fixture(2);
+    // Installed by the editor, so update checks apply.
+    app.extension_manager.managed_roots = vec![root.path().to_path_buf()];
+    let listing = |id: &str, name: &str, repository: &str| crate::extension_catalog::Listing {
+        id: id.into(),
+        name: name.into(),
+        description: format!("{name} description"),
+        repository: repository.into(),
+        marketplace: "VTCode Official".into(),
+        official: true,
+    };
+    app.ext_catalog.catalog = crate::extension_catalog::Catalog {
+        listings: vec![
+            listing(
+                "vtcode.hex-editor",
+                "Hex Editor",
+                "https://github.com/im-henri/vtcode-ext-hex-editor",
+            ),
+            // Already installed: listed only under its installed section.
+            listing(
+                "test.ext00",
+                "Installed One",
+                "https://github.com/vtcode/example",
+            ),
+        ],
+        latest: [(
+            "vtcode/example".to_string(),
+            crate::extension_versions::ReleaseVersion {
+                name: "v2.0.0".into(),
+                release_id: 1,
+                asset_id: 2,
+                size: 3,
+                sha256: "a".repeat(64),
+                prerelease: false,
+            },
+        )]
+        .into(),
+        errors: vec![],
+    };
+    app.clamp_extensions_selection();
+    (root, app)
+}
+
+#[test]
+fn marketplace_listings_offer_install_with_a_version_menu_and_updates() {
+    let (_root, mut app) = marketplace_fixture();
+    let mut terminal = Terminal::new(TestBackend::new(44, 29)).unwrap();
+    sidebar(&mut app, &mut terminal);
+    let screen = text(&terminal);
+    assert!(screen.contains("MARKETPLACE"), "{screen}");
+    assert!(screen.contains("Hex Editor"));
+    assert!(!screen.contains("Installed One"));
+    assert!(screen.contains("vtcode ✓"));
+    assert!(screen.contains(" Install "));
+    assert!(screen.contains("↑ v2.0.0"), "{screen}");
+    assert!(screen.contains(" ↑2 "), "{screen}");
+    for action in [
+        Action::InstallListing(0),
+        Action::ChooseVersion(0),
+        Action::Update(0),
+        Action::UpdateAll,
+    ] {
+        assert!(
+            app.ext_sidebar.actions.iter().any(|(a, _)| *a == action),
+            "{action:?}"
+        );
+    }
+
+    // The listing is browsed like any card; Enter installs it.
+    key(&mut app, KeyCode::Down);
+    key(&mut app, KeyCode::End);
+    assert_eq!(app.extensions_selected, ui_extensions::LISTING);
+    sidebar(&mut app, &mut terminal);
+    assert!(text(&terminal).contains("Enter Install"));
+
+    // An install in progress replaces the buttons.
+    app.ext_catalog
+        .installing
+        .push("im-henri/vtcode-ext-hex-editor".into());
+    sidebar(&mut app, &mut terminal);
+    assert!(text(&terminal).contains("Installing…"));
+    assert!(
+        !app.ext_sidebar
+            .actions
+            .iter()
+            .any(|(a, _)| *a == Action::InstallListing(0))
+    );
+
+    app.extensions_filter = "@marketplace".into();
+    sidebar(&mut app, &mut terminal);
+    assert_eq!(app.ext_sidebar.rows.len(), 1);
+    assert_eq!(app.ext_sidebar.rows[0].0, ui_extensions::LISTING);
+
+    app.extensions_filter = "@updates".into();
+    app.clamp_extensions_selection();
+    sidebar(&mut app, &mut terminal);
+    assert_eq!(app.ext_sidebar.rows.len(), 2);
+    assert!(app.ext_sidebar.rows.iter().all(|(key, _)| *key < 2));
+
+    // Once installed at the newest version, neither listing nor update remains.
+    app.extensions_filter.clear();
+    app.ext_catalog.catalog.latest.clear();
+    app.ext_catalog.catalog.listings.truncate(0);
+    sidebar(&mut app, &mut terminal);
+    let screen = text(&terminal);
+    assert!(!screen.contains("MARKETPLACE"));
+    assert!(!screen.contains("↑ v") && !screen.contains(" ↑2 "));
+}
+
+#[test]
+fn extension_page_offers_an_update_to_the_newest_release() {
+    let (_root, mut app) = marketplace_fixture();
+    app.open_extension_info_tab("test.ext00");
+    let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
+    info(&mut app, &mut terminal);
+    assert!(text(&terminal).contains("Update to v2.0.0"));
 }

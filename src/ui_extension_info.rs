@@ -32,6 +32,8 @@ const SECTIONS: [(Section, &str); 3] = [
 ];
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
+    /// Install the newest release over this one.
+    Update,
     Toggle,
     Reload,
     Versions,
@@ -165,6 +167,7 @@ fn run_action(app: &mut App, action: Action) {
             app.refresh_open_extension_view_tabs();
             app.clamp_extensions_selection();
         }
+        Action::Update => app.install_latest_extension(&ext.repository),
         Action::Versions => {
             app.open_extension_install_prompt();
             app.palette.query = ext.repository.clone();
@@ -486,7 +489,14 @@ pub(crate) fn draw_extension_info(f: &mut Frame, app: &mut App, area: Rect) {
         ExtensionState::Unloaded => "Enable",
     };
     let remove_armed = app.ext_info.remove_armed.as_deref() == Some(ext.id.as_str());
+    let update = if app.extension_installing(&ext.repository) {
+        Some("Updating…".to_string())
+    } else {
+        app.extension_update(&ext)
+            .map(|update| format!("Update to {}", update.name))
+    };
     let labels = [
+        (Action::Update, update.as_deref().unwrap_or_default()),
         (Action::Toggle, toggle),
         (Action::Reload, "Reload"),
         (Action::Versions, "Versions"),
@@ -504,6 +514,7 @@ pub(crate) fn draw_extension_info(f: &mut Frame, app: &mut App, area: Rect) {
     for (action, label) in labels {
         if matches!(action, Action::Versions | Action::Repository) && repository_url(&ext).is_none()
             || action == Action::Remove && !ext.removable
+            || action == Action::Update && update.is_none()
         {
             continue;
         }
@@ -524,7 +535,8 @@ pub(crate) fn draw_extension_info(f: &mut Frame, app: &mut App, area: Rect) {
             &app.colors,
             bg,
             action == Action::Toggle && ext.state != ExtensionState::Loaded
-                || action == Action::Remove && remove_armed,
+                || action == Action::Remove && remove_armed
+                || action == Action::Update,
             hovered || focused,
             true,
         );
