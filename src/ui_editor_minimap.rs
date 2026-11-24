@@ -508,11 +508,9 @@ impl MinimapLayout {
         let max_scroll = scrollable_lines.saturating_sub(visible);
         let scroll = scroll.min(max_scroll);
         let window = zoomed_minimap_window(scrollable_lines, scroll, visible, height, zoom);
-        // The first and last visible lines may share bands with offscreen
-        // text. Include those bands using the same boundaries as the markers.
-        let view_start =
-            minimap_row_after(scroll.saturating_add(1), window, height).saturating_sub(1);
-        let view_end = minimap_row_after(scroll.saturating_add(visible), window, height);
+        let zoomed_out =
+            window.len() > minimap_window(scrollable_lines, scroll, visible, height).len();
+        let (view_start, view_end) = viewport_rows(scroll, visible, window, height, zoomed_out);
         Self {
             window,
             height,
@@ -542,7 +540,9 @@ impl MinimapLayout {
         let view_start = |scroll| {
             let window =
                 zoomed_minimap_window(self.extent, scroll, self.visible, self.height, self.zoom);
-            minimap_row_after(scroll.saturating_add(1), window, self.height).saturating_sub(1)
+            let zoomed_out =
+                window.len() > minimap_window(self.extent, scroll, self.visible, self.height).len();
+            viewport_rows(scroll, self.visible, window, self.height, zoomed_out).0
         };
         let last = view_start(self.max_scroll);
         if row == start_row || last == 0 {
@@ -690,6 +690,31 @@ fn minimap_row_after(line: usize, window: MinimapWindow, height: usize) -> usize
         return relative.min(height);
     }
     (relative as u128 * height as u128).div_ceil(len as u128) as usize
+}
+
+/// Minimap rows covered by the viewport box. The first and last visible lines
+/// may share bands with offscreen text; include those bands using the same
+/// boundaries as the markers. Zoomed out on a long file the viewport can fit
+/// in one row, which leaves no room for the bottom edge, so there the box
+/// spans at least two rows (growing upward only at the very bottom). The
+/// detail view keeps exact rows. Both stay monotonic in `scroll`, which
+/// dragging relies on.
+fn viewport_rows(
+    scroll: usize,
+    visible: usize,
+    window: MinimapWindow,
+    height: usize,
+    zoomed_out: bool,
+) -> (usize, usize) {
+    let start = minimap_row_after(scroll.saturating_add(1), window, height).saturating_sub(1);
+    let end = minimap_row_after(scroll.saturating_add(visible), window, height);
+    if !zoomed_out || height < 2 || end >= start + 2 {
+        (start, end)
+    } else if start + 2 <= height {
+        (start, start + 2)
+    } else {
+        (height - 2, height)
+    }
 }
 
 fn draw_minimap_viewport_border(
@@ -1980,6 +2005,56 @@ mod tests {
                     before = Some(buffer.clone());
                 }
             }
+        }
+    }
+
+    #[test]
+    fn zoomed_out_viewport_box_always_has_room_for_both_edges() {
+        // Overview of a long file: one minimap row holds hundreds of lines,
+        // so the viewport alone would round to a single row.
+        let (total, visible, height) = (40_000, 40, 30);
+        for zoom in [0.0, 0.25, 0.5, 0.75] {
+            for scroll in (0..=total - visible).step_by(97).chain([total - visible]) {
+                let layout = MinimapLayout::zoomed(total, scroll, visible, height, false, zoom);
+                assert!(
+                    layout.view_end >= layout.view_start + 2 && layout.view_end <= height,
+                    "zoom={zoom} scroll={scroll}: rows {}..{}",
+                    layout.view_start,
+                    layout.view_end
+                );
+                // Grabbing the box in place must not move the view.
+                assert_eq!(layout.click_scroll(layout.view_end - 1), layout.scroll);
+            }
+        }
+        let mut editor = crate::editor::Editor::new();
+        editor.scroll_past_end = false;
+        editor.rope = ropey::Rope::from_str(
+            &"line
+"
+            .repeat(total),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(12, height as u16)).expect("terminal");
+        for scroll in [0, 12_345, total - visible] {
+            let layout = MinimapLayout::zoomed(total, scroll, visible, height, false, 0.0);
+            terminal
+                .draw(|frame| {
+                    draw_minimap_viewport_border(
+                        frame,
+                        Rect::new(0, 0, 12, height as u16),
+                        layout.view_start,
+                        layout.view_end,
+                        false,
+                        &test_colors(),
+                    );
+                })
+                .expect("draw border");
+            let buffer = terminal.backend().buffer();
+            let rows = |symbol| {
+                (0..height as u16)
+                    .filter(|&y| buffer.cell((0, y)).unwrap().symbol() == symbol)
+                    .count()
+            };
+            assert_eq!((rows("▔"), rows("▁")), (1, 1), "scroll={scroll}");
         }
     }
 
