@@ -373,3 +373,227 @@ fn commit_details_opened_from_the_graph_take_colon_and_the_palette() {
         ":q closes the preview"
     );
 }
+
+/// More places the keyboard can be: terminals, the agent chat, Search,
+/// the Output panel and the commit message box.
+fn more_views() -> Vec<(&'static str, App)> {
+    let mut out = Vec::new();
+    {
+        let mut app = base();
+        let pty = crate::terminal::TerminalEmulator::test_with_output(40, 20, "");
+        app.terminals[0].terminal_pty = Some(pty);
+        app.terminals[0].dock = crate::app::TerminalDock::Right;
+        app.show_terminal_sidebar = true;
+        app.terminal_panel_focused = true;
+        out.push(("terminal sidebar", app));
+    }
+    {
+        let mut app = base();
+        app.chat.visible = true;
+        app.active_pane = ActivePane::Chat;
+        out.push(("agent chat", app));
+    }
+    {
+        let mut app = base();
+        app.show_explorer = true;
+        app.sidebar_view = SidebarView::Search;
+        app.global_search_active = true;
+        app.active_pane = ActivePane::Explorer;
+        out.push(("search box", app));
+    }
+    {
+        let mut app = base();
+        app.show_explorer = true;
+        app.sidebar_view = SidebarView::Search;
+        app.global_search_active = true;
+        app.global_search_results_focused = true;
+        app.active_pane = ActivePane::Explorer;
+        out.push(("search results", app));
+    }
+    {
+        let mut app = base();
+        app.show_explorer = true;
+        app.sidebar_view = SidebarView::SourceControl;
+        app.active_pane = ActivePane::Explorer;
+        app.source_control_input_mode = true;
+        out.push(("commit message box", app));
+    }
+    out
+}
+
+fn fingerprint(app: &App) -> String {
+    format!(
+        "palette={} quick_open={} explorer={} view={:?} panel={}/{} shortcuts={} chat={} tab={} pane={:?} tabs={}",
+        app.palette.active,
+        app.quick_open_active,
+        app.show_explorer,
+        app.sidebar_view,
+        app.show_panel,
+        app.panel_tab,
+        app.shortcuts_active,
+        app.chat.visible,
+        app.active_tab,
+        app.active_pane,
+        app.tabs.len(),
+    )
+}
+
+/// Vim mode must not change what workbench shortcuts do outside the Vim
+/// buffer, and Ctrl+Shift / F-key shortcuts must work the same in it too.
+#[test]
+fn workbench_shortcuts_match_plain_mode_outside_the_vim_buffer() {
+    let c = KeyModifiers::CONTROL;
+    let cs = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+    let strokes = [
+        ("Ctrl+Shift+P", KeyCode::Char('P'), cs, true),
+        ("F1", KeyCode::F(1), KeyModifiers::NONE, true),
+        ("Ctrl+Shift+G", KeyCode::Char('G'), cs, true),
+        ("Ctrl+Shift+F", KeyCode::Char('F'), cs, true),
+        ("Ctrl+Shift+X", KeyCode::Char('X'), cs, true),
+        ("Ctrl+Shift+M", KeyCode::Char('M'), cs, true),
+        ("Ctrl+Shift+I", KeyCode::Char('I'), cs, true),
+        ("Ctrl+Shift+/", KeyCode::Char('/'), cs, true),
+        ("Ctrl+P", KeyCode::Char('p'), c, true),
+        ("Ctrl+B", KeyCode::Char('b'), c, false),
+        ("Ctrl+`", KeyCode::Char('`'), c, false),
+        ("Ctrl+Tab", KeyCode::Tab, c, false),
+    ];
+    let mut failed = Vec::new();
+    for (name, code, mods, in_editor_too) in strokes {
+        let all = views().into_iter().chain(more_views());
+        let plain = views().into_iter().chain(more_views());
+        for ((view, mut app), (_, mut off)) in all.zip(plain) {
+            // Vim buffers (a file, a git revision) own Vim's Ctrl keys.
+            if matches!(view, "editor" | "git revision" | "diff tab") && !in_editor_too {
+                continue;
+            }
+            super::app_host::set_enabled(&mut off, false);
+            draw(&mut app);
+            draw(&mut off);
+            press(&mut app, code, mods);
+            press(&mut off, code, mods);
+            let (a, b) = (fingerprint(&app), fingerprint(&off));
+            if a != b {
+                failed.push(format!("{view}: {name}\n   vim:   {a}\n   plain: {b}"));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+#[test]
+fn colon_types_where_text_is_being_typed() {
+    for (view, mut app) in more_views() {
+        if view == "search results" {
+            continue;
+        }
+        draw(&mut app);
+        keys(&mut app, ":");
+        assert!(app.vim.cmdline.is_none(), "{view}: ':' is text here");
+    }
+    let mut app = more_views()
+        .into_iter()
+        .find(|v| v.0 == "search results")
+        .unwrap()
+        .1;
+    draw(&mut app);
+    keys(&mut app, ":");
+    assert!(
+        app.vim.cmdline.is_some(),
+        "search results: ':' opens the command line"
+    );
+}
+
+fn diff_tab_app(vim: bool) -> (tempfile::TempDir, App) {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init(dir.path()).unwrap();
+    {
+        let mut config = repo.config().unwrap();
+        config.set_bool("core.autocrlf", false).unwrap();
+        config.set_str("user.email", "t@example.com").unwrap();
+        config.set_str("user.name", "T").unwrap();
+    }
+    let file = dir.path().join("file.txt");
+    let old: String = (0..80).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&file, &old).unwrap();
+    let mut index = repo.index().unwrap();
+    index.add_path(std::path::Path::new("file.txt")).unwrap();
+    index.write().unwrap();
+    let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+    let sig = repo.signature().unwrap();
+    repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[])
+        .unwrap();
+    let new = old.replace("line 40\n", "line forty\n");
+    std::fs::write(&file, &new).unwrap();
+    let mut app = App::new(dir.path().to_path_buf());
+    let mut editor = Editor::test_with_text(&new);
+    editor.file_path = Some(file.clone());
+    app.tabs = vec![Tab::new_file(editor)];
+    app.active_tab = 0;
+    app.active_pane = ActivePane::Editor;
+    app.terminal_has_focus = true;
+    app.source_control_files = vec![crate::app::GitFileChange {
+        directory: false,
+        original_path: None,
+        path: "file.txt".into(),
+        status: 'M',
+        staged: false,
+    }];
+    app.open_source_control_diff(0);
+    app.wait_for_background(std::time::Duration::from_secs(5), |app| {
+        app.should_render_diff_for_active_editor()
+    });
+    app.active_pane = ActivePane::Editor;
+    super::app_host::set_enabled(&mut app, vim);
+    draw(&mut app);
+    (dir, app)
+}
+
+fn view_of(app: &App) -> (usize, usize) {
+    let ed = app.editor().unwrap();
+    (ed.cursor_line, ed.scroll_offset)
+}
+
+#[test]
+fn a_diff_tab_moves_with_vim_keys_like_the_arrows() {
+    let (_d, probe) = diff_tab_app(true);
+    assert!(matches!(
+        probe.tabs[probe.active_tab].kind,
+        TabKind::Diff(_)
+    ));
+    let mut failed = Vec::new();
+    for (vim_keys, plain) in [
+        ("j", vec![(KeyCode::Down, KeyModifiers::NONE)]),
+        ("jjk", vec![(KeyCode::Down, KeyModifiers::NONE)]),
+        ("G", vec![(KeyCode::End, KeyModifiers::CONTROL)]),
+        ("Ggg", vec![(KeyCode::Home, KeyModifiers::CONTROL)]),
+    ] {
+        let (_d1, mut app) = diff_tab_app(true);
+        let (_d2, mut off) = diff_tab_app(false);
+        keys(&mut app, vim_keys);
+        for (code, mods) in plain {
+            press(&mut off, code, mods);
+        }
+        if vim_keys == "Ggg" {
+            press(&mut off, KeyCode::End, KeyModifiers::CONTROL);
+            press(&mut off, KeyCode::Home, KeyModifiers::CONTROL);
+        }
+        // Vim's last line is the last one with text, not the empty line
+        // after the final newline.
+        let expected = if vim_keys == "G" { 79 } else { view_of(&off).0 };
+        if view_of(&app).0 != expected {
+            failed.push(format!(
+                "{vim_keys}: vim {:?} plain {:?}",
+                view_of(&app),
+                view_of(&off)
+            ));
+        }
+    }
+    // `:` works there too.
+    let (_d, mut app) = diff_tab_app(true);
+    keys(&mut app, ":");
+    if app.vim.cmdline.is_none() {
+        failed.push("':' in a diff tab".into());
+    }
+    assert!(failed.is_empty(), "{failed:#?}");
+}

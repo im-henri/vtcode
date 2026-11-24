@@ -526,14 +526,28 @@ def scenario_extension_details(e, d):
     e.keys("gg")
     e.keys("l")
     opened = wait_for(e, lambda: screen_has(e, "binary files"), 8)
-    # Back to the editor area, then Ctrl-W c closes the details like a window.
+    # Back to the editor area: l and h switch the details' pages, `:` opens
+    # the command line, then Ctrl-W c closes the details like a window.
     e.keys("q")
     e.settle(0.4)
+    before = e.lines()
+    e.keys("l")
+    e.settle(0.4)
+    paged = e.lines() != before
+    e.keys("h")
+    e.settle(0.4)
+    paged_back = e.lines() == before
+    e.keys(":")
+    colon = wait_for(e, lambda: e.status().startswith(":"), 3)
+    e.keys(ESC)
     e.keys(ctrl("w") + "c")
     closed = wait_for(e, lambda: not screen_has(e, "binary files"))
     return [
         ("an installed extension is listed", listed),
         ("l opens its details", opened),
+        ("l switches the details page", paged),
+        ("h switches back", paged_back),
+        ("':' opens the command line on the details", colon),
         ("q, Ctrl-W c close the details", closed),
         ("editing resumes", resumes_editing(e, d, "*")),
     ]
@@ -830,6 +844,67 @@ def scenario_commit_details(e, d):
     return results
 
 
+def win32_key(vk, char, ctrl=False, shift=False):
+    """A key press and release in win32-input-mode, as Windows Terminal
+    sends them: unlike legacy bytes, it keeps Shift on Ctrl+Shift+letter."""
+    state = (0x8 if ctrl else 0) | (0x10 if shift else 0)
+    return "".join(f"[{vk};0;{char};{down};{state};1_" for down in (1, 0))
+
+
+def ctrl_shift_p():
+    return win32_key(0x50, 0x10, ctrl=True, shift=True)
+
+
+def win32_text(text):
+    """Type text in win32-input-mode. Once a terminal uses that mode it sends
+    every key that way; mixing in legacy bytes is not what users produce."""
+    out = []
+    for c in text:
+        vk = {ESC: 0x1B, CR: 0x0D, ":": 0xBA, " ": 0x20}.get(c, ord(c.upper()) if c.isalnum() else 0)
+        out.append(win32_key(vk, ord(c), shift=c.isupper() or c == ":"))
+    return "".join(out)
+
+
+def scenario_palette_everywhere(e, d):
+    # The real Ctrl+Shift+P from the editor in each Vim mode and from sidebars,
+    # typed the way Windows Terminal sends keys.
+    results = []
+    class W:
+        def __init__(self, e):
+            self.e = e
+        def keys(self, text):
+            for c in text:
+                self.e.process.write(win32_text(c))
+                self.e.settle(0.25 if c == ESC else 0.05)
+        def __getattr__(self, name):
+            return getattr(self.e, name)
+    e = W(e)
+    def palette_shown():
+        return screen_has(e, "Command Palette") or any(l.lstrip().startswith(">") for l in e.lines())
+    def check(label, setup, cleanup):
+        e.keys(setup)
+        e.settle(0.3)
+        e.process.write(ctrl_shift_p())
+        shown = wait_for(e, palette_shown, 3)
+        e.keys(ESC)
+        e.settle(0.3)
+        e.keys(cleanup)
+        e.settle(0.3)
+        results.append((f"Ctrl+Shift+P opens the palette: {label}", shown))
+    check("Normal mode", "", "")
+    check("Insert mode", "i", ESC)
+    check("Visual mode", "v", ESC)
+    check("operator pending", "d", ESC)
+    check("Explorer", ":Explore" + CR, ESC)
+    check("Source Control", ":VT source_control" + CR, ESC)
+    # Ctrl+Shift+G opens Source Control from Normal mode.
+    e.keys(":Explore" + CR + ESC)
+    e.settle(0.3)
+    e.process.write(win32_key(0x47, 0x07, ctrl=True, shift=True))
+    results.append(("Ctrl+Shift+G opens Source Control from Normal mode", wait_for(e, lambda: "SOURCE CONTROL" in e.status() or screen_has(e, "SOURCE CONTROL"), 3)))
+    return results
+
+
 SCENARIOS = [
     ("edit and :w", scenario_edit_and_write, {"a.txt": "alpha beta\ngamma\n"}),
     ("mode indicators", scenario_modes_in_status, {"a.txt": "alpha\ngamma\n"}),
@@ -863,6 +938,7 @@ SCENARIOS = [
     ("crlf", scenario_crlf, {"a.txt": "alpha\r\ngamma\r\nbeta\r\n"}),
     ("no file open", scenario_no_file_open, {"a.txt": "alpha\n", "@nofile": ""}),
     ("commit details", scenario_commit_details, {"a.txt": "alpha\ngamma\n"}),
+    ("palette everywhere", scenario_palette_everywhere, {"a.txt": "alpha\ngamma\n"}),
 ]
 
 VIMRC = 'let mapleader = " "\ninoremap jk <Esc>\nnnoremap <leader>w :w<CR>\n'

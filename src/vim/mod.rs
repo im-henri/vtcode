@@ -870,10 +870,10 @@ impl VimState {
             );
             return;
         }
-        // Ctrl+Shift+letter is a workbench shortcut (Ctrl+Shift+P, G, F, X...),
+        // Ctrl+Shift+key is a workbench shortcut (Ctrl+Shift+P, G, F, X, /...),
         // never a Vim key: Vim can't tell it from Ctrl+letter. It cancels a
         // pending count or operator, as any key that isn't a motion does.
-        if key.ctrl && key.shift && matches!(key.k, K::Char(c) if c.is_ascii_alphabetic()) {
+        if key.ctrl && key.shift && matches!(key.k, K::Char(_)) {
             self.pending.clear();
             host.native_key(key);
             exec::after_native(self, host);

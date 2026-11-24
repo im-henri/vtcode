@@ -121,8 +121,15 @@ impl Key {
             KeyCode::Char(c) => {
                 // Vim cannot tell <C-a> from <C-A>; keep Shift so that
                 // workbench shortcuts like Ctrl+Shift+P stay distinct.
-                let ctrl_shift =
-                    ctrl && c.is_ascii_alphabetic() && (shift || c.is_ascii_uppercase());
+                // Ctrl+Shift with a symbol (Ctrl+Shift+/ is Keyboard Shortcuts)
+                // keeps Shift too, except the symbols Vim's own Ctrl keys
+                // need Shift to type (<C-^>, <C-_>, <C-@>, <C-?>).
+                let ctrl_shift = ctrl
+                    && if c.is_ascii_alphabetic() {
+                        shift || c.is_ascii_uppercase()
+                    } else {
+                        shift && !alt && !matches!(c, '^' | '_' | '@' | '?' | '6' | '-' | '2')
+                    };
                 let c = if ctrl && c.is_ascii_alphabetic() {
                     c.to_ascii_lowercase()
                 } else if shift && c.is_ascii_lowercase() {

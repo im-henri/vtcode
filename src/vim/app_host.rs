@@ -14,12 +14,16 @@ pub(crate) struct AppHost<'a> {
     pub(crate) app: &'a mut App,
 }
 
-/// The active tab is a text editor Vim may drive.
+/// The active tab is a text editor Vim may drive. A diff tab is the
+/// working file shown against its base: Vim moves and edits that file, as
+/// the arrow keys and typing do without Vim mode.
 pub(crate) fn vim_tab(app: &App) -> bool {
-    app.tabs
-        .get(app.active_tab)
-        .is_some_and(|tab| matches!(tab.kind, TabKind::File | TabKind::GitRevision))
-        && app.active_extension_view().is_none()
+    app.tabs.get(app.active_tab).is_some_and(|tab| {
+        matches!(
+            tab.kind,
+            TabKind::File | TabKind::GitRevision | TabKind::Diff(_)
+        )
+    }) && app.active_extension_view().is_none()
         && app
             .editor()
             .is_some_and(|ed| ed.markdown_preview_scroll.is_none())
@@ -312,8 +316,9 @@ pub(crate) fn early_key(app: &mut App, event: KeyEvent) -> Option<bool> {
     commit_details_key(app, key)
 }
 
-/// Vim movement in Commit Details: j/k (and Ctrl-N/P) move through the
-/// focused list, gg/G jump to its ends, Ctrl-D/U page.
+/// Vim movement in Commit Details: j/k move through the focused list
+/// (Ctrl-N/P stay New File and Quick Open, as in the editor), gg/G jump
+/// to its ends, Ctrl-D/U page.
 fn commit_details_key(app: &mut App, key: Key) -> Option<bool> {
     let pending = std::mem::take(&mut app.vim_explorer_pending);
     if key.is_ctrl('d') {
@@ -321,12 +326,6 @@ fn commit_details_key(app: &mut App, key: Key) -> Option<bool> {
     }
     if key.is_ctrl('u') {
         return translate(app, KeyCode::PageUp);
-    }
-    if key.is_ctrl('n') {
-        return translate(app, KeyCode::Down);
-    }
-    if key.is_ctrl('p') {
-        return translate(app, KeyCode::Up);
     }
     match key.char()? {
         'g' if pending == Some('g') => translate(app, KeyCode::Home),
@@ -728,21 +727,44 @@ fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
             app.vim_window_prefix = true;
             return Some(false);
         }
-        if app
-            .editor()
-            .is_some_and(|ed| ed.markdown_preview_scroll.is_some())
+        let info = app
+            .tabs
+            .get(app.active_tab)
+            .is_some_and(|tab| tab.kind == TabKind::ExtensionInfo);
+        if info
+            || app
+                .editor()
+                .is_some_and(|ed| ed.markdown_preview_scroll.is_some())
         {
-            return match key.char() {
-                Some('j') => translate(app, KeyCode::Down),
-                Some('k') => translate(app, KeyCode::Up),
-                Some('G') => translate(app, KeyCode::End),
-                _ if key.is_ctrl('d') => translate(app, KeyCode::PageDown),
-                _ if key.is_ctrl('u') => translate(app, KeyCode::PageUp),
-                _ => None,
-            };
+            return scroll_view_key(app, key, info);
         }
     }
     None
+}
+
+/// Read-only views that scroll (Markdown preview, extension details):
+/// j/k, gg/G, Ctrl-D/U, and h/l between the extension's pages.
+fn scroll_view_key(app: &mut App, key: Key, pages: bool) -> Option<bool> {
+    let pending = std::mem::take(&mut app.vim_explorer_pending);
+    if key.is_ctrl('d') {
+        return translate(app, KeyCode::PageDown);
+    }
+    if key.is_ctrl('u') {
+        return translate(app, KeyCode::PageUp);
+    }
+    match key.char()? {
+        'j' => translate(app, KeyCode::Down),
+        'k' => translate(app, KeyCode::Up),
+        'G' => translate(app, KeyCode::End),
+        'g' if pending == Some('g') => translate(app, KeyCode::Home),
+        'g' => {
+            app.vim_explorer_pending = Some('g');
+            Some(false)
+        }
+        'h' if pages => translate(app, KeyCode::Left),
+        'l' if pages => translate(app, KeyCode::Right),
+        _ => None,
+    }
 }
 
 /// Problems and Notifications: j/k, gg/G, Ctrl-D/U, l or Enter opens, q/Esc
@@ -758,12 +780,6 @@ fn panel_list_key(app: &mut App, key: Key) -> Option<bool> {
     }
     if key.is_ctrl('u') {
         return translate(app, KeyCode::PageUp);
-    }
-    if key.is_ctrl('n') {
-        return translate(app, KeyCode::Down);
-    }
-    if key.is_ctrl('p') {
-        return translate(app, KeyCode::Up);
     }
     if key == Key::ESC {
         focus_editor(app);
@@ -830,12 +846,6 @@ fn explorer_key(app: &mut App, key: Key, _event: KeyEvent) -> Option<bool> {
                 translate(app, KeyCode::Up);
             }
             return Some(false);
-        }
-        if key.is_ctrl('n') {
-            return translate(app, KeyCode::Down);
-        }
-        if key.is_ctrl('p') {
-            return translate(app, KeyCode::Up);
         }
         if key == Key::ESC {
             focus_editor(app);
