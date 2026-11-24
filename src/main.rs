@@ -225,6 +225,7 @@ mod rope_changes;
 mod rope_line_blocks;
 mod scope_bubble_config;
 mod scope_selector;
+mod screen_transition;
 mod search_history;
 mod search_paths;
 mod search_regex;

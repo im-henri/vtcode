@@ -46,6 +46,7 @@ const ANIMATION_SECTIONS: &[(&str, &str, &[AnimationEffect])] = &[
         "heading_animation_navigation",
         &[AnimationEffect::TabSlide],
     ),
+    ("Startup & Exit", "heading_animation_screen", &[]),
     ("Shared Frame Rate", "heading_animation_timing", &[]),
 ];
 
@@ -170,8 +171,13 @@ impl App {
         match setting_id {
             "files_exclude" | "search_exclude" => "exclusions",
             "acp_agents" | "lsp_servers" | "formatters" | "language_associations" => "action",
-            "animation_copy" | "animation_cursor_smear_when_typing" => "checkbox",
-            "animation_copy_duration_ms" => "number",
+            "animation_copy"
+            | "animation_cursor_smear_when_typing"
+            | "animation_startup"
+            | "animation_exit" => "checkbox",
+            "animation_copy_duration_ms"
+            | "animation_startup_duration_ms"
+            | "animation_exit_duration_ms" => "number",
             "lsp_enabled" | "source_control_enabled" | "source_control_show_untracked" => {
                 "checkbox"
             }
@@ -272,6 +278,10 @@ impl App {
         Some(match setting_id {
             "animation_copy" => "animationCopy",
             "animation_copy_duration_ms" => "animationCopyDurationMs",
+            "animation_startup" => "animationStartup",
+            "animation_startup_duration_ms" => "animationStartupDurationMs",
+            "animation_exit" => "animationExit",
+            "animation_exit_duration_ms" => "animationExitDurationMs",
             "animation_cursor_smear_when_typing" => "animationCursorSmearWhenTyping",
             "formatters" => "formatters",
             "language_associations" => "languageAssociations",
@@ -592,6 +602,18 @@ impl App {
             "animation_copy_duration_ms" => {
                 "Total time in milliseconds for the copy highlight to fade out and return (1–5000). Default: 220. A new copy restarts the animation. Has no effect when Copy Animation is off."
             }
+            "animation_startup" => {
+                "When VTCode opens, the workbench rises into place from the bottom in staggered columns, each led by a bright glyph that settles into the real text and theme colours. Any key or click skips it. Off by default."
+            }
+            "animation_startup_duration_ms" => {
+                "Total time in milliseconds for the startup animation (1–5000). Default: 1500. Has no effect when Startup Animation is off."
+            }
+            "animation_exit" => {
+                "When VTCode quits, the screen drains downward column by column back into the terminal. Any key or click skips it. Off by default."
+            }
+            "animation_exit_duration_ms" => {
+                "Total time in milliseconds for the exit animation (1–5000). Default: 1500. Has no effect when Exit Animation is off."
+            }
             "animation_cursor_smear_when_typing" => {
                 "Apply a compact smear to the caret while typing and editing text. Requires Cursor Smear. Off by default."
             }
@@ -846,6 +868,10 @@ impl App {
         match setting_id {
             "animation_cursor_smear_when_typing" => return Some("Cursor"),
             "animation_copy" | "animation_copy_duration_ms" => return Some("Editing"),
+            "animation_startup"
+            | "animation_startup_duration_ms"
+            | "animation_exit"
+            | "animation_exit_duration_ms" => return Some("Startup & Exit"),
             _ => {}
         }
         let effect = AnimationSettings::effect_for_id(setting_id)
@@ -1487,6 +1513,34 @@ impl App {
         ));
         for &(label, heading_id, effects) in ANIMATION_SECTIONS {
             items.push((format!("── {label} ──"), String::new(), heading_id.into()));
+            if heading_id == "heading_animation_screen" {
+                let scoped = self.selected_scope_settings();
+                let duration = |value: Option<u64>| {
+                    value
+                        .unwrap_or(crate::screen_transition::DEFAULT_DURATION_MS)
+                        .to_string()
+                };
+                items.push((
+                    "Startup Animation".into(),
+                    on_off(scoped.animation_startup.unwrap_or(false)),
+                    "animation_startup".into(),
+                ));
+                items.push((
+                    "Startup Animation Duration (ms)".into(),
+                    duration(scoped.animation_startup_duration_ms),
+                    "animation_startup_duration_ms".into(),
+                ));
+                items.push((
+                    "Exit Animation".into(),
+                    on_off(scoped.animation_exit.unwrap_or(false)),
+                    "animation_exit".into(),
+                ));
+                items.push((
+                    "Exit Animation Duration (ms)".into(),
+                    duration(scoped.animation_exit_duration_ms),
+                    "animation_exit_duration_ms".into(),
+                ));
+            }
             if heading_id == "heading_animation_editing" {
                 let scoped = self.selected_scope_settings();
                 items.push((
@@ -1675,8 +1729,21 @@ mod tests {
                 .iter()
                 .filter(|&&index| !items[index].2.starts_with("heading_"))
                 .count(),
-            AnimationEffect::ALL.len() * 3 + 8
+            // Plus Startup/Exit Animation and their durations.
+            AnimationEffect::ALL.len() * 3 + 12
         );
+        for (id, value) in [
+            ("animation_startup", "Off"),
+            ("animation_exit", "Off"),
+            ("animation_startup_duration_ms", "1500"),
+            ("animation_exit_duration_ms", "1500"),
+        ] {
+            assert_eq!(
+                items.iter().find(|(_, _, item)| item == id).unwrap().1,
+                value,
+                "{id}"
+            );
+        }
         for effect in AnimationEffect::ALL {
             assert_eq!(App::settings_category_for_id(effect.id()), 7);
             assert_eq!(App::setting_field_kind(effect.id()), "checkbox");

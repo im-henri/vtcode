@@ -274,6 +274,10 @@ impl App {
             ),
             animation_copy: Some(self.copy_animation.enabled),
             animation_copy_duration_ms: Some(self.copy_animation.duration_ms),
+            animation_startup: Some(self.screen_transition.settings.startup),
+            animation_startup_duration_ms: Some(self.screen_transition.settings.startup_ms),
+            animation_exit: Some(self.screen_transition.settings.exit),
+            animation_exit_duration_ms: Some(self.screen_transition.settings.exit_ms),
             animation_cursor_fire: Some(
                 self.animation_settings
                     .enabled(crate::animation_config::AnimationEffect::CursorFire),
@@ -426,6 +430,19 @@ impl App {
         if let Some(duration) = s.animation_copy_duration_ms {
             self.copy_animation.duration_ms =
                 crate::animation_config::clamp_animation_duration_ms(duration);
+        }
+        let screen = &mut self.screen_transition.settings;
+        if let Some(enabled) = s.animation_startup {
+            screen.startup = enabled;
+        }
+        if let Some(enabled) = s.animation_exit {
+            screen.exit = enabled;
+        }
+        if let Some(duration) = s.animation_startup_duration_ms {
+            screen.startup_ms = crate::animation_config::clamp_animation_duration_ms(duration);
+        }
+        if let Some(duration) = s.animation_exit_duration_ms {
+            screen.exit_ms = crate::animation_config::clamp_animation_duration_ms(duration);
         }
         // Share compiled profiles across all views/desks. Preserve identity on
         // unrelated settings changes so cached scope analysis remains reusable.
@@ -1054,6 +1071,16 @@ impl App {
         if !self.copy_animation.enabled {
             self.copy_animation.clear();
         }
+        self.screen_transition.settings = crate::screen_transition::Settings {
+            startup: settings.animation_startup.unwrap_or(false),
+            exit: settings.animation_exit.unwrap_or(false),
+            startup_ms: settings
+                .animation_startup_duration_ms
+                .unwrap_or(crate::screen_transition::DEFAULT_DURATION_MS),
+            exit_ms: settings
+                .animation_exit_duration_ms
+                .unwrap_or(crate::screen_transition::DEFAULT_DURATION_MS),
+        };
         self.chat.output_detail = settings
             .chat_output_detail
             .as_deref()
@@ -1573,6 +1600,14 @@ impl App {
                 .animation_copy_duration_ms
                 .unwrap_or(crate::copy_animation::DEFAULT_DURATION_MS),
         );
+        before.animation_startup = Some(before.animation_startup.unwrap_or(false));
+        before.animation_exit = Some(before.animation_exit.unwrap_or(false));
+        for duration in [
+            &mut before.animation_startup_duration_ms,
+            &mut before.animation_exit_duration_ms,
+        ] {
+            *duration = Some(duration.unwrap_or(crate::screen_transition::DEFAULT_DURATION_MS));
+        }
         let mut animations = crate::animation_config::AnimationSettings::default();
         animations.apply(&before);
         for effect in crate::animation_config::AnimationEffect::ALL {

@@ -63,6 +63,14 @@ impl App {
                     self.copy_animation.clear();
                 }
             }
+            "animation_startup" => {
+                let screen = &mut self.screen_transition.settings;
+                screen.startup = !screen.startup;
+            }
+            "animation_exit" => {
+                let screen = &mut self.screen_transition.settings;
+                screen.exit = !screen.exit;
+            }
             "animation_cursor_smear_when_typing" => {
                 self.animation_settings.cursor_smear_when_typing =
                     !self.animation_settings.cursor_smear_when_typing;
@@ -689,6 +697,12 @@ impl App {
         match id.as_str() {
             "animation_copy_duration_ms" => {
                 value.animation_copy_duration_ms = Some(clamp_animation_duration_ms(raw))
+            }
+            "animation_startup_duration_ms" => {
+                value.animation_startup_duration_ms = Some(clamp_animation_duration_ms(raw))
+            }
+            "animation_exit_duration_ms" => {
+                value.animation_exit_duration_ms = Some(clamp_animation_duration_ms(raw))
             }
             id if crate::animation_config::AnimationSettings::effect_for_duration_id(id)
                 .is_some() =>

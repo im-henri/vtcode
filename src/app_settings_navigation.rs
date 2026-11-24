@@ -41,6 +41,7 @@ impl App {
                 "Editing",
                 "Code Structure",
                 "Navigation",
+                "Startup & Exit",
                 "Shared Frame Rate",
             ],
             SETTINGS_AUTOCOMPLETE_CATEGORY => &["General", VTCOMPLETE_SECTION, GPTCOMPLETE_SECTION],

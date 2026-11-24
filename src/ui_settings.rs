@@ -1727,7 +1727,7 @@ mod tests {
                 .enumerate()
                 .filter(|(_, idx)| items[**idx].2.starts_with("heading_animation_"))
                 .collect();
-            assert_eq!(headings.len(), 5);
+            assert_eq!(headings.len(), 6);
             terminal
                 .draw(|frame| draw_settings_editor(frame, &mut app, Rect::new(0, 0, width, height)))
                 .unwrap();

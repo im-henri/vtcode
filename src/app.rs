@@ -913,6 +913,7 @@ pub(crate) struct App {
     pub(crate) shared_word_highlight: Option<crate::ui_editor::SharedWordHighlight>,
     // Shutdown animation
     pub shutdown_anim_active: bool,
+    pub(crate) screen_transition: crate::screen_transition::State,
     pub shutdown_anim_start: std::time::Instant,
     // Extensions
     pub extension_manager: crate::extensions::ExtensionManager,
@@ -1944,6 +1945,7 @@ impl App {
             editor_cursor_word_cache: Default::default(),
             editor_selection_word_cache: std::collections::VecDeque::new(),
             shutdown_anim_active: false,
+            screen_transition: Default::default(),
             shutdown_anim_start: std::time::Instant::now(),
             extension_manager: crate::extensions::ExtensionManager::new(&browser_path),
             extension_pointer_capture: None,

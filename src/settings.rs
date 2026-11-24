@@ -250,6 +250,15 @@ pub struct Settings {
     pub animation_copy: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animation_copy_duration_ms: Option<u64>,
+    // Whole-screen startup and exit animations, each off by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub animation_startup: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub animation_startup_duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub animation_exit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub animation_exit_duration_ms: Option<u64>,
     // Optional animations inherit independently.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub animation_cursor_smear: Option<bool>,
@@ -629,6 +638,14 @@ impl Settings {
             animation_copy_duration_ms: other
                 .animation_copy_duration_ms
                 .or(self.animation_copy_duration_ms),
+            animation_startup: other.animation_startup.or(self.animation_startup),
+            animation_startup_duration_ms: other
+                .animation_startup_duration_ms
+                .or(self.animation_startup_duration_ms),
+            animation_exit: other.animation_exit.or(self.animation_exit),
+            animation_exit_duration_ms: other
+                .animation_exit_duration_ms
+                .or(self.animation_exit_duration_ms),
             animation_cursor_fire: other.animation_cursor_fire.or(self.animation_cursor_fire),
             animation_whitespace_reveal: other
                 .animation_whitespace_reveal
@@ -822,6 +839,15 @@ impl Settings {
             *v = clamp_animation_duration_ms(*v);
         }
         if let Some(ref mut v) = self.animation_copy_duration_ms {
+            *v = clamp_animation_duration_ms(*v);
+        }
+        for v in [
+            &mut self.animation_startup_duration_ms,
+            &mut self.animation_exit_duration_ms,
+        ]
+        .into_iter()
+        .flatten()
+        {
             *v = clamp_animation_duration_ms(*v);
         }
         if let Some(ref mut v) = self.animation_fps {

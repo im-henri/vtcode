@@ -4129,6 +4129,9 @@ fn next_event_wait_with_output(
     if app.shutdown_anim_active {
         include(Duration::from_millis(16));
     }
+    if let Some(wait) = app.screen_transition.next_wait(std::time::Instant::now()) {
+        include(wait);
+    }
     if output_ready && let Some(activity_wait) = crate::ui_chat::next_activity_frame(app) {
         include(activity_wait);
     }
@@ -4896,6 +4899,15 @@ fn note_user_activity(app: &mut App) {
     relight_cursor(app);
 }
 
+/// A key press or mouse click skips the startup or exit animation.
+fn skips_screen_transition(event: &Event) -> bool {
+    match event {
+        Event::Key(key) => key.kind != crossterm::event::KeyEventKind::Release,
+        Event::Mouse(mouse) => matches!(mouse.kind, crossterm::event::MouseEventKind::Down(_)),
+        _ => false,
+    }
+}
+
 pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -4927,6 +4939,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
     // refreshing the tree never runs a repository status scan on the UI.
     app.refresh_explorer_async();
     app.ensure_initial_source_control_status();
+    app.screen_transition.arm_startup();
     loop {
         // Include workspace-loader completions in the same wake ticket as
         // all other producers; observing after polling can lose their wake.
@@ -5130,6 +5143,10 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         let background_due =
             windows.background_draw_wait(std::time::Instant::now()) == Some(Duration::ZERO);
         needs_redraw |= background_due;
+        // Startup animation frames post-process a complete workbench frame.
+        if app.screen_transition.startup_due(std::time::Instant::now()) {
+            needs_redraw = true;
+        }
         // The minimap overview zoom changes geometry, so its few transition
         // frames take the ordinary path; the hold between them is one timer.
         if app.terminal_has_focus
@@ -5270,6 +5287,8 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 terminal.draw(|f| {
                     let painting_started = std::time::Instant::now();
                     ui::draw(f, app);
+                    app.screen_transition
+                        .paint_startup(f.buffer_mut(), std::time::Instant::now());
                     #[cfg(all(test, windows))]
                     pointer_event_loop_latency_tests::paint_marker(f, app);
                     painting_elapsed = painting_started.elapsed();
@@ -5419,6 +5438,28 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             last_revealed_tab = None;
             last_revealed_path = None;
             periodic_disk_paths_cache = PeriodicDiskPaths::default();
+            continue;
+        }
+
+        // Optional exit animation: the last frame drains down the screen.
+        if app.shutdown_anim_active && app.screen_transition.begin_exit(app.shutdown_anim_start) {
+            let now = std::time::Instant::now();
+            // Quitting discards further input; a key press or click skips.
+            while let Ok(Some(event)) = windows.active_pump(&mut main_events).try_recv() {
+                if skips_screen_transition(&event) {
+                    app.screen_transition.skip_exit();
+                }
+            }
+            if app.screen_transition.exit_done(now) {
+                return Ok(());
+            }
+            terminal.draw(|f| {
+                if app.screen_transition.exit_needs_snapshot() {
+                    crate::ui::draw(f, app);
+                }
+                app.screen_transition.paint_exit(f.buffer_mut(), now);
+            })?;
+            std::thread::sleep(crate::screen_transition::State::frame_interval());
             continue;
         }
 
@@ -5651,6 +5692,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             if !windows.accept_focus(app, source, &next_event) {
                 continue;
             }
+            if skips_screen_transition(&next_event) && app.screen_transition.skip_startup() {
+                needs_redraw = true;
+            }
             if source != old_window {
                 // A mouse press must hit the new terminal's layout, never the
                 // preceding window's rectangles.
@@ -5821,6 +5865,11 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             handle_keyboard_input(app, windows.active_pump(&mut main_events), key)
         };
         if quit {
+            if app.screen_transition.settings.exit && !app.shutdown_anim_active {
+                app.shutdown_anim_active = true;
+                app.shutdown_anim_start = std::time::Instant::now();
+                continue;
+            }
             return Ok(());
         }
     }
