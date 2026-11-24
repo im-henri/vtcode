@@ -127,18 +127,19 @@ class LinuxReleaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             calls = []
             output = Path(temporary) / "build output"
+            resolved_output = output.resolve().as_posix()
 
             def run(command, **kwargs):
                 calls.append([str(arg) for arg in command])
                 if kwargs.get("capture"):
-                    return "/mnt/d/build output" if command[-1] == output.as_posix() else "/mnt/c/repository"
+                    return "/mnt/d/build output" if command[-1] == resolved_output else "/mnt/c/repository"
 
             with patch.object(sys, "platform", "win32"):
                 linux_release.build(local.ROOT, run,
                                     self.options(glibc="2.43", output_dir=output))
         self.assertEqual(len(calls), 3)
         self.assertIn("--exec", calls[1])
-        self.assertEqual(calls[1][-3:], ["wslpath", "-u", output.as_posix()])
+        self.assertEqual(calls[1][-3:], ["wslpath", "-u", resolved_output])
         self.assertEqual(calls[2][-2:], ["--output-dir", "/mnt/d/build output"])
         self.assertEqual(calls[2][calls[2].index("--glibc") + 1], "2.43")
 
@@ -159,7 +160,7 @@ class LinuxReleaseTests(unittest.TestCase):
             runs = [call for call in calls if "run" in call]
             self.assertEqual(len(runs), 2)
             for baseline, command in zip(("2.28", "2.43"), runs):
-                self.assertIn(f"{output}:{linux_release.CONTAINER_OUTPUT}", command)
+                self.assertIn(f"{output.resolve()}:{linux_release.CONTAINER_OUTPUT}", command)
                 self.assertIn(f"{Path(temporary) / 'cache' / ('glibc-' + baseline)}:/cache", command)
                 self.assertEqual(command[-6:], ["--glibc", baseline, "--preview", "--skip-tests",
                                                "--output-dir", linux_release.CONTAINER_OUTPUT])
