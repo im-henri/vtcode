@@ -607,6 +607,36 @@ pub(crate) fn action_button_style(
     colors.ui.button_style(surface, primary, hovered, enabled)
 }
 
+/// A button that always reads as one. Many themes give secondary buttons
+/// almost the surface's color (they rely on hover or a border), so a fill that
+/// would vanish is tinted toward the text color.
+pub(crate) fn filled_button_style(
+    colors: &crate::app_theme::ThemeColors,
+    surface: Color,
+    primary: bool,
+    hovered: bool,
+    enabled: bool,
+) -> Style {
+    let ui = &colors.ui;
+    let mut style = ui.button_style(surface, primary, hovered, enabled);
+    let fill = style.bg.unwrap_or(surface);
+    let faint = match (fill, surface) {
+        (Color::Rgb(r, g, b), Color::Rgb(sr, sg, sb)) => {
+            r.abs_diff(sr).max(g.abs_diff(sg)).max(b.abs_diff(sb)) < 18
+        }
+        _ => fill == surface,
+    };
+    if faint && let Color::Rgb(r, g, b) = colors.fg_text {
+        let alpha = if hovered { 60 } else { 34 };
+        if let Some(tinted) = crate::theme_workbench::ColorLayer::rgba(r, g, b, alpha).over(surface)
+        {
+            let fg = style.fg.unwrap_or(colors.fg_text);
+            style = style.bg(tinted).fg(ui.readable_foreground(fg, tinted, 4.5));
+        }
+    }
+    style
+}
+
 pub(crate) fn draw_button_content(
     f: &mut Frame,
     area: Rect,

@@ -415,11 +415,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .filter(|view| app.extension_update(view).is_some())
         .count();
     let update_all = format!(" ↑{updates} ");
-    let mut header_buttons = vec![
-        (install, Action::Install),
-        (" ↻ ", Action::Refresh),
-        (" ⟳ ", Action::ReloadAll),
-    ];
+    let mut header_buttons = vec![(install, Action::Install), (" ⟳ ", Action::ReloadAll)];
     if updates > 0 {
         header_buttons.insert(0, (update_all.as_str(), Action::UpdateAll));
     }
@@ -736,6 +732,13 @@ fn draw_header(
         .style(style),
         section,
     );
+    if group == MARKETPLACE {
+        draw_marketplace_check(f, app, section, &style);
+        app.ext_sidebar
+            .actions
+            .push((Action::Collapse(group), section));
+        return;
+    }
     let catalog = &app.ext_catalog;
     let count = if group == MARKETPLACE && catalog.refreshing {
         "loading…".to_string()
@@ -758,6 +761,52 @@ fn draw_header(
     app.ext_sidebar
         .actions
         .push((Action::Collapse(group), section));
+}
+
+/// The MARKETPLACE header's "Check for updates" button: rescans extension
+/// folders, then asks the marketplaces and releases for updates. While a
+/// check runs it reads "Checking…" and does nothing when pressed.
+fn draw_marketplace_check(f: &mut Frame, app: &mut App, section: Rect, header: &Style) {
+    let catalog = &app.ext_catalog;
+    let checking = catalog.refreshing;
+    let offline = !checking && !catalog.catalog.errors.is_empty();
+    let title = format!("⌄ {}", section_label(MARKETPLACE)).width() as u16 + 2;
+    let room = section.width.saturating_sub(title);
+    let label = [
+        if checking {
+            " Checking… "
+        } else if offline {
+            " Offline · Retry "
+        } else {
+            " Check for updates "
+        },
+        if checking {
+            " … "
+        } else if offline {
+            " Retry "
+        } else {
+            " Check "
+        },
+    ]
+    .into_iter()
+    .find(|label| label.width() as u16 <= room);
+    let Some(label) = label else {
+        return;
+    };
+    let width = label.width() as u16;
+    let area = Rect::new(section.right() - width, section.y, width, 1);
+    let hovered = !checking && area.contains((app.mouse_col, app.mouse_row).into());
+    let style = crate::ui_widgets::filled_button_style(
+        &app.colors,
+        header.bg.unwrap_or(app.colors.bg_sidebar),
+        false,
+        hovered,
+        !checking,
+    );
+    f.render_widget(Paragraph::new(label).style(style), area);
+    if !checking {
+        app.ext_sidebar.actions.push((Action::Refresh, area));
+    }
 }
 
 fn draw_card(

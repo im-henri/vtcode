@@ -741,8 +741,15 @@ fn marketplace_section_shows_loading_failure_and_offline_instead_of_vanishing() 
     sidebar(&mut app, &mut terminal);
     let screen = text(&terminal);
     assert!(screen.contains("MARKETPLACE"), "{screen}");
-    assert!(screen.contains("loading…"));
+    assert!(screen.contains(" Checking… "), "{screen}");
     assert!(screen.contains("Loading marketplace…"));
+    assert!(
+        !app.ext_sidebar
+            .actions
+            .iter()
+            .any(|(action, _)| *action == Action::Refresh),
+        "a running check cannot be started again"
+    );
 
     // Nothing installed at all: the marketplace still shows it is loading.
     let mut empty = App::test_new();
@@ -756,7 +763,7 @@ fn marketplace_section_shows_loading_failure_and_offline_instead_of_vanishing() 
     sidebar(&mut app, &mut terminal);
     let screen = text(&terminal);
     assert!(screen.contains("Couldn't load the marketplace"), "{screen}");
-    assert!(screen.contains("offline"));
+    assert!(screen.contains(" Offline · Retry "), "{screen}");
     assert!(screen.contains("timed out"));
 
     // Cached listings stay usable offline, marked as such.
@@ -765,7 +772,7 @@ fn marketplace_section_shows_loading_failure_and_offline_instead_of_vanishing() 
     sidebar(&mut cached, &mut terminal);
     let screen = text(&terminal);
     assert!(
-        screen.contains("Hex Editor") && screen.contains("offline"),
+        screen.contains("Hex Editor") && screen.contains("Offline"),
         "{screen}"
     );
 
@@ -841,4 +848,34 @@ fn installed_cards_uninstall_after_a_confirming_second_press() {
     sidebar(&mut app, &mut terminal);
     let screen = text(&terminal);
     assert!(screen.contains("Installed One"), "{screen}");
+}
+
+#[test]
+fn marketplace_header_has_a_filled_check_for_updates_button() {
+    let (_root, mut app) = marketplace_fixture();
+    let mut terminal = Terminal::new(TestBackend::new(44, 29)).unwrap();
+    sidebar(&mut app, &mut terminal);
+    let screen = text(&terminal);
+    assert!(screen.contains(" Check for updates "), "{screen}");
+    assert!(!screen.contains(" ↻ "), "the bare glyph button is gone");
+    let (x, y) = find(&terminal, "Check for updates");
+    let buffer = terminal.backend().buffer();
+    let sidebar_bg = app.colors.bg_sidebar;
+    assert_ne!(buffer[(x, y)].bg, sidebar_bg, "the button has its own fill");
+    assert_ne!(
+        buffer[(x - 1, y)].bg,
+        sidebar_bg,
+        "padding is part of the button"
+    );
+    ui_extensions::handle_click(&mut app, x + 3, y);
+    assert!(
+        app.notification_history
+            .iter()
+            .any(|(message, _, _)| message.contains("Checking extension marketplaces")),
+        "clicking the button starts a check"
+    );
+    // A narrow sidebar keeps a shorter button rather than dropping it.
+    let mut narrow = Terminal::new(TestBackend::new(26, 29)).unwrap();
+    sidebar(&mut app, &mut narrow);
+    assert!(text(&narrow).contains(" Check "), "{}", text(&narrow));
 }

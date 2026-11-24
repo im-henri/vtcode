@@ -44,7 +44,6 @@ fn control_style(
     colors: &crate::app_theme::ThemeColors,
     background: &str,
 ) -> Option<ratatui::style::Style> {
-    use ratatui::style::Color;
     let ui = &colors.ui;
     let surface = colors.bg_sidebar;
     let (primary, hovered) = match background {
@@ -55,22 +54,7 @@ fn control_style(
         "input" => return Some(ui.input_style(surface)),
         _ => return None,
     };
-    let mut style = ui.button_style(surface, primary, hovered, true);
-    let fill = style.bg.unwrap_or(surface);
-    let faint = match (fill, surface) {
-        (Color::Rgb(r, g, b), Color::Rgb(sr, sg, sb)) => {
-            r.abs_diff(sr).max(g.abs_diff(sg)).max(b.abs_diff(sb)) < 18
-        }
-        _ => fill == surface,
-    };
-    if faint && let Color::Rgb(r, g, b) = colors.fg_text {
-        let alpha = if hovered { 60 } else { 34 };
-        if let Some(tinted) = crate::theme_workbench::ColorLayer::rgba(r, g, b, alpha).over(surface)
-        {
-            let fg = style.fg.unwrap_or(colors.fg_text);
-            style = style.bg(tinted).fg(ui.readable_foreground(fg, tinted, 4.5));
-        }
-    }
+    let style = crate::ui_widgets::filled_button_style(colors, surface, primary, hovered, true);
     Some(style)
 }
 
