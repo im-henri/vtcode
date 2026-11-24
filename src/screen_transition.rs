@@ -3,12 +3,13 @@
 //! Startup: the first workbench frames rise into place from the bottom in
 //! staggered columns. Each column's leading edge is a bright, briefly
 //! scrambled glyph that settles into the real cell, so text and colours end
-//! exactly as the workbench paints them. Exit: a snapshot of the last frame
-//! drains downward column by column, accelerating and dimming as it falls.
+//! exactly as the workbench paints them. Exit: the text of the last frame
+//! drains downward column by column, accelerating and fading as it falls.
 //!
 //! Both effects transform finished frame buffers only; they never change what
-//! the workbench renders. Unrevealed space uses the terminal's own background
-//! so the workbench rises out of, and drains back into, the shell.
+//! the workbench renders. Backgrounds appear at once and stay in place: only
+//! text moves. Startup ticks reuse the last real frame, so the workbench
+//! renderer runs only when the workbench itself changes.
 use std::time::{Duration, Instant};
 
 use ratatui::{
@@ -56,12 +57,14 @@ pub(crate) struct State {
     exit: Option<Exit>,
 }
 
-#[derive(Clone, Copy)]
 struct Playback {
     /// Set by the first painted frame, so a slow first paint cannot eat it.
     started: Option<Instant>,
     last_frame: Option<Instant>,
     duration: Duration,
+    /// The last real workbench frame. Animation ticks transform this copy
+    /// instead of running the workbench renderer every frame.
+    target: Option<Buffer>,
 }
 
 struct Exit {
@@ -81,6 +84,7 @@ impl State {
             started: None,
             last_frame: None,
             duration: duration(self.settings.startup_ms),
+            target: None,
         });
     }
 
@@ -96,7 +100,7 @@ impl State {
 
     /// Time until the next startup frame is due.
     pub(crate) fn next_wait(&self, now: Instant) -> Option<Duration> {
-        let playback = self.startup?;
+        let playback = self.startup.as_ref()?;
         Some(playback.last_frame.map_or(Duration::ZERO, |last| {
             (last + FRAME).saturating_duration_since(now)
         }))
@@ -121,8 +125,36 @@ impl State {
         }
         let progress = elapsed.as_secs_f32() / playback.duration.as_secs_f32();
         let flicker = (elapsed.as_millis() / 60) as u64;
-        let target = buffer.clone();
-        startup_frame(&target, buffer, progress, flicker);
+        let target = playback.target.insert(buffer.clone());
+        startup_frame(target, buffer, progress, flicker);
+    }
+
+    /// Whether the next startup frame can reuse the cached workbench frame:
+    /// one is due, a real frame exists, and it is not the final exact frame.
+    pub(crate) fn cached_startup_ready(&self, now: Instant) -> bool {
+        self.startup_due(now)
+            && self.startup.as_ref().is_some_and(|playback| {
+                playback.target.is_some()
+                    && playback.started.is_some_and(|started| {
+                        now.saturating_duration_since(started) < playback.duration
+                    })
+            })
+    }
+
+    /// Paint a startup frame from the cached workbench frame. The caller
+    /// checks `cached_startup_ready` first; the final frame and any real
+    /// change in the workbench take the normal render path instead.
+    pub(crate) fn paint_startup_cached(&mut self, buffer: &mut Buffer, now: Instant) {
+        let Some(playback) = &mut self.startup else {
+            return;
+        };
+        let (Some(started), Some(target)) = (playback.started, &playback.target) else {
+            return;
+        };
+        playback.last_frame = Some(now);
+        let elapsed = now.saturating_duration_since(started);
+        let progress = (elapsed.as_secs_f32() / playback.duration.as_secs_f32()).min(1.0);
+        startup_frame(target, buffer, progress, (elapsed.as_millis() / 60) as u64);
     }
 
     /// Begin the exit effect. Returns false when it is disabled.
@@ -243,10 +275,6 @@ fn wide(cell: &Cell) -> bool {
     UnicodeWidthStr::width(cell.symbol()) > 1
 }
 
-fn empty(cell: &mut Cell) {
-    cell.reset();
-}
-
 fn ease_out(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(3)
 }
@@ -261,8 +289,14 @@ fn owner(target: &Buffer, x: u16, y: u16) -> u16 {
     }
 }
 
-/// Startup at `progress` (0..1): columns rise from the bottom; every cell is
-/// exact once its column's trail has passed, and the whole frame is exact
+/// Text cells whose glyph is drawn: everything else is background only.
+fn blank_text(cell: &mut Cell) {
+    cell.set_symbol(" ");
+}
+
+/// Startup at `progress` (0..1). Backgrounds are exact from the first frame;
+/// only text rises into place, column by column from the bottom. Every cell
+/// is exact once its column's trail has passed, and the whole frame is exact
 /// for the final `SETTLE` fraction.
 pub(crate) fn startup_frame(target: &Buffer, out: &mut Buffer, progress: f32, flicker: u64) {
     let area = target.area;
@@ -271,49 +305,38 @@ pub(crate) fn startup_frame(target: &Buffer, out: &mut Buffer, progress: f32, fl
         // Distance from the bottom row, in rows.
         let depth = f32::from(area.y + area.height - 1 - y);
         for x in area.x..area.x + area.width {
+            let (Some(source), Some(cell)) = (target.cell((x, y)), out.cell_mut((x, y))) else {
+                continue;
+            };
+            *cell = source.clone();
             let column = owner(target, x, y);
+            if column == x && !has_content(source) {
+                continue;
+            }
             let delay = unit(u64::from(column)) * STAGGER;
             let local = ((progress - delay) / (1.0 - SETTLE - delay)).clamp(0.0, 1.0);
             // A column's front climbs past the top plus its whole trail.
             let front = ease_out(local) * (height + TRAIL + 1.0);
             let age = front - depth;
-            let Some(source) = target.cell((x, y)) else {
-                continue;
-            };
-            let Some(cell) = out.cell_mut((x, y)) else {
-                continue;
-            };
             if age >= TRAIL {
-                *cell = source.clone();
                 continue;
             }
-            if age <= 0.0 {
-                empty(cell);
+            if age <= 0.0 || column != x {
+                // Not risen yet; a wide glyph's trailing cell stays blank
+                // until the glyph itself is exact.
+                blank_text(cell);
                 continue;
             }
             let settled = age / TRAIL;
-            *cell = source.clone();
-            cell.set_bg(mix(Color::Reset, source.bg, (settled * 2.0).min(1.0)));
-            if column != x {
-                // Hidden behind its wide glyph, or blank beside a narrow
-                // stand-in for it while scrambled.
-                cell.set_symbol(" ");
-                continue;
+            // The head scrambles; the trail resolves into the real glyph.
+            let scramble = age < 1.5
+                || (settled < 0.3
+                    && unit(hash(u64::from(x) ^ (u64::from(y) << 20)) ^ flicker) < 0.3);
+            if scramble {
+                cell.set_symbol(glyph(x, y, flicker));
             }
-            if has_content(source) {
-                // The head scrambles; the trail resolves into the real glyph.
-                let scramble = age < 1.5
-                    || (settled < 0.3
-                        && unit(hash(u64::from(x) ^ (u64::from(y) << 20)) ^ flicker) < 0.3);
-                if scramble {
-                    cell.set_symbol(glyph(x, y, flicker));
-                }
-                let head = (1.0 - settled).powi(2);
-                cell.set_fg(glow(source.fg, 0.75 * head));
-            } else if age < 1.0 {
-                // Blank space still shows the passing front, faintly.
-                cell.set_bg(glow(source.bg, 0.12));
-            }
+            let head = (1.0 - settled).powi(2);
+            cell.set_fg(glow(source.fg, 0.75 * head));
         }
     }
 }
@@ -326,41 +349,43 @@ fn exit_fall(x: u16, progress: f32, height: f32) -> (f32, u16) {
     (local, (local.powf(2.2) * (height + TRAIL)).floor() as u16)
 }
 
-/// Exit at `progress` (0..1): every column drains downward under gravity,
-/// staggered, dimming as it falls; at 1.0 the frame is empty.
+/// Exit at `progress` (0..1). Backgrounds stay exactly in place; the text of
+/// every column falls under gravity, staggered, fading into the background it
+/// passes over. At 1.0 only the backgrounds remain.
 pub(crate) fn exit_frame(snapshot: &Buffer, out: &mut Buffer, progress: f32, flicker: u64) {
     let area = snapshot.area;
     let height = f32::from(area.height);
     for x in area.x..area.x + area.width {
         let (local, shift) = exit_fall(x, progress, height);
         let next_shift = exit_fall(x + 1, progress, height).1;
+        let dim = local.powf(0.7);
         for y in area.y..area.y + area.height {
-            let Some(cell) = out.cell_mut((x, y)) else {
+            let (Some(place), Some(cell)) = (snapshot.cell((x, y)), out.cell_mut((x, y))) else {
                 continue;
             };
+            *cell = place.clone();
+            if shift == 0 && progress < 1.0 && !(wide(place) && next_shift != 0) {
+                continue;
+            }
+            blank_text(cell);
             let offset = y - area.y;
             if progress >= 1.0 || offset < shift {
-                empty(cell);
                 continue;
             }
             let source_y = y - shift;
             let Some(source) = snapshot.cell((x, source_y)) else {
-                empty(cell);
                 continue;
             };
-            *cell = source.clone();
-            if shift == 0 {
+            if !has_content(source) {
                 continue;
             }
-            let dim = local.powf(0.7);
-            cell.set_fg(mix(source.fg, source.bg, dim * 0.85));
-            if source.bg != Color::Reset {
-                cell.set_bg(mix(source.bg, Color::Reset, dim));
-            }
+            cell.set_symbol(source.symbol());
+            cell.modifier = source.modifier;
+            cell.set_fg(mix(source.fg, place.bg, dim * 0.85));
             // Wide glyphs cannot straddle columns that fall at different
             // speeds; and the top of each falling stream dissolves.
-            let edge = offset - shift < 2;
-            if (wide(source) && next_shift != shift) || (edge && has_content(source)) {
+            let edge = shift > 0 && offset - shift < 2;
+            if (wide(source) && next_shift != shift) || edge {
                 cell.set_symbol(glyph(x, source_y, flicker));
                 if edge {
                     cell.set_fg(glow(source.fg, 0.5 * (1.0 - dim)));

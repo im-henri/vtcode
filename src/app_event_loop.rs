@@ -5143,10 +5143,6 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         let background_due =
             windows.background_draw_wait(std::time::Instant::now()) == Some(Duration::ZERO);
         needs_redraw |= background_due;
-        // Startup animation frames post-process a complete workbench frame.
-        if app.screen_transition.startup_due(std::time::Instant::now()) {
-            needs_redraw = true;
-        }
         // The minimap overview zoom changes geometry, so its few transition
         // frames take the ordinary path; the hold between them is one timer.
         if app.terminal_has_focus
@@ -5177,6 +5173,19 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         // and selection hit tests must still see the last presented rows.
         if can_draw {
             needs_redraw |= app.advance_wheel_scroll(now);
+        }
+        // Startup animation ticks transform the cached workbench frame; the
+        // workbench renderer runs only for real changes and the final frame.
+        if !needs_redraw && can_draw && windows.is_main() && app.screen_transition.startup_due(now)
+        {
+            if app.screen_transition.cached_startup_ready(now) {
+                terminal.draw(|f| {
+                    app.screen_transition
+                        .paint_startup_cached(f.buffer_mut(), now)
+                })?;
+            } else {
+                needs_redraw = true;
+            }
         }
         let draw_changed = needs_redraw && can_draw;
         if draw_changed || (output_ready && !needs_redraw && animation_redraw) {

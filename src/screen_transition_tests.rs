@@ -16,20 +16,29 @@ fn workbench(width: u16, height: u16) -> Buffer {
     buffer
 }
 
+/// Cells showing any glyph: backgrounds never count.
 fn revealed(buffer: &Buffer) -> usize {
     buffer
         .content
         .iter()
-        .filter(|cell| cell.bg != Color::Reset)
+        .filter(|cell| !cell.symbol().trim().is_empty())
         .count()
 }
 
+/// Every frame keeps every background exactly where the workbench put it.
+fn assert_backgrounds_exact(out: &Buffer, target: &Buffer, progress: f32) {
+    for (index, (cell, place)) in out.content.iter().zip(&target.content).enumerate() {
+        assert_eq!(cell.bg, place.bg, "cell {index} at {progress}");
+    }
+}
+
 #[test]
-fn startup_begins_empty_rises_from_the_bottom_and_ends_exact() {
+fn startup_shows_backgrounds_at_once_and_text_rises_from_the_bottom() {
     let target = workbench(60, 20);
     let mut out = target.clone();
     startup_frame(&target, &mut out, 0.0, 0);
-    assert_eq!(revealed(&out), 0, "nothing is shown before the first front");
+    assert_eq!(revealed(&out), 0, "no text before the first front");
+    assert_backgrounds_exact(&out, &target, 0.0);
 
     let mut previous = 0;
     let mut saw_partial = false;
@@ -37,13 +46,18 @@ fn startup_begins_empty_rises_from_the_bottom_and_ends_exact() {
         let progress = step as f32 / 100.0;
         let mut out = target.clone();
         startup_frame(&target, &mut out, progress, step);
+        assert_backgrounds_exact(&out, &target, progress);
         let count = revealed(&out);
-        assert!(count >= previous, "reveal never retreats ({progress})");
+        assert!(count >= previous, "text never retreats ({progress})");
         previous = count;
-        if count > 0 && count < target.content.len() {
+        if count > 0 && count < revealed(&target) {
             saw_partial = true;
             // The bottom row leads the top row.
-            let row = |y: u16| (0..60).filter(|&x| out[(x, y)].bg != Color::Reset).count();
+            let row = |y: u16| {
+                (0..60)
+                    .filter(|&x| !out[(x, y)].symbol().trim().is_empty())
+                    .count()
+            };
             assert!(row(19) >= row(0), "rises from the bottom ({progress})");
         }
         if progress >= 1.0 - SETTLE {
@@ -54,30 +68,34 @@ fn startup_begins_empty_rises_from_the_bottom_and_ends_exact() {
 }
 
 #[test]
-fn exit_drains_down_and_ends_on_the_terminal_background() {
+fn exit_keeps_backgrounds_and_text_drains_down() {
     let snapshot = workbench(60, 20);
     let mut out = snapshot.clone();
     exit_frame(&snapshot, &mut out, 0.0, 0);
     assert_eq!(out, snapshot, "the first exit frame is the workbench");
 
-    let mut previous = snapshot.content.len();
+    let mut previous = revealed(&snapshot);
     for step in 1..=100 {
         let progress = step as f32 / 100.0;
         out = snapshot.clone();
         exit_frame(&snapshot, &mut out, progress, step);
+        assert_backgrounds_exact(&out, &snapshot, progress);
         let count = revealed(&out);
-        assert!(count <= previous, "content only drains ({progress})");
+        assert!(count <= previous, "text only drains ({progress})");
         previous = count;
-        // Content moves down, never up: each column's top row empties first.
+        // Text moves down, never up: a column's text never sits above the
+        // highest row it occupied in the snapshot.
         for x in 0..60 {
-            let column: Vec<_> = (0..20).map(|y| out[(x, y)].bg != Color::Reset).collect();
-            if let Some(first) = column.iter().position(|&shown| shown) {
-                assert!(column[first..].iter().all(|&shown| shown));
+            let top =
+                |buffer: &Buffer| (0..20).position(|y| !buffer[(x, y)].symbol().trim().is_empty());
+            if let (Some(now), Some(before)) = (top(&out), top(&snapshot)) {
+                assert!(now >= before, "column {x} at {progress}");
             }
         }
     }
     assert_eq!(previous, 0);
     assert!(out.content.iter().all(|cell| cell.symbol() == " "));
+    assert_backgrounds_exact(&out, &snapshot, 1.0);
 }
 
 #[test]
@@ -92,21 +110,17 @@ fn wide_glyphs_never_split_across_differently_timed_columns() {
         let progress = step as f32 / 60.0;
         let mut out = target.clone();
         startup_frame(&target, &mut out, progress, step);
-        let (lead, trail) = (&out[(x, 3)], &out[(x + 1, 3)]);
-        // The trailing cell is hidden with its glyph, and blank otherwise,
-        // so a narrow stand-in never shows stray text beside it.
-        if *lead == Cell::default() {
-            assert_eq!(*trail, Cell::default(), "{progress}");
-        }
-        assert_eq!(trail.symbol(), " ", "{progress}");
+        // The trailing cell stays blank, so a narrow stand-in for the wide
+        // glyph never shows stray text beside it.
+        assert_eq!(out[(x + 1, 3)].symbol(), " ", "{progress}");
         let mut out = target.clone();
         exit_frame(&target, &mut out, progress, step);
         for y in 0..12 {
             for x in 0..39 {
                 if UnicodeWidthStr::width(out[(x, y)].symbol()) > 1 {
-                    // A wide glyph is only drawn where it sits in the snapshot
-                    // or where both of its columns fall together.
-                    assert!(out[(x + 1, y)].symbol().trim().is_empty() || x + 1 == 39);
+                    // A wide glyph is only drawn where both of its columns
+                    // are in step, so the cell it covers holds no text.
+                    assert!(out[(x + 1, y)].symbol().trim().is_empty());
                 }
             }
         }
@@ -363,4 +377,46 @@ fn dump_screen_transition_frames() {
     }
     html.push_str("</body></html>");
     std::fs::write(path, html).unwrap();
+}
+
+#[test]
+fn startup_ticks_reuse_the_last_real_frame_until_the_final_frame() {
+    let mut state = State::default();
+    state.settings.startup = true;
+    state.settings.startup_ms = 300;
+    state.arm_startup();
+    let start = Instant::now();
+    assert!(state.startup_due(start));
+    assert!(
+        !state.cached_startup_ready(start),
+        "needs one real frame first"
+    );
+
+    let target = workbench(50, 16);
+    let mut first = target.clone();
+    state.paint_startup(&mut first, start);
+    let tick = start + FRAME;
+    assert!(state.cached_startup_ready(tick));
+    // A tick paints into whatever the terminal hands over, from the cache.
+    let mut cached = Buffer::empty(target.area);
+    state.paint_startup_cached(&mut cached, tick);
+    let mut expected = target.clone();
+    let elapsed = tick - start;
+    startup_frame(
+        &target,
+        &mut expected,
+        elapsed.as_secs_f32() / 0.3,
+        (elapsed.as_millis() / 60) as u64,
+    );
+    assert_eq!(cached, expected);
+    assert!(!state.startup_due(tick + Duration::from_millis(5)));
+
+    // The final frame takes the real render path, which ends the effect.
+    let end = start + Duration::from_millis(300);
+    assert!(state.startup_due(end));
+    assert!(!state.cached_startup_ready(end));
+    let mut last = target.clone();
+    state.paint_startup(&mut last, end);
+    assert_eq!(last, target);
+    assert!(!state.startup_active());
 }
