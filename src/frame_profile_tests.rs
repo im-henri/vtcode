@@ -1193,7 +1193,7 @@ fn remote_connection(
         stream: server.try_clone().unwrap(),
         bytes: traffic.down_bytes.clone(),
         messages: traffic.down_messages.clone(),
-        marker: b"VTCR31S:",
+        marker: b"VTCR32S:",
         delay: one_way,
     };
     std::thread::spawn(move || {
@@ -1203,7 +1203,7 @@ fn remote_connection(
         stream: stream.try_clone().unwrap(),
         bytes: traffic.up_bytes.clone(),
         messages: traffic.up_messages.clone(),
-        marker: b"VTCR31C:",
+        marker: b"VTCR32C:",
         delay: one_way,
     };
     crate::remote::client::Client::connect(stream, up).unwrap()

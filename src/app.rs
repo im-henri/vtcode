@@ -2583,7 +2583,7 @@ impl App {
                     }
                 }
                 crate::background::BackgroundResult::ExplorerHoverInfo { generation, info } => {
-                    if self.explorer_hover.finish(generation)
+                    if self.explorer_hover.finish(generation, info.is_some())
                         && let Some(info) = info
                     {
                         has_visual_changes |= self

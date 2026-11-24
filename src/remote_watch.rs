@@ -219,6 +219,50 @@ pub(super) fn inspect(
     }
     Ok(Reply::FileStates(states))
 }
+/// One settled Explorer hover. The line count uses the same byte bound as a
+/// local hover and never opens anything but a regular file.
+pub(super) fn hover_info(
+    root: &Path,
+    path: RemotePath,
+    count_lines: bool,
+    cancel: &crate::background::CancellationToken,
+) -> io::Result<Reply> {
+    let interrupted = || io::Error::from(io::ErrorKind::Interrupted);
+    if cancel.is_cancelled() {
+        return Err(interrupted());
+    }
+    let native = path.resolve(root)?;
+    let state = State::read(root, path)?;
+    let line_count = if count_lines
+        && state.exists
+        && !state.is_dir
+        && state
+            .size
+            .is_some_and(|size| size <= crate::background::HOVER_LINE_COUNT_MAX_BYTES)
+        && !cancel.is_cancelled()
+    {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            // A path retargeted to a FIFO must not strand a worker in open().
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        options
+            .open(&native)
+            .ok()
+            .filter(|file| file.metadata().is_ok_and(|metadata| metadata.is_file()))
+            .and_then(|file| crate::background::bounded_hover_line_count(file, cancel))
+    } else {
+        None
+    };
+    if cancel.is_cancelled() {
+        return Err(interrupted());
+    }
+    Ok(Reply::HoverInfo { state, line_count })
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(crate) struct Batch {
     pub root_uri: String,
@@ -610,6 +654,39 @@ impl workspace::Workspace {
             })
             .collect())
     }
+}
+
+impl workspace::Workspace {
+    /// Size, modification time and (optionally) line count for an Explorer
+    /// tooltip, read on the remote machine. `None` means the path is missing.
+    pub(crate) fn hover_info(
+        &self,
+        key: &Path,
+        count_lines: bool,
+        cancel: &crate::background::CancellationToken,
+    ) -> io::Result<Option<HoverStat>> {
+        let path = self.remote_path(key)?;
+        let Reply::HoverInfo { state, line_count } = self
+            .client
+            .call_cancellable(Command::HoverInfo { path, count_lines }, cancel)?
+        else {
+            return Err(io::Error::other("Invalid remote hover response"));
+        };
+        Ok(state.exists.then_some(HoverStat {
+            is_dir: state.is_dir,
+            size: state.size.unwrap_or(0),
+            modified: state.modified,
+            line_count,
+        }))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HoverStat {
+    pub is_dir: bool,
+    pub size: u64,
+    pub modified: Option<std::time::SystemTime>,
+    pub line_count: Option<usize>,
 }
 
 #[cfg(test)]

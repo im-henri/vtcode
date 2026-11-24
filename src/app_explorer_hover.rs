@@ -1,6 +1,8 @@
 //! Tooltip reads follow a settled pointer, never a sweep across the file tree.
 //! Keep at most one read queued/running and one latest candidate, including
 //! when an antivirus, shared disk or remote filesystem delays a metadata call.
+//! A remote workspace reads the same metadata on its node, one request per
+//! settled hover; a failed read is not retried until the pointer moves.
 use crate::{
     app::{App, SidebarView, TabKind},
     background::{BackgroundResult, CancellationToken, ExplorerHoverInfo},
@@ -28,6 +30,8 @@ pub(crate) struct State {
     target: Option<Target>,
     active: Option<Request>,
     generation: u64,
+    /// The hovered path whose read failed (e.g. remote error or missing file).
+    failed: Option<PathBuf>,
 }
 
 impl State {
@@ -39,7 +43,9 @@ impl State {
         }
     }
 
-    pub(crate) fn finish(&mut self, generation: u64) -> bool {
+    /// A current, uncancelled read that found nothing is not retried until
+    /// the pointer moves, so an unreachable path cannot spin the event loop.
+    pub(crate) fn finish(&mut self, generation: u64, found: bool) -> bool {
         if self
             .active
             .as_ref()
@@ -47,7 +53,14 @@ impl State {
         {
             return false;
         }
-        !self.active.take().unwrap().cancel.is_cancelled()
+        let active = self.active.take().unwrap();
+        if active.cancel.is_cancelled() {
+            return false;
+        }
+        if !found {
+            self.failed = Some(active.path);
+        }
+        true
     }
 }
 
@@ -79,6 +92,7 @@ pub(crate) fn next_wait(app: &App, now: Instant) -> Option<Duration> {
     let pending = app.explorer_hover.target.as_ref()?;
     if app.explorer_hover.active.is_some()
         || pending.path != path
+        || app.explorer_hover.failed.as_deref() == Some(path)
         || app.explorer_hover_info_cache.contains_key(path)
     {
         return None;
@@ -102,6 +116,7 @@ pub(crate) fn poll(app: &mut App, now: Instant) {
         });
         app.explorer_hover.invalidate(None);
         app.explorer_hover.target = candidate;
+        app.explorer_hover.failed = None;
     }
     if next_wait(app, now).is_some_and(|wait| wait.is_zero()) {
         let target = app.explorer_hover.target.as_ref().unwrap();
@@ -160,6 +175,11 @@ impl App {
         } else {
             None
         };
+        // Remote view keys are placeholders on this machine: ask the node.
+        let remote = self
+            .remote_workspace
+            .clone()
+            .filter(|workspace| workspace.remote_path(&path).is_ok());
         let sender = self.background.sender.clone();
         // Optional metadata must not occupy the sole foreground read worker
         // on a one-core machine. Reuse the serial maintenance worker, which
@@ -174,6 +194,24 @@ impl App {
             let info = (|| {
                 if cancel.is_cancelled() {
                     return None;
+                }
+                if let Some(remote) = remote {
+                    let count = count_lines && !is_dir;
+                    let stat = remote
+                        .hover_info(&path, count && snapshot.is_none(), &cancel)
+                        .ok()??;
+                    let cached_lines = snapshot
+                        .filter(|(modified, size, _)| {
+                            modified.is_some() && *modified == stat.modified && *size == stat.size
+                        })
+                        .map(|(_, _, lines)| lines);
+                    return (!cancel.is_cancelled()).then(|| ExplorerHoverInfo {
+                        path,
+                        is_dir: stat.is_dir,
+                        size: stat.size,
+                        modified: stat.modified,
+                        line_count: count.then(|| cached_lines.or(stat.line_count)).flatten(),
+                    });
                 }
                 let metadata = std::fs::metadata(&path).ok();
                 if cancel.is_cancelled() {

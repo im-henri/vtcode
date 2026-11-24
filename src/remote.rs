@@ -60,8 +60,8 @@ pub(crate) mod wire;
 #[path = "remote_workspace.rs"]
 pub(crate) mod workspace;
 
-// Amend drafts read and validate the exact branch and commit on the server.
-pub(crate) const VERSION: u32 = 31;
+// Explorer hover tooltips read size, mtime and line counts on the server.
+pub(crate) const VERSION: u32 = 32;
 /// Per-message/queue memory budget, not a file size limit. Larger documents use
 /// remote_text's bounded pipeline instead of a document-sized JSON allocation.
 pub(crate) const MAX_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;
@@ -399,6 +399,11 @@ pub(crate) enum Command {
     Inspect {
         paths: Vec<RemotePath>,
     },
+    /// Explorer tooltip metadata, plus a bounded line count read on the node.
+    HoverInfo {
+        path: RemotePath,
+        count_lines: bool,
+    },
     Close {
         path: RemotePath,
     },
@@ -714,6 +719,10 @@ pub(crate) enum Reply {
     CanonicalPaths(Vec<Option<RemotePath>>),
     Directory {
         identity: RemotePath,
+    },
+    HoverInfo {
+        state: watch::State,
+        line_count: Option<usize>,
     },
     Unchanged {
         identity: RemotePath,

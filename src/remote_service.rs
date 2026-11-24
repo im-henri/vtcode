@@ -461,6 +461,12 @@ impl Service {
                 paths,
                 &crate::background::CancellationToken::new(),
             ),
+            Command::HoverInfo { path, count_lines } => watch::hover_info(
+                &self.root,
+                path,
+                count_lines,
+                &crate::background::CancellationToken::new(),
+            ),
             Command::Filesystem(task) => super::fs::execute(
                 &self.root,
                 task,
@@ -1503,6 +1509,7 @@ fn serve_service(
                 | Command::FormatSource { .. }
                 | Command::Explorer(_)
                 | Command::Inspect { .. }
+                | Command::HoverInfo { .. }
                 | Command::OpenLocation { .. }
                 | Command::Open { .. }
                 | Command::Reload { .. }
@@ -1642,9 +1649,10 @@ fn serve_service(
             Command::GitNetwork { .. } => network.get()?,
             Command::Files { .. } => index.get()?,
             Command::Explorer(_) => explorer.get()?,
-            Command::FilesystemRoots | Command::Inspect { .. } | Command::SearchScope(_) => {
-                metadata.get()?
-            }
+            Command::FilesystemRoots
+            | Command::Inspect { .. }
+            | Command::HoverInfo { .. }
+            | Command::SearchScope(_) => metadata.get()?,
             Command::Search(_) => search.get()?,
             Command::Filesystem(_) | Command::Replace(_) => filesystem.get()?,
             Command::Format { .. } | Command::FormatSource { .. } => formatter.get()?,
@@ -2063,6 +2071,12 @@ fn actor_with_inbox(
                         Command::Inspect { paths } => {
                             watch::inspect(&service.root, paths, cancel.as_ref().unwrap())
                         }
+                        Command::HoverInfo { path, count_lines } => watch::hover_info(
+                            &service.root,
+                            path,
+                            count_lines,
+                            cancel.as_ref().unwrap(),
+                        ),
                         Command::Context(context::Command::Suggest {
                             generation,
                             query,

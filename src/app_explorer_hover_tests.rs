@@ -582,3 +582,58 @@ fn metadata_completion_repaints_current_tooltip_and_invalidated_reads_are_reject
     assert!(app.explorer_hover_info_cache.is_empty());
     assert!(app.explorer_hover.active.is_none());
 }
+
+#[test]
+fn remote_hover_reads_size_date_and_lines_on_the_node() {
+    use crate::remote::{RemotePath, tests::connection, workspace::Workspace};
+
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::create_dir(temp.path().join("dir")).unwrap();
+    std::fs::write(temp.path().join("dir/notes λ.txt"), "one\ntwo\nthree\n").unwrap();
+    let workspace = Workspace::new(connection(
+        temp.path(),
+        Default::default(),
+        Default::default(),
+    ));
+    let file = workspace.view_key(&RemotePath::new("dir/notes λ.txt".as_bytes().to_vec()).unwrap());
+    let dir = workspace.view_key(&RemotePath::new(b"dir".to_vec()).unwrap());
+    let missing = workspace.view_key(&RemotePath::new(b"gone.txt".to_vec()).unwrap());
+    assert!(!file.exists(), "a remote view key is not a local file");
+    let mut app = App::test_new();
+    app.remote_workspace = Some(workspace);
+
+    app.request_explorer_hover_info(file.clone(), false, true);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.explorer_hover_info_cache.contains_key(&file)
+    });
+    let info = &app.explorer_hover_info_cache[&file];
+    assert_eq!(
+        (info.is_dir, info.size, info.line_count),
+        (false, 14, Some(4))
+    );
+    assert!(info.modified.is_some());
+
+    app.request_explorer_hover_info(dir.clone(), true, true);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.explorer_hover_info_cache.contains_key(&dir)
+    });
+    let info = &app.explorer_hover_info_cache[&dir];
+    assert!(info.is_dir && info.line_count.is_none() && info.modified.is_some());
+
+    // A missing path completes without a tooltip and is not re-requested
+    // while the pointer stays on it.
+    app.explorer_hover.target = Some(Target {
+        path: missing.clone(),
+        is_dir: false,
+        since: Instant::now() - QUIET,
+    });
+    app.request_explorer_hover_info(missing.clone(), false, true);
+    app.wait_for_background(Duration::from_secs(5), |app| {
+        app.explorer_hover.active.is_none()
+    });
+    assert!(!app.explorer_hover_info_cache.contains_key(&missing));
+    assert_eq!(
+        app.explorer_hover.failed.as_deref(),
+        Some(missing.as_path())
+    );
+}
