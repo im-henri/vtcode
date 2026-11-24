@@ -37,6 +37,12 @@ pub(crate) fn handle_mouse_dialogs(
         }
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => app.folder_browser_click(col, row),
+            MouseEventKind::Drag(MouseButton::Left) => {
+                app.drag_folder_browser_column(col);
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                app.finish_folder_browser_column_drag();
+            }
             MouseEventKind::ScrollUp => app.scroll_folder_browser(col, row, true),
             MouseEventKind::ScrollDown => app.scroll_folder_browser(col, row, false),
             _ => {}

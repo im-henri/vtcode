@@ -62,6 +62,106 @@ pub(crate) enum Action {
     Close,
 }
 
+/// A column of the file list. Name grows to fill what the others leave.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Column {
+    Name,
+    Modified,
+    Type,
+    Size,
+}
+
+impl Column {
+    fn min_width(self) -> u16 {
+        if self == Self::Name { 8 } else { 6 }
+    }
+}
+
+/// Widths the user dragged the column dividers to. `name` stays `None` until
+/// a divider is dragged, so the Name column fills the list by default.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ColumnWidths {
+    pub name: Option<u16>,
+    pub modified: u16,
+    pub kind: u16,
+    pub size: u16,
+}
+
+impl Default for ColumnWidths {
+    fn default() -> Self {
+        Self {
+            name: None,
+            modified: 20,
+            kind: 14,
+            size: 11,
+        }
+    }
+}
+
+impl ColumnWidths {
+    fn get(&self, column: Column) -> u16 {
+        match column {
+            Column::Name => self.name.unwrap_or(0),
+            Column::Modified => self.modified,
+            Column::Type => self.kind,
+            Column::Size => self.size,
+        }
+    }
+
+    fn set(&mut self, column: Column, width: u16) {
+        let width = width.max(column.min_width());
+        match column {
+            Column::Name => self.name = Some(width),
+            Column::Modified => self.modified = width,
+            Column::Type => self.kind = width,
+            Column::Size => self.size = width,
+        }
+    }
+
+    /// Visible columns as `(column, x offset, width)` within a list `width`
+    /// cells wide. Narrow lists drop Type, then Size, then Modified; columns
+    /// past the right edge are clipped.
+    pub(crate) fn layout(&self, width: u16, files: bool) -> Vec<(Column, u16, u16)> {
+        let mut columns = vec![Column::Name];
+        if width >= 54 {
+            columns.push(Column::Modified);
+        }
+        if width >= 72 {
+            columns.push(Column::Type);
+        }
+        if files && width >= 64 {
+            columns.push(Column::Size);
+        }
+        let others: u16 = columns[1..].iter().map(|&c| self.get(c)).sum();
+        let auto = width
+            .saturating_sub(if columns.len() > 1 { others } else { 1 })
+            .max(Column::Name.min_width());
+        let mut x = 0;
+        let mut result = Vec::with_capacity(columns.len());
+        for column in columns {
+            let wanted = match column {
+                Column::Name => self.name.unwrap_or(auto),
+                _ => self.get(column),
+            };
+            let visible = wanted.min(width.saturating_sub(x));
+            if visible == 0 {
+                break;
+            }
+            result.push((column, x, visible));
+            x += visible;
+        }
+        result
+    }
+}
+
+/// An in-progress drag of the divider on a column's right edge.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ColumnDrag {
+    pub column: Column,
+    pub start_col: u16,
+    pub start_width: u16,
+}
+
 struct DeviceDraft {
     path: PathBuf,
     address: (String, usize, Option<usize>),
@@ -95,7 +195,13 @@ pub(crate) struct FolderBrowser {
     pub location_scroll: usize,
     pub location_area: Rect,
     pub modified: HashMap<PathBuf, SystemTime>,
+    pub sizes: HashMap<PathBuf, u64>,
     pub directory_count: usize,
+    pub columns: ColumnWidths,
+    /// Header dividers drawn last frame: `(x, y, column)`, the cell just
+    /// right of the column it resizes.
+    pub column_dividers: Vec<(u16, u16, Column)>,
+    pub column_drag: Option<ColumnDrag>,
     pub controls: Vec<(Rect, Action)>,
     pub last_click: Option<(usize, Instant)>,
     use_selection: bool,
@@ -255,6 +361,7 @@ impl App {
         self.folder_browser = FolderBrowser {
             mode,
             generation,
+            columns: self.folder_browser.columns,
             ..FolderBrowser::default()
         };
         self.change_dir_active = true;
@@ -303,6 +410,7 @@ impl App {
         self.folder_browser.error = None;
         self.folder_browser.last_click = None;
         self.folder_browser.modified.clear();
+        self.folder_browser.sizes.clear();
         self.folder_browser.directory_count = 0;
         self.folder_browser_entries.clear();
         self.folder_browser_selected = 0;
@@ -364,6 +472,7 @@ impl App {
                             entries,
                             directory_count,
                             modified: HashMap::new(),
+                            sizes: HashMap::new(),
                             locations,
                             error: result.err().map(|error| error.to_string()),
                         });
@@ -391,6 +500,7 @@ impl App {
                             directory_count: entries.len(),
                             entries,
                             modified: HashMap::new(),
+                            sizes: HashMap::new(),
                             locations,
                             error: roots
                                 .err()
@@ -401,6 +511,7 @@ impl App {
                 let mut dirs = Vec::new();
                 let mut files = Vec::new();
                 let mut modified = HashMap::new();
+                let mut sizes = HashMap::new();
                 let mut error = None;
                 match std::fs::read_dir(&path) {
                     Ok(entries) => {
@@ -446,6 +557,7 @@ impl App {
                             if metadata.is_dir() {
                                 dirs.push(entry_path);
                             } else {
+                                sizes.insert(entry_path.clone(), metadata.len());
                                 files.push(entry_path);
                             }
                         }
@@ -468,6 +580,7 @@ impl App {
                     entries: dirs,
                     directory_count,
                     modified,
+                    sizes,
                     locations: if cached_locations.is_empty() {
                         locations(workspace)
                     } else {
@@ -1232,6 +1345,10 @@ impl App {
     }
 
     pub(crate) fn folder_browser_click(&mut self, col: u16, row: u16) {
+        if let Some(column) = self.folder_browser_divider_at(col, row) {
+            self.start_folder_browser_column_drag(column, col);
+            return;
+        }
         if let Some((_, action)) = self
             .folder_browser
             .controls
@@ -1279,6 +1396,62 @@ impl App {
                 self.folder_browser.focus = Focus::List;
             }
         }
+    }
+
+    /// The column whose right-edge divider is at this header cell. The cell
+    /// on either side of a boundary grabs it, so the target is two cells wide.
+    pub(crate) fn folder_browser_divider_at(&self, col: u16, row: u16) -> Option<Column> {
+        let dividers = &self.folder_browser.column_dividers;
+        dividers
+            .iter()
+            .find(|&&(x, y, _)| y == row && x == col)
+            .or_else(|| {
+                dividers
+                    .iter()
+                    .find(|&&(x, y, _)| y == row && x == col.saturating_add(1))
+            })
+            .map(|&(_, _, column)| column)
+    }
+
+    fn start_folder_browser_column_drag(&mut self, column: Column, col: u16) {
+        let width = self.folder_browser_area.map_or(0, |area| area.width);
+        let files = self.folder_browser.mode == Mode::OpenFile;
+        let columns = &mut self.folder_browser.columns;
+        // Freeze the auto-sized Name column so dividers right of it follow
+        // the pointer instead of being pushed back by Name shrinking.
+        let layout = columns.layout(width, files);
+        if columns.name.is_none() {
+            columns.name = layout
+                .iter()
+                .find(|(c, ..)| *c == Column::Name)
+                .map(|&(_, _, w)| w);
+        }
+        let start_width = layout
+            .iter()
+            .find(|(c, ..)| *c == column)
+            .map_or(columns.get(column), |&(_, _, w)| w);
+        self.folder_browser.column_drag = Some(ColumnDrag {
+            column,
+            start_col: col,
+            start_width,
+        });
+        self.folder_browser.last_click = None;
+    }
+
+    /// Resize the dragged column. Returns whether a drag is in progress.
+    pub(crate) fn drag_folder_browser_column(&mut self, col: u16) -> bool {
+        let Some(drag) = self.folder_browser.column_drag else {
+            return false;
+        };
+        let max = self.folder_browser_area.map_or(u16::MAX, |area| area.width);
+        let width = (i32::from(drag.start_width) + i32::from(col) - i32::from(drag.start_col))
+            .clamp(0, i32::from(max)) as u16;
+        self.folder_browser.columns.set(drag.column, width);
+        true
+    }
+
+    pub(crate) fn finish_folder_browser_column_drag(&mut self) -> bool {
+        self.folder_browser.column_drag.take().is_some()
     }
 
     pub(crate) fn hover_folder_browser_button(&mut self, col: u16, row: u16) {
@@ -1425,6 +1598,7 @@ mod tests {
                 entries: vec![root.path().join("stale")],
                 directory_count: 1,
                 modified: HashMap::new(),
+                sizes: HashMap::new(),
                 locations: Vec::new(),
                 error: None,
             })
@@ -1632,6 +1806,7 @@ mod tests {
                 entries: vec![root.path().join("stale")],
                 directory_count: 1,
                 modified: HashMap::new(),
+                sizes: HashMap::new(),
                 locations: Vec::new(),
                 error: None,
             })

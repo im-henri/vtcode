@@ -538,6 +538,8 @@ pub enum BackgroundResult {
         entries: Vec<PathBuf>,
         directory_count: usize,
         modified: std::collections::HashMap<PathBuf, std::time::SystemTime>,
+        /// File sizes in bytes; folders and remote entries have none.
+        sizes: std::collections::HashMap<PathBuf, u64>,
         locations: Vec<(String, PathBuf)>,
         error: Option<String>,
     },

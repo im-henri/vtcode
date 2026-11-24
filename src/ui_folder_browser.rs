@@ -9,7 +9,9 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
-use crate::folder_browser::{Action, Focus, Mode};
+use std::path::{Path, PathBuf};
+
+use crate::folder_browser::{Action, Column, Focus, Mode};
 use crate::text_input::TextInputId;
 use crate::ui_pickers::truncate_to_width;
 use crate::ui_widgets::InputField;
@@ -602,67 +604,74 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
     }
 
     draw_sidebar(f, app, layout.sidebar);
-    let details = layout.list.width >= 54;
-    let type_column = layout.list.width >= 72;
-    let name_width = layout
-        .list
-        .width
-        .saturating_sub(if details { 20 } else { 1 })
-        .saturating_sub(if type_column { 14 } else { 0 });
-    let name_header = Rect::new(
-        layout.header.x,
-        layout.header.y,
-        name_width,
-        layout.header.height,
-    );
-    control(
-        f,
-        app,
-        name_header,
-        if !app.folder_browser.sort_modified && app.folder_browser.descending {
-            "  Name ↓"
-        } else if !app.folder_browser.sort_modified {
-            "  Name ↑"
-        } else {
-            "  Name"
-        },
-        Action::SortName,
-        true,
-    );
-    if details {
-        control(
-            f,
-            app,
-            Rect::new(
-                name_header.right(),
-                layout.header.y,
-                20,
-                layout.header.height,
-            ),
-            if app.folder_browser.sort_modified && app.folder_browser.descending {
-                " Modified ↓"
-            } else if app.folder_browser.sort_modified {
-                " Modified ↑"
-            } else {
-                " Modified"
-            },
-            Action::SortModified,
-            true,
+    let columns = app.folder_browser.columns.layout(layout.list.width, files);
+    let name_width = columns.first().map_or(0, |&(_, _, width)| width);
+    let header_style = Style::default()
+        .fg(app.colors.ui.description_color(bg))
+        .bg(bg);
+    app.folder_browser.column_dividers.clear();
+    for &(column, x, width) in &columns {
+        let cell = Rect::new(
+            layout.header.x + x,
+            layout.header.y,
+            width,
+            layout.header.height,
         );
-    }
-    if type_column {
-        label(
-            f,
-            Rect::new(
-                layout.header.right().saturating_sub(14),
-                layout.header.y,
-                14,
-                layout.header.height,
+        let sorted_by_name = !app.folder_browser.sort_modified;
+        match column {
+            Column::Name => control(
+                f,
+                app,
+                cell,
+                match (sorted_by_name, app.folder_browser.descending) {
+                    (true, true) => "  Name ↓",
+                    (true, false) => "  Name ↑",
+                    _ => "  Name",
+                },
+                Action::SortName,
+                true,
             ),
-            " Type",
-            Style::default()
-                .fg(app.colors.ui.description_color(bg))
-                .bg(bg),
+            Column::Modified => control(
+                f,
+                app,
+                cell,
+                match (sorted_by_name, app.folder_browser.descending) {
+                    (false, true) => " Modified ↓",
+                    (false, false) => " Modified ↑",
+                    _ => " Modified",
+                },
+                Action::SortModified,
+                true,
+            ),
+            Column::Type => label(f, cell, " Type", header_style),
+            Column::Size => label(f, cell, " Size", header_style),
+        }
+        // A divider sits just right of each column; dragging it resizes
+        // that column. The list's right edge has no divider to draw on.
+        let divider = cell.right();
+        if divider < layout.header.right() {
+            app.folder_browser
+                .column_dividers
+                .push((divider, layout.header.y, column));
+        }
+    }
+    // Drawn after every header so the next column's label cannot cover them.
+    for (divider, y, column) in app.folder_browser.column_dividers.clone() {
+        let dragging = app
+            .folder_browser
+            .column_drag
+            .is_some_and(|drag| drag.column == column);
+        let hovered = app.folder_browser_divider_at(app.mouse_col, app.mouse_row) == Some(column);
+        f.render_widget(
+            Paragraph::new("│").style(if dragging || hovered {
+                Style::default()
+                    .fg(app.colors.ui.widget_text_color(bg))
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                header_style
+            }),
+            Rect::new(divider, y, 1, 1),
         );
     }
 
@@ -765,39 +774,51 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
             .style(style),
             Rect::new(row.x, row.y, name_width, 1),
         );
-        if details {
-            let modified = path
-                .and_then(|p| app.folder_browser.modified.get(p))
-                .map(|time| {
-                    let then = time
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs() as i64;
-                    App::format_time_ago(now, then)
-                })
-                .unwrap_or_else(|| "—".into());
-            label(
-                f,
-                Rect::new(row.x + name_width, row.y, 20, 1),
-                format!(" {modified}"),
-                Style::default().fg(description).bg(bg),
-            );
-        }
-        if type_column {
-            label(
-                f,
-                Rect::new(row.right().saturating_sub(14), row.y, 13, 1),
-                if is_parent {
-                    ""
-                } else if app.folder_browser_is_computer() {
-                    " File system"
-                } else if is_file {
-                    " File"
-                } else {
-                    " File folder"
-                },
-                Style::default().fg(description).bg(bg),
-            );
+        for &(column, x, width) in &columns[1..] {
+            let text = if is_parent {
+                String::new()
+            } else {
+                match column {
+                    Column::Name => unreachable!("Name is always the first column"),
+                    Column::Modified => path
+                        .and_then(|p| app.folder_browser.modified.get(p))
+                        .map(|time| {
+                            let then = time
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs() as i64;
+                            App::format_time_ago(now, then)
+                        })
+                        .unwrap_or_else(|| "—".into()),
+                    Column::Type => entry_type(
+                        path.map(PathBuf::as_path),
+                        is_file,
+                        app.folder_browser_is_computer(),
+                    ),
+                    Column::Size => path
+                        .filter(|_| is_file)
+                        .and_then(|p| app.folder_browser.sizes.get(p))
+                        .map_or_else(String::new, |&bytes| format_size(bytes)),
+                }
+            };
+            let cell = Rect::new(row.x + x, row.y, width, 1);
+            if column == Column::Size {
+                // Right-align sizes so their units line up, like Explorer.
+                let inner = width.saturating_sub(2) as usize;
+                label(
+                    f,
+                    cell,
+                    format!(" {:>inner$} ", ellipsize(&text, inner)),
+                    Style::default().fg(description).bg(bg),
+                );
+            } else {
+                label(
+                    f,
+                    cell,
+                    format!(" {}", ellipsize(&text, width.saturating_sub(2) as usize)),
+                    Style::default().fg(description).bg(bg),
+                );
+            }
         }
     }
     if app.folder_browser_loading || indices.is_empty() {
@@ -1030,6 +1051,40 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App) {
         app.folder_browser_buttons
             .push((rect.x, rect.y, rect.width));
         x = x.saturating_add(width + 2);
+    }
+}
+
+/// What the Type column says: the file's extension (".rs"), or what the
+/// entry is when it has none.
+fn entry_type(path: Option<&Path>, is_file: bool, computer: bool) -> String {
+    if computer {
+        return "File system".into();
+    }
+    if !is_file {
+        return "File folder".into();
+    }
+    path.and_then(Path::extension)
+        .map(|extension| format!(".{}", extension.to_string_lossy().to_lowercase()))
+        .unwrap_or_else(|| "File".into())
+}
+
+/// A file size the way Explorer writes it: whole bytes below 1 KB, then one
+/// decimal place until the number reaches 100 of a unit.
+fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["KB", "MB", "GB", "TB", "PB"];
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1024.0;
+    let mut unit = 0;
+    while value >= 1024.0 && unit + 1 < UNITS.len() {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if value < 100.0 {
+        format!("{value:.1} {}", UNITS[unit])
+    } else {
+        format!("{value:.0} {}", UNITS[unit])
     }
 }
 
@@ -1521,6 +1576,157 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn file_fixture() -> App {
+        let mut app = fixture();
+        app.folder_browser.mode = Mode::OpenFile;
+        app.folder_browser.directory_count = app.folder_browser_entries.len();
+        for (name, size) in [
+            ("main.RS", 2_560u64),
+            ("notes", 12),
+            ("video.mp4", 734_003_200),
+        ] {
+            let path = app.folder_browser_path.join(name);
+            app.folder_browser.sizes.insert(path.clone(), size);
+            app.folder_browser_entries.push(path);
+        }
+        app.filter_folder_browser();
+        app
+    }
+
+    fn row_text(terminal: &Terminal<TestBackend>, needle: &str) -> String {
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        buffer
+            .content
+            .chunks(width)
+            .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+            .find(|row| row.contains(needle))
+            .unwrap_or_else(|| panic!("no row contains {needle:?}"))
+    }
+
+    #[test]
+    fn open_file_lists_extensions_and_sizes() {
+        assert_eq!(super::format_size(12), "12 B");
+        assert_eq!(super::format_size(2_560), "2.5 KB");
+        assert_eq!(super::format_size(734_003_200), "700 MB");
+        let mut app = file_fixture();
+        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        let text = render_text(&terminal);
+        assert!(text.contains("Size") && text.contains("Type"));
+        let rust = row_text(&terminal, "main.RS");
+        assert!(rust.contains(".rs") && rust.contains("2.5 KB"), "{rust}");
+        let plain = row_text(&terminal, "notes");
+        assert!(plain.contains(" File ") && plain.contains("12 B"), "{plain}");
+        assert!(row_text(&terminal, "video.mp4").contains("700 MB"));
+        let folder = row_text(&terminal, "Console Game");
+        assert!(folder.contains("File folder") && !folder.contains(" B "));
+
+        // Open Folder lists no files, so it has no Size column.
+        let mut app = fixture();
+        terminal
+            .draw(|frame| crate::ui::draw(frame, &mut app))
+            .unwrap();
+        assert!(!render_text(&terminal).contains("Size"));
+    }
+
+    #[test]
+    fn dragging_a_header_divider_resizes_its_column() {
+        let mut app = file_fixture();
+        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        let draw = |app: &mut App, terminal: &mut Terminal<TestBackend>| {
+            terminal.draw(|frame| crate::ui::draw(frame, app)).unwrap();
+        };
+        draw(&mut app, &mut terminal);
+        let widths = |app: &App| {
+            let list = app.folder_browser_area.unwrap();
+            app.folder_browser
+                .columns
+                .layout(list.width, true)
+                .into_iter()
+                .map(|(column, _, width)| (column, width))
+                .collect::<Vec<_>>()
+        };
+        let before = widths(&app);
+        let &(x, y, _) = app
+            .folder_browser
+            .column_dividers
+            .iter()
+            .find(|(_, _, column)| *column == Column::Name)
+            .unwrap();
+        // Name: drag its divider 10 cells left; the other columns keep widths.
+        app.folder_browser_click(x, y);
+        assert!(app.folder_browser.column_drag.is_some());
+        assert!(app.drag_folder_browser_column(x - 10));
+        assert!(app.finish_folder_browser_column_drag());
+        let after = widths(&app);
+        assert_eq!(after[0].1, before[0].1 - 10);
+        assert_eq!(after[1..], before[1..]);
+        // The divider moved with the pointer.
+        draw(&mut app, &mut terminal);
+        assert!(
+            app.folder_browser
+                .column_dividers
+                .contains(&(x - 10, y, Column::Name))
+        );
+
+        // Modified: drag wider, from the cell just left of its divider.
+        let &(x, y, _) = app
+            .folder_browser
+            .column_dividers
+            .iter()
+            .find(|(_, _, column)| *column == Column::Modified)
+            .unwrap();
+        app.folder_browser_click(x - 1, y);
+        app.drag_folder_browser_column(x + 5);
+        app.finish_folder_browser_column_drag();
+        assert_eq!(app.folder_browser.columns.modified, before[1].1 + 6);
+        // Never below the minimum, and a click on the divider sorts nothing.
+        app.folder_browser_click(x, y);
+        app.drag_folder_browser_column(0);
+        app.finish_folder_browser_column_drag();
+        assert_eq!(app.folder_browser.columns.modified, 6);
+        assert!(!app.folder_browser.sort_modified);
+
+        // Widths survive reopening the dialog.
+        let columns = app.folder_browser.columns;
+        app.open_path_browser(Mode::OpenFolder);
+        assert_eq!(app.folder_browser.columns, columns);
+    }
+
+    #[test]
+    fn mouse_side_buttons_walk_folder_history() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mut app = fixture();
+        let start = app.folder_browser_path.clone();
+        let child = start.join("docs");
+        app.navigate_folder_browser(child.clone());
+        let press = |app: &mut App, button| {
+            for kind in [MouseEventKind::Down(button), MouseEventKind::Up(button)] {
+                assert!(crate::mouse::handle_navigation_mouse(
+                    app,
+                    MouseEvent {
+                        kind,
+                        column: 0,
+                        row: 0,
+                        modifiers: crossterm::event::KeyModifiers::NONE,
+                    },
+                ));
+            }
+        };
+        let normalized = |path: &PathBuf| crate::folder_browser::normalized_path(path);
+        press(&mut app, MouseButton::Back);
+        assert_eq!(app.folder_browser_path, normalized(&start));
+        press(&mut app, MouseButton::Forward);
+        assert_eq!(app.folder_browser_path, normalized(&child));
+        // The dialog's history works even when editor navigation is off.
+        app.mouse_back_forward_to_navigate = false;
+        press(&mut app, MouseButton::Back);
+        assert_eq!(app.folder_browser_path, normalized(&start));
     }
 
     #[test]

@@ -179,12 +179,25 @@ fn handle_mouse_workbench(app: &mut App, mouse: event::MouseEvent) {
 /// Side buttons navigate the workbench unless a child requests mouse input.
 /// Consume releases and drags too, so one gesture navigates exactly once.
 pub(crate) fn handle_navigation_mouse(app: &mut App, mouse: event::MouseEvent) -> bool {
-    if crate::ui_modal::active(app).is_none() && app.terminal_wants_mouse(mouse) {
+    if !app.change_dir_active
+        && crate::ui_modal::active(app).is_none()
+        && app.terminal_wants_mouse(mouse)
+    {
         return false;
     }
     match mouse.kind {
         MouseEventKind::Down(button @ (MouseButton::Back | MouseButton::Forward)) => {
-            if app.mouse_back_forward_to_navigate && crate::ui_modal::active(app).is_none() {
+            // The Open File/Folder dialog has its own history. A save error
+            // or recovery prompt over it still swallows the button.
+            if app.change_dir_active {
+                if crate::ui_modal::active(app).is_none() {
+                    app.folder_browser_action(if button == MouseButton::Back {
+                        crate::folder_browser::Action::Back
+                    } else {
+                        crate::folder_browser::Action::Forward
+                    });
+                }
+            } else if app.mouse_back_forward_to_navigate && crate::ui_modal::active(app).is_none() {
                 if button == MouseButton::Back {
                     app.navigate_back();
                 } else {

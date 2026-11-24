@@ -4958,7 +4958,7 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
             selection_drag = None;
         }
         #[cfg(windows)]
-        main_events.poll_native_mouse(app.mouse_back_forward_to_navigate);
+        main_events.poll_native_mouse(app.mouse_back_forward_to_navigate || app.change_dir_active);
         let previous_window = windows.active();
         if windows.poll_drag(app, &main_events, false) | windows.poll(app) {
             needs_redraw = true;

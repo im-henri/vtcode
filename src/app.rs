@@ -2611,6 +2611,7 @@ impl App {
                     entries,
                     directory_count,
                     modified,
+                    sizes,
                     locations,
                     error,
                 } => {
@@ -2620,6 +2621,7 @@ impl App {
                         self.folder_browser_entries = entries;
                         self.folder_browser.directory_count = directory_count;
                         self.folder_browser.modified = modified;
+                        self.folder_browser.sizes = sizes;
                         self.folder_browser.locations = locations;
                         if self.folder_browser.error.is_none() {
                             self.folder_browser.error = error;
