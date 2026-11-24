@@ -109,14 +109,15 @@ fn zoom_steps_shrink_monotonically_and_always_contain_the_viewport() {
                     let mut previous = usize::MAX;
                     for step in 0..=20 {
                         let zoom = step as f32 / 20.0;
-                        let window = zoomed_minimap_window(total, scroll, visible, height, zoom);
+                        let window =
+                            zoomed_minimap_window(total, false, scroll, visible, height, zoom);
                         assert!(window.len() <= previous, "{total} {scroll} {zoom}");
                         assert!(window.start <= scroll && window.end >= scroll + visible);
                         assert!(window.len() >= detail.len().min(total));
                         previous = window.len();
                     }
                     assert_eq!(
-                        zoomed_minimap_window(total, scroll, visible, height, 1.0),
+                        zoomed_minimap_window(total, false, scroll, visible, height, 1.0),
                         detail
                     );
                 }

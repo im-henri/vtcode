@@ -515,7 +515,9 @@ fn dragging_minimap_and_scrollbar_uses_the_visible_scroll_range() {
                 KeyModifiers::NONE,
             );
             crate::mouse_drag::handle_left_drag(&mut app, 95, 13, 95, 2, KeyModifiers::NONE);
-            assert_eq!(app.editor().unwrap().scroll_offset, last_top);
+            // The minimap shows blank space past the end only once scrolled
+            // into it, so dragging its slider stops with the end in view.
+            assert_eq!(app.editor().unwrap().scroll_offset, 4992);
             crate::mouse_drag::handle_left_drag(&mut app, 95, 2, 95, 13, KeyModifiers::NONE);
             assert_eq!(app.editor().unwrap().scroll_offset, 0);
             crate::mouse_drag::handle_left_up(&mut app, 95, 2, KeyModifiers::NONE);

@@ -143,7 +143,13 @@ fn viewport_stays_inside_the_preview_at_file_edges_and_small_heights() {
                     for scroll in 0..=max_scroll {
                         let layout = MinimapLayout::new(total, scroll, visible, height, past_end);
                         assert!(layout.window.start <= scroll);
-                        assert!(layout.window.end >= scroll + layout.visible);
+                        // Every document line in view is mapped. Blank lines
+                        // below EOF may run past the window, but then the
+                        // slider still reaches the last row.
+                        assert!(layout.window.end >= total.min(scroll + layout.visible));
+                        if layout.window.end < scroll + layout.visible {
+                            assert_eq!(layout.view_end, height);
+                        }
                         assert!(layout.window.start >= previous);
                         assert!(layout.view_start < layout.view_end);
                         assert!(layout.view_end <= height);

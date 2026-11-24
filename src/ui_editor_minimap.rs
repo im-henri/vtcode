@@ -397,18 +397,63 @@ fn minimap_window(
     }
 }
 
+/// The detail window, revealing blank space below the end of the document
+/// only once the viewport extends into it. Past the end the window follows
+/// the viewport's top band, as it does inside the document, so the slider
+/// rests at a fixed row while blank space scrolls in beneath the text. The
+/// window always covers the whole document end (`base.end`).
+fn detail_window(
+    lines: usize,
+    scroll_past_end: bool,
+    scroll: usize,
+    visible_lines: usize,
+    height: usize,
+) -> MinimapWindow {
+    let visible = visible_lines.max(1);
+    let end_scroll = lines.saturating_sub(visible);
+    let base = minimap_window(lines, scroll.min(end_scroll), visible, height);
+    if !scroll_past_end || lines == 0 || height == 0 || scroll + visible <= base.end {
+        return base;
+    }
+    let scale = visible.div_ceil(height.saturating_sub(1).max(1)).max(4);
+    let len = height.max(2).saturating_mul(scale);
+    // A document that fits whole gains just the blank lines now in view.
+    let shown = scroll.saturating_add(visible);
+    if base.start == 0 && base.end == lines && shown <= len {
+        return MinimapWindow {
+            start: 0,
+            end: shown,
+        };
+    }
+    // Keep the slider on the row it reached at the end of the document. Its
+    // final band may then extend up to `scale - 1` lines beyond the window,
+    // but only into blank space below EOF, and the slider still reaches the
+    // last row; demanding those lines too would make it hop between rows.
+    let bands_above = len.saturating_sub(visible) / scale;
+    let start = (scroll / scale)
+        .saturating_sub(bands_above)
+        .saturating_mul(scale)
+        .max(base.start);
+    MinimapWindow {
+        start,
+        end: start.saturating_add(len).max(base.end),
+    }
+}
+
 /// Blend the whole-document overview (`zoom` 0) into the detail window
 /// (`zoom` 1). The length moves geometrically so every frame changes the
 /// apparent scale by the same ratio, and the viewport keeps its relative
 /// place in the minimap so the slider glides instead of jumping.
 fn zoomed_minimap_window(
-    total_lines: usize,
+    lines: usize,
+    scroll_past_end: bool,
     scroll: usize,
     visible_lines: usize,
     height: usize,
     zoom: f32,
 ) -> MinimapWindow {
-    let detail = minimap_window(total_lines, scroll, visible_lines, height);
+    let detail = detail_window(lines, scroll_past_end, scroll, visible_lines, height);
+    let total_lines = extent_at(lines, scroll, visible_lines, scroll_past_end);
     if zoom >= 1.0 || detail.len() >= total_lines || detail.len() == 0 {
         return detail;
     }
@@ -449,7 +494,9 @@ pub(crate) struct MinimapLayout {
     window: MinimapWindow,
     height: usize,
     zoom: f32,
-    extent: usize,
+    /// Document lines, excluding any blank space past the end.
+    lines: usize,
+    scroll_past_end: bool,
     visible: usize,
     scroll: usize,
     max_scroll: usize,
@@ -497,8 +544,8 @@ impl MinimapLayout {
         zoom: f32,
     ) -> Self {
         // Match the editor's range: the last line can reach the top of the
-        // viewport. Include the remaining blank rows in both the content map
-        // and slider geometry so painting, clicks, and drags use one extent.
+        // viewport. The map reveals blank rows below the end only once the
+        // viewport really extends into them, instead of reserving them.
         let scrollable_lines = if scroll_past_end && total_lines > 0 {
             total_lines.saturating_add(visible_lines.saturating_sub(1))
         } else {
@@ -507,15 +554,14 @@ impl MinimapLayout {
         let visible = visible_lines.max(1).min(scrollable_lines);
         let max_scroll = scrollable_lines.saturating_sub(visible);
         let scroll = scroll.min(max_scroll);
-        let window = zoomed_minimap_window(scrollable_lines, scroll, visible, height, zoom);
-        let zoomed_out =
-            window.len() > minimap_window(scrollable_lines, scroll, visible, height).len();
-        let (view_start, view_end) = viewport_rows(scroll, visible, window, height, zoomed_out);
+        let (window, view_start, view_end) =
+            place(total_lines, scroll_past_end, scroll, visible, height, zoom);
         Self {
             window,
             height,
             zoom,
-            extent: scrollable_lines,
+            lines: total_lines,
+            scroll_past_end,
             visible,
             scroll,
             max_scroll,
@@ -535,16 +581,28 @@ impl MinimapLayout {
     }
 
     /// Anchor the drag to mouse-down so rounding and the moving content cannot
-    /// accumulate drift. The slider can traverse the entire document.
+    /// accumulate drift. The slider can traverse the entire document; it
+    /// enters the blank space past the end only as far as a drag started
+    /// there, because the map does not show that space before then.
     pub(crate) fn drag_scroll(&self, start_row: usize, row: usize) -> usize {
         let view_start = |scroll| {
-            let window =
-                zoomed_minimap_window(self.extent, scroll, self.visible, self.height, self.zoom);
-            let zoomed_out =
-                window.len() > minimap_window(self.extent, scroll, self.visible, self.height).len();
-            viewport_rows(scroll, self.visible, window, self.height, zoomed_out).0
+            let (lines, past_end) = (self.lines, self.scroll_past_end);
+            place(
+                lines,
+                past_end,
+                scroll,
+                self.visible,
+                self.height,
+                self.zoom,
+            )
+            .1
         };
-        let last = view_start(self.max_scroll);
+        let max_scroll = self
+            .lines
+            .saturating_sub(self.visible)
+            .max(self.scroll)
+            .min(self.max_scroll);
+        let last = view_start(max_scroll);
         if row == start_row || last == 0 {
             return self.scroll;
         }
@@ -556,11 +614,11 @@ impl MinimapLayout {
             return 0;
         }
         if target >= last {
-            return self.max_scroll;
+            return max_scroll;
         }
         // Invert the painted position, including quantized window shifts.
         let mut first = 0;
-        let mut end = self.max_scroll;
+        let mut end = max_scroll;
         while first < end {
             let middle = first + (end - first) / 2;
             if view_start(middle) < target {
@@ -692,6 +750,31 @@ fn minimap_row_after(line: usize, window: MinimapWindow, height: usize) -> usize
     (relative as u128 * height as u128).div_ceil(len as u128) as usize
 }
 
+/// The document plus only the blank rows the viewport currently shows.
+fn extent_at(lines: usize, scroll: usize, visible: usize, scroll_past_end: bool) -> usize {
+    if scroll_past_end && lines > 0 {
+        lines.max(scroll.saturating_add(visible))
+    } else {
+        lines
+    }
+}
+
+/// The rendered window and the viewport box's rows for one scroll position.
+fn place(
+    lines: usize,
+    scroll_past_end: bool,
+    scroll: usize,
+    visible: usize,
+    height: usize,
+    zoom: f32,
+) -> (MinimapWindow, usize, usize) {
+    let window = zoomed_minimap_window(lines, scroll_past_end, scroll, visible, height, zoom);
+    let detail = detail_window(lines, scroll_past_end, scroll, visible, height);
+    let zoomed_out = window.len() > detail.len();
+    let (start, end) = viewport_rows(scroll, visible, window, height, zoomed_out);
+    (window, start, end)
+}
+
 /// Minimap rows covered by the viewport box. The first and last visible lines
 /// may share bands with offscreen text; include those bands using the same
 /// boundaries as the markers. Zoomed out on a long file the viewport can fit
@@ -788,7 +871,8 @@ pub(crate) fn draw_minimap(f: &mut Frame, p: MinimapParams) {
         1.0,
     );
     // Only a document longer than the detail window has an overview to show.
-    let zoomable = detail.window.len() < detail.extent;
+    // Judged on the document so scrolling past its end cannot toggle zooming.
+    let zoomable = detail.window.len() < detail.lines;
     let mut clock = editor.minimap_zoom.get();
     let zoom = clock.advance(
         editor.minimap_overview.get(),
@@ -1561,10 +1645,11 @@ mod tests {
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
+        // Line 40 lies in row 2 of the local window starting at line 32.
         for x in 0..11 {
-            assert_eq!(buffer[(x, 1)].bg, Color::Rgb(192, 200, 208));
+            assert_eq!(buffer[(x, 2)].bg, Color::Rgb(192, 200, 208));
         }
-        assert_eq!(buffer[(11, 1)].bg, Color::Rgb(20, 40, 60));
+        assert_eq!(buffer[(11, 2)].bg, Color::Rgb(20, 40, 60));
     }
 
     #[test]
@@ -1653,9 +1738,10 @@ mod tests {
             .expect("draw minimap");
 
         let buffer = terminal.backend().buffer();
-        // The local window starts at line 36 and each row covers four lines.
-        assert_eq!(buffer[(11, 1)].bg, colors.ui.fg_gutter_modified);
-        assert_eq!(buffer[(11, 1)].symbol(), " ");
+        // The local window starts at line 32 and each row covers four lines;
+        // blank space past the end is not reserved while still inside it.
+        assert_eq!(buffer[(11, 2)].bg, colors.ui.fg_gutter_modified);
+        assert_eq!(buffer[(11, 2)].symbol(), " ");
         assert!((0..10).all(|y| buffer[(11, y)].bg != colors.ui.fg_gutter_deleted));
     }
 
@@ -1770,8 +1856,8 @@ mod tests {
                 })
                 .unwrap();
             let buffer = terminal.backend().buffer();
-            assert_eq!(buffer[(11, 2)].bg, minimap_expected, "minimap {status}");
-            assert_eq!(buffer[(11, 2)].symbol(), symbol, "minimap {status}");
+            assert_eq!(buffer[(11, 3)].bg, minimap_expected, "minimap {status}");
+            assert_eq!(buffer[(11, 3)].symbol(), symbol, "minimap {status}");
             assert_eq!(
                 buffer.cell((13, 4)).unwrap().fg,
                 overview_expected,
@@ -1849,6 +1935,43 @@ mod tests {
     }
 
     #[test]
+    fn scroll_past_end_reveals_blank_space_only_once_scrolled_into_it() {
+        for (total, height) in [(10_000_usize, 40_usize), (1_000, 30), (150, 40), (30, 40)] {
+            let visible = 40;
+            let end_scroll = total.saturating_sub(visible);
+            for zoom in [0.0, 0.5, 1.0] {
+                // Inside the document nothing is reserved below the end.
+                let inside = (0..=end_scroll).step_by(7).chain([end_scroll]);
+                for scroll in inside.filter(|scroll| scroll + visible <= total) {
+                    let with = MinimapLayout::zoomed(total, scroll, visible, height, true, zoom);
+                    let without =
+                        MinimapLayout::zoomed(total, scroll, visible, height, false, zoom);
+                    assert_eq!(with.window, without.window, "total={total} scroll={scroll}");
+                    assert_eq!(
+                        (with.view_start, with.view_end),
+                        (without.view_start, without.view_end)
+                    );
+                }
+            }
+            // Past the end the slider never moves up, and blank space grows.
+            let mut previous = MinimapLayout::new(total, end_scroll, visible, height, true);
+            for scroll in end_scroll + 1..total {
+                let layout = MinimapLayout::new(total, scroll, visible, height, true);
+                assert!(layout.view_start >= previous.view_start, "scroll={scroll}");
+                assert!(layout.window.end >= previous.window.end);
+                assert_eq!(layout.view_end, height.min(layout.window.len()));
+                previous = layout;
+            }
+            // A drag that starts past the end can stay there or move up.
+            let past = MinimapLayout::new(total, total - 1, visible, height, true);
+            let row = past.view_end - 1;
+            assert_eq!(past.drag_scroll(row, row), total - 1);
+            assert_eq!(past.drag_scroll(row, height + 5), total - 1);
+            assert!(past.drag_scroll(row, 0) < total - 1 || past.view_start == 0);
+        }
+    }
+
+    #[test]
     fn minimap_past_end_layout_includes_the_entire_viewport() {
         for total in [1_usize, 10, 60, 10_000] {
             let visible = 40;
@@ -1859,9 +1982,18 @@ mod tests {
                 assert_eq!(layout.scroll, scroll);
                 assert_eq!(layout.max_scroll, total - 1);
                 assert!(layout.window.start <= scroll);
-                assert!(layout.window.end >= scroll + visible);
+                // Document lines are always mapped; at most part of one band
+                // of blank space below EOF may fall past the window.
+                assert!(layout.window.end >= total.min(scroll + visible));
+                assert!(layout.window.end + 3 >= scroll + visible);
                 assert!(layout.window.start >= previous_window);
-                assert!(layout.view_start >= previous_row);
+                assert!(
+                    layout.view_start >= previous_row,
+                    "total={total} scroll={scroll} {}..{} window={:?} prev={previous_row}",
+                    layout.view_start,
+                    layout.view_end,
+                    layout.window
+                );
                 assert!(layout.view_end <= 40);
                 assert_eq!(layout.click_scroll(layout.view_end - 1), scroll);
                 assert_eq!(
@@ -1869,8 +2001,7 @@ mod tests {
                     scroll,
                 );
                 if scroll == total - 1 {
-                    assert!(layout.window.end >= total + visible - 1);
-                    assert!(layout.window.end - (total + visible - 1) < 4);
+                    assert!(layout.window.end.abs_diff(total + visible - 1) < 4);
                     assert_eq!(layout.view_end, 40);
                 }
                 previous_window = layout.window.start;

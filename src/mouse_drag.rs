@@ -1895,8 +1895,9 @@ mod tests {
             assert!(app.minimap_drag_start.is_some());
 
             handle_left_drag(&mut app, 95, 41, 95, 40, KeyModifiers::NONE);
-            let max_scroll = 10_000 - if scroll_past_end { 1 } else { 30 };
-            assert_eq!(app.editor().unwrap().scroll_offset, max_scroll);
+            // Blank space past the end is not on the map until scrolled
+            // into, so the slider's bottom brings the last line into view.
+            assert_eq!(app.editor().unwrap().scroll_offset, 10_000 - 30);
 
             handle_left_drag(&mut app, 95, 2, 95, 3, KeyModifiers::NONE);
             assert_eq!(app.editor().unwrap().scroll_offset, 0);
