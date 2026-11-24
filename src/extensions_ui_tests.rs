@@ -327,7 +327,7 @@ fn extensions_ui_remove_needs_a_second_press_and_deletes_installed_files() {
     let mut terminal = Terminal::new(TestBackend::new(110, 35)).unwrap();
     info(&mut app, &mut terminal);
     assert!(
-        !text(&terminal).contains("Remove"),
+        !text(&terminal).contains("Uninstall"),
         "extensions outside the install folders cannot be removed here"
     );
 
@@ -337,7 +337,7 @@ fn extensions_ui_remove_needs_a_second_press_and_deletes_installed_files() {
         crate::mouse::handle_mouse(app, event(MouseEventKind::Down(MouseButton::Left), x, y));
         crate::mouse::handle_mouse(app, event(MouseEventKind::Up(MouseButton::Left), x, y));
     };
-    click(&mut app, find(&terminal, "Remove"));
+    click(&mut app, find(&terminal, "Uninstall"));
     info(&mut app, &mut terminal);
     assert!(
         root.path().join("ext00").exists(),
@@ -347,11 +347,11 @@ fn extensions_ui_remove_needs_a_second_press_and_deletes_installed_files() {
     // Any other action disarms it.
     click(&mut app, find(&terminal, "Copy ID"));
     info(&mut app, &mut terminal);
-    assert!(!text(&terminal).contains("Confirm Remove"));
+    assert!(!text(&terminal).contains("Confirm Uninstall"));
 
-    click(&mut app, find(&terminal, "Remove"));
+    click(&mut app, find(&terminal, "Uninstall"));
     info(&mut app, &mut terminal);
-    click(&mut app, find(&terminal, "Confirm Remove"));
+    click(&mut app, find(&terminal, "Confirm Uninstall"));
     assert!(!root.path().join("ext00").exists());
     assert_eq!(app.extension_manager.len(), 2);
     assert!(
@@ -773,4 +773,60 @@ fn marketplace_section_shows_loading_failure_and_offline_instead_of_vanishing() 
     app.extensions_filter = "@enabled".into();
     sidebar(&mut app, &mut terminal);
     assert!(!text(&terminal).contains("MARKETPLACE"));
+}
+
+#[test]
+fn installed_cards_uninstall_after_a_confirming_second_press() {
+    let (root, mut app) = marketplace_fixture();
+    let mut terminal = Terminal::new(TestBackend::new(44, 29)).unwrap();
+    sidebar(&mut app, &mut terminal);
+    assert_eq!(app.extensions_selected, 0);
+    let uninstall = |app: &App| {
+        app.ext_sidebar
+            .actions
+            .iter()
+            .find(|(action, _)| *action == Action::Uninstall(0))
+            .map(|(_, rect)| *rect)
+    };
+    // Only the selected (or hovered) card offers it, in place of its status.
+    let button = uninstall(&app).expect("selected card offers Uninstall");
+    assert!(
+        !app.ext_sidebar
+            .actions
+            .iter()
+            .any(|(action, _)| *action == Action::Uninstall(1))
+    );
+    assert!(text(&terminal).contains(" Uninstall "));
+
+    // First press asks to confirm; clicking anything else cancels.
+    ui_extensions::handle_click(&mut app, button.x, button.y);
+    sidebar(&mut app, &mut terminal);
+    assert!(text(&terminal).contains(" Confirm? "));
+    assert_eq!(app.extension_views().len(), 2);
+    let (title_x, title_y) = find(&terminal, "EXTENSIONS");
+    ui_extensions::handle_click(&mut app, title_x, title_y);
+    sidebar(&mut app, &mut terminal);
+    assert!(!text(&terminal).contains(" Confirm? "));
+
+    // Two presses delete it; the marketplace offers it again.
+    let directory = root.path().join("ext00");
+    assert!(directory.exists());
+    for _ in 0..2 {
+        let button = uninstall(&app).unwrap();
+        ui_extensions::handle_click(&mut app, button.x, button.y);
+        sidebar(&mut app, &mut terminal);
+    }
+    assert!(!directory.exists());
+    assert_eq!(app.extension_views().len(), 1);
+
+    // The Delete key works the same way on the selected card.
+    app.ext_sidebar.search_focused = false;
+    app.extensions_selected = 0;
+    key(&mut app, KeyCode::Delete);
+    key(&mut app, KeyCode::Delete);
+    assert!(app.extension_views().is_empty());
+    // Nothing of that repository is installed now, so the marketplace offers it again.
+    sidebar(&mut app, &mut terminal);
+    let screen = text(&terminal);
+    assert!(screen.contains("Installed One"), "{screen}");
 }

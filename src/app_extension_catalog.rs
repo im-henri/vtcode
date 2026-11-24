@@ -223,6 +223,39 @@ impl App {
         }
     }
 
+    /// Uninstall an editor-installed extension. The first call only arms it
+    /// (the button then asks to confirm); a second call for the same id deletes.
+    pub(crate) fn uninstall_extension(&mut self, id: &str) {
+        let views = self.extension_views();
+        let Some(index) = views.iter().position(|view| view.id == id) else {
+            return;
+        };
+        if !views[index].removable {
+            self.notify_error(format!(
+                "{} was not installed by VTCode, so it cannot be uninstalled here.",
+                views[index].name
+            ));
+            return;
+        }
+        if self.ext_info.remove_armed.as_deref() != Some(id) {
+            self.ext_info.remove_armed = Some(id.to_owned());
+            self.notify(format!(
+                "Press again to confirm uninstalling {}",
+                views[index].name
+            ));
+            return;
+        }
+        self.ext_info.remove_armed = None;
+        let result = self.extension_manager.remove_extension(index);
+        match result {
+            Ok(message) => self.notify(message),
+            Err(error) => self.notify_error(error),
+        }
+        self.refresh_palette_commands();
+        self.refresh_open_extension_view_tabs();
+        self.clamp_extensions_selection();
+    }
+
     /// The install dropdown: pick any published version of this repository.
     pub(crate) fn choose_extension_version(&mut self, repository: &str) {
         self.open_extension_install_prompt();

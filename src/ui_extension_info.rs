@@ -58,8 +58,9 @@ pub(crate) struct State {
     views: Vec<View>,
     focus: Option<usize>,
     pressed: Option<MouseButton>,
-    /// The extension whose Remove button awaits its confirming second press.
-    remove_armed: Option<String>,
+    /// The extension whose Uninstall button (here or in the sidebar) awaits
+    /// its confirming second press.
+    pub(crate) remove_armed: Option<String>,
 }
 #[derive(Default)]
 struct View {
@@ -139,19 +140,9 @@ fn run_action(app: &mut App, action: Action) {
     let ext = &views[index];
     let armed = app.ext_info.remove_armed.take();
     match action {
-        Action::Remove if armed.as_deref() == Some(id.as_str()) => {
-            let result = app.extension_manager.remove_extension(index);
-            app.notify(result.unwrap_or_else(|error| error));
-            app.refresh_palette_commands();
-            app.refresh_open_extension_view_tabs();
-            app.clamp_extensions_selection();
-        }
         Action::Remove => {
-            app.ext_info.remove_armed = Some(id);
-            app.notify(format!(
-                "Press Confirm Remove to delete {} from disk",
-                ext.name
-            ));
+            app.ext_info.remove_armed = armed;
+            app.uninstall_extension(&id);
         }
         Action::Toggle | Action::Reload => {
             // The page can stay open while another extension is selected in the sidebar.
@@ -505,9 +496,9 @@ pub(crate) fn draw_extension_info(f: &mut Frame, app: &mut App, area: Rect) {
         (
             Action::Remove,
             if remove_armed {
-                "Confirm Remove"
+                "Confirm Uninstall"
             } else {
-                "Remove"
+                "Uninstall"
             },
         ),
     ];

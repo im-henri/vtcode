@@ -34,6 +34,8 @@ pub(crate) enum Action {
     ChooseVersion(usize),
     /// Update an installed extension (by view index) to its newest release.
     Update(usize),
+    /// Uninstall an editor-installed extension (by view index); asks to confirm first.
+    Uninstall(usize),
     UpdateAll,
 }
 
@@ -852,7 +854,13 @@ fn draw_card(
             ExtensionState::Error => app.colors.ui.list_error_color(row_bg),
             ExtensionState::Unloaded => secondary,
         };
-        let state = format!("{icon} {}", status(ext));
+        let armed = app.ext_info.remove_armed.as_deref() == Some(ext.id.as_str());
+        let uninstall = ext.removable && (selected || hovered || armed);
+        let state = if uninstall {
+            if armed { " Confirm? " } else { " Uninstall " }.to_string()
+        } else {
+            format!("{icon} {}", status(ext))
+        };
         let state_w = (state.width() as u16).min(text_width);
         let mut publisher_w = text_width.saturating_sub(state_w + 2);
         let installing = app.extension_installing(&ext.repository);
@@ -883,11 +891,16 @@ fn draw_card(
             Paragraph::new(clip(publisher(ext), publisher_w)).style(style.fg(secondary)),
             Rect::new(text_x, card.y + 2, publisher_w, 1),
         );
-        f.render_widget(
-            Paragraph::new(clip(&state, state_w))
-                .style(style.fg(app.colors.ui.readable_foreground(color, row_bg, 4.5))),
-            Rect::new(text_x + text_width - state_w, card.y + 2, state_w, 1),
-        );
+        let state_rect = Rect::new(text_x + text_width - state_w, card.y + 2, state_w, 1);
+        if uninstall {
+            button(f, app, state_rect, &state, Action::Uninstall(index), armed);
+        } else {
+            f.render_widget(
+                Paragraph::new(clip(&state, state_w))
+                    .style(style.fg(app.colors.ui.readable_foreground(color, row_bg, 4.5))),
+                state_rect,
+            );
+        }
     }
     if selected {
         f.render_widget(
@@ -1065,6 +1078,8 @@ fn install_listing(app: &mut App, index: usize, choose: bool) {
 
 pub(crate) fn handle_click(app: &mut App, col: u16, row: u16) {
     app.active_pane = ActivePane::Explorer;
+    // Any other click cancels a pending uninstall confirmation.
+    let armed = app.ext_info.remove_armed.take();
     if let Some((action, _)) = app
         .ext_sidebar
         .actions
@@ -1087,6 +1102,12 @@ pub(crate) fn handle_click(app: &mut App, col: u16, row: u16) {
                 }
             }
             Action::UpdateAll => app.update_all_extensions(),
+            Action::Uninstall(index) => {
+                if let Some(view) = app.extension_views().get(index) {
+                    app.ext_info.remove_armed = armed;
+                    app.uninstall_extension(&view.id);
+                }
+            }
             Action::ReloadAll => app.extensions_reload_all(),
             Action::Clear => {
                 app.extensions_filter.clear();
@@ -1229,6 +1250,15 @@ pub(crate) fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) 
             app.ext_sidebar.search_focused = true;
         }
         KeyCode::F(5) => app.extensions_rescan(),
+        KeyCode::Delete if !app.ext_sidebar.search_focused => {
+            if let Some(ext) = app
+                .extension_views()
+                .get(app.extensions_selected)
+                .filter(|ext| ext.removable)
+            {
+                app.uninstall_extension(&ext.id);
+            }
+        }
         _ => {
             app.ext_sidebar.search_focused = true;
             if app
@@ -1260,6 +1290,7 @@ pub(crate) fn draw_tooltip(f: &mut Frame, app: &App) {
         Action::ChooseVersion(_) => "Install another version…",
         Action::Update(_) => "Update to the latest release",
         Action::UpdateAll => "Update all extensions",
+        Action::Uninstall(_) => "Uninstall and delete from disk (Delete)",
         Action::ReloadAll => "Reload all enabled extensions",
         Action::Clear => "Clear search and filters (Esc)",
         _ => return,
