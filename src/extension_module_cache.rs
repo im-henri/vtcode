@@ -14,6 +14,47 @@ use wasmtime::{Engine, Module};
 /// Artifacts kept; older ones belong to replaced extension builds.
 const MAX_ENTRIES: usize = 32;
 
+/// Cranelift's optimizer recurses once per value in an expression chain, so a
+/// large module needs far more stack than the UI thread's 1 MiB on Windows
+/// (debug builds overflowed it compiling a freshly installed extension).
+/// Compilation therefore always runs on its own thread; the reservation is
+/// virtual memory, committed only as deep as the compiler actually goes.
+const COMPILE_STACK_BYTES: usize = 256 * 1024 * 1024;
+
+fn compile(engine: &Engine, bytes: &[u8]) -> wasmtime::Result<Vec<u8>> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("wasm-compile".into())
+            .stack_size(COMPILE_STACK_BYTES)
+            .spawn_scoped(scope, || engine.precompile_module(bytes))
+            .map_err(wasmtime::Error::from)?
+            .join()
+            .map_err(|_| wasmtime::Error::msg("the Wasm compiler thread panicked"))?
+    })
+}
+
+/// Compile and cache the modules of newly discovered extensions on the calling
+/// background worker, so activating them on the UI thread only maps cached code.
+#[cfg(not(test))]
+pub(crate) fn warm(discovered: &[crate::extension_manifest::DiscoveredExtension]) {
+    static ENGINE: std::sync::OnceLock<Engine> = std::sync::OnceLock::new();
+    let dir = crate::portable::data_dir().join("wasm-cache");
+    for extension in discovered.iter().filter(|ext| ext.manifest.enabled) {
+        let Ok(bytes) = std::fs::read(&extension.wasm_path) else {
+            continue;
+        };
+        let engine = ENGINE.get_or_init(crate::extensions::new_extension_engine);
+        let path = dir.join(entry_name(engine, &bytes));
+        if path.is_file() {
+            continue;
+        }
+        // A failure here is reported when the extension activates.
+        if let Ok(compiled) = compile(engine, &bytes) {
+            store(&dir, &path, &compiled);
+        }
+    }
+}
+
 #[cfg(not(test))]
 pub(crate) fn load(engine: &Engine, wasm: &Path) -> wasmtime::Result<Module> {
     load_in(
@@ -33,7 +74,7 @@ fn load_in(dir: &Path, engine: &Engine, wasm: &Path) -> wasmtime::Result<Module>
     if let Ok(module) = unsafe { Module::deserialize_file(engine, &path) } {
         return Ok(module);
     }
-    let compiled = engine.precompile_module(&bytes)?;
+    let compiled = compile(engine, &bytes)?;
     store(dir, &path, &compiled);
     // SAFETY: `compiled` was just produced by this engine.
     unsafe { Module::deserialize(engine, &compiled) }
@@ -95,6 +136,26 @@ mod tests {
     use super::*;
 
     const WAT: &str = r#"(module (func (export "vtcode_activate") (result i32) i32.const 0))"#;
+
+    /// Installing an extension activated it on the UI thread, and Cranelift
+    /// overflowed the 1 MiB main stack compiling the Hex Editor in a debug build.
+    #[test]
+    fn compiling_a_real_extension_fits_on_a_small_calling_stack() {
+        let dir = tempfile::tempdir().unwrap();
+        let wasm = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/hex-editor/hex-editor.wasm");
+        let cache = dir.path().to_path_buf();
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                let engine = crate::extensions::new_extension_engine();
+                load_in(&cache, &engine, &wasm).map(drop)
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+    }
 
     #[test]
     fn compiled_modules_are_reused_and_follow_the_wasm_bytes() {

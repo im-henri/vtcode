@@ -716,7 +716,10 @@ fn marketplace_listings_offer_install_with_a_version_menu_and_updates() {
     app.ext_catalog.catalog.listings.truncate(0);
     sidebar(&mut app, &mut terminal);
     let screen = text(&terminal);
-    assert!(!screen.contains("MARKETPLACE"));
+    assert!(
+        screen.contains("The marketplace lists no extensions."),
+        "{screen}"
+    );
     assert!(!screen.contains("↑ v") && !screen.contains(" ↑2 "));
 }
 
@@ -727,4 +730,47 @@ fn extension_page_offers_an_update_to_the_newest_release() {
     let mut terminal = Terminal::new(TestBackend::new(100, 40)).unwrap();
     info(&mut app, &mut terminal);
     assert!(text(&terminal).contains("Update to v2.0.0"));
+}
+
+#[test]
+fn marketplace_section_shows_loading_failure_and_offline_instead_of_vanishing() {
+    let (_root, mut app) = fixture(1);
+    let mut terminal = Terminal::new(TestBackend::new(44, 29)).unwrap();
+
+    app.ext_catalog.refreshing = true;
+    sidebar(&mut app, &mut terminal);
+    let screen = text(&terminal);
+    assert!(screen.contains("MARKETPLACE"), "{screen}");
+    assert!(screen.contains("loading…"));
+    assert!(screen.contains("Loading marketplace…"));
+
+    // Nothing installed at all: the marketplace still shows it is loading.
+    let mut empty = App::test_new();
+    empty.open_extensions_sidebar();
+    empty.ext_catalog.refreshing = true;
+    sidebar(&mut empty, &mut terminal);
+    assert!(text(&terminal).contains("Loading marketplace…"));
+
+    app.ext_catalog.refreshing = false;
+    app.ext_catalog.catalog.errors = vec!["x/y: timed out".into()];
+    sidebar(&mut app, &mut terminal);
+    let screen = text(&terminal);
+    assert!(screen.contains("Couldn't load the marketplace"), "{screen}");
+    assert!(screen.contains("offline"));
+    assert!(screen.contains("timed out"));
+
+    // Cached listings stay usable offline, marked as such.
+    let (_root, mut cached) = marketplace_fixture();
+    cached.ext_catalog.catalog.errors = vec!["offline".into()];
+    sidebar(&mut cached, &mut terminal);
+    let screen = text(&terminal);
+    assert!(
+        screen.contains("Hex Editor") && screen.contains("offline"),
+        "{screen}"
+    );
+
+    // A search that excludes the marketplace hides the section entirely.
+    app.extensions_filter = "@enabled".into();
+    sidebar(&mut app, &mut terminal);
+    assert!(!text(&terminal).contains("MARKETPLACE"));
 }

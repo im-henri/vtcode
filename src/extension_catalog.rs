@@ -314,7 +314,7 @@ pub(crate) fn refresh(
                 Ok(None) => {}
                 Err(error) => catalog
                     .errors
-                    .push(format!("Marketplace {}: {error}", source.repository)),
+                    .push(format!("{}/{}: {error}", source.owner, source.project)),
             }
         }
         if let Some(entry) = cache.marketplaces.get(&key) {

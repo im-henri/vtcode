@@ -121,6 +121,9 @@ impl App {
         let queued = pool.send(Box::new(move || {
             let _activity = activity.running();
             let (discovered, notices) = crate::extension_manifest::discover_extensions(&roots);
+            // Activation of later discoveries happens on the UI thread; compile here first.
+            #[cfg(not(test))]
+            crate::extension_module_cache::warm(&discovered);
             if let Some(mut manager) = initial {
                 let notices = manager.sync_discovered(discovered, notices);
                 let _ = sender.send(crate::background::BackgroundResult::ExtensionsInitialized {

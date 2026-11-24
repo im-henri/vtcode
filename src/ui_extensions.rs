@@ -142,12 +142,23 @@ pub(crate) enum Item {
     Card(usize),
     /// A marketplace listing that is not installed.
     Listing(usize),
+    /// Why the marketplace section shows no listings (loading, failed, …).
+    Notice(Notice),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Notice {
+    Loading,
+    Failed,
+    AllInstalled,
+    Empty,
 }
 
 impl Item {
     pub(crate) fn height(self) -> u16 {
         match self {
             Item::Header { .. } => 1,
+            Item::Notice(_) => 3,
             Item::Card(_) | Item::Listing(_) => CARD_HEIGHT,
         }
     }
@@ -157,7 +168,7 @@ impl Item {
         match self {
             Item::Card(index) => Some(index),
             Item::Listing(index) => Some(LISTING + index),
-            Item::Header { .. } => None,
+            Item::Header { .. } | Item::Notice(_) => None,
         }
     }
 }
@@ -199,7 +210,31 @@ pub(crate) fn items(app: &App) -> Vec<Item> {
     }
     let listings = app.marketplace_listings();
     let cards = listing_indices(&listings, &app.extensions_filter);
-    if !cards.is_empty() {
+    let query = app.extensions_filter.to_lowercase();
+    let installed_only = query.split_whitespace().any(|word| {
+        matches!(
+            word,
+            "@installed" | "@enabled" | "@disabled" | "@error" | "@errors" | "@updates"
+        )
+    });
+    let catalog = &app.ext_catalog;
+    // The section never silently disappears while it loads or after it fails.
+    let notice = if !cards.is_empty() || installed_only {
+        None
+    } else if catalog.refreshing {
+        Some(Notice::Loading)
+    } else if catalog.catalog.listings.is_empty() && !catalog.catalog.errors.is_empty() {
+        Some(Notice::Failed)
+    } else if query.split_whitespace().all(|word| word == "@marketplace") {
+        Some(if catalog.catalog.listings.is_empty() {
+            Notice::Empty
+        } else {
+            Notice::AllInstalled
+        })
+    } else {
+        None
+    };
+    if !cards.is_empty() || notice.is_some() {
         items.push(Item::Header {
             group: MARKETPLACE,
             matched: cards.len(),
@@ -207,6 +242,7 @@ pub(crate) fn items(app: &App) -> Vec<Item> {
         });
         if !app.ext_sidebar.collapsed[MARKETPLACE] {
             items.extend(cards.into_iter().map(Item::Listing));
+            items.extend(notice.map(Item::Notice));
         }
     }
     items
@@ -514,7 +550,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
     app.clamp_extensions_selection();
     let listings = app.marketplace_listings();
-    let any_match = !selectable(app).is_empty();
+    let any_match = !items(app).is_empty();
     let footer_h = u16::from(inner.bottom().saturating_sub(y) >= 7);
     let list = Rect::new(
         inner.x,
@@ -597,6 +633,9 @@ Try another search or clear your filters."
                     matched,
                     total,
                 ),
+                Item::Notice(notice) => {
+                    draw_notice(f, app, Rect::new(list.x, row_y, list.width, height), notice)
+                }
                 Item::Listing(index) => draw_listing(
                     f,
                     app,
@@ -695,7 +734,14 @@ fn draw_header(
         .style(style),
         section,
     );
-    let count = if matched == total {
+    let catalog = &app.ext_catalog;
+    let count = if group == MARKETPLACE && catalog.refreshing {
+        "loading…".to_string()
+    } else if group == MARKETPLACE && !catalog.catalog.errors.is_empty() {
+        "offline".to_string()
+    } else if group == MARKETPLACE && total == 0 {
+        String::new()
+    } else if matched == total {
         format!("{total}")
     } else {
         format!("{matched} / {total}")
@@ -851,6 +897,46 @@ fn draw_card(
         );
     }
     app.ext_sidebar.rows.push((index, card));
+}
+
+/// The marketplace section's status line when it has no cards to show.
+fn draw_notice(f: &mut Frame, app: &mut App, area: Rect, notice: Notice) {
+    let bg = app.colors.bg_sidebar;
+    let dim = app.colors.ui.description_color(bg);
+    let style = Style::default().fg(dim).bg(bg);
+    let x = area.x + 2;
+    let width = area.width.saturating_sub(3);
+    let (message, detail) = match notice {
+        Notice::Loading => ("Loading marketplace…".to_string(), None),
+        Notice::Failed => (
+            "Couldn't load the marketplace. Press ↻ to retry.".to_string(),
+            app.ext_catalog.catalog.errors.first().cloned(),
+        ),
+        Notice::AllInstalled => (
+            "Every marketplace extension is installed.".to_string(),
+            None,
+        ),
+        Notice::Empty => ("The marketplace lists no extensions.".to_string(), None),
+    };
+    let message_style = if notice == Notice::Failed {
+        style.fg(app.colors.ui.list_error_color(bg))
+    } else {
+        style
+    };
+    f.render_widget(
+        Paragraph::new(clip(&message, width)).style(message_style),
+        Rect::new(x, area.y, width, 1.min(area.height)),
+    );
+    if let Some(detail) = detail
+        && area.height >= 2
+    {
+        f.render_widget(
+            Paragraph::new(clean(&detail))
+                .style(style)
+                .wrap(Wrap { trim: true }),
+            Rect::new(x, area.y + 1, width, area.height - 1),
+        );
+    }
 }
 
 /// A marketplace card: like an installed one, with Install and a version menu.
