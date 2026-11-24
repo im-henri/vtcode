@@ -144,13 +144,14 @@ pub(crate) enum Item {
     Card(usize),
     /// A marketplace listing that is not installed.
     Listing(usize),
-    /// Why the marketplace section shows no listings (loading, failed, …).
+    /// A status message for the installed extensions or marketplace.
     Notice(Notice),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Notice {
-    Loading,
+    LoadingInstalled,
+    LoadingMarketplace,
     Failed,
     AllInstalled,
     Empty,
@@ -159,7 +160,7 @@ pub(crate) enum Notice {
 impl Item {
     pub(crate) fn height(self) -> u16 {
         match self {
-            Item::Header { .. } => 1,
+            Item::Header { .. } | Item::Notice(Notice::LoadingInstalled) => 1,
             Item::Notice(_) => 3,
             Item::Card(_) | Item::Listing(_) => CARD_HEIGHT,
         }
@@ -189,6 +190,9 @@ pub(crate) fn items(app: &App) -> Vec<Item> {
     let views = app.extension_views();
     let updates_only = app.extensions_filter.to_lowercase().contains("@updates");
     let mut items = Vec::new();
+    if views.is_empty() && app.bg_extension_scan_running {
+        items.push(Item::Notice(Notice::LoadingInstalled));
+    }
     for (group, (state, _)) in GROUPS.iter().enumerate() {
         let total = views.iter().filter(|ext| ext.state == *state).count();
         let cards: Vec<usize> = (0..views.len())
@@ -224,7 +228,7 @@ pub(crate) fn items(app: &App) -> Vec<Item> {
     let notice = if !cards.is_empty() || installed_only {
         None
     } else if catalog.refreshing {
-        Some(Notice::Loading)
+        Some(Notice::LoadingMarketplace)
     } else if catalog.catalog.listings.is_empty() && !catalog.catalog.errors.is_empty() {
         Some(Notice::Failed)
     } else if query.split_whitespace().all(|word| word == "@marketplace") {
@@ -548,7 +552,7 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
     app.clamp_extensions_selection();
     let listings = app.marketplace_listings();
-    let any_match = !items(app).is_empty();
+    let items = items(app);
     let footer_h = u16::from(inner.bottom().saturating_sub(y) >= 7);
     let list = Rect::new(
         inner.x,
@@ -557,13 +561,8 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         inner.bottom().saturating_sub(y + footer_h),
     );
     app.ext_sidebar.list_area = list;
-    if !any_match {
-        let empty = if views.is_empty()
-            && listings.is_empty()
-            && (app.bg_extension_scan_running || app.ext_catalog.refreshing)
-        {
-            "Loading extensions…"
-        } else if views.is_empty() {
+    if items.is_empty() {
+        let empty = if views.is_empty() {
             "Build your workspace
 
 Install an extension from a tagged GitHub release to add tools and language support."
@@ -609,7 +608,6 @@ Try another search or clear your filters."
             );
         }
     } else {
-        let items = items(app);
         app.extensions_scroll = app.extensions_scroll.min(max_scroll(&items, list.height));
         let scroll = app.extensions_scroll;
         let mut row_y = list.y;
@@ -963,7 +961,7 @@ fn draw_card(
     app.ext_sidebar.rows.push((index, card));
 }
 
-/// The marketplace section's status line when it has no cards to show.
+/// A status row for the sidebar's extension scan or marketplace.
 fn draw_notice(f: &mut Frame, app: &mut App, area: Rect, notice: Notice) {
     let bg = app.colors.bg_sidebar;
     let dim = app.colors.ui.description_color(bg);
@@ -971,9 +969,10 @@ fn draw_notice(f: &mut Frame, app: &mut App, area: Rect, notice: Notice) {
     let x = area.x + 2;
     let width = area.width.saturating_sub(3);
     let (message, detail) = match notice {
-        Notice::Loading => ("Loading marketplace…".to_string(), None),
+        Notice::LoadingInstalled => ("Loading extensions…".to_string(), None),
+        Notice::LoadingMarketplace => ("Loading marketplace…".to_string(), None),
         Notice::Failed => (
-            "Couldn't load the marketplace. Press ↻ to retry.".to_string(),
+            "Couldn't load the marketplace.".to_string(),
             app.ext_catalog.catalog.errors.first().cloned(),
         ),
         Notice::AllInstalled => (
