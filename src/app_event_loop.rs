@@ -4945,7 +4945,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
         // Include workspace-loader completions in the same wake ticket as
         // all other producers; observing after polling can lose their wake.
         let observed_wake = service_scheduler.observe_wake(ui_wake.generation());
-        if app.poll_workspace_requests() {
+        let workspace_changed = app.poll_workspace_requests();
+        app.poll_last_workspaces();
+        if workspace_changed {
             needs_redraw = true;
             input_redraw = true;
             last_caret_state = capture_caret_state(app);

@@ -638,7 +638,7 @@ fn headless_target_peer() {
         };
         assert_eq!(password, b"fixture-secret");
     }
-    crate::remote::service::run(root).unwrap();
+    crate::remote::service::run(Some(root)).unwrap();
 }
 
 #[test]

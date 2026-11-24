@@ -355,5 +355,5 @@ fn ssh_command_prefix_fixture() {
         serde_json::to_vec(delivered).unwrap(),
     )
     .unwrap();
-    super::super::service::run(&root).unwrap();
+    super::super::service::run(Some(&root)).unwrap();
 }

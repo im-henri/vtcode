@@ -237,6 +237,7 @@ fn remote_explorer_and_tab_tooltips_show_the_remote_machines_paths() {
             app_version: env!("CARGO_PKG_VERSION").into(),
             git_file_stats: false,
             git_sources_limit: false,
+            default_root: false,
             root: native.into(),
             root_uri: uri.into(),
             session: 42,

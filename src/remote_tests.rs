@@ -40,6 +40,7 @@ fn remote_breadcrumbs_preserve_escaped_names_and_hosted_workspace_roots() {
             app_version: env!("CARGO_PKG_VERSION").into(),
             git_file_stats: false,
             git_sources_limit: false,
+            default_root: false,
             root: native.into(),
             root_uri: uri.into(),
             session: 42,
@@ -121,6 +122,7 @@ fn remote_posix_file_urls_match_native_escaping_and_preserve_drive_like_names() 
         app_version: env!("CARGO_PKG_VERSION").into(),
         git_file_stats: false,
         git_sources_limit: false,
+        default_root: false,
         root: "/workspace".into(),
         root_uri: "file:///workspace/".into(),
         session: 42,
@@ -160,6 +162,7 @@ fn displayed_remote_paths_roundtrip_all_roots_and_filename_bytes() {
             app_version: env!("CARGO_PKG_VERSION").into(),
             git_file_stats: false,
             git_sources_limit: false,
+            default_root: false,
             root: native.into(),
             root_uri: uri.into(),
             session: 42,
@@ -345,7 +348,7 @@ fn handshake_rejects_version_mismatches_before_sending_workspace_requests() {
 #[test]
 #[ignore = "Internal private-PTY headless service fixture"]
 fn headless_service_fixture() {
-    service::run(&std::env::current_dir().unwrap()).unwrap();
+    service::run(Some(&std::env::current_dir().unwrap())).unwrap();
 }
 
 // Transport/lab fixtures supply native argv, independent of the public CLI.

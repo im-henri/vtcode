@@ -297,6 +297,10 @@ pub(crate) struct Hello {
     /// baselines before it knows the file size.
     #[serde(default)]
     pub git_sources_limit: bool,
+    /// The service was started without a directory, so it serves its default
+    /// (the remote home). A client may then reopen its previous folders.
+    #[serde(default)]
+    pub default_root: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

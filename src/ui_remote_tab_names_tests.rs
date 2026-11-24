@@ -13,6 +13,7 @@ fn workspace() -> Workspace {
         app_version: env!("CARGO_PKG_VERSION").into(),
         git_file_stats: false,
         git_sources_limit: false,
+        default_root: false,
         root: "/repo".into(),
         root_uri: "file:///repo/".into(),
         session: 42,

@@ -202,6 +202,7 @@ mod input_terminal;
 #[cfg(test)]
 mod keyboard_protocol_tests;
 mod language_detection;
+mod last_workspaces;
 mod line_changes;
 mod lsp;
 mod lsp_events;
@@ -432,7 +433,7 @@ fn run_main() -> io::Result<()> {
             println!("vtcode {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
-        cli::Command::Headless(root) => return remote::service::run(&root),
+        cli::Command::Headless(root) => return remote::service::run(root.as_deref()),
         cli::Command::DetachedWindow(endpoint) => return tab_windows::run_frontend(endpoint),
         #[cfg(windows)]
         cli::Command::ConsoleHost(args) => {
@@ -527,9 +528,27 @@ fn run_main() -> io::Result<()> {
     let remote_root = remote_workspace
         .as_ref()
         .map(|remote| remote.view_root.clone());
-    let loader = startup::Loader::start(wake.clone(), move || match remote_root {
-        Some(root) => Ok(startup::Prepared::load_remote(root)),
-        None => startup::Prepared::load(raw_arg),
+    // Without a path, reopen the folders this scope had open last time. A
+    // remote service says whether it was started without a directory.
+    let restore_scope = match &remote_workspace {
+        Some(remote) => remote
+            .client
+            .hello()
+            .default_root
+            .then(|| workspace_sets::Scope::Remote(remote.workspace_sets_scope())),
+        None => raw_arg
+            .as_ref()
+            .is_none_or(|arg| arg.is_empty())
+            .then_some(workspace_sets::Scope::Local),
+    };
+    let loader = startup::Loader::start(wake.clone(), move || {
+        let prepared = match remote_root {
+            Some(root) => startup::Prepared::load_remote(root),
+            None => startup::Prepared::load(raw_arg)?,
+        };
+        let last =
+            restore_scope.and_then(|scope| last_workspaces::load(&last_workspaces::path(), &scope));
+        io::Result::Ok((prepared, last))
     })?;
     let Some(prepared) = loader.wait(&mut terminal, &mut events)? else {
         startup_timings.mark("cancelled");
@@ -537,11 +556,16 @@ fn run_main() -> io::Result<()> {
         return Ok(());
     };
     startup_timings.mark("manifest_ready");
-    let mut app = prepared?.into_app_with_remote(wake, remote_workspace);
+    let (prepared, last) = prepared?;
+    let mut app = prepared.into_app_with_remote(wake, remote_workspace);
+    if let Some(last) = last {
+        app.restore_last_workspaces(last);
+    }
     startup_timings.mark("workbench_ready");
     let res = app_event_loop::run_app(&mut terminal, &mut app, events, Some(startup_timings));
 
     app.save_settings();
+    app.flush_last_workspaces();
     app.finish_workspaces_on_shutdown();
 
     drop(screen);

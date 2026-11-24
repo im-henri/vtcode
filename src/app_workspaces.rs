@@ -12,6 +12,8 @@ use std::{
 
 #[path = "app_workspaces_idle.rs"]
 mod idle;
+#[path = "app_workspaces_last.rs"]
+pub(crate) mod last;
 #[path = "app_workspaces_remote.rs"]
 mod remote;
 #[path = "app_workspaces_sets.rs"]
@@ -115,6 +117,7 @@ pub(crate) struct Workspaces {
     pub request: Option<Request>,
     pub(crate) exit: Option<Exit>,
     pub sets: sets::State,
+    pub(crate) last: last::State,
 }
 
 pub(crate) enum Request {

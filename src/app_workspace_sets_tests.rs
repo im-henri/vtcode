@@ -622,3 +622,50 @@ fn hovering_a_set_redraws_its_row_and_management_targets_that_set() {
     let text: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
     assert!(text.contains("Beta") && text.contains("Update folders"));
 }
+
+#[test]
+fn reopening_last_remote_folders_replaces_the_default_folder_without_asking() {
+    let home = Project::new();
+    let b = Project::new();
+    let c = Project::new();
+    let first = crate::remote::workspace::Workspace::new(headless_connection(home.path()));
+    let uri = |path: &Path| {
+        first
+            .open_workspace(
+                &first.view_key(&crate::remote::git::from_native(path, home.path()).unwrap()),
+            )
+            .unwrap()
+            .client
+            .hello()
+            .root_uri
+            .clone()
+    };
+    let roots = vec![
+        Location::Remote { uri: uri(b.path()) },
+        Location::Remote { uri: uri(c.path()) },
+    ];
+    let mut app = home.app(crate::background::UiWake::default());
+    app.explorer.root = first.view_root.clone();
+    app.remote_workspace = Some(first.clone());
+    app.restore_last_workspaces(crate::last_workspaces::Entry {
+        scope: app.workspace_sets_scope(),
+        roots,
+        active: 1,
+    });
+    until(|| {
+        tick(&mut app);
+        assert!(app.workspace_set_confirmation().is_none());
+        !app.workspace_set_switching()
+    });
+    let entries = app.workspace_entries();
+    assert_eq!(entries.len(), 2);
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.path != app.display_path(&first.view_root))
+    );
+    let active = app.remote_workspace.as_ref().unwrap();
+    assert!(active.client.same_transport(&first.client) && active.client.connected());
+    assert_eq!(active.client.hello().root_uri, uri(c.path()));
+    first.disconnect();
+}

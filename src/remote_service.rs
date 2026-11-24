@@ -80,6 +80,7 @@ pub(crate) struct Service {
     agents: Option<std::sync::Arc<agent::Manager>>,
     observations: watch::Registry,
     git_observation: Option<std::sync::Arc<watch::Observation>>,
+    default_root: bool,
 }
 struct FileIndex {
     generation: u64,
@@ -137,6 +138,7 @@ impl Service {
             agents: None,
             observations: Default::default(),
             git_observation: None,
+            default_root: false,
         }
     }
     fn switch_root(&mut self, root: PathBuf) {
@@ -204,6 +206,7 @@ impl Service {
             session,
             git_file_stats: true,
             git_sources_limit: true,
+            default_root: false,
         }
     }
     fn opened_reply(
@@ -1150,6 +1153,14 @@ pub(crate) fn serve(
     serve_service(Service::new(root)?, reader, writer)
 }
 
+/// Serve the directory a bare `--headless` uses. The hello says so, letting
+/// the client reopen the folders it last had open on this connection.
+fn serve_default(reader: impl Read, writer: impl Write + Send + 'static) -> io::Result<()> {
+    let mut service = Service::new(Path::new("."))?;
+    service.default_root = true;
+    serve_service(service, reader, writer)
+}
+
 fn serve_service(
     mut service: Service,
     reader: impl Read,
@@ -1160,7 +1171,8 @@ fn serve_service(
     service.process_ownership = Some(process_ownership.clone());
     use std::hash::BuildHasher;
     let session = std::collections::hash_map::RandomState::new().hash_one(std::process::id());
-    let hello = service.hello(session);
+    let mut hello = service.hello(session);
+    hello.default_root = service.default_root;
     // Printable readiness record is intentionally outside framed traffic so a
     // client can discover the unknown allocated compute node on its shell stream.
     let ready = format!(
@@ -2342,7 +2354,8 @@ fn format(
     }))
 }
 
-pub(crate) fn run(root: &Path) -> io::Result<()> {
+/// `None` serves the default directory of a bare `--headless`.
+pub(crate) fn run(root: Option<&Path>) -> io::Result<()> {
     #[cfg(unix)]
     let mut input = signal::Input::new()?;
     #[cfg(windows)]
@@ -2359,12 +2372,12 @@ pub(crate) fn run(root: &Path) -> io::Result<()> {
     #[cfg(unix)]
     let _raw = RawTerminal::enter()?;
     #[cfg(unix)]
-    {
-        serve(root, &mut input, io::stdout())
-    }
+    let input = &mut input;
     #[cfg(not(unix))]
-    {
-        serve(root, io::stdin(), io::stdout())
+    let input = io::stdin();
+    match root {
+        Some(root) => serve(root, input, io::stdout()),
+        None => serve_default(input, io::stdout()),
     }
 }
 

@@ -4,10 +4,20 @@ How VTCode opens folders, keeps several of them live at once, and helps you find
 
 ## Opening files and folders
 
-Running `vtcode` without a path opens an empty editor with no folder attached.
-It does not load the launch directory's settings or session, scan its Git
-repository, or start its file watcher. Use `vtcode .` to open
-the current directory explicitly, or choose **Open folder…** in the empty window.
+Running `vtcode` without a path reopens the folders that were open when VTCode
+last ran on this device, in the same order and with the same folder selected.
+Folders that no longer exist are skipped. When none were open, it opens an
+empty editor with no folder attached. It never loads the launch directory's
+settings or session, scans its Git repository, or starts its file watcher. Use
+`vtcode .` to open the current directory explicitly, or choose **Open folder…**
+in the empty window.
+
+The same applies over SSH: `vtcode --remote HOST` (or a saved remote target)
+whose remote command is a bare `vtcode --headless` reopens the folders last
+open on that connection. It closes the default remote folder unless that folder
+was one of them or has unsaved work. Naming a folder in `--remote-command`
+opens just that folder. The record is `.vtcode/last-workspaces.json` beside
+vtcode.
 Loose files and tools can remain open while folders are added; their window state
 is stored separately from folder sessions.
 

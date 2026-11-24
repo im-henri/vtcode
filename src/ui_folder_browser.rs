@@ -1163,6 +1163,7 @@ mod tests {
             app_version: env!("CARGO_PKG_VERSION").into(),
             git_file_stats: false,
             git_sources_limit: false,
+            default_root: false,
             root: "/home/henri/project space".into(),
             root_uri: "file:///home/henri/project%20space/".into(),
             session: 42,

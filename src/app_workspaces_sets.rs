@@ -50,6 +50,9 @@ pub(super) struct Staged {
     name: String,
     set_id: Option<u64>,
     folder: bool,
+    /// Reopening the last session: skip missing folders, and close the launch
+    /// folder without asking unless it has work to keep.
+    automatic: bool,
     roots: Vec<StagedRoot>,
     active: usize,
     expected: Vec<u64>,
@@ -66,6 +69,7 @@ pub(super) struct Transition {
     name: String,
     set_id: Option<u64>,
     folder: bool,
+    automatic: bool,
     target: Vec<u64>,
     active: u64,
     close: Vec<u64>,
@@ -367,6 +371,7 @@ impl App {
                     name,
                     set_id: None,
                     folder: true,
+                    automatic: false,
                     active: 0,
                     confirmed: false,
                     validated: false,
@@ -455,6 +460,15 @@ impl App {
             self.notify_error("Saved workspace was not found for this connection");
             return;
         };
+        self.stage_workspace_set(set, Some(id), false);
+    }
+
+    pub(super) fn stage_workspace_set(
+        &mut self,
+        set: SavedSet,
+        set_id: Option<u64>,
+        automatic: bool,
+    ) {
         let opened: Vec<_> = std::iter::once((self.workspaces.active, self.explorer.root.clone()))
             .chain(
                 self.workspaces
@@ -494,80 +508,100 @@ impl App {
             let result = (|| -> Result<Staged, String> {
                 let mut roots: Vec<StagedRoot> = vec![];
                 let mut active = 0;
+                let mut skipped: Vec<String> = vec![];
                 for (index, location) in set.roots.iter().enumerate() {
                     if cancel.is_cancelled() {
                         return Err("Opening the workspace was cancelled".into());
                     }
-                    let known = match location {
-                        Location::Remote { uri } => {
-                            remote_roots.iter().find(|(_, opened, _)| opened == uri)
-                        }
-                        _ => None,
-                    };
-                    let root = if let Some((_, _, root)) = known {
-                        root.clone()
-                    } else {
-                        match (location, &remote) {
-                            (Location::Local { .. }, None) => location
-                                .local_path(&base)
-                                .map_err(|error| error.to_string())?,
-                            (Location::Remote { uri }, Some(remote)) => {
-                                remote.target_key(uri).map_err(|error| error.to_string())?
+                    let staged = (|| -> Result<StagedRoot, String> {
+                        let known = match location {
+                            Location::Remote { uri } => {
+                                remote_roots.iter().find(|(_, opened, _)| opened == uri)
                             }
-                            _ => return Err("Workspace uses a different connection".into()),
-                        }
-                    };
-                    let local = remote
-                        .is_none()
-                        .then(|| crate::startup::LocalFolder::resolve(&root));
-                    let canonical = local
-                        .as_ref()
-                        .and_then(|folder| folder.as_ref().ok())
-                        .map(|folder| folder.canonical.clone());
-                    let mut existing = opened
-                        .iter()
-                        .find(|(_, path)| {
-                            same_workspace(path, &root)
-                                || canonical.as_ref().is_some_and(|canonical| {
-                                    std::fs::canonicalize(path).is_ok_and(|path| path == *canonical)
-                                })
-                        })
-                        .map(|(id, _)| *id);
-                    let (root, prepared) = if existing.is_some() {
-                        (root, None)
-                    } else if let Some(remote) = &remote {
-                        let workspace = remote
-                            .open_workspace(&root)
-                            .map_err(|error| error.to_string())?;
-                        existing = opened
+                            _ => None,
+                        };
+                        let root = if let Some((_, _, root)) = known {
+                            root.clone()
+                        } else {
+                            match (location, &remote) {
+                                (Location::Local { .. }, None) => location
+                                    .local_path(&base)
+                                    .map_err(|error| error.to_string())?,
+                                (Location::Remote { uri }, Some(remote)) => {
+                                    remote.target_key(uri).map_err(|error| error.to_string())?
+                                }
+                                _ => return Err("Workspace uses a different connection".into()),
+                            }
+                        };
+                        let local = remote
+                            .is_none()
+                            .then(|| crate::startup::LocalFolder::resolve(&root));
+                        let canonical = local
+                            .as_ref()
+                            .and_then(|folder| folder.as_ref().ok())
+                            .map(|folder| folder.canonical.clone());
+                        let mut existing = opened
                             .iter()
-                            .find(|(_, path)| same_workspace(path, &workspace.view_root))
+                            .find(|(_, path)| {
+                                same_workspace(path, &root)
+                                    || canonical.as_ref().is_some_and(|canonical| {
+                                        std::fs::canonicalize(path)
+                                            .is_ok_and(|path| path == *canonical)
+                                    })
+                            })
                             .map(|(id, _)| *id);
-                        let prepared = existing.is_none().then(|| Prepared {
-                            startup: crate::startup::Prepared::load_remote(
-                                workspace.view_root.clone(),
-                            ),
-                            remote: Some(workspace.clone()),
-                            equivalent_roots: vec![],
-                        });
-                        (workspace.view_root.clone(), prepared)
-                    } else {
-                        let folder = local
-                            .expect("local folder resolution")
-                            .map_err(|error| format!("Cannot open {}: {error}", root.display()))?;
-                        let startup = folder.prepare().map_err(|error| error.to_string())?;
-                        (
-                            root,
-                            Some(Prepared {
-                                startup,
-                                remote: None,
+                        let (root, prepared) = if existing.is_some() {
+                            (root, None)
+                        } else if let Some(remote) = &remote {
+                            let workspace = remote
+                                .open_workspace(&root)
+                                .map_err(|error| error.to_string())?;
+                            existing = opened
+                                .iter()
+                                .find(|(_, path)| same_workspace(path, &workspace.view_root))
+                                .map(|(id, _)| *id);
+                            let prepared = existing.is_none().then(|| Prepared {
+                                startup: crate::startup::Prepared::load_remote(
+                                    workspace.view_root.clone(),
+                                ),
+                                remote: Some(workspace.clone()),
                                 equivalent_roots: vec![],
-                            }),
-                        )
+                            });
+                            (workspace.view_root.clone(), prepared)
+                        } else {
+                            let folder =
+                                local.expect("local folder resolution").map_err(|error| {
+                                    format!("Cannot open {}: {error}", root.display())
+                                })?;
+                            let startup = folder.prepare().map_err(|error| error.to_string())?;
+                            (
+                                root,
+                                Some(Prepared {
+                                    startup,
+                                    remote: None,
+                                    equivalent_roots: vec![],
+                                }),
+                            )
+                        };
+                        Ok(StagedRoot {
+                            root,
+                            canonical,
+                            existing,
+                            prepared,
+                        })
+                    })();
+                    let staged = match staged {
+                        Ok(staged) => staged,
+                        Err(error) if automatic => {
+                            skipped.push(error);
+                            continue;
+                        }
+                        Err(error) => return Err(error),
                     };
+                    let (root, canonical) = (&staged.root, &staged.canonical);
                     if let Some(duplicate) = roots.iter().position(|previous| {
-                        same_workspace(&previous.root, &root)
-                            || canonical.is_some() && previous.canonical == canonical
+                        same_workspace(&previous.root, root)
+                            || canonical.is_some() && previous.canonical == *canonical
                     }) {
                         if index == set.active {
                             active = duplicate;
@@ -577,17 +611,21 @@ impl App {
                     if index == set.active {
                         active = roots.len();
                     }
-                    roots.push(StagedRoot {
-                        root,
-                        canonical,
-                        existing,
-                        prepared,
-                    });
+                    roots.push(staged);
+                }
+                if roots.is_empty() {
+                    return Err(skipped
+                        .pop()
+                        .unwrap_or_else(|| "The workspace has no folders".into()));
+                }
+                for error in &skipped {
+                    log_warn!("skipped a folder of the last session: {error}");
                 }
                 Ok(Staged {
                     name: set.name,
-                    set_id: Some(id),
+                    set_id,
                     folder: false,
+                    automatic,
                     roots,
                     active,
                     expected: opened.into_iter().map(|(id, _)| id).collect(),
@@ -698,7 +736,7 @@ impl App {
                     .filter(|id| !keep.contains(id))
                     .collect();
                 let needs_confirmation = close.iter().any(|id| {
-                    !staged.folder
+                    !(staged.folder || staged.automatic)
                         || if *id == self.workspaces.active {
                             self.folder_replacement_needs_confirmation()
                         } else {
@@ -753,6 +791,7 @@ impl App {
                     name: staged.name,
                     set_id: staged.set_id,
                     folder: staged.folder,
+                    automatic: staged.automatic,
                     target,
                     active,
                     close,
@@ -782,7 +821,7 @@ impl App {
                     }
                     self.switch_workspace(transition.active);
                     if !transition.folder {
-                        let mut folders = transition.target.into_iter();
+                        let mut folders = transition.target.iter().copied();
                         let order = self
                             .ordered_workspaces()
                             .into_iter()
@@ -797,6 +836,14 @@ impl App {
                         self.set_workspace_order(order);
                     }
                     self.workspaces.sets.active = transition.set_id;
+                    if transition.automatic {
+                        let count = transition.target.len();
+                        self.notify(format!(
+                            "Reopened {count} folder{} from the last session",
+                            if count == 1 { "" } else { "s" }
+                        ));
+                        return true;
+                    }
                     self.notify(format!(
                         "Opened {}: {}",
                         if transition.folder {

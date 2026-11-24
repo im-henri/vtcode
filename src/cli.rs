@@ -15,7 +15,8 @@ pub(crate) const HELP: &str = concat!(
     "  FILE                         Open a file, or create it when saved.\n\n",
     "  FILE:LINE[:COLUMN]           Open at a location (line/column start at 1).\n\n",
     "  DIRECTORY                    Open a project directory.\n",
-    "                               With no path, open an empty editor window.\n",
+    "                               With no path, reopen the folders that were\n",
+    "                               open last time, or an empty editor window.\n",
     "                               Use '.' to open the current directory.\n\n",
     "Options:\n",
     "  -h, --help                   Show this help and exit without opening the UI.\n\n",
@@ -35,7 +36,8 @@ pub(crate) const HELP: &str = concat!(
     "                               no local shell expansion is performed.\n\n",
     "  --headless [DIRECTORY]       Run the remote workspace service without a UI.\n",
     "                               Defaults to the current directory; used with\n",
-    "                               a local VTCode --remote client.\n\n",
+    "                               a local VTCode --remote client, which then\n",
+    "                               reopens its last folders on that connection.\n\n",
     "  --install-theme SOURCE       Install a color theme without opening the UI.\n",
     "                               SOURCE: vscodethemes.com theme link, local VSIX,\n",
     "                               ZIP, extension directory, or JSON/JSONC file.\n\n",
@@ -63,7 +65,8 @@ pub(crate) enum Command {
     Version,
     Editor(Option<OsString>),
     InstallTheme(String),
-    Headless(PathBuf),
+    /// `None`: no directory was given; serve the default (`.`).
+    Headless(Option<PathBuf>),
     DetachedWindow(OsString),
     Remote {
         program: OsString,
@@ -317,9 +320,7 @@ pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command,
             }
             remote.finish()
         }
-        Mode::Headless => Ok(Command::Headless(
-            value.map(PathBuf::from).unwrap_or_else(|| ".".into()),
-        )),
+        Mode::Headless => Ok(Command::Headless(value.map(PathBuf::from))),
         Mode::InstallTheme => {
             let source = value.ok_or("missing SOURCE for --install-theme")?;
             let source = source
@@ -437,7 +438,7 @@ mod tests {
         }
         assert_eq!(
             parsed(&["--headless", "--", "-project"]),
-            Command::Headless("-project".into())
+            Command::Headless(Some("-project".into()))
         );
         assert_eq!(
             parsed(&["--install-theme", "--", "-theme.json"]),
@@ -446,10 +447,10 @@ mod tests {
     }
     #[test]
     fn non_ui_commands_keep_their_operands() {
-        assert_eq!(parsed(&["--headless"]), Command::Headless(".".into()));
+        assert_eq!(parsed(&["--headless"]), Command::Headless(None));
         assert_eq!(
             parsed(&["--headless", "project folder"]),
-            Command::Headless("project folder".into())
+            Command::Headless(Some("project folder".into()))
         );
         assert_eq!(
             parsed(&[
@@ -628,7 +629,7 @@ mod tests {
         );
         assert_eq!(
             parse(["--headless".into(), path.clone()]).unwrap(),
-            Command::Headless(path.clone().into())
+            Command::Headless(Some(path.clone().into()))
         );
         assert_eq!(
             parse([

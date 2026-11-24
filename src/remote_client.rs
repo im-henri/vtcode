@@ -809,6 +809,7 @@ impl Client {
                 hello: Hello {
                     root,
                     root_uri,
+                    default_root: false,
                     ..self.hello().clone()
                 },
             })),

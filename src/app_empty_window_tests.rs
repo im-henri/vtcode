@@ -731,3 +731,53 @@ fn no_argument_launch_from_a_repository_does_not_restore_that_repository() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn a_launch_without_a_path_reopens_the_last_folders_and_records_them_again() {
+    use crate::last_workspaces::{self, Entry};
+    use crate::workspace_sets::{Location, Scope};
+    let temp = tempfile::tempdir().unwrap();
+    let (first, second) = (temp.path().join("first"), temp.path().join("second"));
+    std::fs::create_dir(&first).unwrap();
+    std::fs::create_dir(&second).unwrap();
+    let base = crate::portable::base_dir();
+    let record = temp.path().join("last.json");
+    let mut app = empty();
+    app.settings_persistence_enabled = true;
+    app.workspaces.last.path = record.clone();
+    app.restore_last_workspaces(Entry {
+        scope: Scope::Local,
+        roots: vec![
+            Location::local(&first, &base),
+            Location::local(&temp.path().join("removed"), &base),
+            Location::local(&second, &base),
+        ],
+        active: 2,
+    });
+    settle(&mut app, |app| {
+        app.open_folder_count() == 2 && !app.workspace_set_switching()
+    });
+    // The missing folder is skipped, the empty launch window closes without
+    // asking, and the folder that was active before is active again.
+    assert!(app.workspace_set_confirmation().is_none());
+    assert_eq!(app.workspaces.parked.len(), 1);
+    assert!(same_workspace(&app.explorer.root, &second));
+
+    // Workbenches made in tests do not persist; the restored one now shows.
+    app.settings_persistence_enabled = true;
+    let expected = Entry {
+        scope: Scope::Local,
+        roots: vec![
+            Location::local(&app.workspaces.parked[0].app.explorer.root, &base),
+            Location::local(&app.explorer.root, &base),
+        ],
+        active: 1,
+    };
+    let end = Instant::now() + Duration::from_secs(12);
+    while last_workspaces::load(&record, &Scope::Local).as_ref() != Some(&expected) {
+        assert!(Instant::now() < end, "the open folders were not recorded");
+        app.poll_last_workspaces();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    app.flush_last_workspaces();
+}
