@@ -738,7 +738,9 @@ fn simple(p: &mut P<'_>, ctx: Ctx) -> R<Simple> {
             '^' | '6' => Alternate,
             'g' => FileInfo,
             'l' => Redraw,
-            'v' | 'q' => Visual(super::parse::Force::Block),
+            // <C-q> is Ctrl+Q, Quit, in the workbench (see `unclaimed`);
+            // <C-v> already starts Visual block mode, paste or not.
+            'v' => Visual(super::parse::Force::Block),
             'w' => {
                 let Some(k2) = p.next() else {
                     return R::Need;

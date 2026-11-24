@@ -944,3 +944,175 @@ fn leaving_the_only_tab_a_terminal_moves_to_the_explorer() {
     keys(&mut app, ":");
     assert!(app.vim.cmdline.is_some(), "and ':' works from there");
 }
+
+fn full_state(app: &mut App) -> String {
+    let tabs: Vec<String> = app
+        .tabs
+        .iter()
+        .map(|t| {
+            format!(
+                "{:?}:{}:{:?}",
+                t.kind,
+                t.editor.modified,
+                t.editor.rope.to_string()
+            )
+        })
+        .collect();
+    format!(
+        "{} | popup={} field={:?} text={:?} search={} gsearch={} groups={} term_focus={} sidebar_term={} tabs={tabs:?}",
+        fingerprint(app),
+        super::app_host::popup_open(app),
+        app.focused_text_input_id(),
+        app.focused_text_for_test(),
+        app.search_active,
+        app.global_search_active,
+        app.groups.len(),
+        app.terminal_panel_focused,
+        app.show_terminal_sidebar,
+    )
+}
+
+/// Every default workbench shortcut, in every view, does what it does
+/// without Vim mode — except, in a Vim buffer, the keys Vim itself defines.
+/// (Bindings that start a real shell are covered by the terminal tests.)
+#[test]
+fn every_default_shortcut_matches_plain_mode_in_every_view() {
+    let bindings: Vec<_> = crate::app::default_keybindings()
+        .into_iter()
+        .filter(|b| b.chord.is_none() && !matches!(b.id, "toggle_terminal" | "new_terminal"))
+        .map(|b| (b.id, b.modifiers, b.code))
+        .collect();
+    let threads = 6;
+    let chunks: Vec<Vec<_>> = (0..threads)
+        .map(|t| bindings.iter().copied().skip(t).step_by(threads).collect())
+        .collect();
+    let results: Vec<(usize, Vec<String>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = chunks
+            .into_iter()
+            .map(|chunk| {
+                scope.spawn(move || {
+                    std::thread::Builder::new()
+                        .stack_size(64 << 20)
+                        .spawn(move || shortcut_parity(&chunk))
+                        .unwrap()
+                        .join()
+                        .unwrap()
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let checked: usize = results.iter().map(|r| r.0).sum();
+    let failed: Vec<String> = results.into_iter().flat_map(|r| r.1).collect();
+    eprintln!("checked {checked} shortcut/view pairs");
+    assert!(checked > 1000, "only {checked} pairs ran");
+    assert!(
+        failed.is_empty(),
+        "{} differences:
+{}",
+        failed.len(),
+        failed.join(
+            "
+"
+        )
+    );
+}
+
+fn shortcut_parity(bindings: &[(&'static str, KeyModifiers, KeyCode)]) -> (usize, Vec<String>) {
+    type Views = fn() -> Vec<(&'static str, App)>;
+    let sets: [Views; 3] = [views, more_views, || {
+        rare_views().into_iter().map(|(n, a, _)| (n, a)).collect()
+    }];
+    let vim_buffers = ["editor", "git revision", "diff tab", "editor in a split"];
+    let opts = super::Options::default();
+    let mut failed = Vec::new();
+    let mut checked = 0;
+    for &(id, modifiers, code) in bindings {
+        let event = KeyEvent::new(code, modifiers);
+        let vim_key = super::keys::Key::from_event(event);
+        for set in sets {
+            for ((view, mut app), (_, mut off)) in set().into_iter().zip(set()) {
+                if vim_buffers.contains(&view)
+                    && !vim_key.is_some_and(|k| super::unclaimed(k, &opts))
+                {
+                    continue;
+                }
+                super::app_host::set_enabled(&mut off, false);
+                draw(&mut app);
+                draw(&mut off);
+                crate::input_keyboard::handle_keyboard_event(&mut app, event);
+                crate::input_keyboard::handle_keyboard_event(&mut off, event);
+                checked += 1;
+                // Deliberate Vim behaviour: Ctrl-W starts a window command
+                // everywhere, and Ctrl-D/U page through result lists.
+                if id == "close_tab"
+                    || view == "search results"
+                        && matches!(id, "select_next_occurrence" | "cursor_undo")
+                {
+                    continue;
+                }
+                let (a, b) = (full_state(&mut app), full_state(&mut off));
+                if a != b {
+                    failed.push(format!(
+                        "{view}: {id} ({modifiers:?} {code:?})
+   vim:   {a}
+   plain: {b}"
+                    ));
+                }
+            }
+        }
+    }
+    (checked, failed)
+}
+
+fn hunk_peek_app(vim: bool) -> App {
+    let mut app = base();
+    let saved: String = (0..120).map(|i| format!("old {i}\n")).collect();
+    let current: String = (0..120).map(|i| format!("new {i}\n")).collect();
+    app.hunk_peek =
+        Some(crate::ui_hunk_peek::HunkPeek::from_texts(&saved, &current, 0, 4).unwrap());
+    app.hunk_popup_active = true;
+    app.hunk_popup_status = 'M';
+    app.hunk_popup_pos = (10, 4);
+    super::app_host::set_enabled(&mut app, vim);
+    draw(&mut app);
+    app
+}
+
+#[test]
+fn the_hunk_peek_scrolls_and_closes_with_vim_keys() {
+    let state = |app: &App| {
+        (
+            app.hunk_popup_active,
+            app.hunk_peek.as_ref().map(|p| (p.scroll, p.selected)),
+        )
+    };
+    let mut failed = Vec::new();
+    for (vim_keys, plain) in [
+        ("j", vec![KeyCode::Down]),
+        ("jjjk", vec![KeyCode::Down, KeyCode::Down]),
+        ("<C-d>", vec![KeyCode::PageDown]),
+        ("G", vec![KeyCode::End]),
+        ("Ggg", vec![KeyCode::End, KeyCode::Home]),
+        ("q", vec![KeyCode::Esc]),
+    ] {
+        let mut app = hunk_peek_app(true);
+        let mut off = hunk_peek_app(false);
+        keys(&mut app, vim_keys);
+        for code in plain {
+            press(&mut off, code, KeyModifiers::NONE);
+        }
+        if state(&app) != state(&off) {
+            failed.push(format!(
+                "{vim_keys}: vim {:?} plain {:?}",
+                state(&app),
+                state(&off)
+            ));
+        }
+        // j and Ctrl-D must visibly move (End/Home settle at draw time).
+        if matches!(vim_keys, "j" | "<C-d>") && state(&app) == state(&hunk_peek_app(false)) {
+            failed.push(format!("{vim_keys}: nothing moved"));
+        }
+    }
+    assert!(failed.is_empty(), "{failed:#?}");
+}

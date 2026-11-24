@@ -514,6 +514,9 @@ pub(crate) fn menu_key(app: &App, event: KeyEvent) -> KeyEvent {
     if !app.vim.enabled || event.kind == crossterm::event::KeyEventKind::Release {
         return event;
     }
+    if let Some(code) = scroll_popup_key(app, event) {
+        return KeyEvent::new_with_kind(code, KeyModifiers::NONE, event.kind);
+    }
     let menu_bar = app.menu_active;
     let menu = menu_bar
         || app.tab_context_active
@@ -542,6 +545,39 @@ pub(crate) fn menu_key(app: &App, event: KeyEvent) -> KeyEvent {
         }
     };
     KeyEvent::new_with_kind(code, KeyModifiers::NONE, event.kind)
+}
+
+/// Read-only popups that scroll with the arrows and read keys before the
+/// Vim layer (the hunk peek preview, Performance details): j/k, h/l, gg/G,
+/// Ctrl-D/U and q, translated to the keys they already take.
+fn scroll_popup_key(app: &App, event: KeyEvent) -> Option<KeyCode> {
+    let hunk_peek = app.hunk_popup_active
+        && app.hunk_peek.is_some()
+        && app.hunk_preview_feedback.is_none()
+        && crate::ui_modal::active(app).is_none();
+    let details = app.background.activity.details_open
+        && crate::ui_performance_details::captures_keyboard(app);
+    if !(hunk_peek || details) {
+        return None;
+    }
+    let key = Key::from_event(event)?;
+    if key.is_ctrl('d') {
+        return Some(KeyCode::PageDown);
+    }
+    if key.is_ctrl('u') {
+        return Some(KeyCode::PageUp);
+    }
+    Some(match key.char()? {
+        'j' => KeyCode::Down,
+        'k' => KeyCode::Up,
+        'h' => KeyCode::Left,
+        'l' => KeyCode::Right,
+        'G' => KeyCode::End,
+        // No pending state here: one g goes to the top, so gg does too.
+        'g' => KeyCode::Home,
+        'q' => KeyCode::Esc,
+        _ => return None,
+    })
 }
 
 /// Vim-style keys for sidebars, lists and popups.
