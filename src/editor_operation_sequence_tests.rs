@@ -457,6 +457,10 @@ fn mixed_edit_paste_selection_and_history_sequences_match_a_plain_text_model() {
         anchor: Option<(usize, usize)>,
         modified: bool,
     }
+    struct Edit {
+        before: State,
+        after: State,
+    }
     fn offset(text: &str, (line, col): (usize, usize)) -> usize {
         text.split_inclusive('\n')
             .take(line)
@@ -488,8 +492,8 @@ fn mixed_edit_paste_selection_and_history_sequences_match_a_plain_text_model() {
             anchor: None,
             modified: false,
         };
-        let mut undo: Vec<State> = Vec::new();
-        let mut redo: Vec<State> = Vec::new();
+        let mut undo: Vec<Edit> = Vec::new();
+        let mut redo: Vec<Edit> = Vec::new();
         let mut clipboard = String::new();
         let mut saved_text: Option<String> = None;
         let mut random = seed as u64;
@@ -528,7 +532,7 @@ fn mixed_edit_paste_selection_and_history_sequences_match_a_plain_text_model() {
                         editor.paste_plain_with_text(&payload);
                     }
                     if !payload.is_empty() || (deletes && start != end) {
-                        undo.push(current.clone());
+                        let before = current.clone();
                         redo.clear();
                         let normalized = payload.replace("\r\n", "\n").replace('\r', "\n");
                         let mut chars: Vec<_> = current.text.chars().collect();
@@ -538,24 +542,28 @@ fn mixed_edit_paste_selection_and_history_sequences_match_a_plain_text_model() {
                             position(&current.text, start + normalized.chars().count());
                         current.anchor = None;
                         current.modified = true;
+                        undo.push(Edit {
+                            before,
+                            after: current.clone(),
+                        });
                     } else if deletes {
                         current.anchor = None;
                     }
                 }
             } else if action == 5 {
                 editor.undo();
-                if let Some(previous) = undo.pop() {
-                    redo.push(current);
-                    current = previous;
+                if let Some(edit) = undo.pop() {
+                    current = edit.before.clone();
+                    redo.push(edit);
                     if let Some(saved) = &saved_text {
                         current.modified = current.text != *saved;
                     }
                 }
             } else if action == 6 {
                 editor.redo();
-                if let Some(next) = redo.pop() {
-                    undo.push(current);
-                    current = next;
+                if let Some(edit) = redo.pop() {
+                    current = edit.after.clone();
+                    undo.push(edit);
                     if let Some(saved) = &saved_text {
                         current.modified = current.text != *saved;
                     }

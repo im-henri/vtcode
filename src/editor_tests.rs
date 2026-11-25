@@ -1041,16 +1041,16 @@ fn enter_at_line_end_marks_only_the_inserted_line() {
             assert_marks(&ed);
             ed.insert_char('x');
             assert_marks(&ed);
+            let edited = ed.rope.clone();
             let diff = compute_unsaved_diff_markers(ed.saved_rope.as_ref().unwrap(), &ed.rope);
             ed.apply_unsaved_diff_cache(ed.content_version, diff);
             assert_marks(&ed);
 
             ed.undo();
-            assert_marks(&ed);
-            ed.undo();
             assert_eq!(ed.rope, text.as_str());
             assert!(!ed.has_unsaved_change_in_range(0, ed.line_count()));
             ed.redo();
+            assert_eq!(ed.rope, edited);
             assert_marks(&ed);
         }
     }
