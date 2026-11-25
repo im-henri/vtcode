@@ -265,12 +265,12 @@ To search the whole project, see [Lesson 10](#lesson-10-the-rest-of-the-workbenc
 | `:sp path` / `:vsp path` | open a file or directory in a horizontal / vertical split |
 | `:pwd` / `:cd path` | show or change the working directory for Ex commands |
 | `<C-w>h` `j` `k` `l` | move to the window left / below / above / right |
-| `<C-w>w` | cycle through windows |
+| `<C-w>w` / `<C-w>W` | cycle forward / backward through visible panes |
 | `<C-w>c` / `<C-w>o` | close this window / close all others |
 
-`<C-w>` moves between *everything* on screen, not just editor splits: the
-sidebar on the left, the bottom panel, the terminal and the docked Agent Chat
-are all windows you can reach with `<C-w>h/j/k/l`.
+The cycle includes editor splits, the sidebar, the bottom panel, the terminal
+dock and docked Agent Chat when they are visible. Use `<C-w>h/j/k/l` to move
+by direction. From a terminal, use `<C-\>w` to continue the cycle.
 
 Press Tab or Shift+Tab to cycle through path completions. For example,
 `:vsp .<Tab>` offers `./` and `../`, and `:vsp ./<Tab>` completes entries

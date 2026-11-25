@@ -1125,7 +1125,7 @@ fn visible_targets(app: &App) -> Vec<(Target, ratatui::layout::Rect)> {
             }
         }
     }
-    if app.show_explorer
+    if app.sidebar_is_visible()
         && let Some(r) = app.explorer_area
     {
         out.push((Target::Explorer, r));
@@ -1143,6 +1143,7 @@ fn visible_targets(app: &App) -> Vec<(Target, ratatui::layout::Rect)> {
     if let Some(r) = chat_dock_area(app) {
         out.push((Target::Chat, r));
     }
+    out.retain(|(_, area)| !area.is_empty());
     out
 }
 
@@ -1290,13 +1291,6 @@ fn directional(app: &App, dx: i32, dy: i32) -> Option<Target> {
 }
 
 pub(crate) fn window(app: &mut App, w: Window, count: usize) -> Result<(), String> {
-    let groups: Vec<usize> = visible_targets(app)
-        .into_iter()
-        .filter_map(|(t, _)| match t {
-            Target::Group(i) => Some(i),
-            _ => None,
-        })
-        .collect();
     match w {
         Window::Left | Window::Right | Window::Up | Window::Down => {
             let (dx, dy) = match w {
@@ -1313,35 +1307,35 @@ pub(crate) fn window(app: &mut App, w: Window, count: usize) -> Result<(), Strin
             }
             Ok(())
         }
-        Window::Next | Window::Prev | Window::Top | Window::Bottom => {
-            if groups.len() < 2 {
-                // Cycle between the editor and the visible side panes.
-                let all: Vec<Target> = visible_targets(app).into_iter().map(|(t, _)| t).collect();
-                let cur = current_target(app);
-                let i = all.iter().position(|t| *t == cur).unwrap_or(0);
-                if all.len() > 1 {
-                    let n = all.len();
-                    let next = if w == Window::Prev {
-                        all[(i + n - 1) % n]
-                    } else {
-                        all[(i + 1) % n]
-                    };
-                    focus_target(app, next);
-                }
-                return Ok(());
-            }
-            let cur = groups
-                .iter()
-                .position(|&g| g == app.active_group)
-                .unwrap_or(0);
-            let n = groups.len();
-            let next = match w {
-                Window::Top => 0,
-                Window::Bottom => n - 1,
-                Window::Prev => (cur + n - 1) % n,
-                _ => (cur + 1) % n,
+        Window::Next | Window::Prev => {
+            let targets = visible_targets(app);
+            let current = current_target(app);
+            let position = targets.iter().position(|(target, _)| *target == current);
+            let next = match (w, position) {
+                (Window::Next, Some(i)) => (i + 1) % targets.len(),
+                (Window::Prev, Some(i)) if i > 0 => i - 1,
+                (Window::Prev, _) => targets.len().saturating_sub(1),
+                _ => 0,
             };
-            focus_target(app, Target::Group(groups[next]));
+            if let Some(&(target, _)) = targets.get(next)
+                && target != current
+            {
+                focus_target(app, target);
+            }
+            Ok(())
+        }
+        Window::Top | Window::Bottom => {
+            let mut editors = visible_targets(app)
+                .into_iter()
+                .filter(|(target, _)| matches!(target, Target::Group(_)));
+            let editor = if w == Window::Top {
+                editors.next()
+            } else {
+                editors.next_back()
+            };
+            if let Some((target, _)) = editor {
+                focus_target(app, target);
+            }
             Ok(())
         }
         Window::Last => {
@@ -1386,7 +1380,12 @@ pub(crate) fn window(app: &mut App, w: Window, count: usize) -> Result<(), Strin
             Ok(())
         }
         Window::Close => {
-            if groups.len() < 2 {
+            let has_split = visible_targets(app)
+                .iter()
+                .filter(|(target, _)| matches!(target, Target::Group(_)))
+                .nth(1)
+                .is_some();
+            if !has_split {
                 return Err("E444: Cannot close last window".into());
             }
             let modified = app

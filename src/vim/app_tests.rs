@@ -195,6 +195,71 @@ fn ctrl_w_moves_focus_between_explorer_and_editor() {
 }
 
 #[test]
+fn ctrl_w_cycles_through_splits_and_the_explorer_in_both_directions() {
+    let mut app = vim_app("abc");
+    let _root = with_explorer(&mut app);
+    let left = app.active_group;
+    keys(&mut app, ":vsp .<CR>");
+    let right = app.active_group;
+    assert_ne!(left, right);
+    frame(&mut app);
+
+    use ActivePane::{Editor, Explorer};
+    for (step, pane, group) in [
+        ("<C-w>w", Explorer, right),
+        ("<C-w><C-w>", Editor, left),
+        ("<C-w>w", Editor, right),
+        ("<C-w>W", Editor, left),
+        ("<C-w>W", Explorer, left),
+        ("<C-w>W", Editor, right),
+        ("<C-w>h", Editor, left),
+        ("<C-w>h", Explorer, left),
+        ("<C-w>l", Editor, left),
+        ("<C-w>l", Editor, right),
+    ] {
+        keys(&mut app, step);
+        assert_eq!((app.active_pane, app.active_group), (pane, group), "{step}");
+    }
+}
+
+#[test]
+fn ctrl_w_includes_the_bottom_panel_and_skips_a_hidden_sidebar() {
+    let mut app = vim_app("abc");
+    let _root = with_explorer(&mut app);
+    let original = app.active_group;
+    keys(&mut app, ":new<CR>");
+    let split = app.active_group;
+    assert_ne!(split, original);
+    crate::ui_panels::show_problems(&mut app);
+    app.active_pane = ActivePane::Editor;
+    frame(&mut app);
+
+    keys(&mut app, "<C-w>w");
+    assert_eq!(app.active_pane, ActivePane::Explorer);
+    keys(&mut app, "<C-w>w");
+    assert_eq!(app.active_pane, ActivePane::Panel);
+    keys(&mut app, "<C-w>w");
+    assert_eq!(
+        (app.active_pane, app.active_group),
+        (ActivePane::Editor, original)
+    );
+
+    // The sidebar can be hidden before the previous frame's area is cleared.
+    keys(&mut app, "<C-w>w");
+    assert_eq!(app.active_group, split);
+    app.set_sidebar_auto_hide(true);
+    assert!(!app.sidebar_is_visible());
+    assert!(app.explorer_area.is_some());
+    keys(&mut app, "<C-w>w");
+    assert_eq!(app.active_pane, ActivePane::Panel);
+    keys(&mut app, "<C-w>W");
+    assert_eq!(
+        (app.active_pane, app.active_group),
+        (ActivePane::Editor, split)
+    );
+}
+
+#[test]
 fn toggling_the_setting_resets_editor_state() {
     let mut app = app_with("abc");
     app.toggle_setting("vim_mode");
