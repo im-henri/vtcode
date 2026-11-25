@@ -209,6 +209,7 @@ fn imported_cr_history_never_restores_a_caret_inside_a_line_ending() {
             vec![Some((0, 100))],
             Some((0, 100)),
             true,
+            None,
         );
         if redo {
             editor.import_undo_redo(vec![], vec![state]);

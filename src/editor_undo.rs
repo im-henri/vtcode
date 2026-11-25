@@ -1,6 +1,6 @@
 use ropey::Rope;
 
-use crate::editor::{CharClass, Editor, UndoSnapshot, UndoState};
+use crate::editor::{CaretState, CharClass, Editor, UndoSnapshot, UndoState};
 
 fn next_snapshot_id() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -167,6 +167,7 @@ impl Editor {
             dirty_from,
             dirty_through,
             change_id,
+            other_caret: None,
         });
         self.active_undo_change_id = Some(change_id);
         self.redo_stack.clear();
@@ -233,28 +234,95 @@ impl Editor {
         }
     }
 
+    pub(crate) fn caret_state(&self) -> CaretState {
+        CaretState {
+            line: self.cursor_line,
+            col: self.cursor_col,
+            extra_cursors: self.extra_cursors.clone(),
+            extra_cursor_anchors: self.extra_cursor_anchors.clone(),
+            selection_anchor: self.selection_anchor,
+        }
+    }
+
+    fn restore_caret(&mut self, caret: CaretState) {
+        self.cursor_line = caret.line;
+        self.cursor_col = caret.col;
+        self.extra_cursors = caret.extra_cursors;
+        self.extra_cursor_anchors = caret.extra_cursor_anchors;
+        self.selection_anchor = caret.selection_anchor;
+    }
+
+    /// VS Code replaces an edit group's `afterCursorState` after every edit
+    /// appended to it. Called when each top-level edit transaction ends, so
+    /// Redo returns to where the caret was right after the change, not to
+    /// wherever it was when Undo was pressed.
+    pub(crate) fn record_undo_after_caret(&mut self) {
+        let Some(active_id) = self.active_undo_change_id else {
+            return;
+        };
+        let caret = self.caret_state();
+        if let Some(mut state) = self
+            .undo_stack
+            .back_mut()
+            .filter(|state| state.change_id == active_id)
+        {
+            if state.other_caret.as_ref() != Some(&caret) {
+                state.other_caret = Some(caret);
+            }
+        }
+    }
+
+    /// History without a recorded caret (restored sessions, edits made
+    /// outside a transaction) still lands on the change itself: the start or
+    /// end of the text that differs from `other`.
+    fn caret_at_change(rope: &Rope, other: &Rope, at_end: bool) -> CaretState {
+        let (_, changed) = crate::rope_changes::changed_chars(other, rope);
+        let idx = if at_end { changed.end } else { changed.start }.min(rope.len_chars());
+        let line = rope.char_to_line(idx);
+        CaretState {
+            line,
+            col: idx - rope.line_to_char(line),
+            ..CaretState::default()
+        }
+    }
+
     pub(crate) fn undo(&mut self) {
         crate::editor_document::edit!(self, {
             self.desired_col = None;
+            // A still-open typing group has the post-edit caret right now.
+            self.record_undo_after_caret();
             self.break_undo_group();
             if let Some(state) = self.undo_stack.pop_back() {
                 self.snippet_cancel();
                 self.animation_undo_revision = self.animation_undo_revision.wrapping_add(1);
                 let old_line_count = self.rope.len_lines();
+                // VS Code: Undo restores the carets from before the edit and
+                // Redo the carets from right after it.
+                let before = CaretState {
+                    line: state.cursor_line,
+                    col: state.cursor_col,
+                    extra_cursors: state.extra_cursors,
+                    extra_cursor_anchors: state.extra_cursor_anchors,
+                    selection_anchor: state.selection_anchor,
+                };
+                let after = state
+                    .other_caret
+                    .unwrap_or_else(|| Self::caret_at_change(&self.rope, &state.rope, true));
                 self.redo_stack.push_back(UndoState {
                     snapshot_id: next_snapshot_id(),
                     rope: self.rope.clone(),
                     insertion_anchors: self.insertion_anchors.clone(),
                     line_ending: self.cached_line_ending,
-                    cursor_line: self.cursor_line,
-                    cursor_col: self.cursor_col,
-                    extra_cursors: self.extra_cursors.clone(),
-                    extra_cursor_anchors: self.extra_cursor_anchors.clone(),
-                    selection_anchor: self.selection_anchor,
+                    cursor_line: after.line,
+                    cursor_col: after.col,
+                    extra_cursors: after.extra_cursors,
+                    extra_cursor_anchors: after.extra_cursor_anchors,
+                    selection_anchor: after.selection_anchor,
                     modified: self.modified,
                     dirty_from: state.dirty_from,
                     dirty_through: state.dirty_through,
                     change_id: state.change_id,
+                    other_caret: Some(before.clone()),
                 });
                 // Cap redo stack to same limit as undo
                 let max_redo = 500;
@@ -264,11 +332,7 @@ impl Editor {
                 self.rope = state.rope;
                 self.insertion_anchors = state.insertion_anchors;
                 self.cached_line_ending = state.line_ending;
-                self.cursor_line = state.cursor_line;
-                self.cursor_col = state.cursor_col;
-                self.extra_cursors = state.extra_cursors;
-                self.extra_cursor_anchors = state.extra_cursor_anchors;
-                self.selection_anchor = state.selection_anchor;
+                self.restore_caret(before);
                 let line_delta = old_line_count.abs_diff(self.rope.len_lines());
                 self.mark_syntax_dirty_range(
                     state.dirty_from,
@@ -294,20 +358,31 @@ impl Editor {
                 self.snippet_cancel();
                 self.animation_undo_revision = self.animation_undo_revision.wrapping_add(1);
                 let old_line_count = self.rope.len_lines();
+                let after = CaretState {
+                    line: state.cursor_line,
+                    col: state.cursor_col,
+                    extra_cursors: state.extra_cursors,
+                    extra_cursor_anchors: state.extra_cursor_anchors,
+                    selection_anchor: state.selection_anchor,
+                };
+                let before = state
+                    .other_caret
+                    .unwrap_or_else(|| Self::caret_at_change(&self.rope, &state.rope, false));
                 self.undo_stack.push_back(UndoState {
                     snapshot_id: next_snapshot_id(),
                     rope: self.rope.clone(),
                     insertion_anchors: self.insertion_anchors.clone(),
                     line_ending: self.cached_line_ending,
-                    cursor_line: self.cursor_line,
-                    cursor_col: self.cursor_col,
-                    extra_cursors: self.extra_cursors.clone(),
-                    extra_cursor_anchors: self.extra_cursor_anchors.clone(),
-                    selection_anchor: self.selection_anchor,
+                    cursor_line: before.line,
+                    cursor_col: before.col,
+                    extra_cursors: before.extra_cursors,
+                    extra_cursor_anchors: before.extra_cursor_anchors,
+                    selection_anchor: before.selection_anchor,
                     modified: self.modified,
                     dirty_from: state.dirty_from,
                     dirty_through: state.dirty_through,
                     change_id: state.change_id,
+                    other_caret: Some(after.clone()),
                 });
                 // Cap undo stack (same limit as in undo path)
                 let max_undo = 500;
@@ -317,11 +392,7 @@ impl Editor {
                 self.rope = state.rope;
                 self.insertion_anchors = state.insertion_anchors;
                 self.cached_line_ending = state.line_ending;
-                self.cursor_line = state.cursor_line;
-                self.cursor_col = state.cursor_col;
-                self.extra_cursors = state.extra_cursors;
-                self.extra_cursor_anchors = state.extra_cursor_anchors;
-                self.selection_anchor = state.selection_anchor;
+                self.restore_caret(after);
                 let line_delta = old_line_count.abs_diff(self.rope.len_lines());
                 self.mark_syntax_dirty_range(
                     state.dirty_from,
@@ -357,6 +428,7 @@ impl Editor {
                     s.extra_cursor_anchors.clone(),
                     s.selection_anchor,
                     s.modified,
+                    s.other_caret.clone(),
                 )
             })
             .collect()
@@ -405,6 +477,7 @@ impl Editor {
                     s.extra_cursor_anchors.clone(),
                     s.selection_anchor,
                     s.modified,
+                    s.other_caret.clone(),
                 )
             })
             .collect()
@@ -449,6 +522,7 @@ impl Editor {
                 extra_cursor_anchors,
                 selection_anchor,
                 modified,
+                other_caret,
             ) in undo_entries
             {
                 let rope = content;
@@ -463,6 +537,10 @@ impl Editor {
                     .map(|opt| opt.map(|(l, c)| clamp_pos(&rope, l, c)))
                     .collect();
                 let selection_anchor = selection_anchor.map(|(l, c)| clamp_pos(&rope, l, c));
+                let other_caret = other_caret.map(|caret| {
+                    let (line, col) = clamp_pos(&rope, caret.line, caret.col);
+                    CaretState { line, col, ..caret }
+                });
                 let change_id = self.next_undo_change_id;
                 self.next_undo_change_id = self.next_undo_change_id.wrapping_add(1);
                 self.undo_stack.push_back(UndoState {
@@ -479,6 +557,7 @@ impl Editor {
                     dirty_from: 0,
                     dirty_through,
                     change_id,
+                    other_caret,
                 });
             }
             self.redo_stack.clear();
@@ -490,6 +569,7 @@ impl Editor {
                 extra_cursor_anchors,
                 selection_anchor,
                 modified,
+                other_caret,
             ) in redo_entries
             {
                 let rope = content;
@@ -504,6 +584,10 @@ impl Editor {
                     .map(|opt| opt.map(|(l, c)| clamp_pos(&rope, l, c)))
                     .collect();
                 let selection_anchor = selection_anchor.map(|(l, c)| clamp_pos(&rope, l, c));
+                let other_caret = other_caret.map(|caret| {
+                    let (line, col) = clamp_pos(&rope, caret.line, caret.col);
+                    CaretState { line, col, ..caret }
+                });
                 let change_id = self.next_undo_change_id;
                 self.next_undo_change_id = self.next_undo_change_id.wrapping_add(1);
                 self.redo_stack.push_back(UndoState {
@@ -520,6 +604,7 @@ impl Editor {
                     dirty_from: 0,
                     dirty_through,
                     change_id,
+                    other_caret,
                 });
             }
         })
@@ -668,7 +753,7 @@ mod tests {
         ed.rope = Rope::from_str("changed\n");
         ed.modified = true;
         ed.import_undo_redo(
-            vec![("saved\n".into(), 0, 0, vec![], vec![], None, false)],
+            vec![("saved\n".into(), 0, 0, vec![], vec![], None, false, None)],
             vec![],
         );
 
@@ -710,6 +795,130 @@ mod tests {
         ed.undo();
         assert_eq!(ed.cursor_line, 0);
         assert_eq!(ed.cursor_col, 3);
+    }
+
+    fn type_at(ed: &mut Editor, line: usize, col: usize, text: &str) {
+        // Moving the caret ends the previous undo group, as a click would.
+        ed.break_undo_group();
+        ed.cursor_line = line;
+        ed.cursor_col = col;
+        for c in text.chars() {
+            ed.insert_char(c);
+        }
+    }
+
+    fn caret(ed: &Editor) -> (usize, usize) {
+        (ed.cursor_line, ed.cursor_col)
+    }
+
+    #[test]
+    fn redo_returns_to_where_the_edit_ended_not_where_undo_was_pressed() {
+        let mut ed = Editor::test_with_text("first line\nsecond line\nthird line\n");
+        type_at(&mut ed, 0, 5, "AAA");
+        type_at(&mut ed, 2, 0, "BBB");
+        // Wander off before undoing, as people do.
+        ed.break_undo_group();
+        ed.cursor_line = 1;
+        ed.cursor_col = 2;
+
+        ed.undo();
+        assert_eq!(caret(&ed), (2, 0), "undo goes to before BBB");
+        ed.undo();
+        assert_eq!(caret(&ed), (0, 5), "undo goes to before AAA");
+        ed.redo();
+        assert_eq!(
+            ed.rope.to_string(),
+            "firstAAA line\nsecond line\nthird line\n"
+        );
+        assert_eq!(caret(&ed), (0, 8), "redo lands after AAA, not on line 2");
+        ed.redo();
+        assert_eq!(caret(&ed), (2, 3), "redo lands after BBB, not on line 1");
+
+        // Round trips keep both ends of every change.
+        ed.undo();
+        assert_eq!(caret(&ed), (2, 0));
+        ed.undo();
+        assert_eq!(caret(&ed), (0, 5));
+        ed.redo();
+        ed.redo();
+        assert_eq!(caret(&ed), (2, 3));
+    }
+
+    #[test]
+    fn redo_of_a_typing_group_ends_after_its_last_keystroke() {
+        let mut ed = Editor::test_with_text("x\n");
+        type_at(&mut ed, 0, 1, "abc");
+        // Moving away after typing must not change where redo returns.
+        ed.break_undo_group();
+        ed.cursor_line = 0;
+        ed.cursor_col = 0;
+        ed.undo();
+        assert_eq!(ed.rope.to_string(), "x\n");
+        assert_eq!(caret(&ed), (0, 1));
+        ed.redo();
+        assert_eq!(ed.rope.to_string(), "xabc\n");
+        assert_eq!(caret(&ed), (0, 4));
+    }
+
+    #[test]
+    fn undo_and_redo_restore_selection_and_extra_cursors() {
+        let mut ed = Editor::test_with_text("one two\none two\n");
+        ed.cursor_line = 0;
+        ed.cursor_col = 3;
+        ed.extra_cursors = vec![(1, 3)];
+        ed.extra_cursor_anchors = vec![None];
+        ed.multi_cursor_insert_char('!');
+        let after = ed.caret_state();
+        assert_eq!(ed.rope.to_string(), "one! two\none! two\n");
+        ed.break_undo_group();
+        ed.extra_cursors.clear();
+        ed.extra_cursor_anchors.clear();
+        ed.cursor_line = 1;
+        ed.cursor_col = 0;
+        ed.undo();
+        assert_eq!(caret(&ed), (0, 3));
+        assert_eq!(ed.extra_cursors, vec![(1, 3)]);
+        ed.redo();
+        assert_eq!(ed.caret_state(), after);
+
+        // Typing over a selection: undo brings the replaced selection back.
+        let mut ed = Editor::test_with_text("hello world\n");
+        ed.selection_anchor = Some((0, 6));
+        ed.cursor_line = 0;
+        ed.cursor_col = 11;
+        ed.insert_char('X');
+        assert_eq!(ed.rope.to_string(), "hello X\n");
+        ed.undo();
+        assert_eq!(ed.selection_anchor, Some((0, 6)));
+        assert_eq!(caret(&ed), (0, 11));
+        ed.redo();
+        assert_eq!(ed.selection_anchor, None);
+        assert_eq!(caret(&ed), (0, 7));
+    }
+
+    #[test]
+    fn imported_history_redo_lands_on_the_change() {
+        let mut ed = Editor::test_with_text("alpha\nbeta\ngamma\n");
+        ed.import_undo_redo(
+            vec![(
+                "alpha\nbeta\n".into(),
+                0,
+                0,
+                vec![],
+                vec![],
+                None,
+                true,
+                None,
+            )],
+            vec![],
+        );
+        ed.cursor_line = 0;
+        ed.cursor_col = 0;
+        ed.undo();
+        assert_eq!(ed.rope.to_string(), "alpha\nbeta\n");
+        ed.redo();
+        // No recorded caret: end of the re-applied text.
+        assert_eq!(caret(&ed), (3, 0));
     }
 
     #[test]

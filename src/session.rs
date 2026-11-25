@@ -34,6 +34,10 @@ pub struct SavedUndoEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection_anchor: Option<(usize, usize)>,
     pub modified: bool,
+    /// Carets on the other side of the change (after it for Undo entries,
+    /// before it for Redo entries). Older manifests omit this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other_caret: Option<crate::editor::CaretState>,
 }
 
 /// Saved state for a single editor tab.
@@ -479,15 +483,18 @@ fn save_undo_history(
     let metadata = |entries: &[crate::editor::UndoSnapshot]| {
         entries
             .iter()
-            .map(|(content, cl, cc, ec, eca, sa, modified)| SavedUndoEntry {
-                content_bytes: Some(content.len_bytes()),
-                cursor_line: *cl,
-                cursor_col: *cc,
-                extra_cursors: ec.clone(),
-                extra_cursor_anchors: eca.clone(),
-                selection_anchor: *sa,
-                modified: *modified,
-            })
+            .map(
+                |(content, cl, cc, ec, eca, sa, modified, other)| SavedUndoEntry {
+                    content_bytes: Some(content.len_bytes()),
+                    cursor_line: *cl,
+                    cursor_col: *cc,
+                    extra_cursors: ec.clone(),
+                    extra_cursor_anchors: eca.clone(),
+                    selection_anchor: *sa,
+                    modified: *modified,
+                    other_caret: other.clone(),
+                },
+            )
             .collect()
     };
     let mut digest = [0; 32];
@@ -656,6 +663,7 @@ fn load_undo_stack(path: &Path, metadata: Vec<SavedUndoEntry>) -> std::io::Resul
                 entry.extra_cursor_anchors,
                 entry.selection_anchor,
                 entry.modified,
+                entry.other_caret,
             )
         })
         .collect())
@@ -1200,8 +1208,26 @@ mod tests {
             pending_unsaved_content: Some(content.into()),
             undo_history_file: None,
             language_override: None,
-            undo_entries: Some(vec![("before".into(), 0, 0, vec![], vec![], None, false)]),
-            redo_entries: Some(vec![("after".into(), 0, 0, vec![], vec![], None, true)]),
+            undo_entries: Some(vec![(
+                "before".into(),
+                0,
+                0,
+                vec![],
+                vec![],
+                None,
+                false,
+                None,
+            )]),
+            redo_entries: Some(vec![(
+                "after".into(),
+                0,
+                0,
+                vec![],
+                vec![],
+                None,
+                true,
+                None,
+            )]),
             bookmarks: Vec::new(),
             folded_ranges: Vec::new(),
         }
@@ -1750,6 +1776,11 @@ mod tests {
                     vec![Some((1, 1))],
                     Some((0, 0)),
                     index != 0,
+                    (index % 2 == 1).then(|| crate::editor::CaretState {
+                        line: 0,
+                        col: index,
+                        ..Default::default()
+                    }),
                 )
             })
             .collect();
@@ -1765,7 +1796,7 @@ mod tests {
     #[test]
     fn streaming_history_rejects_missing_truncated_or_extra_content() {
         let root = unique_temp_project_root();
-        let entries = vec![("é😀\n".into(), 0, 0, vec![], vec![], None, false)];
+        let entries = vec![("é😀\n".into(), 0, 0, vec![], vec![], None, false, None)];
         let name = save_test_undo_history(&root, &entries, &[], &mut Default::default()).unwrap();
         let history: SavedUndoHistory =
             serde_json::from_slice(&std::fs::read(unsaved_dir(&root).join(&name)).unwrap())
@@ -1792,6 +1823,7 @@ mod tests {
             extra_cursor_anchors: vec![],
             selection_anchor: None,
             modified: true,
+            other_caret: None,
         };
         let text = ["", "old é😀 text", ""].join(std::str::from_utf8(UNDO_SEPARATOR).unwrap());
         std::fs::write(&path, text).unwrap();
@@ -2162,8 +2194,26 @@ mod tests {
             pending_unsaved_content: None,
             undo_history_file: None,
             language_override: None,
-            undo_entries: Some(vec![("content".into(), 0, 0, vec![], vec![], None, true)]),
-            redo_entries: Some(vec![("redo".into(), 1, 1, vec![], vec![], None, true)]),
+            undo_entries: Some(vec![(
+                "content".into(),
+                0,
+                0,
+                vec![],
+                vec![],
+                None,
+                true,
+                None,
+            )]),
+            redo_entries: Some(vec![(
+                "redo".into(),
+                1,
+                1,
+                vec![],
+                vec![],
+                None,
+                true,
+                None,
+            )]),
             bookmarks: Vec::new(),
             folded_ranges: Vec::new(),
         };

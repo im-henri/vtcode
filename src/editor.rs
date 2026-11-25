@@ -405,8 +405,10 @@ mod unsaved_diff_tests;
 /// Type alias for selection snapshot: optional (anchor, cursor) pair.
 pub(crate) type SelectionSnapshot = (Option<(usize, usize)>, (usize, usize));
 
-/// Type alias for persisted undo/redo snapshots. The final field records the
-/// exact modified state, avoiding a whole-document comparison during restore.
+/// Type alias for persisted undo/redo snapshots. The seventh field records the
+/// exact modified state, avoiding a whole-document comparison during restore;
+/// the last is [`UndoState::other_caret`], so Redo after a restart still lands
+/// where the change ended.
 pub(crate) type UndoSnapshot = (
     Rope,
     usize,
@@ -415,6 +417,7 @@ pub(crate) type UndoSnapshot = (
     Vec<Option<(usize, usize)>>,
     Option<(usize, usize)>,
     bool,
+    Option<CaretState>,
 );
 
 /// Ordered by source line so local edits can invalidate a range without
@@ -542,6 +545,24 @@ pub(crate) struct UndoState {
     pub dirty_from: usize,
     pub dirty_through: usize,
     pub change_id: u64,
+    /// Carets on the other side of this change, as in VS Code's edit stack
+    /// (`beforeCursorState`/`afterCursorState`). Undo entries hold the carets
+    /// right after the edit, which Redo restores; Redo entries hold the carets
+    /// from before the edit, which the next Undo restores. `None` means not
+    /// recorded (imported history, edits outside a transaction): the caret is
+    /// then derived from the changed text.
+    pub(crate) other_caret: Option<CaretState>,
+}
+
+/// Every caret and selection anchor of a view, restored together by Undo and
+/// Redo so multi-cursor edits come back exactly as they were made.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct CaretState {
+    pub line: usize,
+    pub col: usize,
+    pub extra_cursors: Vec<(usize, usize)>,
+    pub extra_cursor_anchors: Vec<Option<(usize, usize)>>,
+    pub selection_anchor: Option<(usize, usize)>,
 }
 
 #[derive(Clone, Copy, PartialEq)]

@@ -12,6 +12,12 @@ fn snapshot(rope: Rope, index: usize) -> UndoSnapshot {
         vec![Some((index, 1))],
         Some((0, index)),
         index % 3 != 0,
+        (index % 2 == 0).then(|| crate::editor::CaretState {
+            line: index,
+            col: 1,
+            extra_cursors: vec![(index, 4)],
+            ..Default::default()
+        }),
     )
 }
 
@@ -26,6 +32,7 @@ fn metadata(entries: &[UndoSnapshot]) -> Vec<SavedUndoEntry> {
             extra_cursor_anchors: entry.4.clone(),
             selection_anchor: entry.5,
             modified: entry.6,
+            other_caret: entry.7.clone(),
         })
         .collect()
 }

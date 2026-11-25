@@ -357,7 +357,7 @@ pub(super) fn read_with_base(
     if let Some(base) = base {
         // Reference zero is the recovery text, not an undo entry. Deltas clone
         // its tree, so the restored editor and undo history share unchanged text.
-        snapshots.push((base, 0, 0, vec![], vec![], None, false));
+        snapshots.push((base, 0, 0, vec![], vec![], None, false, None));
     }
     for entry in undo.into_iter().chain(redo.into_iter().rev()) {
         let mut tag = [0];
@@ -412,6 +412,7 @@ pub(super) fn read_with_base(
             entry.extra_cursor_anchors,
             entry.selection_anchor,
             entry.modified,
+            entry.other_caret,
         ));
     }
     if reader.read(&mut [0])? != 0 || <[u8; 32]>::from(reader.digest.finalize()) != expected_digest

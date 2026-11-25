@@ -246,6 +246,7 @@ impl Editor {
     pub(crate) fn end_document_edit(&mut self) {
         self.document.depth -= 1;
         if self.document.depth == 0 {
+            self.record_undo_after_caret();
             self.prepare_live_unsaved_diff();
             self.publish_document();
         }

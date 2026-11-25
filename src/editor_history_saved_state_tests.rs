@@ -24,7 +24,7 @@ fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
 }
 
 fn snapshot(rope: Rope, modified: bool) -> UndoSnapshot {
-    (rope, 0, 0, vec![], vec![], None, modified)
+    (rope, 0, 0, vec![], vec![], None, modified, None)
 }
 
 fn select_print_arm(editor: &mut Editor) {

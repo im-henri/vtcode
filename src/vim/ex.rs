@@ -1999,11 +1999,19 @@ fn confirm_end(vim: &mut VimState, host: &mut dyn Host) {
             .boundary
             .and_then(|id| deque.iter().rposition(|u| u.snapshot_id == id));
         let keep = idx.map_or(1, |i| i + 2);
-        if deque.len() > keep {
+        let merged = deque.len() > keep;
+        if merged {
             deque.truncate(keep);
         }
         drop(deque);
         exec::clamp_normal(ed);
+        if merged {
+            // The merged step now ends where the whole command left the caret.
+            let caret = ed.caret_state();
+            if let Some(mut top) = ed.undo_stack.back_mut() {
+                top.other_caret = Some(caret);
+            }
+        }
     }
     if c.done > 0 {
         vim.set_message(format!(
@@ -2197,11 +2205,19 @@ fn global(
         let mut deque = ed.undo_stack.write();
         let idx = boundary.and_then(|id| deque.iter().rposition(|u| u.snapshot_id == id));
         let keep = idx.map_or(1, |i| i + 2);
-        if deque.len() > keep {
+        let merged = deque.len() > keep;
+        if merged {
             deque.truncate(keep);
         }
         drop(deque);
         exec::clamp_normal(ed);
+        if merged {
+            // The merged step now ends where the whole command left the caret.
+            let caret = ed.caret_state();
+            if let Some(mut top) = ed.undo_stack.back_mut() {
+                top.other_caret = Some(caret);
+            }
+        }
     }
     if !printed.is_empty() {
         vim.set_lines(printed);

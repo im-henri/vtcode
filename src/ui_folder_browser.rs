@@ -1621,7 +1621,10 @@ mod tests {
         let rust = row_text(&terminal, "main.RS");
         assert!(rust.contains(".rs") && rust.contains("2.5 KB"), "{rust}");
         let plain = row_text(&terminal, "notes");
-        assert!(plain.contains(" File ") && plain.contains("12 B"), "{plain}");
+        assert!(
+            plain.contains(" File ") && plain.contains("12 B"),
+            "{plain}"
+        );
         assert!(row_text(&terminal, "video.mp4").contains("700 MB"));
         let folder = row_text(&terminal, "Console Game");
         assert!(folder.contains("File folder") && !folder.contains(" B "));

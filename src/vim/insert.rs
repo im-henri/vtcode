@@ -804,6 +804,7 @@ fn diff(s: &Session, ed: &Editor) -> Inserted {
 
 /// Collapse the undo steps made during the session into one.
 fn collapse_undo(s: &Session, ed: &mut Editor) {
+    let caret = ed.caret_state();
     let mut deque = ed.undo_stack.write();
     let idx = s
         .boundary
@@ -814,6 +815,10 @@ fn collapse_undo(s: &Session, ed: &mut Editor) {
     };
     if deque.len() > keep {
         deque.truncate(keep);
+        // The merged step now ends where the whole insert session ended.
+        if let Some(top) = deque.back_mut() {
+            top.other_caret = Some(caret);
+        }
     }
     drop(deque);
     ed.break_undo_group();
