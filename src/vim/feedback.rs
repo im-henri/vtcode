@@ -171,7 +171,9 @@ fn awaiting(app: &App) -> Option<String> {
     Some(match app.vim.insert.as_ref()?.awaiting? {
         Await::Register => "^R".into(),
         Await::Literal => "^V".into(),
+        Await::Code { radix, .. } => format!("^V{}", if radix == 10 { "" } else { "…" }),
         Await::Digraph(None) => "^K".into(),
+        Await::CtrlX => "^X".into(),
         Await::Digraph(Some(c)) => format!("^K{c}"),
     })
 }

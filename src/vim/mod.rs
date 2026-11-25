@@ -12,6 +12,7 @@ mod app_tests;
 #[cfg(test)]
 mod app_views_tests;
 pub(crate) mod cmdline;
+pub(crate) mod complete;
 pub(crate) mod directory;
 pub(crate) mod eval;
 pub(crate) mod ex;
@@ -104,6 +105,13 @@ pub(crate) fn update_trailing(ed: &mut Editor, had_eol: bool) {
         ed.vim_buf.trailing_empty = false;
     } else if !had_eol {
         ed.vim_buf.trailing_empty = true;
+    }
+}
+
+/// Remember when each undo step first appeared, for `:earlier 10m`.
+pub(crate) fn stamp_undo(ed: &mut Editor) {
+    if let Some(id) = ed.undo_stack.back().map(|s| s.change_id) {
+        ed.vim_buf.undo_times.entry(id).or_insert_with(Instant::now);
     }
 }
 
@@ -563,6 +571,10 @@ pub(crate) struct VimState {
     pub(crate) qf_idx: usize,
     /// Options kept only for queries (`grepprg`, `makeprg`, `path`...).
     pub(crate) other_opts: BTreeMap<String, String>,
+    /// Insert-mode `<C-n>`/`<C-p>` completion in progress.
+    pub(crate) ins_complete: Option<complete::InsComplete>,
+    /// Keys queued by an abbreviation, which do not expand again.
+    pub(crate) abbrev_block: usize,
 }
 
 impl Default for VimState {
@@ -626,6 +638,8 @@ impl Default for VimState {
             qf: Vec::new(),
             qf_idx: 0,
             other_opts: BTreeMap::new(),
+            ins_complete: None,
+            abbrev_block: 0,
         }
     }
 }
@@ -849,13 +863,20 @@ impl VimState {
                         // Timed out: use the longest complete mapping, if any.
                         timed_out = false;
                         self.map_wait_since = None;
-                        if let Some((len, rhs, noremap)) = self.maps.longest(mode, &seq) {
+                        if let Some((len, rhs, noremap, expr)) = self.maps.longest(mode, &seq) {
+                            let rhs = self.mapping_keys(host, rhs, expr);
                             self.apply_mapping(len, rhs, noremap);
                             continue;
                         }
                     }
-                    map::Lookup::Match { len, rhs, noremap } => {
+                    map::Lookup::Match {
+                        len,
+                        rhs,
+                        noremap,
+                        expr,
+                    } => {
                         self.map_wait_since = None;
+                        let rhs = self.mapping_keys(host, rhs, expr);
                         self.apply_mapping(len, rhs, noremap);
                         continue;
                     }
@@ -869,12 +890,51 @@ impl VimState {
                 self.replaying += 1;
             }
             self.process(host, t.key);
+            if let Some(ed) = host.ed() {
+                stamp_undo(ed);
+            }
             if t.from_macro {
                 self.replaying -= 1;
             }
             if self.error_in_replay {
                 self.error_in_replay = false;
                 self.abort_macro();
+            }
+        }
+    }
+
+    /// The keys a mapping produces: `<expr>` mappings evaluate their
+    /// right-hand side now, with `v:count` from a count typed before it.
+    fn mapping_keys(
+        &mut self,
+        host: &mut dyn Host,
+        rhs: Vec<Key>,
+        expr: Option<String>,
+    ) -> Vec<Key> {
+        let Some(src) = expr else {
+            return rhs;
+        };
+        let digits: String = self
+            .pending
+            .iter()
+            .filter_map(|k| k.char())
+            .take_while(char::is_ascii_digit)
+            .collect();
+        let count: i64 = digits.parse().unwrap_or(0);
+        self.vars.insert("v:count".into(), eval::Val::Num(count));
+        self.vars
+            .insert("v:count1".into(), eval::Val::Num(count.max(1)));
+        let value = {
+            let mut cx = eval::Ctx::new(self, host);
+            eval::eval(&src, &mut cx)
+        };
+        self.vars.remove("v:count");
+        self.vars.remove("v:count1");
+        match value {
+            Ok(v) => ops::text_to_keys(&v.to_str()),
+            Err(e) => {
+                self.set_error(e);
+                Vec::new()
             }
         }
     }

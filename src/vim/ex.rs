@@ -2898,7 +2898,7 @@ fn map_cmd(vim: &mut VimState, modes: &[MapMode], noremap: bool, bang: bool, arg
     } else {
         modes.to_vec()
     };
-    let (silent, nowait, lhs, rhs) = map::parse_args(arg);
+    let (silent, nowait, expr, lhs, rhs) = map::parse_args(arg);
     let leader = vim.leader.clone();
     if lhs.is_empty() {
         let lines = vim.maps.list(&modes, &[]);
@@ -2932,6 +2932,7 @@ fn map_cmd(vim: &mut VimState, modes: &[MapMode], noremap: bool, bang: bool, arg
             nowait,
             silent,
             source: rhs.to_string(),
+            expr,
         },
     );
     Ok(())
@@ -3244,8 +3245,7 @@ pub(crate) struct Abbrev {
     pub(crate) insert: bool,
     pub(crate) cmdline: bool,
     pub(crate) noremap: bool,
-    /// `<expr>`: read once abbreviations expand while typing.
-    #[allow(dead_code)]
+    /// `<expr>`: the right-hand side is evaluated when it expands.
     pub(crate) expr: bool,
 }
 

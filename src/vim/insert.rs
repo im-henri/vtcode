@@ -44,14 +44,24 @@ pub(crate) struct BlockInsert {
 pub(crate) enum Await {
     Register,
     Literal,
+    /// `<C-v>` followed by a character code: decimal `065`, `o101`,
+    /// `x41`, `u00e9`, `U0001F600`.
+    Code {
+        radix: u32,
+        max: u8,
+        len: u8,
+        value: u32,
+    },
     Digraph(Option<char>),
+    /// `<C-x>`: the completion sub-mode key comes next.
+    CtrlX,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct Session {
     pub(crate) kind: InsertKind,
     pub(crate) count: usize,
-    start_idx: usize,
+    pub(crate) start_idx: usize,
     start_rope: Rope,
     boundary: Option<u64>,
     pre_saved: bool,
@@ -300,7 +310,92 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
                     }
                 }
             }
+            Await::Code {
+                radix,
+                max,
+                len,
+                value,
+            } => {
+                let digit = key
+                    .char()
+                    .filter(|_| !key.ctrl && !key.alt)
+                    .and_then(|c| c.to_digit(radix));
+                if let Some(d) = digit {
+                    let value = value * radix + d;
+                    let len = len + 1;
+                    // Decimal stops before 255 would overflow, like Vim.
+                    if len >= max || (radix == 10 && value * 10 > 255) {
+                        if let Some(ch) = char::from_u32(value) {
+                            type_char(vim, host, ch);
+                        }
+                    } else if let Some(s) = &mut vim.insert {
+                        s.awaiting = Some(Await::Code {
+                            radix,
+                            max,
+                            len,
+                            value,
+                        });
+                    }
+                    return;
+                }
+                // Another key ends the code: insert what was typed, then
+                // handle the key as usual.
+                if len > 0 {
+                    if let Some(ch) = char::from_u32(value) {
+                        type_char(vim, host, ch);
+                    }
+                } else {
+                    let lead = match (radix, max) {
+                        (8, _) => 'o',
+                        (16, 2) => 'x',
+                        (16, 4) => 'u',
+                        _ => 'U',
+                    };
+                    type_char(vim, host, lead);
+                }
+                self::key(vim, host, key);
+                return;
+            }
+            Await::CtrlX => {
+                use super::complete::Kind;
+                if key.is_ctrl('n') || key.is_ctrl('p') {
+                    super::complete::start(vim, host, Kind::Keyword, key.is_ctrl('n'));
+                } else if key.is_ctrl('l') {
+                    super::complete::start(vim, host, Kind::Line, false);
+                } else if key.is_ctrl('f') {
+                    super::complete::start(vim, host, Kind::File, true);
+                } else if key.is_ctrl('o') || key.is_ctrl('u') {
+                    // Omni completion is the language server's.
+                    let _ = host.act(super::Act::Command("vim_complete".into()));
+                } else if key.is_ctrl('e') || key.is_ctrl('y') {
+                    copy_from_adjacent(host, key.is_ctrl('e'));
+                } else if !key.is_escape() {
+                    self::key(vim, host, key);
+                }
+                return;
+            }
             Await::Literal => {
+                if !key.ctrl && !key.alt {
+                    let code = match key.char() {
+                        Some(c @ '0'..='9') => Some((10, 3, 1, c as u32 - '0' as u32)),
+                        Some('o' | 'O') => Some((8, 3, 0, 0)),
+                        Some('x' | 'X') => Some((16, 2, 0, 0)),
+                        Some('u') => Some((16, 4, 0, 0)),
+                        Some('U') => Some((16, 8, 0, 0)),
+                        _ => None,
+                    };
+                    if let Some((radix, max, len, value)) = code {
+                        if let Some(s) = &mut vim.insert {
+                            s.awaiting = Some(Await::Code {
+                                radix,
+                                max,
+                                len,
+                                value,
+                            });
+                        }
+                        return;
+                    }
+                }
                 let s = match key.k {
                     K::Char(c) if key.ctrl => ((c.to_ascii_uppercase() as u8) & 0x1f) as char,
                     K::Char(c) => c,
@@ -330,6 +425,33 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
             }
         }
         return;
+    }
+    if vim.abbrev_block > 0 {
+        vim.abbrev_block -= 1;
+    }
+    if vim.ins_complete.is_some() && !host.completion_visible() {
+        if key.is_ctrl('n') || key.is_ctrl('p') {
+            super::complete::cycle(vim, host, key.is_ctrl('n'));
+            return;
+        }
+        if key.is_ctrl('e') {
+            super::complete::cancel(vim, host);
+            return;
+        }
+        super::complete::accept(vim);
+        if key.is_ctrl('y') {
+            return;
+        }
+    }
+    if vim.mode == Mode::Insert && abbrev_trigger(vim, key) {
+        let min = vim.insert.as_ref().map_or(0, |s| s.start_idx);
+        let end_only = key.is_ctrl(']');
+        let trigger = (!end_only).then_some(key);
+        match super::complete::expand_insert(vim, host, min, trigger) {
+            super::complete::Expanded::Queued => return,
+            _ if end_only => return,
+            _ => {}
+        }
     }
     if key.is_escape() || (key.is_ctrl('c') && vim.opts.ctrl_keys) {
         if host.completion_visible() {
@@ -435,7 +557,19 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
                         K::Up
                     }));
                 } else {
-                    let _ = host.act(super::Act::Command("vim_complete".into()));
+                    // Vim's keyword completion from the buffer.
+                    super::complete::start(
+                        vim,
+                        host,
+                        super::complete::Kind::Keyword,
+                        key.k == K::Char('n'),
+                    );
+                }
+                true
+            }
+            K::Char('x') => {
+                if let Some(s) = &mut vim.insert {
+                    s.awaiting = Some(Await::CtrlX);
                 }
                 true
             }
@@ -489,6 +623,25 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
         }
     }
     native(vim, host, key);
+}
+
+/// Keys after which Vim checks for an abbreviation: a non-keyword
+/// character, Enter, Tab, Esc and `<C-]>`.
+fn abbrev_trigger(vim: &VimState, key: Key) -> bool {
+    if vim.abbrevs.is_empty() || key.alt {
+        return false;
+    }
+    if key.is_escape() || key.is_ctrl(']') || key == Key::ENTER {
+        return true;
+    }
+    if key.ctrl {
+        return false;
+    }
+    match key.k {
+        K::Tab => true,
+        K::Char(c) => !vim.opts.iskeyword.is_word(c),
+        _ => false,
+    }
 }
 
 fn type_char(vim: &mut VimState, host: &mut dyn Host, c: char) {
@@ -857,6 +1010,7 @@ pub(crate) fn replay(vim: &mut VimState, host: &mut dyn Host, ins: &Inserted) {
 
 /// End the session and return to Normal mode.
 pub(crate) fn finish(vim: &mut VimState, host: &mut dyn Host, move_left: bool) {
+    vim.ins_complete = None;
     finish_session(vim, host, move_left, true);
     vim.mode = Mode::Normal;
     vim.insert_oneshot = None;

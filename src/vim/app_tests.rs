@@ -1245,3 +1245,16 @@ fn a_directory_view_shows_icons_counts_and_key_hints() {
     assert!(screen.contains("Enter open"), "{screen}");
     assert!(screen.contains("─────"), "{screen}");
 }
+
+#[test]
+fn insert_completion_mappings_and_abbreviations_work_in_the_workbench() {
+    let mut app = vim_app("foobar\n");
+    keys(&mut app, "ofo<C-n><Esc>");
+    assert_eq!(text(&app), "foobar\nfoobar\n");
+    keys(
+        &mut app,
+        ":inoremap jk <lt>Esc><CR>:iabbrev teh the<CR>A teh jk",
+    );
+    assert_eq!(app.vim.mode, Mode::Normal);
+    assert_eq!(text(&app), "foobar\nfoobar the \n");
+}

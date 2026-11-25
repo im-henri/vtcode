@@ -962,8 +962,10 @@ fn variable(cx: &mut Ctx<'_, '_>, name: &str) -> R<Val> {
         "v:true" | "true" => return Ok(Val::Num(1)),
         "v:false" | "false" | "v:null" | "null" | "v:none" => return Ok(Val::Num(0)),
         "v:version" => return Ok(Val::Num(901)),
-        "v:count" => return Ok(Val::Num(0)),
-        "v:count1" => return Ok(Val::Num(1)),
+        "v:count" | "v:count1" => {
+            let fallback = i64::from(name == "v:count1");
+            return Ok(cx.vim.vars.get(name).cloned().unwrap_or(Val::Num(fallback)));
+        }
         "v:lnum" => {
             return Ok(Val::Num(
                 cx.lnum

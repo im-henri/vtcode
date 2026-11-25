@@ -308,6 +308,7 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
         return;
     }
     if key == Key::ENTER || key.is_ctrl('j') || key.is_ctrl('m') {
+        super::complete::expand_cmdline(vim, host);
         execute(vim, host);
         return;
     }
@@ -399,6 +400,12 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
             }
         }
         (K::Char(ch), false, false) => {
+            if !vim.opts.iskeyword.is_word(ch) && !vim.abbrevs.is_empty() {
+                super::complete::expand_cmdline(vim, host);
+            }
+            let Some(c) = vim.cmdline.as_mut() else {
+                return;
+            };
             c.text.insert(c.cursor, ch);
             c.cursor += 1;
             text_changed = true;

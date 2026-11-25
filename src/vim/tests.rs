@@ -430,3 +430,45 @@ fn vimrc_functions_and_blocks() {
     run_keys(&mut vim, &mut host, ":echo g:x<CR>");
     assert_eq!(vim.message.unwrap().text, "5");
 }
+
+#[test]
+fn undo_time_travel_and_literal_codes() {
+    check("abc", (0, 0), "xxxg-g-", "bc", (0, 0));
+    check("abc", (0, 0), "xxuug+", "bc", (0, 0));
+    check("abc", (0, 0), "xx:earlier 1<CR>", "bc", (0, 0));
+    check("abc", (0, 0), "xx:earlier 1h<CR>", "abc", (0, 0));
+    check(
+        "a",
+        (0, 0),
+        "A<C-v>u00e9<C-v>065<C-v>x41<C-v>o101<Esc>",
+        "aéAAA",
+        (0, 4),
+    );
+    check("a", (0, 0), "A<C-v>65z<Esc>", "aAz", (0, 2));
+    check("a", (0, 0), "A<C-v><Tab><Esc>", "a\t", (0, 1));
+}
+
+#[test]
+fn expr_mappings_evaluate_with_the_count() {
+    check(
+        "a\nb\nc\nd",
+        (0, 0),
+        ":nnoremap <lt>expr> Q v:count ? 'dd' : 'x'<CR>Q",
+        "\nb\nc\nd",
+        (0, 0),
+    );
+    check(
+        "a\nb\nc\nd",
+        (0, 0),
+        ":nnoremap <lt>expr> Q v:count ? 'dd' : 'x'<CR>2Q",
+        "c\nd",
+        (0, 0),
+    );
+    check(
+        "x",
+        (0, 0),
+        r":inoremap <lt>expr> ;d strftime('%Y') =~ '^\d\{4}$' ? 'ok' : 'no'<CR>A;d<Esc>",
+        "xok",
+        (0, 2),
+    );
+}

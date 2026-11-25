@@ -942,6 +942,9 @@ fn simple(p: &mut P<'_>, ctx: Ctx) -> R<Simple> {
                 Some(';') => ChangeOlder,
                 Some(',') => ChangeNewer,
                 Some('&') => RepeatSubAll,
+                // Linear undo history: older/newer text state is undo/redo.
+                Some('-') => Undo,
+                Some('+') => Redo,
                 Some('.') => CodeAction,
                 _ => return R::Bad,
             }

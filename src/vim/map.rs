@@ -35,6 +35,8 @@ pub(crate) struct Mapping {
     pub(crate) silent: bool,
     /// The right-hand side as written, for listings.
     pub(crate) source: String,
+    /// `<expr>`: `source` is evaluated each time to get the keys.
+    pub(crate) expr: bool,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -50,6 +52,7 @@ pub(crate) enum Lookup {
         len: usize,
         rhs: Vec<Key>,
         noremap: bool,
+        expr: Option<String>,
     },
 }
 
@@ -127,6 +130,7 @@ impl Maps {
                 len,
                 rhs: m.rhs.clone(),
                 noremap: m.noremap,
+                expr: m.expr.then(|| m.source.clone()),
             },
             _ if longer => Lookup::Prefix,
             _ => Lookup::None,
@@ -134,11 +138,20 @@ impl Maps {
     }
 
     /// The longest mapping that matches a prefix of `seq` (after a timeout).
-    pub(crate) fn longest(&self, mode: MapMode, seq: &[Key]) -> Option<(usize, Vec<Key>, bool)> {
+    pub(crate) fn longest(
+        &self,
+        mode: MapMode,
+        seq: &[Key],
+    ) -> Option<(usize, Vec<Key>, bool, Option<String>)> {
         (1..=seq.len()).rev().find_map(|n| {
-            self.maps
-                .get(&(mode, seq[..n].to_vec()))
-                .map(|m| (n, m.rhs.clone(), m.noremap))
+            self.maps.get(&(mode, seq[..n].to_vec())).map(|m| {
+                (
+                    n,
+                    m.rhs.clone(),
+                    m.noremap,
+                    m.expr.then(|| m.source.clone()),
+                )
+            })
         })
     }
 
@@ -168,10 +181,11 @@ impl Maps {
 }
 
 /// Parse `:map` arguments: `[<silent>] [<buffer>] {lhs} {rhs}`.
-pub(crate) fn parse_args(args: &str) -> (bool, bool, &str, &str) {
+pub(crate) fn parse_args(args: &str) -> (bool, bool, bool, &str, &str) {
     let mut rest = args.trim_start();
     let mut silent = false;
     let mut nowait = false;
+    let mut expr = false;
     loop {
         let lower = rest.get(..10).unwrap_or(rest).to_ascii_lowercase();
         let special = [
@@ -193,6 +207,9 @@ pub(crate) fn parse_args(args: &str) -> (bool, bool, &str, &str) {
                 if s == "<nowait>" {
                     nowait = true;
                 }
+                if s == "<expr>" {
+                    expr = true;
+                }
                 rest = rest[s.len()..].trim_start();
             }
             None => break,
@@ -210,7 +227,7 @@ pub(crate) fn parse_args(args: &str) -> (bool, bool, &str, &str) {
     }
     let lhs = &rest[..end];
     let rhs = rest[end..].trim_start();
-    (silent, nowait, lhs, rhs)
+    (silent, nowait, expr, lhs, rhs)
 }
 
 /// Convert map text to keys: `\|` is `|`, a trailing `<Bar>` is `|`.
@@ -230,6 +247,7 @@ mod tests {
             nowait: false,
             silent: false,
             source: rhs.into(),
+            expr: false,
         }
     }
 
@@ -273,7 +291,7 @@ mod tests {
         assert_eq!(modes_for("xmap"), Some((vec![MapMode::Visual], false)));
         assert_eq!(modes_for("inoremap"), Some((vec![MapMode::Insert], true)));
         assert!(modes_for("nmapx").is_none());
-        let (silent, _, lhs, rhs) = parse_args("<silent> <leader>w :w<CR>");
+        let (silent, _, _, lhs, rhs) = parse_args("<silent> <leader>w :w<CR>");
         assert!(silent);
         assert_eq!((lhs, rhs), ("<leader>w", ":w<CR>"));
     }

@@ -2590,7 +2590,10 @@ pub(crate) fn set_enabled(app: &mut App, on: bool) {
     sync_focus(app);
 }
 
-/// The vimrc: `<vtcode-base>/vimrc`, or the path in the `vimrcPath` setting.
+/// The vimrc: the path in the `vimrcPath` setting, else `<vtcode-base>/vimrc`
+/// when it exists, else the one Vim itself reads (`~/.vimrc`, `~/_vimrc`,
+/// `~/.vim/vimrc`, `~/vimfiles/vimrc`, `$XDG_CONFIG_HOME/vim/vimrc`), so a
+/// Vim user's own settings and mappings apply without copying them.
 pub(crate) fn vimrc_path(app: &App) -> Option<std::path::PathBuf> {
     if let Some(p) = app
         .vim_rc_path
@@ -2599,7 +2602,31 @@ pub(crate) fn vimrc_path(app: &App) -> Option<std::path::PathBuf> {
     {
         return Some(p.clone());
     }
-    Some(crate::portable::base_dir().join("vimrc"))
+    let own = crate::portable::base_dir().join("vimrc");
+    if own.is_file() {
+        return Some(own);
+    }
+    Some(vim_vimrc().unwrap_or(own))
+}
+
+/// The vimrc real Vim would read, if there is one.
+fn vim_vimrc() -> Option<std::path::PathBuf> {
+    // Tests must not depend on the developer's own vimrc.
+    if cfg!(test) {
+        return None;
+    }
+    let home = super::paths::home()?;
+    let mut candidates = vec![
+        home.join(".vimrc"),
+        home.join("_vimrc"),
+        home.join(".vim").join("vimrc"),
+        home.join("vimfiles").join("vimrc"),
+    ];
+    let xdg = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    candidates.push(xdg.join("vim").join("vimrc"));
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 pub(crate) fn load_vimrc(app: &mut App) {
@@ -2616,7 +2643,8 @@ pub(crate) fn load_vimrc(app: &mut App) {
     });
     if !errors.is_empty() {
         app.notify_warn(format!(
-            "vimrc: {} line(s) not supported ({})",
+            "{}: {} line(s) not supported ({})",
+            path.display(),
             errors.len(),
             errors[0]
         ));
@@ -2625,8 +2653,9 @@ pub(crate) fn load_vimrc(app: &mut App) {
 
 /// Starting point for a new vimrc.
 pub(crate) const VIMRC_TEMPLATE: &str = r#"" VTCode vimrc: read when Vim mode starts (Vim: Reload vimrc re-reads it).
-" Supported: set, let mapleader, map/noremap and their n/v/x/o/i/c variants,
-" unmap, and any Ex command. Plugin and Vimscript lines are ignored.
+" Without this file VTCode reads your Vim vimrc (~/.vimrc or ~/_vimrc).
+" Supported: options, mappings (also <expr>), abbreviations, :command,
+" let/if/for/while/try, functions and any Ex command. Plugin lines are skipped.
 
 let mapleader = " "
 
