@@ -4642,6 +4642,13 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
     } else {
         0
     };
+    {
+        let editor = &mut app.tabs[app.active_tab].editor;
+        editor.sticky_overlay = (sticky_rows > 0).then_some((
+            (editor.scroll_offset, editor.wrap_scroll_offset),
+            sticky_rows as usize,
+        ));
+    }
     crate::ui_editor_folds::draw(
         f,
         app,

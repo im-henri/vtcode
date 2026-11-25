@@ -83,8 +83,15 @@ impl Editor {
                 self.visible_scroll_offset(),
             )
         };
+        // Rows under the sticky-scroll header are not visible either: a match
+        // there would be selected but hidden, so centre it like an off-screen one.
+        let covered = self
+            .sticky_overlay
+            .filter(|&(scroll, _)| scroll == (self.scroll_offset, self.wrap_scroll_offset))
+            .map_or(0, |(_, rows)| rows);
         if self.is_line_folded(line)
-            || !(first..first.saturating_add(self.viewport_height)).contains(&row)
+            || !(first.saturating_add(covered)..first.saturating_add(self.viewport_height))
+                .contains(&row)
         {
             self.set_centered_cursor(line, col);
         } else {

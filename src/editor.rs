@@ -695,6 +695,10 @@ pub(crate) struct Editor {
     /// Set by single-caret entry points before they hand off to the shared
     /// multi-cursor edit path, so it groups undo steps the same way.
     pub(crate) pending_multi_edit_kind: EditKind,
+    /// Rows the sticky-scroll header covered in the last frame, with the
+    /// `(scroll_offset, wrap_scroll_offset)` it was drawn for. Reveals treat
+    /// those rows as hidden so a find match never lands underneath it.
+    pub(crate) sticky_overlay: Option<((usize, usize), usize)>,
     pub(crate) next_undo_change_id: u64,
     pub(crate) active_undo_change_id: Option<u64>,
     // Original rope content (for detecting when undo returns to saved state, and for diff gutter)
@@ -899,6 +903,7 @@ impl Editor {
             undo_group_active: false,
             last_edit_kind: EditKind::Other,
             pending_multi_edit_kind: EditKind::Other,
+            sticky_overlay: None,
             next_undo_change_id: 0,
             active_undo_change_id: None,
             saved_rope: None,

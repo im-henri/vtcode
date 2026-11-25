@@ -567,3 +567,70 @@ fn replacement_offsets_keep_retained_unicode_text_and_large_multicursor_edits_al
         }
     }
 }
+
+#[test]
+fn find_scrolls_matches_out_from_under_the_sticky_scroll_header() {
+    use ratatui::{Terminal, backend::TestBackend};
+    let text = format!(
+        "fn outer() {{\n    if ready {{\n{}",
+        (0..60)
+            .map(|index| format!("        work_{index}();\n"))
+            .collect::<String>()
+    );
+    let mut app = app(&text);
+    app.show_explorer = false;
+    app.show_minimap = false;
+    app.sticky_scroll = true;
+    app.cached_sticky_scopes = vec![
+        crate::background::StickyScopeLine {
+            line: 0,
+            parent: None,
+        },
+        crate::background::StickyScopeLine {
+            line: 1,
+            parent: Some(0),
+        },
+    ]
+    .into();
+    {
+        let editor = app.editor_mut().unwrap();
+        editor.scroll_offset = 10;
+        editor.cursor_line = 10;
+    }
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
+    assert_eq!(app.cached_sticky_lines.len(), 2);
+
+    // Line 11 is the second visible row, drawn over by the `if ready` header.
+    app.search_query = "work_9(".into();
+    app.execute_palette_command("find");
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
+    let editor = app.editor().unwrap();
+    assert_eq!(editor.cursor_line, 11);
+    let code = app.code_area.unwrap();
+    let covered = app.cached_sticky_lines.len() as u16;
+    let row = (code.y + covered..code.bottom()).find(|&y| {
+        (code.x..code.right())
+            .map(|x| terminal.backend().buffer()[(x, y)].symbol())
+            .collect::<String>()
+            .contains("work_9(")
+    });
+    assert!(
+        row.is_some(),
+        "the match is hidden behind the sticky header"
+    );
+
+    // A match already in the clear rows stays put, as before.
+    let scroll = app.editor().unwrap().scroll_offset;
+    app.search_query = "work_12(".into();
+    app.update_search();
+    terminal
+        .draw(|frame| crate::ui::draw(frame, &mut app))
+        .unwrap();
+    assert_eq!(app.editor().unwrap().cursor_line, 14);
+    assert_eq!(app.editor().unwrap().scroll_offset, scroll);
+}
