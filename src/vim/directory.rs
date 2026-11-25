@@ -267,12 +267,15 @@ pub(crate) fn mouse(app: &mut App, event: MouseEvent) -> bool {
 }
 
 pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
+    use ratatui::text::{Line, Span};
+
     app.code_area = None;
     app.gutter_area = None;
     app.minimap_area = None;
     app.scrollbar_area = None;
     app.h_scrollbar_area = None;
     let colors = &app.colors;
+    let associations = &app.language_associations;
     let Some(dir) = app
         .tabs
         .get_mut(app.active_tab)
@@ -281,38 +284,101 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     };
     let bg = colors.bg_editor;
+    let ui = &colors.ui;
+    let dim = ui.readable_foreground(colors.fg_dim, bg, 3.0);
+    let folder = ui.readable_foreground(colors.fg_folder_icon, bg, 3.0);
     f.render_widget(Block::default().style(Style::default().bg(bg)), area);
     if area.is_empty() {
         dir.list_area = Rect::default();
         return;
     }
+
+    // Header: the parent path quiet, the folder itself bold, counts on the right.
+    let label = dir.label.trim_end_matches(['/', '\\']);
+    let (head, tail) = match label.rfind(['/', '\\']) {
+        Some(i) => (&label[..=i], &label[i + 1..]),
+        None => ("", label),
+    };
+    let folders = dir
+        .entries
+        .iter()
+        .filter(|e| e.is_dir && e.name != "..")
+        .count();
+    let files = dir.entries.iter().filter(|e| !e.is_dir).count();
+    let plural =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    let counts = if dir.request.is_some() {
+        String::new()
+    } else {
+        format!(
+            "{} · {} ",
+            plural(folders, "folder", "folders"),
+            plural(files, "file", "files")
+        )
+    };
     let header = Rect::new(area.x, area.y, area.width, 1);
     f.render_widget(
-        Paragraph::new(dir.label.as_str()).style(Style::default().fg(colors.fg_dim).bg(bg)),
+        Paragraph::new(Line::from(vec![
+            Span::styled(" ▾ ", Style::default().fg(folder)),
+            Span::styled(
+                crate::ui_workspaces::escaped(head).into_owned(),
+                Style::default().fg(dim),
+            ),
+            Span::styled(
+                crate::ui_workspaces::escaped(tail).into_owned(),
+                Style::default()
+                    .fg(colors.fg_text)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]))
+        .style(Style::default().bg(bg)),
         header,
     );
-    dir.list_area = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
+    let counts_w = counts.chars().count() as u16;
+    if counts_w > 0 && counts_w + 12 < area.width {
+        f.render_widget(
+            Paragraph::new(Span::styled(counts.as_str(), Style::default().fg(dim))),
+            Rect::new(area.right() - counts_w, area.y, counts_w, 1),
+        );
+    }
+    if area.height < 2 {
+        dir.list_area = Rect::default();
+        return;
+    }
+    let rule = Rect::new(area.x, area.y + 1, area.width, 1);
+    f.render_widget(
+        Paragraph::new("─".repeat(area.width as usize))
+            .style(Style::default().fg(colors.border_color).bg(bg)),
+        rule,
+    );
+    // A key hint along the bottom when there is room for it.
+    let hint_rows = u16::from(area.height >= 8);
+    dir.list_area = Rect::new(area.x, area.y + 2, area.width, area.height - 2 - hint_rows);
     if dir.list_area.is_empty() {
         return;
     }
     if dir.request.is_some() || dir.error.is_some() || dir.entries.is_empty() {
-        let text = if dir.request.is_some() {
-            "Loading directory…".into()
+        let (text, color) = if dir.request.is_some() {
+            ("Loading directory…".to_string(), dim)
         } else if let Some(error) = &dir.error {
-            format!(
-                "Cannot read directory: {}",
-                crate::ui_workspaces::escaped(error)
+            (
+                format!(
+                    "Cannot read directory: {}",
+                    crate::ui_workspaces::escaped(error)
+                ),
+                colors.fg_error,
             )
         } else {
-            "Empty directory".into()
+            ("Empty directory".into(), dim)
         };
         f.render_widget(
-            Paragraph::new(text).style(Style::default().fg(colors.fg_dim)),
+            Paragraph::new(format!("   {text}")).style(Style::default().fg(color).bg(bg)),
             dir.list_area,
         );
         return;
     }
     dir.select(dir.selected);
+    let width = dir.list_area.width as usize;
     for (i, entry) in dir
         .entries
         .iter()
@@ -320,18 +386,48 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .take(dir.list_area.height as usize)
         .enumerate()
     {
-        let name = crate::ui_workspaces::escaped(&entry.name);
-        let text = if entry.is_dir {
-            format!("{name}/").into()
+        let selected = dir.scroll + i == dir.selected;
+        let row_bg = if selected { colors.bg_selected } else { bg };
+        let text_fg = if selected {
+            colors.fg_selected
         } else {
-            name
+            colors.fg_text
         };
-        let mut style = Style::default().fg(colors.fg_text).bg(bg);
-        if entry.is_dir {
-            style = style.add_modifier(Modifier::BOLD);
+        let quiet = ui.readable_foreground(colors.fg_dim, row_bg, 3.0);
+        let parent = entry.name == "..";
+        let hidden = entry.name.starts_with('.') && !parent;
+        let name = crate::ui_workspaces::escaped(&entry.name).into_owned();
+        let mut spans = vec![Span::raw(" ")];
+        if parent {
+            spans.push(Span::styled("↰  ", Style::default().fg(quiet)));
+            spans.push(Span::styled("..", Style::default().fg(quiet)));
+            spans.push(Span::styled("  parent folder", Style::default().fg(quiet)));
+        } else if entry.is_dir {
+            let icon = ui.readable_foreground(colors.fg_folder_icon, row_bg, 3.0);
+            spans.push(Span::styled("▸  ", Style::default().fg(icon)));
+            let fg = if hidden && !selected { quiet } else { text_fg };
+            spans.push(Span::styled(
+                name,
+                Style::default().fg(fg).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled("/", Style::default().fg(quiet)));
+        } else {
+            let (icon, icon_color) = crate::file_icons::for_path(&entry.path, associations);
+            let icon_color = ui.readable_foreground(icon_color, row_bg, 3.0);
+            spans.push(Span::styled(icon, Style::default().fg(icon_color)));
+            // The extension is quieter than the name.
+            let (stem, ext) = match name.rfind('.') {
+                Some(d) if d > 0 => name.split_at(d),
+                _ => (name.as_str(), ""),
+            };
+            let fg = if hidden && !selected { quiet } else { text_fg };
+            spans.push(Span::styled(stem.to_string(), Style::default().fg(fg)));
+            spans.push(Span::styled(ext.to_string(), Style::default().fg(quiet)));
         }
-        if dir.scroll + i == dir.selected {
-            style = style.fg(colors.fg_selected).bg(colors.bg_selected);
+        if selected {
+            // Fill the whole row so the selection reads as a bar.
+            let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+            spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
         }
         let row = Rect::new(
             dir.list_area.x,
@@ -339,6 +435,36 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             dir.list_area.width,
             1,
         );
-        f.render_widget(Paragraph::new(text).style(style), row);
+        f.render_widget(
+            Paragraph::new(Line::from(spans)).style(Style::default().bg(row_bg)),
+            row,
+        );
+    }
+    if hint_rows > 0 {
+        let y = area.bottom() - 1;
+        let key = Style::default().fg(colors.fg_text);
+        let text = Style::default().fg(dim);
+        let hint = Line::from(vec![
+            Span::styled(" j/k", key),
+            Span::styled(" move  ", text),
+            Span::styled("Enter", key),
+            Span::styled(" open  ", text),
+            Span::styled("-", key),
+            Span::styled(" parent  ", text),
+            Span::styled("q", key),
+            Span::styled(" close", text),
+        ]);
+        f.render_widget(
+            Paragraph::new(hint).style(Style::default().bg(bg)),
+            Rect::new(area.x, y, area.width, 1),
+        );
+        let pos = format!("{}/{} ", dir.selected + 1, dir.entries.len());
+        let w = pos.chars().count() as u16;
+        if w + 40 < area.width {
+            f.render_widget(
+                Paragraph::new(Span::styled(pos, text)),
+                Rect::new(area.right() - w, y, w, 1),
+            );
+        }
     }
 }

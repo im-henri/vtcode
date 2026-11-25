@@ -1220,3 +1220,28 @@ fn x_and_zz_close_an_unchanged_buffer_without_a_name() {
             .is_some_and(|m| m.text.starts_with("E32"))
     );
 }
+
+#[test]
+fn a_directory_view_shows_icons_counts_and_key_hints() {
+    let mut app = vim_app("original");
+    let root = tempfile::tempdir().unwrap();
+    let root_path = crate::portable::filesystem_spelling(&root.path().canonicalize().unwrap());
+    std::fs::create_dir(root_path.join("src")).unwrap();
+    std::fs::create_dir(root_path.join(".git")).unwrap();
+    std::fs::write(root_path.join("main.rs"), "").unwrap();
+    std::fs::write(root_path.join("README.md"), "").unwrap();
+    app.explorer.root = root_path.clone();
+    app.show_explorer = false;
+    keys(&mut app, ":e .<CR>");
+    app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+        !app.background.has_active_jobs() && !app.background.has_pending_results()
+    });
+    let (rows, _) = frame(&mut app);
+    let screen = rows.join("\n");
+    eprintln!("{screen}");
+    assert!(screen.contains("2 folders · 2 files"), "{screen}");
+    assert!(screen.contains("▸  src/"), "{screen}");
+    assert!(screen.contains("README.md"), "{screen}");
+    assert!(screen.contains("Enter open"), "{screen}");
+    assert!(screen.contains("─────"), "{screen}");
+}
