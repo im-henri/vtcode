@@ -5482,7 +5482,9 @@ pub(crate) fn run_app<B: Backend<Error = io::Error> + io::Write>(
                 }
                 app.screen_transition.paint_exit(f.buffer_mut(), now);
             })?;
-            std::thread::sleep(crate::screen_transition::State::frame_interval());
+            // A slow frame already took its interval: start the next at once.
+            let interval = crate::screen_transition::State::frame_interval();
+            std::thread::sleep(interval.saturating_sub(now.elapsed()));
             continue;
         }
 

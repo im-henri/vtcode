@@ -21,6 +21,8 @@ use unicode_width::UnicodeWidthStr;
 pub(crate) const DEFAULT_DURATION_MS: u64 = 1_500;
 /// Frame pacing for both effects (about 60 frames per second).
 const FRAME: Duration = Duration::from_millis(16);
+/// A frame advances an effect by at most 1/MIN_FRAMES of its duration.
+const MIN_FRAMES: u32 = 10;
 /// Rows behind the startup front that are still settling.
 const TRAIL: f32 = 7.0;
 /// Largest column stagger, as a fraction of the duration.
@@ -29,6 +31,8 @@ const STAGGER: f32 = 0.28;
 const EXIT_STAGGER: f32 = 0.5;
 /// Final fraction of the startup duration with every cell already exact.
 const SETTLE: f32 = 0.1;
+/// Colour steps of a fade (see `step`).
+const FADE_STEPS: f32 = 4.0;
 const GLYPHS: &[u8] = b"0123456789ABCDEFGHJKLMNPRSTUVWXYZabcdefghkmnopqrstuvwxyz<>/\\|=+*:;#%&$@";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,20 +64,71 @@ pub(crate) struct State {
     exit: Option<Exit>,
 }
 
-struct Playback {
-    /// Set by the first painted frame, so a slow first paint cannot eat it.
-    started: Option<Instant>,
-    last_frame: Option<Instant>,
+/// Animation time that advances with painted frames, at most `max_step` per
+/// frame. On a slow machine a stalled or slow frame (startup work, a terminal
+/// that cannot keep up) then delays the effect instead of skipping most of
+/// it: every frame shows a real step. A frame that arrives on time advances
+/// by exactly the wall time, so a fast machine plays it unchanged.
+struct Clock {
+    elapsed: Duration,
+    last: Option<Instant>,
     duration: Duration,
-    /// The last real workbench frame. Animation ticks transform this copy
-    /// instead of running the workbench renderer every frame.
-    target: Option<Buffer>,
+}
+
+impl Clock {
+    fn new(duration: Duration, started: Option<Instant>) -> Self {
+        Self {
+            elapsed: Duration::ZERO,
+            last: started,
+            duration,
+        }
+    }
+
+    fn max_step(&self) -> Duration {
+        (self.duration / MIN_FRAMES).max(FRAME * 2)
+    }
+
+    fn at(&self, now: Instant) -> Duration {
+        self.elapsed
+            + self.last.map_or(Duration::ZERO, |last| {
+                now.saturating_duration_since(last).min(self.max_step())
+            })
+    }
+
+    fn tick(&mut self, now: Instant) -> Duration {
+        self.elapsed = self.at(now);
+        self.last = Some(now);
+        self.elapsed
+    }
+
+    fn done_at(&self, now: Instant) -> bool {
+        self.at(now) >= self.duration
+    }
+
+    fn progress(&self, elapsed: Duration) -> f32 {
+        if self.duration.is_zero() {
+            1.0
+        } else {
+            (elapsed.as_secs_f32() / self.duration.as_secs_f32()).min(1.0)
+        }
+    }
+}
+
+fn flicker(elapsed: Duration) -> u64 {
+    (elapsed.as_millis() / 60) as u64
+}
+
+struct Playback {
+    /// Starts with the first painted frame, so a slow first paint cannot eat it.
+    clock: Clock,
+    /// The last real workbench frame and its highlight bases. Animation ticks
+    /// transform this copy instead of running the workbench renderer.
+    target: Option<(Buffer, Vec<Option<Color>>)>,
 }
 
 struct Exit {
-    started: Instant,
-    duration: Duration,
-    snapshot: Option<Buffer>,
+    clock: Clock,
+    snapshot: Option<(Buffer, Vec<Option<Color>>)>,
 }
 
 fn duration(ms: u64) -> Duration {
@@ -95,10 +150,8 @@ impl State {
 
     /// Arm the startup effect for the first workbench frame, when enabled.
     pub(crate) fn arm_startup(&mut self) {
-        self.startup = self.settings.startup.then_some(Playback {
-            started: None,
-            last_frame: None,
-            duration: duration(self.settings.startup_ms),
+        self.startup = self.settings.startup.then(|| Playback {
+            clock: Clock::new(duration(self.settings.startup_ms), None),
             target: None,
         });
     }
@@ -116,7 +169,7 @@ impl State {
     /// Time until the next startup frame is due.
     pub(crate) fn next_wait(&self, now: Instant) -> Option<Duration> {
         let playback = self.startup.as_ref()?;
-        Some(playback.last_frame.map_or(Duration::ZERO, |last| {
+        Some(playback.clock.last.map_or(Duration::ZERO, |last| {
             (last + FRAME).saturating_duration_since(now)
         }))
     }
@@ -131,17 +184,19 @@ impl State {
         let Some(playback) = &mut self.startup else {
             return;
         };
-        let started = *playback.started.get_or_insert(now);
-        playback.last_frame = Some(now);
-        let elapsed = now.saturating_duration_since(started);
-        if elapsed >= playback.duration {
+        let elapsed = playback.clock.tick(now);
+        if elapsed >= playback.clock.duration {
             self.startup = None;
             return;
         }
-        let progress = elapsed.as_secs_f32() / playback.duration.as_secs_f32();
-        let flicker = (elapsed.as_millis() / 60) as u64;
-        let target = playback.target.insert(buffer.clone());
-        startup_frame(target, buffer, progress, flicker, &self.highlights);
+        let progress = playback.clock.progress(elapsed);
+        // Reuse the cached frame's allocations; real frames are rare.
+        let (target, bases) = playback
+            .target
+            .get_or_insert_with(|| (Buffer::empty(buffer.area), Vec::new()));
+        target.clone_from(buffer);
+        highlight_bases_into(target, &self.highlights, bases);
+        startup_frame_with(target, bases, buffer, progress, flicker(elapsed));
     }
 
     /// Whether the next startup frame can reuse the cached workbench frame:
@@ -150,9 +205,8 @@ impl State {
         self.startup_due(now)
             && self.startup.as_ref().is_some_and(|playback| {
                 playback.target.is_some()
-                    && playback.started.is_some_and(|started| {
-                        now.saturating_duration_since(started) < playback.duration
-                    })
+                    && playback.clock.last.is_some()
+                    && !playback.clock.done_at(now)
             })
     }
 
@@ -163,19 +217,12 @@ impl State {
         let Some(playback) = &mut self.startup else {
             return;
         };
-        let (Some(started), Some(target)) = (playback.started, &playback.target) else {
+        let Some((target, bases)) = &playback.target else {
             return;
         };
-        playback.last_frame = Some(now);
-        let elapsed = now.saturating_duration_since(started);
-        let progress = (elapsed.as_secs_f32() / playback.duration.as_secs_f32()).min(1.0);
-        startup_frame(
-            target,
-            buffer,
-            progress,
-            (elapsed.as_millis() / 60) as u64,
-            &self.highlights,
-        );
+        let elapsed = playback.clock.tick(now);
+        let progress = playback.clock.progress(elapsed);
+        startup_frame_with(target, bases, buffer, progress, flicker(elapsed));
     }
 
     /// Begin the exit effect. Returns false when it is disabled.
@@ -184,9 +231,9 @@ impl State {
             return false;
         }
         self.startup = None;
-        self.exit.get_or_insert(Exit {
-            started: now,
-            duration: duration(self.settings.exit_ms),
+        let exit_ms = self.settings.exit_ms;
+        self.exit.get_or_insert_with(|| Exit {
+            clock: Clock::new(duration(exit_ms), Some(now)),
             snapshot: None,
         });
         true
@@ -196,12 +243,12 @@ impl State {
     pub(crate) fn exit_done(&self, now: Instant) -> bool {
         self.exit
             .as_ref()
-            .is_none_or(|exit| now.saturating_duration_since(exit.started) >= exit.duration)
+            .is_none_or(|exit| exit.clock.done_at(now))
     }
 
     pub(crate) fn skip_exit(&mut self) {
         if let Some(exit) = &mut self.exit {
-            exit.duration = Duration::ZERO;
+            exit.clock.duration = Duration::ZERO;
         }
     }
 
@@ -225,20 +272,14 @@ impl State {
         let Some(exit) = &mut self.exit else {
             return;
         };
-        let snapshot = exit.snapshot.get_or_insert_with(|| buffer.clone());
-        let elapsed = now.saturating_duration_since(exit.started);
-        let progress = if exit.duration.is_zero() {
-            1.0
-        } else {
-            (elapsed.as_secs_f32() / exit.duration.as_secs_f32()).min(1.0)
-        };
-        exit_frame(
-            snapshot,
-            buffer,
-            progress,
-            (elapsed.as_millis() / 60) as u64,
-            &self.highlights,
-        );
+        let highlights = &self.highlights;
+        let (snapshot, bases) = exit.snapshot.get_or_insert_with(|| {
+            let bases = highlight_bases(buffer, highlights);
+            (buffer.clone(), bases)
+        });
+        let elapsed = exit.clock.tick(now);
+        let progress = exit.clock.progress(elapsed);
+        exit_frame_with(snapshot, bases, buffer, progress, flicker(elapsed));
     }
 
     pub(crate) fn frame_interval() -> Duration {
@@ -312,6 +353,14 @@ fn wide(cell: &Cell) -> bool {
     UnicodeWidthStr::width(cell.symbol()) > 1
 }
 
+/// Round `value` (0..1) to one of `levels` steps. Fades in steps instead of
+/// a new colour per cell per frame: a cell is resent only when its step
+/// changes, and neighbours on the same step share one colour sequence, which
+/// cuts the bytes a frame sends to the terminal several times over.
+fn step(value: f32, levels: f32) -> f32 {
+    (value.clamp(0.0, 1.0) * levels).round() / levels
+}
+
 fn ease_out(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(3)
 }
@@ -331,43 +380,49 @@ fn owner(target: &Buffer, x: u16, y: u16) -> u16 {
 /// short run of another background around text with the same background on
 /// both sides, like a selection or match whose colour was blended.
 pub(crate) fn highlight_bases(buffer: &Buffer, highlights: &[Color]) -> Vec<Option<Color>> {
+    let mut bases = Vec::new();
+    highlight_bases_into(buffer, highlights, &mut bases);
+    bases
+}
+
+fn highlight_bases_into(buffer: &Buffer, highlights: &[Color], bases: &mut Vec<Option<Color>>) {
     let area = buffer.area;
     let width = usize::from(area.width);
-    let mut bases = vec![None; buffer.content.len()];
+    bases.clear();
+    bases.resize(buffer.content.len(), None);
+    // Runs of one background: (start, end, colour), reused across rows.
+    let mut runs: Vec<(usize, usize, Color)> = Vec::new();
+    let mut marked: Vec<bool> = Vec::new();
     for row in 0..usize::from(area.height) {
         let cells = &buffer.content[row * width..(row + 1) * width];
-        // Runs of one background: (start, end, colour).
-        let mut runs: Vec<(usize, usize, Color)> = Vec::new();
+        runs.clear();
         for (index, cell) in cells.iter().enumerate() {
             match runs.last_mut() {
                 Some(run) if run.2 == cell.bg => run.1 = index + 1,
                 _ => runs.push((index, index + 1, cell.bg)),
             }
         }
-        let marked: Vec<bool> = runs
-            .iter()
-            .enumerate()
-            .map(|(index, &(start, end, bg))| {
-                if highlights.contains(&bg) {
-                    return true;
-                }
-                let (Some(left), Some(right)) = (
-                    index.checked_sub(1).map(|i| runs[i].2),
-                    runs.get(index + 1).map(|run| run.2),
-                ) else {
-                    return false;
-                };
-                let around: usize = runs
-                    .iter()
-                    .filter(|run| run.2 == left)
-                    .map(|run| run.1 - run.0)
-                    .sum();
-                left == right
-                    && end - start <= width / 3
-                    && around > end - start
-                    && cells[start..end].iter().any(has_glyph)
-            })
-            .collect();
+        marked.clear();
+        marked.extend(runs.iter().enumerate().map(|(index, &(start, end, bg))| {
+            if highlights.contains(&bg) {
+                return true;
+            }
+            let (Some(left), Some(right)) = (
+                index.checked_sub(1).map(|i| runs[i].2),
+                runs.get(index + 1).map(|run| run.2),
+            ) else {
+                return false;
+            };
+            let around: usize = runs
+                .iter()
+                .filter(|run| run.2 == left)
+                .map(|run| run.1 - run.0)
+                .sum();
+            left == right
+                && end - start <= width / 3
+                && around > end - start
+                && cells[start..end].iter().any(has_glyph)
+        }));
         for (index, &(start, end, _)) in runs.iter().enumerate() {
             if !marked[index] {
                 continue;
@@ -382,7 +437,6 @@ pub(crate) fn highlight_bases(buffer: &Buffer, highlights: &[Color]) -> Vec<Opti
             }
         }
     }
-    bases
 }
 
 fn index(area: ratatui::layout::Rect, x: u16, y: u16) -> usize {
@@ -399,6 +453,7 @@ fn blank_text(cell: &mut Cell) {
 /// only text rises into place, column by column from the bottom. Every cell
 /// is exact once its column's trail has passed, and the whole frame is exact
 /// for the final `SETTLE` fraction.
+#[cfg(test)]
 pub(crate) fn startup_frame(
     target: &Buffer,
     out: &mut Buffer,
@@ -406,9 +461,20 @@ pub(crate) fn startup_frame(
     flicker: u64,
     highlights: &[Color],
 ) {
+    let bases = highlight_bases(target, highlights);
+    startup_frame_with(target, &bases, out, progress, flicker);
+}
+
+/// `startup_frame` with the target's highlight bases already computed.
+fn startup_frame_with(
+    target: &Buffer,
+    bases: &[Option<Color>],
+    out: &mut Buffer,
+    progress: f32,
+    flicker: u64,
+) {
     let area = target.area;
     let height = f32::from(area.height);
-    let bases = highlight_bases(target, highlights);
     for y in area.y..area.y + area.height {
         // Distance from the bottom row, in rows.
         let depth = f32::from(area.y + area.height - 1 - y);
@@ -436,7 +502,7 @@ pub(crate) fn startup_frame(
                 cell.set_bg(if age <= 0.0 {
                     base
                 } else {
-                    mix(base, source.bg, settled * 3.0)
+                    mix(base, source.bg, step(settled * 3.0, FADE_STEPS))
                 });
             }
             if age <= 0.0 || column != x {
@@ -452,7 +518,7 @@ pub(crate) fn startup_frame(
             if scramble && has_glyph(source) {
                 cell.set_symbol(glyph(x, y, flicker));
             }
-            let head = (1.0 - settled).powi(2);
+            let head = step((1.0 - settled).powi(2), FADE_STEPS);
             cell.set_fg(glow(source.fg, 0.75 * head));
         }
     }
@@ -469,6 +535,7 @@ fn exit_fall(x: u16, progress: f32, height: f32) -> (f32, u16) {
 /// Exit at `progress` (0..1). Backgrounds stay exactly in place; the text of
 /// every column falls under gravity, staggered, fading into the background it
 /// passes over. At 1.0 only the backgrounds remain.
+#[cfg(test)]
 pub(crate) fn exit_frame(
     snapshot: &Buffer,
     out: &mut Buffer,
@@ -476,13 +543,24 @@ pub(crate) fn exit_frame(
     flicker: u64,
     highlights: &[Color],
 ) {
+    let bases = highlight_bases(snapshot, highlights);
+    exit_frame_with(snapshot, &bases, out, progress, flicker);
+}
+
+/// `exit_frame` with the snapshot's highlight bases already computed.
+fn exit_frame_with(
+    snapshot: &Buffer,
+    bases: &[Option<Color>],
+    out: &mut Buffer,
+    progress: f32,
+    flicker: u64,
+) {
     let area = snapshot.area;
     let height = f32::from(area.height);
-    let bases = highlight_bases(snapshot, highlights);
     for x in area.x..area.x + area.width {
         let (local, shift) = exit_fall(x, progress, height);
         let next_shift = exit_fall(x + 1, progress, height).1;
-        let dim = local.powf(0.7);
+        let dim = step(local.powf(0.7), FADE_STEPS * 2.0);
         for y in area.y..area.y + area.height {
             let (Some(place), Some(cell)) = (snapshot.cell((x, y)), out.cell_mut((x, y))) else {
                 continue;

@@ -204,6 +204,15 @@ impl<W: Write> AnsiBackend<W> {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_forced(writer: W) -> Self {
+        Self {
+            writer,
+            synchronized: false,
+            force_ansi: true,
+        }
+    }
+
     fn uses_ansi(&self) -> bool {
         self.force_ansi || ansi_supported()
     }

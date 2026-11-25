@@ -161,8 +161,17 @@ fn state_is_off_by_default_and_arms_only_when_enabled() {
     assert_ne!(buffer, target);
     assert!(!state.startup_due(now + Duration::from_millis(5)));
     assert!(state.startup_due(now + FRAME));
+    // A stalled frame advances only a tenth of the effect, so a slow machine
+    // still shows every stage instead of jumping to the end.
     let mut buffer = target.clone();
     state.paint_startup(&mut buffer, now + Duration::from_millis(1_500));
+    assert!(state.startup_active(), "one late frame does not end it");
+    let mut time = now + Duration::from_millis(1_500);
+    for _ in 0..9 {
+        time += Duration::from_millis(150);
+        buffer = target.clone();
+        state.paint_startup(&mut buffer, time);
+    }
     assert_eq!(buffer, target);
     assert!(!state.startup_active(), "finished after its duration");
 
@@ -180,7 +189,16 @@ fn state_is_off_by_default_and_arms_only_when_enabled() {
     state.paint_exit(&mut buffer, now);
     assert_eq!(buffer, target);
     assert!(!state.exit_needs_snapshot());
-    assert!(state.exit_done(now + Duration::from_millis(200)));
+    assert!(
+        !state.exit_done(now + Duration::from_millis(200)),
+        "clamped step"
+    );
+    let mut time = now;
+    for _ in 0..7 {
+        time += FRAME * 2;
+        state.paint_exit(&mut buffer, time);
+    }
+    assert!(state.exit_done(time));
     state.skip_exit();
     assert!(state.exit_done(now));
 }
@@ -434,7 +452,12 @@ fn startup_ticks_reuse_the_last_real_frame_until_the_final_frame() {
     assert!(!state.startup_due(tick + Duration::from_millis(5)));
 
     // The final frame takes the real render path, which ends the effect.
-    let end = start + Duration::from_millis(300);
+    let mut end = tick;
+    while state.cached_startup_ready(end + FRAME) {
+        end += FRAME;
+        state.paint_startup_cached(&mut cached, end);
+    }
+    let end = end + FRAME;
     assert!(state.startup_due(end));
     assert!(!state.cached_startup_ready(end));
     let mut last = target.clone();
@@ -491,4 +514,138 @@ fn text_highlights_arrive_and_leave_with_their_text() {
         out.content.iter().all(|cell| cell.bg == panel),
         "no highlight is left behind"
     );
+}
+
+/// A dense, syntax-coloured screen like a real workbench frame.
+fn dense_workbench(width: u16, height: u16) -> Buffer {
+    let area = Rect::new(0, 0, width, height);
+    let mut buffer = Buffer::empty(area);
+    let palette = [
+        Color::Rgb(220, 120, 120),
+        Color::Rgb(120, 200, 140),
+        Color::Rgb(130, 160, 230),
+        Color::Rgb(210, 190, 110),
+        Color::Rgb(200, 205, 215),
+    ];
+    let words = [
+        "fn",
+        "let",
+        "mut",
+        "buffer",
+        "=",
+        "Some(value)",
+        "{",
+        "}",
+        "self.render();",
+        "match",
+        "x",
+        "=>",
+    ];
+    for y in 0..height {
+        let bg = if y == 0 || y + 1 == height {
+            Color::Rgb(24, 26, 32)
+        } else {
+            Color::Rgb(30, 32, 40)
+        };
+        for x in 0..width {
+            buffer[(x, y)].set_style(Style::default().bg(bg));
+        }
+        let mut x = 0u16;
+        let mut i = usize::from(y) * 7;
+        while x < width {
+            let word = words[i % words.len()];
+            let style = Style::default().fg(palette[i % palette.len()]).bg(bg);
+            buffer.set_stringn(x, y, word, usize::from(width - x), style);
+            x = x.saturating_add(word.len() as u16 + 1);
+            i += 1;
+        }
+    }
+    buffer
+}
+
+#[test]
+#[ignore = "measurement: cargo test --profile fastrelease --bin vtcode screen_transition_cost -- --ignored --nocapture"]
+fn screen_transition_cost() {
+    use ratatui::{Terminal, TerminalOptions, Viewport};
+    use std::{cell::RefCell, io::Write, rc::Rc, time::Instant};
+    #[derive(Clone, Default)]
+    struct Sink(Rc<RefCell<usize>>);
+    impl Write for Sink {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            *self.0.borrow_mut() += data.len();
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let (width, height) = (200, 55);
+    let target = dense_workbench(width, height);
+    let mut state = State::default();
+    state.settings.startup = true;
+    state.settings.exit = true;
+    for effect in ["startup", "exit"] {
+        let sink = Sink::default();
+        let backend = crate::terminal_output::AnsiBackend::new_forced(sink.clone());
+        let mut terminal = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Fixed(Rect::new(0, 0, width, height)),
+            },
+        )
+        .unwrap();
+        let start = Instant::now();
+        let base = start;
+        let frames = 90;
+        let (mut paint, mut present, mut bytes, mut worst) = (0.0f64, 0.0f64, 0usize, 0usize);
+        if effect == "startup" {
+            state.arm_startup();
+        } else {
+            state.begin_exit(base);
+        }
+        for frame in 0..=frames {
+            let now = base + Duration::from_millis(frame * 16 + 1);
+            let before = *sink.0.borrow();
+            let mut spent = 0.0;
+            let t0 = Instant::now();
+            terminal
+                .draw(|f| {
+                    let p0 = Instant::now();
+                    let buffer = f.buffer_mut();
+                    if effect == "startup" {
+                        if frame == 0 {
+                            buffer.clone_from(&target);
+                            state.paint_startup(buffer, base);
+                        } else if state.cached_startup_ready(now) {
+                            state.paint_startup_cached(buffer, now);
+                        } else {
+                            buffer.clone_from(&target);
+                            state.paint_startup(buffer, now);
+                        }
+                    } else {
+                        if frame == 0 {
+                            buffer.clone_from(&target);
+                        }
+                        state.paint_exit(buffer, now);
+                    }
+                    spent = p0.elapsed().as_secs_f64();
+                })
+                .unwrap();
+            let total = t0.elapsed().as_secs_f64();
+            paint += spent;
+            present += total - spent;
+            let written = *sink.0.borrow() - before;
+            bytes += written;
+            worst = worst.max(written);
+        }
+        let n = (frames + 1) as f64;
+        println!(
+            "{effect}: paint {:.3} ms/frame, diff+encode {:.3} ms/frame, {:.1} KB/frame avg, {:.1} KB worst, {:.1} KB total",
+            paint * 1e3 / n,
+            present * 1e3 / n,
+            bytes as f64 / n / 1024.0,
+            worst as f64 / 1024.0,
+            bytes as f64 / 1024.0
+        );
+    }
 }
