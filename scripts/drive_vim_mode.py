@@ -1396,7 +1396,14 @@ def scenario_completion_other_buffer(e, d):
     return [("<C-n> completes a word from another open buffer", ok)]
 
 
+def scenario_surround(e, d):
+    e.keys('ds"' + "ysiw)" + "jcs])" + ":w" + CR)
+    ok = wait_for(e, lambda: read(d, "a.txt") == "(say) hi\n(1, 2)\n")
+    return [("ds\", ysiw), cs]) work like vim-surround", ok)]
+
+
 SCENARIOS = [
+    ("surround", scenario_surround, {"a.txt": "\"say\" hi\n[1, 2]\n"}),
     ("undo branches", scenario_undo_branches, {"a.txt": "one\n"}),
     ("quickfix window", scenario_quickfix_window, {"a.txt": "x\nneedle one\n", "b.txt": "needle two\n"}),
     ("completion other buffer", scenario_completion_other_buffer, {"a.txt": "alpha\ngamma\n", "b.txt": "elsewhere_word\n"}),

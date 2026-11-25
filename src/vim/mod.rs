@@ -30,6 +30,7 @@ mod paths;
 pub(crate) mod register;
 pub(crate) mod script;
 pub(crate) mod search;
+pub(crate) mod surround;
 #[cfg(test)]
 mod tests;
 pub(crate) mod text;
@@ -596,6 +597,8 @@ pub(crate) struct VimState {
     pub(crate) ins_complete: Option<complete::InsComplete>,
     /// Keys queued by an abbreviation, which do not expand again.
     pub(crate) abbrev_block: usize,
+    /// `ds`, `cs`, `ys` waiting for their next key.
+    pub(crate) surround: Option<surround::Pending>,
 }
 
 impl Default for VimState {
@@ -662,6 +665,7 @@ impl Default for VimState {
             other_opts: BTreeMap::new(),
             ins_complete: None,
             abbrev_block: 0,
+            surround: None,
         }
     }
 }
@@ -1061,6 +1065,15 @@ impl VimState {
             && !self.is_visual()
             && (cmdline::window_enter(self, host) || ex::qf_window_enter(self, host))
         {
+            return;
+        }
+        if self.surround.is_some() {
+            surround::key(self, host, key);
+            return;
+        }
+        if let Some(p) = surround::begins(self, key) {
+            self.pending.clear();
+            self.surround = Some(p);
             return;
         }
         self.pending.push(key);
