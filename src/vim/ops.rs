@@ -1311,6 +1311,23 @@ pub(crate) fn simple(
             clamp_normal(ed);
             update_curswant(vim, ed);
         }
+        Simple::Undo | Simple::Redo
+            if host.ed_ref().is_some_and(super::undo_tree::after_travel) =>
+        {
+            let newer = matches!(s, Simple::Redo);
+            let Some(ed) = host.ed() else {
+                return;
+            };
+            if !super::undo_tree::travel(ed, newer, count) {
+                vim.set_message(if newer {
+                    "Already at newest change"
+                } else {
+                    "Already at oldest change"
+                });
+            }
+            clamp_normal(ed);
+            update_curswant(vim, ed);
+        }
         Simple::Undo => {
             let Some(ed) = host.ed() else {
                 return;

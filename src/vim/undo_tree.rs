@@ -49,6 +49,13 @@ pub(crate) fn record(ed: &mut Editor) {
     }
 }
 
+/// The text on screen came from a `g-`/`g+` jump with nothing changed since:
+/// `u` and `<C-r>` then move from that state, not undo the jump itself.
+pub(crate) fn after_travel(ed: &Editor) -> bool {
+    let top = ed.undo_stack.back().map(|s| s.change_id);
+    top.is_some() && ed.vim_buf.history.travel_id == top
+}
+
 /// `g-` (`newer` false) or `g+`, `count` times. Returns false at the end.
 pub(crate) fn travel(ed: &mut Editor, newer: bool, count: usize) -> bool {
     record(ed);
@@ -105,5 +112,10 @@ mod tests {
         assert_eq!(o.lines, ["three"]);
         let o = run("one", (0, 0), "ciwtwo<Esc>uciwthree<Esc>2g-");
         assert_eq!(o.lines, ["one"]);
+        // After g-, u goes on from that state; <C-r> comes back.
+        let o = run("one", (0, 0), "ciwtwo<Esc>uciwthree<Esc>g-u");
+        assert_eq!(o.lines, ["one"]);
+        let o = run("one", (0, 0), "ciwtwo<Esc>uciwthree<Esc>g-u<C-r>");
+        assert_eq!(o.lines, ["two"]);
     }
 }
