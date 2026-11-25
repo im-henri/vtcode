@@ -181,6 +181,21 @@ impl App {
         })
     }
 
+    /// Open a new view in a split without copying the source pane's active tab.
+    pub(crate) fn open_tab_in_split(&mut self, tab: Tab, zone: TabDropZone) {
+        if self.tabs.is_empty() {
+            self.active_tab = self.insert_tab_after_active(tab);
+            self.touch_tab_mru(self.active_tab);
+        } else {
+            self.clear_transient_editor_state();
+            self.save_split_source();
+            self.insert_split_group(tab, zone);
+        }
+        self.active_pane = ActivePane::Editor;
+        self.terminal_panel_focused = false;
+        self.ensure_active_tab_visible();
+    }
+
     /// Split commands open another view of a text document. Workbench tabs
     /// such as terminals and diffs retain their single-view move behavior.
     pub(crate) fn split_editor_tab(&mut self, index: usize, zone: TabDropZone) {
@@ -198,12 +213,7 @@ impl App {
             source.preview = false;
             let mut tab = self.clone_desk_tab(&self.tabs[index]);
             tab.pinned = false;
-            self.clear_transient_editor_state();
-            self.save_split_source();
-            self.insert_split_group(tab, zone);
-            self.active_pane = ActivePane::Editor;
-            self.terminal_panel_focused = false;
-            self.ensure_active_tab_visible();
+            self.open_tab_in_split(tab, zone);
         } else {
             self.create_split_group_at(index, zone);
         }

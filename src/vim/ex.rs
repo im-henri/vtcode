@@ -4,10 +4,12 @@
 use super::exec::{self, Tx, cursor, push_jump, set_cursor, update_curswant};
 use super::keys::Key;
 use super::map::{self, MapMode, Mapping};
+use super::paths::Matches;
 use super::register::{Reg, RegKind};
 use super::search;
 use super::text::{Pos, Text};
-use super::{Act, Host, HostClip, Mode, VimState};
+use super::{Act, Host, HostClip, Mode, OpenTarget, VimState};
+use crate::app::TabDropZone;
 
 type R<T> = Result<T, String>;
 
@@ -528,7 +530,7 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
             .iter()
             .take_while(|c| c.is_ascii_alphabetic())
             .collect();
-        !host.buffers().is_empty() && resolve(&name).is_some_and(view_safe)
+        resolve(&name).is_some_and(view_safe)
     };
     if host.ed_ref().is_none() && !view_command {
         return run_without_buffer(vim, host, &s[i..].iter().collect::<String>());
@@ -581,6 +583,10 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
     }
     let arg: String = s[i..].iter().collect::<String>();
     let arg_trim = arg.trim();
+    let path = || {
+        let file = super::paths::argument(&arg);
+        (!file.is_empty()).then(|| file.to_owned())
+    };
     if !name.is_empty()
         && range.end
             > host.ed_ref().map_or(0, |e| {
@@ -632,7 +638,7 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
     }
     match full {
         "write" | "update" | "wq" | "xit" | "exit" => {
-            let path = (!arg_trim.is_empty()).then(|| arg_trim.to_string());
+            let path = path();
             let write = match full {
                 // As in Vim, only a changed buffer is written: `:x` and `ZZ`
                 // on an unchanged one just close it, named or not.
@@ -678,53 +684,47 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
             Ok(())
         }
         "saveas" => {
-            if arg_trim.is_empty() {
+            let path = path();
+            if path.is_none() {
                 return Err("E471: Argument required".into());
             }
-            host.act(Act::Write {
-                path: Some(arg_trim.into()),
-                force: bang,
-            })
+            host.act(Act::Write { path, force: bang })
         }
         "wall" => host.act(Act::WriteAll),
         "wqall" | "xall" => host.act(Act::WriteQuitAll),
         "quit" | "close" => host.act(Act::Quit { force: bang }),
         "qall" | "quitall" => host.act(Act::QuitAll { force: bang }),
-        "edit" => {
-            if arg_trim == "#" {
-                return host.act(Act::Alternate);
+        "edit" => match path() {
+            Some(path) if path == "#" => host.act(Act::Alternate),
+            None => host.act(Act::Reload { force: bang }),
+            Some(path) => host.act(Act::Open {
+                target: OpenTarget::Path(path),
+                split: None,
+            }),
+        },
+        "enew" => host.act(Act::Open {
+            target: OpenTarget::Empty,
+            split: None,
+        }),
+        "new" | "split" | "vnew" | "vsplit" => {
+            use super::parse::Window;
+            let vertical = full.starts_with('v');
+            if arg_trim.is_empty() && matches!(full, "split" | "vsplit") {
+                let window = if vertical {
+                    Window::VSplit
+                } else {
+                    Window::Split
+                };
+                return host.act(Act::Window(window, 1));
             }
-            host.act(Act::Edit {
-                path: (!arg_trim.is_empty()).then(|| arg_trim.to_string()),
-                force: bang,
+            host.act(Act::Open {
+                target: path().map_or(OpenTarget::Empty, OpenTarget::Path),
+                split: Some(if vertical {
+                    TabDropZone::Right
+                } else {
+                    TabDropZone::Bottom
+                }),
             })
-        }
-        "enew" => host.act(Act::NewBuffer),
-        "new" | "split" => {
-            if !arg_trim.is_empty() || full == "new" {
-                host.act(Act::Window(super::parse::Window::Split, 1))?;
-                if full == "new" && arg_trim.is_empty() {
-                    return host.act(Act::NewBuffer);
-                }
-                return host.act(Act::Edit {
-                    path: Some(arg_trim.into()),
-                    force: false,
-                });
-            }
-            host.act(Act::Window(super::parse::Window::Split, 1))
-        }
-        "vnew" | "vsplit" => {
-            host.act(Act::Window(super::parse::Window::VSplit, 1))?;
-            if !arg_trim.is_empty() {
-                return host.act(Act::Edit {
-                    path: Some(arg_trim.into()),
-                    force: false,
-                });
-            }
-            if full == "vnew" {
-                return host.act(Act::NewBuffer);
-            }
-            Ok(())
         }
         "only" => host.act(Act::Window(super::parse::Window::Only, 1)),
         "wincmd" => {
@@ -736,16 +736,10 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
         "tabprevious" | "tabNext" => host.act(Act::TabPrev(arg_trim.parse().unwrap_or(1))),
         "tabfirst" | "tabrewind" => host.act(Act::TabNext(Some(1))),
         "tablast" => host.act(Act::TabNext(Some(usize::MAX))),
-        "tabnew" | "tabedit" => {
-            if arg_trim.is_empty() {
-                host.act(Act::NewBuffer)
-            } else {
-                host.act(Act::Edit {
-                    path: Some(arg_trim.into()),
-                    force: false,
-                })
-            }
-        }
+        "tabnew" | "tabedit" => host.act(Act::Open {
+            target: path().map_or(OpenTarget::Empty, OpenTarget::Path),
+            split: None,
+        }),
         "tabclose" => host.act(Act::TabClose { force: bang }),
         "tabonly" => host.act(Act::TabOnly),
         "bnext" => host.act(Act::BufferNext(arg_trim.parse().unwrap_or(1))),
@@ -780,19 +774,21 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
         "cclose" => host.act(Act::Quickfix(super::Quickfix::Close)),
         "cnext" => host.act(Act::Quickfix(super::Quickfix::Next)),
         "cprevious" | "cNext" => host.act(Act::Quickfix(super::Quickfix::Prev)),
-        "Explore" | "Sexplore" | "Vexplore" | "Lexplore" => host.act(Act::Explore),
+        "Explore" | "Lexplore" if arg_trim.is_empty() => host.act(Act::Explore),
+        "Explore" | "Lexplore" | "Sexplore" | "Vexplore" => host.act(Act::Open {
+            target: OpenTarget::Directory(path()),
+            split: match full {
+                "Sexplore" => Some(TabDropZone::Bottom),
+                "Vexplore" => Some(TabDropZone::Right),
+                _ => None,
+            },
+        }),
         "terminal" => host.act(Act::Terminal(
             (!arg_trim.is_empty()).then(|| arg_trim.to_string()),
         )),
-        "cd" | "lcd" | "tcd" => host.act(Act::Cd(
-            (!arg_trim.is_empty()).then(|| arg_trim.to_string()),
-        )),
+        "cd" | "lcd" | "tcd" => host.act(Act::Cd(path())),
         "pwd" => {
-            let d = host
-                .cwd()
-                .map(|p| p.display().to_string())
-                .unwrap_or_default();
-            vim.set_message(d);
+            vim.set_message(host.cwd_label());
             Ok(())
         }
         "vtcode" | "VT" => {
@@ -1092,7 +1088,7 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
         "set" | "setlocal" | "setglobal" => set(vim, host, arg_trim),
         "let" => let_cmd(vim, host, arg_trim),
         "source" => {
-            let path = expand_path(host, arg_trim);
+            let path = expand_path(host, &arg);
             let text = std::fs::read_to_string(&path)
                 .map_err(|e| format!("E484: Can't open file {arg_trim}: {e}"))?;
             let errors = source(vim, host, &text);
@@ -1124,7 +1120,7 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
             let text = if let Some(cmd) = arg_trim.strip_prefix('!') {
                 shell(host, cmd.trim(), None)?
             } else {
-                let path = expand_path(host, arg_trim);
+                let path = expand_path(host, &arg);
                 std::fs::read_to_string(&path)
                     .map_err(|e| format!("E484: Can't open file {arg_trim}: {e}"))?
             };
@@ -1362,6 +1358,12 @@ fn view_safe(full: &str) -> bool {
             | "close"
             | "xit"
             | "exit"
+            | "edit"
+            | "enew"
+            | "Explore"
+            | "Lexplore"
+            | "Sexplore"
+            | "Vexplore"
             | "tabnext"
             | "tabprevious"
             | "tabNext"
@@ -1414,11 +1416,6 @@ fn run_without_buffer(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<
     }
     match full {
         "quit" | "qall" | "quitall" => host.act(Act::QuitAll { force: bang }),
-        "edit" | "tabedit" | "tabnew" => host.act(Act::Edit {
-            path: (!arg.is_empty()).then(|| arg.to_string()),
-            force: bang,
-        }),
-        "enew" => host.act(Act::NewBuffer),
         "set" | "setlocal" | "setglobal" => set(vim, host, arg),
         "let" => let_cmd(vim, host, arg),
         "vtcode" | "VT" => host.act(Act::Command(arg.into())),
@@ -1426,7 +1423,6 @@ fn run_without_buffer(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<
         "cclose" => host.act(Act::Quickfix(super::Quickfix::Close)),
         "cnext" => host.act(Act::Quickfix(super::Quickfix::Next)),
         "cprevious" | "cNext" => host.act(Act::Quickfix(super::Quickfix::Prev)),
-        "Explore" | "Sexplore" | "Vexplore" | "Lexplore" => host.act(Act::Explore),
         "terminal" => host.act(Act::Terminal((!arg.is_empty()).then(|| arg.to_string()))),
         "wall" => host.act(Act::WriteAll),
         _ => Err("E32: No file name".into()),
@@ -1491,26 +1487,15 @@ fn show_output(vim: &mut VimState, out: &str) {
 }
 
 fn expand_path(host: &dyn Host, p: &str) -> std::path::PathBuf {
-    let p = p.trim();
-    let p = if p == "%" {
-        host.file_name().unwrap_or_default()
-    } else {
-        p.to_string()
-    };
-    let expanded = if let Some(rest) = p.strip_prefix("~/").or_else(|| p.strip_prefix("~\\")) {
-        std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(|h| std::path::PathBuf::from(h).join(rest))
-            .unwrap_or_else(|| p.clone().into())
-    } else {
-        std::path::PathBuf::from(&p)
-    };
-    if expanded.is_relative() {
-        if let Some(cwd) = host.cwd() {
-            return cwd.join(expanded);
+    let p = super::paths::argument(p);
+    let base = host.cwd().unwrap_or_default();
+    if p == "%" {
+        if let Some(path) = host.ed_ref().and_then(|ed| ed.file_path.as_ref()) {
+            return path.clone();
         }
+        return base.join(host.file_name().unwrap_or_default());
     }
-    expanded
+    super::paths::resolve_local(&base, p)
 }
 
 /// Run a shell command, optionally feeding stdin.
@@ -3105,11 +3090,7 @@ pub(crate) fn source(vim: &mut VimState, host: &mut dyn Host, text: &str) -> Vec
 // ---------------------------------------------------------------------------
 // Completion
 
-pub(crate) fn completions(
-    vim: &VimState,
-    host: &mut dyn Host,
-    before: &str,
-) -> (usize, Vec<String>) {
+pub(crate) fn completions(vim: &VimState, host: &mut dyn Host, before: &str) -> (usize, Matches) {
     let chars: Vec<char> = before.chars().collect();
     // Skip a leading range.
     let mut i = 0;
@@ -3132,12 +3113,12 @@ pub(crate) fn completions(
             .collect();
         items.sort();
         items.dedup();
-        return (name_start, items);
+        return (name_start, Matches::Ready(items));
     }
     if chars.get(i) == Some(&'!') {
         i += 1;
     }
-    while i < chars.len() && chars[i] == ' ' {
+    while i < chars.len() && matches!(chars[i], ' ' | '\t') {
         i += 1;
     }
     let full = resolve(&name).unwrap_or("");
@@ -3162,7 +3143,7 @@ pub(crate) fn completions(
                 .filter(|n| n[prefix.len()..].starts_with(w))
                 .collect();
             items.sort();
-            (word_start, items)
+            (word_start, Matches::Ready(items))
         }
         "buffer" | "bdelete" => {
             let items = host
@@ -3171,7 +3152,7 @@ pub(crate) fn completions(
                 .map(|(_, n, _)| n)
                 .filter(|n| n.to_lowercase().contains(&arg.to_lowercase()))
                 .collect();
-            (arg_start, items)
+            (arg_start, Matches::Ready(items))
         }
         "vtcode" | "VT" => {
             let mut items: Vec<String> = host
@@ -3180,46 +3161,22 @@ pub(crate) fn completions(
                 .filter(|c| c.starts_with(&arg))
                 .collect();
             items.sort();
-            (arg_start, items)
+            (arg_start, Matches::Ready(items))
         }
-        "edit" | "write" | "saveas" | "split" | "vsplit" | "new" | "vnew" | "tabedit"
-        | "tabnew" | "read" | "source" | "cd" | "lcd" | "tcd" => {
-            let base = host.cwd().unwrap_or_default();
-            let (dir_part, file_part) = match arg.rfind(['/', '\\']) {
-                Some(p) => (&arg[..p + 1], &arg[p + 1..]),
-                None => ("", arg.as_str()),
-            };
-            let dir = if std::path::Path::new(dir_part).is_absolute() {
-                std::path::PathBuf::from(dir_part)
-            } else {
-                base.join(dir_part)
-            };
-            let mut items: Vec<String> = std::fs::read_dir(&dir)
-                .map(|rd| {
-                    rd.filter_map(|e| e.ok())
-                        .filter_map(|e| {
-                            let n = e.file_name().to_string_lossy().to_string();
-                            let ok = if vim.opts.wildignorecase || cfg!(windows) {
-                                n.to_lowercase().starts_with(&file_part.to_lowercase())
-                            } else {
-                                n.starts_with(file_part)
-                            };
-                            if !ok || (n.starts_with('.') && !file_part.starts_with('.')) {
-                                return None;
-                            }
-                            let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
-                            if full == "cd" && !is_dir {
-                                return None;
-                            }
-                            Some(format!("{dir_part}{n}{}", if is_dir { "/" } else { "" }))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            items.sort();
-            (arg_start, items)
+        "edit" | "write" | "update" | "wq" | "xit" | "exit" | "saveas" | "split" | "vsplit"
+        | "new" | "vnew" | "tabedit" | "tabnew" | "read" | "source"
+            if !arg.starts_with('!') =>
+        {
+            (
+                arg_start,
+                host.complete_path(&arg, false, vim.opts.wildignorecase),
+            )
         }
-        _ => (arg_start, Vec::new()),
+        "cd" | "lcd" | "tcd" | "Explore" | "Lexplore" | "Sexplore" | "Vexplore" => (
+            arg_start,
+            host.complete_path(&arg, true, vim.opts.wildignorecase),
+        ),
+        _ => (arg_start, Matches::Ready(Vec::new())),
     }
 }
 

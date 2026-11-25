@@ -82,6 +82,7 @@ pub(crate) fn context(app: &App) -> Option<&'static str> {
         return Some("FIND");
     }
     Some(match app.tabs.get(app.active_tab).map(|t| t.kind) {
+        Some(TabKind::Directory) => "EXPLORER",
         Some(TabKind::Settings) => "SETTINGS",
         Some(TabKind::SourceControl) => "SOURCE CONTROL",
         Some(TabKind::MarkdownPreview) => "PREVIEW",

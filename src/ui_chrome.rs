@@ -1558,6 +1558,9 @@ fn render_group_pane(
         app.refresh_file_search_view(group_id);
         if pending_diff {
             crate::ui_loading::draw_diff(f, app, pane_layout[2]);
+        } else if current_tab_kind == Some(crate::app::TabKind::Directory) {
+            app.settings_editor_active = false;
+            crate::vim::directory::draw(f, app, pane_layout[2]);
         } else if current_tab_kind == Some(crate::app::TabKind::SourceControl) {
             app.settings_editor_active = false;
             crate::ui_source_control::draw_tab(f, app, pane_layout[2]);
@@ -1840,7 +1843,12 @@ pub(crate) fn draw_editor_section_with_pending_diff(
     }
 
     // Settings/Keyboard Shortcuts tab view
-    if !is_split && current_tab_kind == Some(crate::app::TabKind::SourceControl) {
+    if !is_split && current_tab_kind == Some(crate::app::TabKind::Directory) {
+        app.settings_editor_active = false;
+        app.editor_area = Some(layout[2]);
+        crate::vim::directory::draw(f, app, layout[2]);
+        return;
+    } else if !is_split && current_tab_kind == Some(crate::app::TabKind::SourceControl) {
         app.settings_editor_active = false;
         crate::ui_source_control::draw_tab(f, app, layout[2]);
         return;

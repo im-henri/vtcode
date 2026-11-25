@@ -88,6 +88,64 @@ fn begin_blocked(fixture: &mut Fixture, path: &Path) {
 }
 
 #[test]
+fn vim_path_commands_browse_the_remote_workspace() {
+    let mut fixture = setup();
+    let child = file(&fixture, "sub folder/child.txt", "remote contents");
+    let folder = key(&fixture, "sub folder");
+    let native_root =
+        crate::portable::filesystem_spelling(&fixture.root.path().canonicalize().unwrap());
+    let app = &mut fixture.app;
+    app.active_pane = ActivePane::Editor;
+    crate::vim::app_host::set_enabled(app, true);
+    let keys = |app: &mut App, text: &str| {
+        for key in crate::vim::keys::parse(text, &[]) {
+            crate::input_keyboard::handle_keyboard_event(app, key.to_event());
+        }
+    };
+
+    keys(app, ":pwd<CR>");
+    let shown = &app.vim.message.as_ref().unwrap().text;
+    assert_eq!(shown, &native_root.display().to_string());
+
+    keys(app, ":vsp sub<Tab>");
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.vim
+            .cmdline
+            .as_ref()
+            .is_some_and(|c| c.completion.is_some())
+    });
+    assert_eq!(
+        app.vim.cmdline.as_ref().unwrap().string(),
+        "vsp sub\\ folder/"
+    );
+    keys(app, "<CR>");
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        crate::vim::directory::current(app).is_some()
+            && !app.background.has_active_jobs()
+            && !app.background.has_pending_results()
+    });
+    assert_eq!(crate::vim::directory::current(app).unwrap().path, folder);
+    let directory_group = app.active_group;
+    keys(app, "<CR>");
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        app.editor()
+            .is_some_and(|ed| ed.file_path.as_ref() == Some(&child) && !ed.bg_loading)
+    });
+    assert_eq!(app.editor().unwrap().rope.to_string(), "remote contents");
+    assert_eq!(app.active_group, directory_group);
+
+    keys(app, ":cd sub\\ folder<CR>");
+    app.wait_for_background(Duration::from_secs(10), |app| {
+        crate::vim::app_host::vim_cwd(app) == folder
+    });
+    keys(app, ":pwd<CR>");
+    assert_eq!(
+        app.vim.message.as_ref().unwrap().text,
+        native_root.join("sub folder").display().to_string()
+    );
+}
+
+#[test]
 fn remote_editor_path_links_resolve_fallbacks_without_hover_io() {
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::{Terminal, backend::TestBackend};

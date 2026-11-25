@@ -34,6 +34,7 @@ pub(crate) fn tab_icon(tab: &crate::app::Tab) -> &'static str {
         crate::app::TabKind::CommitDetails | crate::app::TabKind::AmendCommit => "◈ ",
         crate::app::TabKind::MarkdownPreview => "Md ",
         crate::app::TabKind::Settings => "≡ ",
+        crate::app::TabKind::Directory => "▸ ",
         crate::app::TabKind::ExtensionView | crate::app::TabKind::ExtensionInfo => "Ex ",
         crate::app::TabKind::Terminal => ">_ ",
         crate::app::TabKind::RemoteConnection(_) => "↗ ",

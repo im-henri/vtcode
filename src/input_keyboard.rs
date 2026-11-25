@@ -1069,6 +1069,9 @@ pub(crate) fn handle_keyboard_event_inner(app: &mut App, key: crossterm::event::
     if crate::ui_git_amend::handle_key(app, key) {
         return false;
     }
+    if crate::vim::directory::key(app, key) {
+        return false;
+    }
     match app.active_pane {
         ActivePane::Explorer => input::handle_explorer_key(app, key.code, key.modifiers),
         ActivePane::Editor => input::handle_editor_key(app, key.code, key.modifiers),

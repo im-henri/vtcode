@@ -1,13 +1,16 @@
 //! Workbench integration: [`Host`] for [`App`], keyboard routing, window
 //! navigation and keyboard-only control of the sidebars and popups.
 
+use std::path::{Path, PathBuf};
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::keys::{K, Key};
 use super::parse::Window;
+use super::paths;
 use super::text::{Pos, Text};
-use super::{Act, Host, Mode, VimState, exec};
-use crate::app::{ActivePane, App, TabKind};
+use super::{Act, Host, Mode, OpenTarget, VimState, directory, exec};
+use crate::app::{ActivePane, App, Tab, TabDropZone, TabKind};
 use crate::editor::Editor;
 
 pub(crate) struct AppHost<'a> {
@@ -160,16 +163,47 @@ impl Host for AppHost<'_> {
     fn file_name(&self) -> Option<String> {
         let ed = self.app.editor()?;
         let path = ed.file_path.as_ref()?;
-        Some(
-            path.strip_prefix(vim_cwd(self.app))
-                .unwrap_or(path)
-                .display()
-                .to_string(),
-        )
+        Some(paths::label(
+            self.app,
+            crate::native_paths::strip_prefix(path, vim_cwd(self.app)).unwrap_or(path),
+        ))
     }
 
     fn cwd(&self) -> Option<std::path::PathBuf> {
-        Some(vim_cwd(self.app).to_path_buf())
+        Some(paths::cwd(self.app))
+    }
+
+    fn cwd_label(&self) -> String {
+        paths::label(self.app, &paths::cwd(self.app))
+    }
+
+    fn complete_path(
+        &mut self,
+        arg: &str,
+        directories_only: bool,
+        ignore_case: bool,
+    ) -> paths::Matches {
+        let cwd = paths::cwd(self.app);
+        let Some(remote) = self.app.remote_workspace.clone() else {
+            return paths::Matches::Ready(paths::complete(
+                arg,
+                directories_only,
+                ignore_case,
+                &cwd,
+                None,
+            ));
+        };
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let request = NEXT.fetch_add(1, Ordering::Relaxed);
+        let arg = arg.to_owned();
+        let sender = self.app.background.sender.clone();
+        self.app.background.spawn("vim-path-completion", move || {
+            let items = paths::complete(&arg, directories_only, ignore_case, &cwd, Some(&remote));
+            let _ = sender
+                .send(crate::background::BackgroundResult::VimPathCompletion { request, items });
+        });
+        paths::Matches::Pending(request)
     }
 
     fn completion_visible(&self) -> bool {
@@ -763,6 +797,20 @@ fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
             app.vim_window_prefix = true;
             return Some(false);
         }
+        if directory::current(app).is_some() {
+            if key.is_ctrl('l') {
+                directory::refresh(app);
+                return Some(false);
+            }
+            match key.char() {
+                Some('q') => {
+                    app.close_tab(app.active_tab);
+                    return Some(false);
+                }
+                Some('-') => return translate(app, KeyCode::Left),
+                _ => return scroll_view_key(app, key, true),
+            }
+        }
         let info = app
             .tabs
             .get(app.active_tab)
@@ -1303,21 +1351,28 @@ pub(crate) fn window(app: &mut App, w: Window, count: usize) -> Result<(), Strin
             focus_target(app, from_id(id));
             Ok(())
         }
-        Window::Split | Window::VSplit | Window::New => {
-            if app.tabs.is_empty() {
-                return Ok(());
-            }
-            app.execute_palette_command("duplicate_tab");
-            let direction = if w == Window::VSplit {
-                crate::app::SplitDirection::Horizontal
+        Window::Split | Window::VSplit => {
+            let zone = if w == Window::VSplit {
+                TabDropZone::Right
             } else {
-                crate::app::SplitDirection::Vertical
+                TabDropZone::Bottom
             };
-            app.create_split_group_dir(app.active_tab, direction);
-            if w == Window::New {
+            if let Some(dir) = directory::current(app) {
+                directory::open(app, dir.path.clone(), Some(zone));
+            } else if app.tabs.is_empty() {
                 app.new_file();
+            } else if app.can_duplicate_tab(app.active_tab)
+                && app.tabs[app.active_tab].kind != TabKind::File
+            {
+                app.duplicate_tab(app.active_tab);
+                app.create_split_group_at(app.active_tab, zone);
+            } else {
+                app.split_editor_tab(app.active_tab, zone);
             }
-            app.active_pane = ActivePane::Editor;
+            Ok(())
+        }
+        Window::New => {
+            new_ex_buffer(app, None, Some(TabDropZone::Bottom));
             Ok(())
         }
         Window::Close if chat_dock_focused(app) => {
@@ -1415,7 +1470,7 @@ fn quit_app(app: &mut App, choice: char) -> Result<(), String> {
 
 /// The directory relative Ex paths start from: the `:cd` directory, else the
 /// workspace folder.
-pub(crate) fn vim_cwd(app: &App) -> &std::path::Path {
+pub(crate) fn vim_cwd(app: &App) -> &Path {
     app.vim_cwd
         .as_ref()
         .filter(|(root, _)| *root == app.explorer.root)
@@ -1427,18 +1482,25 @@ pub(crate) fn vim_cwd(app: &App) -> &std::path::Path {
 /// the buffers alone. No argument goes home (on Windows it prints the
 /// directory, as Windows Vim does); `-` returns to the previous one.
 fn change_dir(app: &mut App, arg: Option<String>) -> Result<(), String> {
-    let current = vim_cwd(app).to_path_buf();
-    let target = match arg.as_deref().map(str::trim) {
-        None | Some("") if cfg!(windows) => return info(current.display().to_string()),
-        None | Some("") => std::env::var_os("HOME")
-            .map(std::path::PathBuf::from)
-            .ok_or_else(|| "E472: HOME is not set".to_string())?,
+    let current = paths::cwd(app);
+    let target = match arg.as_deref() {
+        None if cfg!(windows) || app.remote_workspace.is_some() => {
+            return info(paths::label(app, &current));
+        }
+        None => paths::home().ok_or_else(|| "E472: HOME is not set".to_string())?,
         Some("-") => app
             .vim_prev_cwd
-            .clone()
+            .as_ref()
+            .filter(|(root, _)| *root == app.explorer.root)
+            .map(|(_, dir)| dir.clone())
             .ok_or_else(|| "E186: No previous directory".to_string())?,
-        Some(dir) => open_path(app, dir),
+        Some(dir) => open_path(app, dir)?,
     };
+    if crate::remote::workspace::is_view_key(&target) {
+        use crate::app_remote_navigation::{Source, VimLocation};
+        app.open_remote_location(target, None, Source::Vim(VimLocation::ChangeDirectory));
+        return Ok(());
+    }
     let target = target
         .canonicalize()
         .ok()
@@ -1449,27 +1511,109 @@ fn change_dir(app: &mut App, arg: Option<String>) -> Result<(), String> {
                 arg.unwrap_or_default().trim()
             )
         })?;
-    let target = crate::portable::filesystem_spelling(&target);
-    app.vim_prev_cwd = Some(current);
-    app.vim_cwd = (target != app.explorer.root).then(|| (app.explorer.root.clone(), target));
+    set_vim_cwd(app, crate::portable::filesystem_spelling(&target));
     Ok(())
 }
 
-fn open_path(app: &mut App, path: &str) -> std::path::PathBuf {
-    let p = path.trim();
-    let expanded = if let Some(rest) = p.strip_prefix("~/").or_else(|| p.strip_prefix("~\\")) {
-        std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(|h| std::path::PathBuf::from(h).join(rest))
-            .unwrap_or_else(|| p.into())
-    } else {
-        std::path::PathBuf::from(p)
-    };
-    if expanded.is_relative() {
-        vim_cwd(app).join(expanded)
-    } else {
-        expanded
+pub(crate) fn set_vim_cwd(app: &mut App, target: PathBuf) {
+    let root = &app.explorer.root;
+    app.vim_prev_cwd = Some((root.clone(), paths::cwd(app)));
+    app.vim_cwd = (!App::same_open_path(&target, root)).then(|| (root.clone(), target));
+}
+
+fn open_path(app: &App, path: &str) -> Result<PathBuf, String> {
+    if path == "%"
+        && let Some(path) = app
+            .editor()
+            .and_then(|ed| ed.file_path.as_ref().or(ed.vim_buf.intended_path.as_ref()))
+    {
+        return Ok(path.clone());
     }
+    paths::resolve(&paths::cwd(app), path, app.remote_workspace.as_ref())
+        .map_err(|error| format!("E484: Cannot open {path}: {error}"))
+}
+
+pub(crate) fn new_ex_buffer(app: &mut App, path: Option<PathBuf>, split: Option<TabDropZone>) {
+    if let Some(zone) = split {
+        app.start_empty_window_document_services();
+        app.record_navigation();
+        let tab = Tab::new_file(app.new_editor());
+        app.open_tab_in_split(tab, zone);
+        app.record_navigation();
+        app.status_message = "New file".into();
+    } else {
+        app.new_file();
+        app.terminal_panel_focused = false;
+    }
+    if let Some(path) = path
+        && let Some(ed) = app.editor_mut()
+    {
+        ed.suggested_file_name = path.file_name().map(|name| {
+            crate::remote::workspace::display_name(&path)
+                .unwrap_or_else(|| name.to_string_lossy().into_owned())
+        });
+        ed.vim_buf.intended_path = Some(path);
+    }
+}
+
+fn open_ex(app: &mut App, target: OpenTarget, split: Option<TabDropZone>) -> Result<(), String> {
+    match target {
+        OpenTarget::Empty => new_ex_buffer(app, None, split),
+        OpenTarget::Directory(arg) => {
+            let path = match arg {
+                Some(arg) => open_path(app, &arg)?,
+                None => directory::current(app)
+                    .map(|dir| dir.path.clone())
+                    .or_else(|| {
+                        paths::parent(
+                            app.editor()?.file_path.as_deref()?,
+                            app.remote_workspace.as_ref(),
+                        )
+                    })
+                    .unwrap_or_else(|| paths::cwd(app)),
+            };
+            if crate::remote::workspace::is_view_key(&path) {
+                directory::open(app, path, split);
+            } else {
+                let path = path
+                    .canonicalize()
+                    .ok()
+                    .filter(|path| path.is_dir())
+                    .ok_or_else(|| {
+                        format!(
+                            "E344: Can't find directory \"{}\"",
+                            paths::label(app, &path)
+                        )
+                    })?;
+                directory::open(app, crate::portable::filesystem_spelling(&path), split);
+            }
+        }
+        OpenTarget::Path(arg) => {
+            let path = open_path(app, &arg)?;
+            if crate::remote::workspace::is_view_key(&path) {
+                use crate::app_remote_navigation::{Source, VimLocation};
+                app.open_remote_location(path, None, Source::Vim(VimLocation::Open(split)));
+            } else {
+                match path.metadata() {
+                    Ok(metadata) if metadata.is_dir() => {
+                        let path = path
+                            .canonicalize()
+                            .map_err(|error| format!("E484: Cannot open {arg}: {error}"))?;
+                        directory::open(app, crate::portable::filesystem_spelling(&path), split);
+                    }
+                    Ok(_) => {
+                        app.push_nav_history();
+                        app.open_file_from_vim(&path, split, None);
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        new_ex_buffer(app, Some(path), split);
+                    }
+                    Err(error) => return Err(format!("E484: Cannot open {arg}: {error}")),
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn find_view(app: &App, nav_id: u64) -> Option<(usize, usize)> {
@@ -1505,24 +1649,30 @@ pub(crate) fn act_on(app: &mut App, act: Act) -> Result<(), String> {
             }
             let current = ed.file_path.clone();
             let intended = ed.vim_buf.intended_path.clone();
-            let path = path.or_else(|| {
-                current
-                    .is_none()
-                    .then(|| intended.map(|p| p.display().to_string()))
-                    .flatten()
-            });
-            match path {
-                Some(p) => {
-                    let target = open_path(app, &p);
-                    if current.as_ref() == Some(&target) {
+            let target = match path {
+                Some(path) => Some(open_path(app, &path)?),
+                None if current.is_none() => intended,
+                None => None,
+            };
+            match target {
+                Some(target) => {
+                    if current
+                        .as_ref()
+                        .is_some_and(|path| App::same_open_path(path, &target))
+                    {
                         app.save_current_file();
                         return Ok(());
                     }
+                    let p = if crate::remote::workspace::is_view_key(&target) {
+                        app.display_path(&target)
+                    } else {
+                        target.display().to_string()
+                    };
                     if target.exists() && !force {
                         return Err(format!("E13: File exists (add ! to override): {p}"));
                     }
                     app.execute_palette_command("save_as");
-                    app.save_as_query = target.display().to_string();
+                    app.save_as_query = p;
                     app.execute_save_as();
                     if let Some(err) = app.modal.error.take() {
                         app.save_as_active = false;
@@ -1630,41 +1780,19 @@ pub(crate) fn act_on(app: &mut App, act: Act) -> Result<(), String> {
             app.force_close_tab(idx);
             Ok(())
         }
-        Act::Edit { path, force } => match path {
-            None => {
-                let modified = app.editor().is_some_and(|e| e.modified);
-                if modified && !force {
-                    return Err("E37: No write since last change (add ! to override)".into());
-                }
-                app.execute_palette_command("revert_file");
-                Ok(())
+        Act::Reload { force } => {
+            if let Some(dir) = directory::current(app) {
+                directory::open(app, dir.path.clone(), None);
+                return Ok(());
             }
-            Some(p) => {
-                let path = open_path(app, &p);
-                if path.is_dir() {
-                    app.show_explorer_view();
-                    app.active_pane = ActivePane::Explorer;
-                    return Ok(());
-                }
-                if !path.exists() {
-                    app.new_file();
-                    if let Some(ed) = app.editor_mut() {
-                        ed.suggested_file_name =
-                            path.file_name().map(|n| n.to_string_lossy().to_string());
-                        ed.vim_buf.intended_path = Some(path);
-                    }
-                    return Ok(());
-                }
-                app.push_nav_history();
-                app.open_file(&path);
-                app.active_pane = ActivePane::Editor;
-                Ok(())
+            let modified = app.editor().is_some_and(|e| e.modified);
+            if modified && !force {
+                return Err("E37: No write since last change (add ! to override)".into());
             }
-        },
-        Act::NewBuffer => {
-            app.new_file();
+            app.execute_palette_command("revert_file");
             Ok(())
         }
+        Act::Open { target, split } => open_ex(app, target, split),
         Act::Window(w, count) => window(app, w, count),
         Act::TabNext(n) => {
             if app.tabs.is_empty() {

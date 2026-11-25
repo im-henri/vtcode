@@ -584,6 +584,11 @@ pub enum BackgroundResult {
         generation: u64,
         error: Option<String>,
     },
+    VimDirectoryLoaded(crate::vim::directory::Loaded),
+    VimPathCompletion {
+        request: u64,
+        items: Vec<String>,
+    },
     /// Breadcrumb siblings collected without pausing pointer input. The bool
     /// caches whether each entry is a directory for rendering and activation.
     BreadcrumbEntries {

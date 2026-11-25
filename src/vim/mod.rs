@@ -12,6 +12,7 @@ mod app_tests;
 #[cfg(test)]
 mod app_views_tests;
 pub(crate) mod cmdline;
+pub(crate) mod directory;
 pub(crate) mod ex;
 pub(crate) mod exec;
 pub(crate) mod feedback;
@@ -23,6 +24,7 @@ pub(crate) mod ops;
 #[cfg(test)]
 mod parity_tests;
 pub(crate) mod parse;
+mod paths;
 pub(crate) mod register;
 pub(crate) mod search;
 #[cfg(test)]
@@ -286,11 +288,13 @@ pub(crate) enum Act {
     WriteQuit {
         force: bool,
     },
-    Edit {
-        path: Option<String>,
+    Reload {
         force: bool,
     },
-    NewBuffer,
+    Open {
+        target: OpenTarget,
+        split: Option<crate::app::TabDropZone>,
+    },
     Window(parse::Window, usize),
     TabNext(Option<usize>),
     TabPrev(usize),
@@ -325,6 +329,13 @@ pub(crate) enum Act {
         end: Pos,
         linewise: bool,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum OpenTarget {
+    Path(String),
+    Directory(Option<String>),
+    Empty,
 }
 
 /// What the engine needs from the workbench.
@@ -367,6 +378,26 @@ pub(crate) trait Host {
     fn file_name(&self) -> Option<String>;
     fn cwd(&self) -> Option<std::path::PathBuf> {
         None
+    }
+    fn cwd_label(&self) -> String {
+        self.cwd()
+            .map_or_else(String::new, |p| p.display().to_string())
+    }
+    fn complete_path(
+        &mut self,
+        arg: &str,
+        directories_only: bool,
+        ignore_case: bool,
+    ) -> paths::Matches {
+        paths::Matches::Ready(paths::complete(
+            arg,
+            directories_only,
+            ignore_case,
+            self.cwd()
+                .as_deref()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+            None,
+        ))
     }
     /// Visible popups (completion) that should receive Insert-mode keys.
     fn completion_visible(&self) -> bool {

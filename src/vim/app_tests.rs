@@ -646,6 +646,118 @@ fn cd_changes_where_relative_ex_paths_start() {
     );
 }
 
+#[test]
+fn ex_path_completion_covers_dot_directories_and_escaped_filenames() {
+    let mut app = vim_app("original");
+    let root = tempfile::tempdir().unwrap();
+    app.explorer.root = root.path().canonicalize().unwrap();
+    std::fs::create_dir(root.path().join("work space")).unwrap();
+    std::fs::write(root.path().join("work space/two words.txt"), "contents").unwrap();
+    std::fs::write(root.path().join("work-file.txt"), "").unwrap();
+    std::fs::write(root.path().join(".hidden"), "").unwrap();
+
+    keys(&mut app, ":vsp .<Tab>");
+    let cmd = app.vim.cmdline.as_ref().unwrap();
+    assert_eq!(cmd.string(), "vsp ./");
+    assert!(
+        cmd.completion
+            .as_ref()
+            .unwrap()
+            .items
+            .contains(&".hidden".into())
+    );
+    keys(&mut app, "<Tab><S-Tab>");
+    assert_eq!(app.vim.cmdline.as_ref().unwrap().string(), "vsp ./");
+    keys(&mut app, "<Esc>:vsp ..<Tab>");
+    assert_eq!(app.vim.cmdline.as_ref().unwrap().string(), "vsp ../");
+    for command in ["cd", "lcd", "tcd", "Vexplore", "Sexplore"] {
+        keys(&mut app, &format!("<Esc>:{command} wor<Tab>"));
+        let cmd = app.vim.cmdline.as_ref().unwrap();
+        assert_eq!(cmd.completion.as_ref().unwrap().items, ["work\\ space/"]);
+    }
+
+    keys(&mut app, "<Esc>:vsp ./work\\ space/two<Tab><CR>");
+    app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+        app.editor()
+            .is_some_and(|ed| ed.file_path.is_some() && !ed.bg_loading)
+    });
+    assert_eq!(text(&app), "contents");
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.groups[0].tabs.len(), 1);
+    assert_eq!(app.groups[0].tabs[0].editor.rope.to_string(), "original");
+}
+
+#[test]
+fn a_directory_split_browses_and_opens_files_in_its_own_pane() {
+    let mut app = vim_app("original");
+    let root = tempfile::tempdir().unwrap();
+    let root_path = crate::portable::filesystem_spelling(&root.path().canonicalize().unwrap());
+    let folder = root_path.join("nested");
+    let file = folder.join("open-me.txt");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(&file, "opened here").unwrap();
+    app.explorer.root = root_path.clone();
+    app.show_explorer = false;
+
+    keys(&mut app, ":vsp .<CR>");
+    assert_eq!(app.active_pane, ActivePane::Editor);
+    assert_ne!(app.active_group, 0);
+    assert!(!app.show_explorer);
+    assert!(matches!(
+        app.split_tree.as_ref(),
+        Some(crate::app::SplitNode::Split {
+            direction: crate::app::SplitDirection::Horizontal,
+            ..
+        })
+    ));
+    assert_eq!(super::directory::current(&app).unwrap().path, root_path);
+    app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+        !app.background.has_active_jobs() && !app.background.has_pending_results()
+    });
+    assert!(screen_text(&mut app).contains("nested/"));
+    keys(&mut app, "<C-w>h");
+    assert_eq!(text(&app), "original");
+    keys(&mut app, "<C-w>l<CR>");
+    assert_eq!(super::directory::current(&app).unwrap().path, folder);
+    app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+        !app.background.has_active_jobs() && !app.background.has_pending_results()
+    });
+    keys(&mut app, "<CR>");
+    app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+        app.editor()
+            .is_some_and(|ed| ed.file_path.as_deref() == Some(file.as_path()) && !ed.bg_loading)
+    });
+    assert_eq!(text(&app), "opened here");
+    assert_ne!(app.active_group, 0);
+    keys(&mut app, ":q<CR>-");
+    assert_eq!(super::directory::current(&app).unwrap().path, root_path);
+    keys(&mut app, "<C-w>c");
+    assert!(!app.split_active());
+    assert_eq!(text(&app), "original");
+}
+
+#[test]
+fn pwd_and_directory_commands_work_in_an_empty_editor() {
+    let mut app = vim_app("");
+    let root = tempfile::tempdir().unwrap();
+    let canonical = root.path().canonicalize().unwrap();
+    app.explorer.root = canonical.clone();
+    app.tabs.clear();
+    keys(&mut app, ":pwd<CR>");
+    let expected = crate::portable::filesystem_spelling(&canonical);
+    assert_eq!(
+        app.vim.message.as_ref().unwrap().text,
+        expected.display().to_string()
+    );
+    #[cfg(windows)]
+    assert!(!app.vim.message.as_ref().unwrap().text.starts_with(r"\\?\"));
+
+    keys(&mut app, ":vsp .<Tab><CR>");
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(super::directory::current(&app).unwrap().path, expected);
+    assert_eq!(app.active_pane, ActivePane::Editor);
+}
+
 /// Pretend the current prefix has waited long enough for its hints.
 fn wait_for_hints(app: &mut App) {
     frame(app);

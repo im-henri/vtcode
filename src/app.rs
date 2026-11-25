@@ -269,7 +269,7 @@ pub(crate) struct App {
     /// `:cd` directory for relative Ex paths, with the workspace folder it was
     /// set in (opening another folder resets it), and the previous one for `:cd -`.
     pub(crate) vim_cwd: Option<(PathBuf, PathBuf)>,
-    pub(crate) vim_prev_cwd: Option<PathBuf>,
+    pub(crate) vim_prev_cwd: Option<(PathBuf, PathBuf)>,
     /// LSP hover requested from the keyboard (`K`), not the pointer.
     pub(crate) keyboard_hover: bool,
     pub(crate) vim_ctrl_keys_setting: bool,
@@ -2184,6 +2184,8 @@ impl App {
                     | crate::background::BackgroundResult::ExplorerRefreshFailed { .. }
                     | crate::background::BackgroundResult::FolderBrowserEntries { .. }
                     | crate::background::BackgroundResult::FolderBrowserCreated { .. }
+                    | crate::background::BackgroundResult::VimDirectoryLoaded(_)
+                    | crate::background::BackgroundResult::VimPathCompletion { .. }
                     | crate::background::BackgroundResult::BreadcrumbEntries { .. }
                     | crate::background::BackgroundResult::GlobalSearchResults { .. }
                     | crate::background::BackgroundResult::GlobalSearchFailed { .. }
@@ -2648,6 +2650,13 @@ impl App {
                         }
                         has_visual_changes = true;
                     }
+                }
+                crate::background::BackgroundResult::VimDirectoryLoaded(loaded) => {
+                    has_visual_changes |= crate::vim::directory::apply(self, loaded);
+                }
+                crate::background::BackgroundResult::VimPathCompletion { request, items } => {
+                    has_visual_changes |=
+                        crate::vim::cmdline::apply_completion(&mut self.vim, request, items);
                 }
                 crate::background::BackgroundResult::BreadcrumbEntries {
                     generation,

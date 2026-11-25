@@ -4,7 +4,7 @@ use unicode_width::UnicodeWidthStr;
 
 #[cfg(test)]
 use crate::app::SourceControlRepositoryState;
-use crate::app::{ActivePane, App, Tab, TabKind};
+use crate::app::{ActivePane, App, Tab, TabDropZone, TabKind};
 use crate::editor::Editor;
 #[cfg(test)]
 use crate::explorer::FileExplorer;
@@ -18,6 +18,8 @@ struct FileOpenOptions {
     preview: bool,
     preserve_existing_preview: bool,
     skip_open_prompt: bool,
+    stay_in_group: bool,
+    split: Option<TabDropZone>,
 }
 
 pub(crate) fn loaded_file_result(
@@ -490,6 +492,24 @@ impl App {
         self.open_file_with_source(path, FileOpenOptions::default(), Some(loaded));
     }
 
+    pub(crate) fn open_file_from_vim(
+        &mut self,
+        path: &Path,
+        split: Option<TabDropZone>,
+        loaded: Option<crate::editor::LoadedTextFile>,
+    ) {
+        self.terminal_panel_focused = false;
+        self.open_file_with_source(
+            path,
+            FileOpenOptions {
+                stay_in_group: true,
+                split,
+                ..Default::default()
+            },
+            loaded,
+        );
+    }
+
     pub(crate) fn open_file_in_standard_editor(&mut self, path: &Path) {
         // A detached window needs its document to stay in its own pane. The
         // workbench-wide Open With picker removes the loading tab on arrival.
@@ -532,6 +552,8 @@ impl App {
             preview,
             preserve_existing_preview,
             skip_open_prompt,
+            stay_in_group,
+            split,
         } = options;
         if self.pending_save_as.values().any(|(generation, target)| {
             *generation == self.workspace_generation && Self::paths_may_share_entry(target, path)
@@ -558,7 +580,7 @@ impl App {
         }
 
         // Check if file is already open in a tab
-        for (i, tab) in self.tabs.iter().enumerate() {
+        for (i, tab) in self.tabs.iter().enumerate().filter(|_| split.is_none()) {
             if tab.kind == TabKind::File {
                 let matches = tab
                     .editor
@@ -580,12 +602,9 @@ impl App {
             }
         }
         // Check other split groups for the same file
-        for (group_idx, group) in self
-            .groups
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !self.navigation.restoring && self.group_in_current_desk(*i))
-        {
+        for (group_idx, group) in self.groups.iter().enumerate().filter(|(i, _)| {
+            !stay_in_group && !self.navigation.restoring && self.group_in_current_desk(*i)
+        }) {
             for (tab_idx, tab) in group.tabs.iter().enumerate() {
                 if tab.kind == TabKind::File {
                     let matches = tab
@@ -610,27 +629,35 @@ impl App {
             }
         }
 
-        // Opening an existing document in another desk creates a view of the
-        // live buffer, including unsaved edits; it never reloads the disk file.
+        // Creating a view of a live buffer preserves unsaved edits.
         let saved_view = self.closed_file_views.get(&open_path).copied().or_else(|| {
             self.closed_file_views
                 .iter()
                 .find(|(path, _)| Self::same_open_path(path, &open_path))
                 .map(|(_, position)| *position)
         });
-        if let Some(source) = self.groups.iter().flat_map(|g| &g.tabs).find(|tab| {
-            tab.kind == TabKind::File
-                && (!tab.editor.bg_loading || tab.editor.pending_session_restore.is_some())
-                && tab
-                    .editor
-                    .file_path
-                    .as_ref()
-                    .is_some_and(|path| Self::same_open_path(path, &open_path))
-        }) {
+        if let Some(source) = self
+            .tabs
+            .iter()
+            .chain(self.groups.iter().flat_map(|g| &g.tabs))
+            .find(|tab| {
+                tab.kind == TabKind::File
+                    && (!tab.editor.bg_loading || tab.editor.pending_session_restore.is_some())
+                    && tab
+                        .editor
+                        .file_path
+                        .as_ref()
+                        .is_some_and(|path| Self::same_open_path(path, &open_path))
+            })
+        {
             let mut tab = self.clone_desk_tab(source);
             tab.editor.pending_reopen_view = saved_view;
             tab.editor.restore_reopen_view();
-            self.open_previewable_tab(tab, preview);
+            if let Some(zone) = split {
+                self.open_tab_in_split(tab, zone);
+            } else {
+                self.open_previewable_tab(tab, preview);
+            }
             self.active_pane = ActivePane::Editor;
             self.touch_tab_mru(self.active_tab);
             self.sync_diff_tab();
@@ -674,7 +701,12 @@ impl App {
         #[cfg(windows)]
         let preview = preview && !deferred_preview;
         self.status_message = format!("Loading: {}...", self.display_path(&open_path));
-        self.open_previewable_tab(Tab::new_file(editor), preview);
+        let tab = Tab::new_file(editor);
+        if let Some(zone) = split {
+            self.open_tab_in_split(tab, zone);
+        } else {
+            self.open_previewable_tab(tab, preview);
+        }
         self.active_pane = ActivePane::Editor;
         self.refresh_source_control_for_navigation();
 

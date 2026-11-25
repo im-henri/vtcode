@@ -258,10 +258,12 @@ To search the whole project, see [Lesson 10](#lesson-10-the-rest-of-the-workbenc
 
 | Keys / command | Does |
 |---|---|
-| `:e path` | open a file |
+| `:e path` | open a file or browse a directory in the current pane |
 | `<C-p>` | Quick Open (fuzzy file finder) |
 | `gt` / `gT` or `:bn` / `:bp` | next / previous tab |
 | `:sp` / `:vs` (or `<C-w>s` / `<C-w>v`) | split horizontally / vertically |
+| `:sp path` / `:vsp path` | open a file or directory in a horizontal / vertical split |
+| `:pwd` / `:cd path` | show or change the working directory for Ex commands |
 | `<C-w>h` `j` `k` `l` | move to the window left / below / above / right |
 | `<C-w>w` | cycle through windows |
 | `<C-w>c` / `<C-w>o` | close this window / close all others |
@@ -269,6 +271,15 @@ To search the whole project, see [Lesson 10](#lesson-10-the-rest-of-the-workbenc
 `<C-w>` moves between *everything* on screen, not just editor splits: the
 sidebar on the left, the bottom panel, the terminal and the docked Agent Chat
 are all windows you can reach with `<C-w>h/j/k/l`.
+
+Press Tab or Shift+Tab to cycle through path completions. For example,
+`:vsp .<Tab>` offers `./` and `../`, and `:vsp ./<Tab>` completes entries
+inside the working directory.
+
+`:vsp .` opens the working directory alongside your file. Use `j`/`k` to
+move through the directory, Enter to open the selected entry in that pane,
+and `-` to go up one level. `:Sexplore` and `:Vexplore` browse the current
+file's directory in a horizontal or vertical split.
 
 ### Lesson 10: the rest of the workbench
 

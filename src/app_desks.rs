@@ -990,6 +990,7 @@ impl App {
         editor.bg_loading = source.bg_loading;
         Tab {
             editor,
+            directory: tab.directory.clone(),
             pinned: tab.pinned,
             preview: false,
             text_color: tab.text_color,

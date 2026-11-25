@@ -441,6 +441,9 @@ fn handle_mouse_inner(app: &mut App, mouse: event::MouseEvent) {
     if crate::ui_extension_info::handle_mouse(app, mouse) {
         return;
     }
+    if crate::vim::directory::mouse(app, mouse) {
+        return;
+    }
     if crate::ui_lsp_completion::handle_mouse(app, mouse) {
         return;
     }

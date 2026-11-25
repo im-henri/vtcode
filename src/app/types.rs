@@ -2124,7 +2124,7 @@ pub enum SidebarView {
     Remote,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabDropZone {
     Left,
     Right,
@@ -2142,6 +2142,7 @@ pub enum TerminalDock {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TabKind {
     File,
+    Directory,
     GitRevision,
     SourceControl,
     CommitDetails,
@@ -2240,6 +2241,7 @@ impl TabTextColor {
 
 pub struct Tab {
     pub editor: Editor,
+    pub(crate) directory: Option<Box<crate::vim::directory::Directory>>,
     pub pinned: bool,
     pub preview: bool,
     pub(crate) text_color: Option<TabTextColor>,
@@ -2284,6 +2286,7 @@ impl Tab {
     pub(crate) fn new_file(editor: Editor) -> Self {
         Self {
             editor,
+            directory: None,
             pinned: false,
             preview: false,
             text_color: None,

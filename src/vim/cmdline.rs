@@ -29,6 +29,7 @@ pub(crate) struct CmdLine {
     awaiting_literal: bool,
     pub(crate) count: usize,
     pub(crate) completion: Option<Completion>,
+    pending_completion: Option<(u64, usize, bool)>,
     /// The match previewed by 'incsearch': (start, end) char offsets.
     pub(crate) preview: Option<(usize, usize)>,
     pub(crate) resume_insert: Option<super::insert::Resume>,
@@ -72,6 +73,7 @@ pub(crate) fn open(
         awaiting_literal: false,
         count: 1,
         completion: None,
+        pending_completion: None,
         preview: None,
         resume_insert: vim.insert_oneshot.take(),
     });
@@ -219,6 +221,7 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
     if !is_tab && !is_backtab && !(c.completion.is_some() && (key.is_ctrl('n') || key.is_ctrl('p')))
     {
         c.completion = None;
+        c.pending_completion = None;
     }
     if key.is_escape() || key.is_ctrl('c') {
         cancel(vim, host);
@@ -557,46 +560,11 @@ fn complete(vim: &mut VimState, host: &mut dyn Host, forward: bool) {
     let Some(c) = vim.cmdline.as_mut() else {
         return;
     };
-    if let Some(comp) = &mut c.completion {
-        if comp.items.is_empty() {
-            return;
-        }
-        let n = comp.items.len();
-        comp.index = Some(match comp.index {
-            None => {
-                if forward {
-                    0
-                } else {
-                    n - 1
-                }
-            }
-            Some(i) if forward => {
-                if i + 1 >= n {
-                    usize::MAX
-                } else {
-                    i + 1
-                }
-            }
-            Some(i) => {
-                if i == 0 {
-                    usize::MAX
-                } else {
-                    i - 1
-                }
-            }
-        });
-        let word: String = match comp.index {
-            Some(usize::MAX) => {
-                comp.index = None;
-                comp.original.clone()
-            }
-            Some(i) => comp.items[i].clone(),
-            None => comp.original.clone(),
-        };
-        let start = comp.start;
-        c.text.truncate(start);
-        c.text.extend(word.chars());
-        c.cursor = c.text.len();
+    if c.completion.is_some() {
+        cycle_completion(c, forward);
+        return;
+    }
+    if c.pending_completion.is_some() {
         return;
     }
     let before: String = c.text[..c.cursor].iter().collect();
@@ -604,18 +572,54 @@ fn complete(vim: &mut VimState, host: &mut dyn Host, forward: bool) {
     let Some(c) = vim.cmdline.as_mut() else {
         return;
     };
+    match items {
+        super::paths::Matches::Ready(items) => start_completion(c, start, items, forward),
+        super::paths::Matches::Pending(request) => {
+            c.pending_completion = Some((request, start, forward));
+        }
+    }
+}
+
+pub(crate) fn apply_completion(vim: &mut VimState, id: u64, items: Vec<String>) -> bool {
+    let Some(c) = vim.cmdline.as_mut() else {
+        return false;
+    };
+    let Some((_, start, forward)) = c.pending_completion.filter(|(request, ..)| *request == id)
+    else {
+        return false;
+    };
+    c.pending_completion = None;
+    start_completion(c, start, items, forward);
+    true
+}
+
+fn start_completion(c: &mut CmdLine, start: usize, items: Vec<String>, forward: bool) {
     if items.is_empty() {
         return;
     }
     let original: String = c.text[start..c.cursor].iter().collect();
-    c.text.truncate(c.cursor);
     c.completion = Some(Completion {
         items,
         index: None,
         start,
         original,
     });
-    complete(vim, host, forward);
+    cycle_completion(c, forward);
+}
+
+fn cycle_completion(c: &mut CmdLine, forward: bool) {
+    let Some(comp) = &mut c.completion else {
+        return;
+    };
+    comp.index = match (comp.index, forward) {
+        (None, true) => Some(0),
+        (None, false) => Some(comp.items.len() - 1),
+        (Some(i), true) => (i + 1 < comp.items.len()).then_some(i + 1),
+        (Some(i), false) => i.checked_sub(1),
+    };
+    let word = comp.index.map_or(&comp.original, |i| &comp.items[i]);
+    c.text.splice(comp.start..c.cursor, word.chars());
+    c.cursor = comp.start + word.chars().count();
 }
 
 fn execute(vim: &mut VimState, host: &mut dyn Host) {

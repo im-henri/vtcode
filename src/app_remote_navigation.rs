@@ -1,7 +1,7 @@
 //! Resolve unclassified links off the input thread. One active request, one
 //! retiring request and one replaceable destination bound rapid clicks. The
 //! replacement can start without waiting another SSH round trip for cancellation.
-use crate::app::{ActivePane, App, SidebarView, TabKind};
+use crate::app::{ActivePane, App, SidebarView, TabDropZone, TabKind};
 use crate::background::{BackgroundResult, CancellationToken};
 use crate::remote::workspace::{Location, Workspace};
 use std::collections::VecDeque;
@@ -15,6 +15,13 @@ pub(crate) enum Source {
     FileCommand,
     PathDialog,
     Terminal,
+    Vim(VimLocation),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VimLocation {
+    Open(Option<TabDropZone>),
+    ChangeDirectory,
 }
 
 impl Source {
@@ -307,6 +314,12 @@ impl App {
             return;
         }
         if path == self.explorer.root && !matches!(source, Source::EditorLink { file_only: true }) {
+            if let Source::Vim(action) = source {
+                return match action {
+                    VimLocation::Open(split) => crate::vim::directory::open(self, path, split),
+                    VimLocation::ChangeDirectory => crate::vim::app_host::set_vim_cwd(self, path),
+                };
+            }
             if source == Source::PathDialog {
                 self.navigate_folder_browser(path);
                 return;
@@ -341,7 +354,12 @@ impl App {
                         .as_deref()
                         .is_some_and(|other| Self::same_open_path(other, &path))
             });
-        if live {
+        if live && source != Source::Vim(VimLocation::ChangeDirectory) {
+            if let Source::Vim(VimLocation::Open(split)) = source {
+                self.push_nav_history();
+                self.open_file_from_vim(&path, split, None);
+                return;
+            }
             if source == Source::PathDialog {
                 self.folder_browser_action(crate::folder_browser::Action::Close);
             }
@@ -408,12 +426,20 @@ impl App {
                     });
                 });
                 let result = match workspace {
+                    Some(workspace) if source == Source::Vim(VimLocation::ChangeDirectory) => {
+                        workspace
+                            .remote_path(&path)
+                            .and_then(|remote_path| workspace.list(&remote_path))
+                            .map(|_| Location::Directory(path))
+                    }
                     Some(workspace) => workspace.open_location(
                         &path,
                         &cancel,
                         matches!(
                             source,
-                            Source::PathDialog | Source::EditorLink { file_only: true }
+                            Source::PathDialog
+                                | Source::EditorLink { file_only: true }
+                                | Source::Vim(_)
                         ),
                         progress,
                     ),
@@ -506,7 +532,14 @@ impl App {
         };
         match result {
             Ok(Location::Directory(path)) => {
-                if request.source == Source::PathDialog {
+                if let Source::Vim(action) = request.source {
+                    match action {
+                        VimLocation::Open(split) => crate::vim::directory::open(self, path, split),
+                        VimLocation::ChangeDirectory => {
+                            crate::vim::app_host::set_vim_cwd(self, path)
+                        }
+                    }
+                } else if request.source == Source::PathDialog {
                     self.navigate_folder_browser(path);
                 } else if request.source == Source::FileCommand {
                     self.remote_location_error(
@@ -520,6 +553,11 @@ impl App {
                 }
             }
             Ok(Location::File(loaded)) => {
+                if let Source::Vim(VimLocation::Open(split)) = request.source {
+                    self.push_nav_history();
+                    self.open_file_from_vim(&request.path, split, Some(loaded));
+                    return true;
+                }
                 if request.source == Source::PathDialog {
                     self.folder_browser_action(crate::folder_browser::Action::Close);
                 }
@@ -534,6 +572,12 @@ impl App {
             }
             Err(error) => {
                 use std::io::ErrorKind::{IsADirectory, NotADirectory, NotFound};
+                if error.kind() == NotFound
+                    && let Source::Vim(VimLocation::Open(split)) = request.source
+                {
+                    crate::vim::app_host::new_ex_buffer(self, Some(request.path), split);
+                    return true;
+                }
                 if matches!(error.kind(), NotFound | NotADirectory | IsADirectory)
                     && let Some(path) = request.fallback.pop_front()
                 {
@@ -658,6 +702,7 @@ impl App {
             }
             Source::PathDialog => self.folder_browser.error = Some(error),
             Source::Terminal => crate::app_terminal_links::show_error(self, error),
+            Source::Vim(_) => self.vim.set_error(error),
         }
     }
     fn hide_chat_after_remote_location(&mut self, source: Source) {
