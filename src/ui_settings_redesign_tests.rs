@@ -1,7 +1,7 @@
 use crate::{
     app::App,
     app_settings_navigation::{GPTCOMPLETE_SECTION, VTCOMPLETE_SECTION},
-    app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY,
+    app_settings_ui::{SETTINGS_ANIMATIONS_CATEGORY, SETTINGS_AUTOCOMPLETE_CATEGORY},
     ui_settings::draw_settings_editor,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -135,7 +135,7 @@ fn settings_subpages_cover_every_setting_without_empty_pages() {
         assert!(filtered.contains(&app.settings_selected));
         if let Some(section) = section {
             assert!(filtered.iter().all(|&i| !items[i].2.starts_with("heading_")
-                && App::settings_section_for_id(&items[i].2) == Some(section)));
+                && App::settings_section_for_category(&items[i].2, category) == Some(section)));
         }
     }
     for (_, _, id) in &items {
@@ -148,6 +148,51 @@ fn settings_subpages_cover_every_setting_without_empty_pages() {
             );
         }
     }
+}
+
+#[test]
+fn minimap_overview_can_be_changed_from_either_page() {
+    use crate::settings::{SettingsScope, load_from_file};
+
+    let temp = tempfile::tempdir().unwrap();
+    let mut app = app();
+    app.settings_global_path = temp.path().join("user.json");
+    app.settings_workspace_path = temp.path().join("folder.json");
+    app.settings_persistence_enabled = true;
+    app.settings_scope = SettingsScope::Workspace;
+    let index = app
+        .settings_items()
+        .iter()
+        .position(|(_, _, id)| id == "minimap_overview")
+        .unwrap();
+    assert_eq!(app.settings_items()[index].1, "On");
+
+    app.select_settings_page(SETTINGS_ANIMATIONS_CATEGORY, Some("Navigation"));
+    assert!(text(&render(&mut app, 120, 36)).contains("Minimap Whole-File Overview"));
+    let area = app.settings_sidebar_area.unwrap();
+    let layout = app.settings_line_layout(area.width.saturating_sub(3) as usize);
+    let row = layout.row_for_item(index).unwrap();
+    let control = row.start + row.control - app.settings_editor_scroll;
+    assert!(control < area.height as usize);
+    click(&mut app, area.x + 2, area.y + control as u16);
+    assert_eq!(app.settings_selected, index);
+    assert!(!app.minimap_overview);
+    assert_eq!(
+        load_from_file(&app.settings_workspace_path).minimap_overview,
+        Some(false)
+    );
+
+    app.select_settings_page(1, Some("Minimap"));
+    assert!(text(&render(&mut app, 120, 36)).contains("Minimap Whole-File Overview"));
+    assert_eq!(app.settings_items()[index].1, "Off");
+    app.settings_selected = index;
+    app.settings_focus_control = true;
+    key(&mut app, KeyCode::Char(' '));
+    assert!(app.minimap_overview);
+    assert_eq!(
+        load_from_file(&app.settings_workspace_path).minimap_overview,
+        Some(true)
+    );
 }
 
 #[test]

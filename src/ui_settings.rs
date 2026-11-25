@@ -977,7 +977,7 @@ pub(crate) fn draw_settings_editor(f: &mut Frame, app: &mut App, area: Rect) {
         let display_label = if searching_all_settings || selected_category == 0 || is_heading {
             vscode_setting_label(label, id)
         } else if section.is_none()
-            && let Some(section) = App::settings_section_for_id(id)
+            && let Some(section) = App::settings_section_for_category(id, selected_category)
         {
             format!("{section}: {label}")
         } else {

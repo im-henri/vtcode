@@ -1,7 +1,10 @@
 //! Settings pages and their shared mouse/keyboard navigation model.
 
 use crate::app::App;
-use crate::app_settings_ui::SETTINGS_AUTOCOMPLETE_CATEGORY;
+use crate::app_settings_ui::{
+    ADDITIONAL_SETTING_PLACEMENTS, SETTINGS_ALL_CATEGORY, SETTINGS_ANIMATIONS_CATEGORY,
+    SETTINGS_AUTOCOMPLETE_CATEGORY,
+};
 
 pub(crate) const VTCOMPLETE_SECTION: &str = "VTComplete";
 pub(crate) const GPTCOMPLETE_SECTION: &str = "GPTComplete";
@@ -36,7 +39,7 @@ impl App {
             2 => &["Appearance", "Layout", "Editor Management"],
             3 => &["Code Decorations", "Navigation", "Search", "Focus"],
             4 => &["Saving", "File Associations", "Exclusions", "Large Files"],
-            7 => &[
+            SETTINGS_ANIMATIONS_CATEGORY => &[
                 "Cursor",
                 "Editing",
                 "Code Structure",
@@ -62,7 +65,7 @@ impl App {
             1 => Some(match id {
                 "cursor_style" | "cursor_blinking" | "cursor_surrounding_lines" => "Cursor",
                 "whitespace" | "comment_whitespace" => "Whitespace",
-                "minimap" | "minimap_width" => "Minimap",
+                "minimap" | "minimap_width" | "minimap_overview" => "Minimap",
                 "format_on_type" | "format_on_save" | "formatters" => "Formatting",
                 _ => "Editing",
             }),
@@ -85,10 +88,21 @@ impl App {
                 "large_file_threshold_mb" | "large_file_analysis_timeout_ms" => "Large Files",
                 _ => "Saving",
             }),
-            7 => Self::animation_setting_section(id),
+            SETTINGS_ANIMATIONS_CATEGORY => Self::animation_setting_section(id),
             SETTINGS_AUTOCOMPLETE_CATEGORY => Some("General"),
             _ => None,
         }
+    }
+
+    pub(crate) fn settings_section_for_category(id: &str, category: usize) -> Option<&'static str> {
+        if category == SETTINGS_ALL_CATEGORY || category == Self::settings_category_for_id(id) {
+            return Self::settings_section_for_id(id);
+        }
+        ADDITIONAL_SETTING_PLACEMENTS
+            .iter()
+            .find_map(|&(setting_id, page, section)| {
+                (id == setting_id && page == category).then_some(section)
+            })
     }
 
     pub(crate) fn settings_selected_section(&self, category: usize) -> Option<&'static str> {

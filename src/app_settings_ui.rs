@@ -22,8 +22,16 @@ pub(crate) const SETTINGS_CATEGORIES: &[&str] = &[
     "All",
 ];
 
+pub(crate) const SETTINGS_ANIMATIONS_CATEGORY: usize = 7;
 pub(crate) const SETTINGS_AUTOCOMPLETE_CATEGORY: usize = 10;
 pub(crate) const SETTINGS_ALL_CATEGORY: usize = SETTINGS_CATEGORIES.len() - 1;
+
+/// Additional pages that show existing settings by ID.
+pub(crate) const ADDITIONAL_SETTING_PLACEMENTS: &[(&str, usize, &str)] = &[(
+    "minimap_overview",
+    SETTINGS_ANIMATIONS_CATEGORY,
+    "Navigation",
+)];
 
 const ANIMATION_SECTIONS: &[(&str, &str, &[AnimationEffect])] = &[
     (
@@ -60,7 +68,7 @@ impl App {
             return SETTINGS_AUTOCOMPLETE_CATEGORY;
         }
         if setting_id.starts_with("animation_") || setting_id.starts_with("heading_animation") {
-            return 7;
+            return SETTINGS_ANIMATIONS_CATEGORY;
         }
         if setting_id.starts_with("kb_")
             || setting_id == "heading_shortcuts"
@@ -946,8 +954,15 @@ impl App {
                         || crate::app::contains_ignore_case(&searchable_id, query)
                         || crate::app::contains_ignore_case(category, query)
                         || crate::app::contains_ignore_case(child, query)
-                        || Self::animation_setting_section(id)
-                            .is_some_and(|section| crate::app::contains_ignore_case(section, query))
+                        || ADDITIONAL_SETTING_PLACEMENTS.iter().any(
+                            |&(setting_id, category, section)| {
+                                id == setting_id
+                                    && (crate::app::contains_ignore_case(
+                                        SETTINGS_CATEGORIES[category],
+                                        query,
+                                    ) || crate::app::contains_ignore_case(section, query))
+                            },
+                        )
                 })
                 .map(|(idx, _)| idx)
                 .collect();
@@ -959,6 +974,7 @@ impl App {
         if category_idx == SETTINGS_ALL_CATEGORY {
             return (0..items.len()).collect();
         }
+        let selected_section = self.settings_selected_section(category_idx);
         let is_common_category = category_idx == 0;
         const COMMON_SETTING_IDS: &[&str] = &[
             "tab_size",
@@ -971,7 +987,7 @@ impl App {
             "trim_trailing",
             "auto_save_mode",
         ];
-        items
+        let mut filtered: Vec<_> = items
             .iter()
             .enumerate()
             .filter(|(_, (_, _, id))| {
@@ -984,7 +1000,7 @@ impl App {
                 if Self::settings_category_for_id(id) != category_idx {
                     return false;
                 }
-                if let Some(section) = self.settings_selected_section(category_idx) {
+                if let Some(section) = selected_section {
                     return !id.starts_with("heading_")
                         && Self::settings_section_for_id(id) == Some(section);
                 }
@@ -993,7 +1009,26 @@ impl App {
                     || id.starts_with("heading_animation_")
             })
             .map(|(idx, _)| idx)
-            .collect()
+            .collect();
+        for &(setting_id, category, section) in ADDITIONAL_SETTING_PLACEMENTS {
+            if category != category_idx
+                || selected_section.is_some_and(|selected| selected != section)
+            {
+                continue;
+            }
+            let Some(index) = items.iter().position(|(_, _, id)| id == setting_id) else {
+                continue;
+            };
+            let position = filtered
+                .iter()
+                .rposition(|&idx| {
+                    Self::settings_section_for_category(&items[idx].2, category_idx)
+                        == Some(section)
+                })
+                .map_or(filtered.len(), |position| position + 1);
+            filtered.insert(position, index);
+        }
+        filtered
     }
 
     pub(crate) fn ensure_settings_selection_visible(&mut self) {
@@ -1729,9 +1764,18 @@ mod tests {
                 .iter()
                 .filter(|&&index| !items[index].2.starts_with("heading_"))
                 .count(),
-            // Plus Startup/Exit Animation and their durations.
-            AnimationEffect::ALL.len() * 3 + 12
+            // Includes the whole-file minimap overview alongside the animation controls.
+            AnimationEffect::ALL.len() * 3 + 13
         );
+        let position = |id| {
+            filtered
+                .iter()
+                .position(|&index| items[index].2 == id)
+                .unwrap()
+        };
+        let overview = position("minimap_overview");
+        assert!(position("heading_animation_navigation") < overview);
+        assert!(overview < position("heading_animation_screen"));
         for (id, value) in [
             ("animation_startup", "Off"),
             ("animation_exit", "Off"),
@@ -1819,6 +1863,18 @@ mod tests {
                 .iter()
                 .any(|&index| items[index].2 == "animation_scope_connector")
         );
+        for query in ["Animations", "whole-file overview"] {
+            app.settings_editor_search = query.into();
+            let matches = app.settings_filtered_indices_for_category(0);
+            assert_eq!(
+                matches
+                    .iter()
+                    .filter(|&&index| items[index].2 == "minimap_overview")
+                    .count(),
+                1,
+                "{query}",
+            );
+        }
         app.settings_editor_search = "code structure".into();
         let filtered = app.settings_filtered_indices_for_category(0);
         let ids: Vec<_> = filtered
