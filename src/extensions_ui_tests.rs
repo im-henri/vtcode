@@ -766,6 +766,20 @@ fn marketplace_section_shows_loading_failure_and_offline_instead_of_vanishing() 
     assert!(screen.contains(" Offline · Retry "), "{screen}");
     assert!(screen.contains("timed out"));
 
+    let error = crate::extension_release_source::request_error(ureq::Error::Rustls(
+        rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer),
+    ));
+    app.ext_catalog.catalog.errors = vec![format!("{error} (im-henri/vtcode-extensions)")];
+    let mut narrow = Terminal::new(TestBackend::new(30, 29)).unwrap();
+    sidebar(&mut app, &mut narrow);
+    let screen = text(&narrow);
+    let words = screen.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains("Untrusted TLS certificate issuer."),
+        "{screen}"
+    );
+    assert!(words.contains("VPN or proxy CA."), "{screen}");
+
     // Cached listings stay usable offline, marked as such.
     let (_root, mut cached) = marketplace_fixture();
     cached.ext_catalog.catalog.errors = vec!["offline".into()];

@@ -22,6 +22,10 @@ from File** and **Developer: Reload Syntaxes** in the command palette.
 - **Syntaxes:** run **Preferences: Install Syntax from File** with a local TextMate `.tmLanguage.json` or `.tmLanguage` file. Highlighting reloads automatically; URLs are not accepted. All languages use the same native TextMate tokenizer and VS Code theme rules. Grammar sources live in the root [grammars](../grammars/README.md) directory: `grammars/bundled` is compiled into the executable, and the Rust, Python, and Git folders hold the VS Code overrides. Portable releases ship these assets in `grammars/` beside the executable.
 - **Agents:** install an ACP-compatible agent separately, then run **Agent: Configure Agents** from the command palette.
 - **Extensions:** the Extensions sidebar lists the official marketplace ([im-henri/vtcode-extensions](https://github.com/im-henri/vtcode-extensions)) under **MARKETPLACE**. **Install** takes the latest release and **▾** picks another version. Add more marketplaces (GitHub repositories with a `marketplace.json`) with the `extensions.marketplaces` setting. Installed extensions show **↑ vX.Y.Z** when a newer release exists. VTCode checks for updates in the background at launch if the previous check was more than 12 hours ago. Use **Check for updates** in the marketplace or **Extensions: Check for Extension Updates** to check now. Run **Extensions: Update All Extensions** to install the available updates. Any repository link still works through **Extensions: Install Extension from GitHub**. See the [Wasm extension guide](../extension-api/README.md) to build your own.
+
+Marketplace and theme downloads use your operating system’s trusted certificates.
+If a managed VPN or proxy causes an untrusted-issuer error, ask your network
+administrator to check that its approved CA certificate is in the system trust store.
 - **Performance & activity:** pin the live monitor while you work: CPU/memory trends, UI responsiveness, slow calls, worker queues, task timings, and workspace details. Resource sampling runs at most every 10 seconds while visible and the app is focused.
 
 ## Language servers

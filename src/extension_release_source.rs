@@ -100,18 +100,6 @@ pub(crate) fn semantic_version(tag: &str) -> Option<semver::Version> {
     semver::Version::parse(tag.strip_prefix('v').unwrap_or(tag)).ok()
 }
 
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .https_only(true)
-        .max_redirects(5)
-        .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
-        .timeout_connect(Some(Duration::from_secs(15)))
-        .timeout_global(Some(Duration::from_secs(120)))
-        .user_agent(concat!("VTCode/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .into()
-}
-
 /// Credentials stay in this short-lived worker client, never in UI state,
 /// provenance, URLs, or diagnostics. Cross-host redirects drop authorization.
 pub(crate) struct GitHubClient {
@@ -136,7 +124,7 @@ impl GitHubClient {
                 command_token(command, Duration::from_secs(5))
             });
         Self {
-            agent: agent(),
+            agent: crate::marketplace_http::agent(),
             token,
         }
     }
@@ -257,10 +245,30 @@ fn command_token(mut command: Command, timeout: Duration) -> Option<String> {
     valid_token(&token)
 }
 
-pub(crate) fn request_error(error: impl std::fmt::Display) -> String {
-    format!(
-        "GitHub release request failed: {error}. Check the connection, repository link, and account access. For private repositories, run gh auth login or set GH_TOKEN/GITHUB_TOKEN. If GitHub's rate limit was reached, retry later."
-    )
+pub(crate) fn request_error(error: impl Into<ureq::Error>) -> String {
+    let error = error.into();
+    if let Some(message) = crate::marketplace_http::certificate_message(&error) {
+        return message;
+    }
+    let help = match &error {
+        ureq::Error::StatusCode(401 | 404) => Some(
+            "Check the repository link and access. For private repositories, run gh auth login or set GH_TOKEN/GITHUB_TOKEN.",
+        ),
+        ureq::Error::StatusCode(403) => Some("Check GitHub account access and rate limits."),
+        ureq::Error::StatusCode(429) => Some("Retry after GitHub's rate limit resets."),
+        ureq::Error::ConnectionFailed
+        | ureq::Error::ConnectProxyFailed(_)
+        | ureq::Error::HostNotFound
+        | ureq::Error::Timeout(_)
+        | ureq::Error::Io(_) => Some("Check your network connection and HTTPS proxy."),
+        _ => None,
+    };
+    let mut message = format!("GitHub release request failed: {error}.");
+    if let Some(help) = help {
+        message.push(' ');
+        message.push_str(help);
+    }
+    message
 }
 
 #[cfg(test)]
@@ -276,7 +284,7 @@ mod tests {
             Some("fake_token")
         );
         let client = GitHubClient {
-            agent: agent(),
+            agent: crate::marketplace_http::agent(),
             token: Some("private_test_credential".into()),
         };
         for url in [
@@ -294,6 +302,28 @@ mod tests {
             ureq::config::RedirectAuthHeaders::SameHost
         ));
     }
+
+    #[test]
+    fn untrusted_certificate_errors_explain_system_trust() {
+        let unknown_issuer =
+            || rustls::Error::InvalidCertificate(rustls::CertificateError::UnknownIssuer);
+        for error in [
+            ureq::Error::Rustls(unknown_issuer()),
+            ureq::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                unknown_issuer(),
+            )),
+        ] {
+            let message = request_error(error);
+            assert!(message.starts_with("Untrusted TLS certificate issuer."));
+            assert!(message.contains("system trust store"));
+            assert!(!message.contains("gh auth login"));
+        }
+        assert!(request_error(ureq::Error::StatusCode(404)).contains("gh auth login"));
+        assert!(request_error(ureq::Error::StatusCode(429)).contains("rate limit"));
+        assert!(!request_error(ureq::Error::HostNotFound).contains("GH_TOKEN"));
+    }
+
     #[test]
     fn credential_command_output_is_captured_without_logging_or_inheriting_stdin() {
         #[cfg(windows)]

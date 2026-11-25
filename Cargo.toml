@@ -60,7 +60,8 @@ notify = "7"
 lsp-types = "0.95"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 tempfile = "3.26.0"
-ureq = "3.4"
+rustls = { version = "0.23", default-features = false }
+ureq = { version = "3.4", features = ["platform-verifier"] }
 url = "2"
 
 # Local Windows input fixes and portable underline-color SGR encoding.

@@ -161,6 +161,7 @@ impl Item {
     pub(crate) fn height(self) -> u16 {
         match self {
             Item::Header { .. } | Item::Notice(Notice::LoadingInstalled) => 1,
+            Item::Notice(Notice::Failed) => 5,
             Item::Notice(_) => 3,
             Item::Card(_) | Item::Listing(_) => CARD_HEIGHT,
         }

@@ -1,5 +1,5 @@
 //! Resolve VS Code Themes gallery links to their Marketplace VSIX packages.
-use std::{io::Read, path::Path, time::Duration};
+use std::{io::Read, path::Path};
 
 const LINK_HELP: &str = "Use a theme link such as https://vscodethemes.com/e/publisher.extension/theme-name, or a local theme file.";
 
@@ -44,14 +44,7 @@ pub(crate) fn package_url(source: &str) -> Result<String, String> {
 }
 
 pub(crate) fn download(url: &str, path: &Path) -> Result<(), String> {
-    let agent = ureq::Agent::config_builder()
-        .https_only(true)
-        .max_redirects(5)
-        .timeout_connect(Some(Duration::from_secs(15)))
-        .timeout_global(Some(Duration::from_secs(120)))
-        .user_agent(concat!("VTCode/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .into();
+    let agent = crate::marketplace_http::agent();
     download_with_agent(&agent, url, path, crate::theme_install::MAX_PACKAGE_SIZE)
 }
 
@@ -61,10 +54,10 @@ fn download_with_agent(
     path: &Path,
     limit: u64,
 ) -> Result<(), String> {
-    let mut response = agent
-        .get(url)
-        .call()
-        .map_err(|error| format!("Could not download theme from Marketplace: {error}"))?;
+    let mut response = agent.get(url).call().map_err(|error| {
+        crate::marketplace_http::certificate_message(&error)
+            .unwrap_or_else(|| format!("Could not download theme from Marketplace: {error}"))
+    })?;
     if response.status() != ureq::http::StatusCode::OK {
         return Err(format!(
             "Could not download theme: unexpected HTTP {}",
@@ -100,7 +93,7 @@ fn download_with_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{io::Write, net::TcpListener};
+    use std::{io::Write, net::TcpListener, time::Duration};
 
     #[test]
     fn resolves_gallery_links_and_ignores_preview_language() {

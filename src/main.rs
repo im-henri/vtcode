@@ -209,6 +209,7 @@ mod lsp_events;
 mod lsp_parsing;
 mod lsp_positions;
 mod lsp_requests;
+mod marketplace_http;
 mod merge_conflict_ui;
 mod merge_conflicts;
 mod mouse;
