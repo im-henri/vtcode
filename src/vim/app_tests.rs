@@ -373,9 +373,12 @@ fn ctrl_backslash_ctrl_n_leaves_a_focused_terminal() {
     app.show_terminal_sidebar = true;
     app.terminal_panel_focused = true;
     assert!(app.focused_terminal_index().is_some());
-    // Ordinary keys reach the shell, Ctrl-W included (shells use it).
-    keys(&mut app, "ls<C-w>");
+    keys(&mut app, "ls<C-w>.");
     assert_eq!(&*input.lock().unwrap(), b"ls\x17");
+    app.vim.opts.ctrl_keys = false;
+    keys(&mut app, "<C-w>");
+    assert_eq!(&*input.lock().unwrap(), b"ls\x17\x17");
+    app.vim.opts.ctrl_keys = true;
     // Both spellings terminals use for Ctrl-\ work.
     for backslash in [KeyCode::Char('\\'), KeyCode::Char('4')] {
         app.terminal_panel_focused = true;
@@ -386,6 +389,57 @@ fn ctrl_backslash_ctrl_n_leaves_a_focused_terminal() {
     }
     keys(&mut app, "x");
     assert_eq!(text(&app), "bc", "Vim keys act on the editor again");
+}
+
+#[test]
+fn ctrl_w_moves_between_the_docked_terminal_and_editor_splits() {
+    let mut app = vim_app("abc");
+    let _root = with_explorer(&mut app);
+    let left = app.active_group;
+    keys(&mut app, ":vnew<CR>");
+    let right = app.active_group;
+    assert_ne!(left, right);
+    let mut pty = crate::terminal::TerminalEmulator::test_with_output(40, 20, "");
+    let input = pty.test_capture_input();
+    app.terminals[0].terminal_pty = Some(pty);
+    app.show_terminal_sidebar = true;
+    app.terminal_sidebar_revealed = true;
+    frame(&mut app);
+
+    keys(&mut app, "<C-w>l");
+    assert!(app.docked_terminal_has_focus());
+    keys(&mut app, "<C-w>");
+    assert_eq!(super::feedback::pending(&app), "^W");
+    assert!(
+        super::feedback::hint(&app)
+            .unwrap()
+            .items
+            .iter()
+            .any(|(key, _)| *key == ".")
+    );
+    keys(&mut app, "<Esc>");
+    assert!(app.docked_terminal_has_focus());
+    assert!(app.vim_terminal_prefix.is_none());
+
+    keys(&mut app, "<C-w>h");
+    assert!(app.focused_terminal_index().is_none());
+    assert_eq!(app.active_group, right);
+    keys(&mut app, "<C-w>l");
+    assert!(app.docked_terminal_has_focus());
+    keys(&mut app, "<C-w><C-w>");
+    assert!(app.focused_terminal_index().is_none());
+    assert_eq!(app.active_group, left);
+    keys(&mut app, "<C-w>W");
+    assert!(app.docked_terminal_has_focus());
+    keys(&mut app, "<C-w>c");
+    assert!(!app.show_terminal_sidebar);
+    assert!(app.split_active());
+    assert_eq!(app.active_group, left);
+    assert_eq!(text(&app), "abc");
+    assert!(
+        input.lock().unwrap().is_empty(),
+        "window keys stay in the workbench"
+    );
 }
 
 fn with_problems(app: &mut App) {

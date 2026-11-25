@@ -11,6 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
+use super::app_host::TerminalPrefix;
 use super::keys::Key;
 use crate::app::{ActivePane, App, SidebarView, TabKind};
 
@@ -103,11 +104,15 @@ pub(crate) fn badge(app: &App) -> &'static str {
 /// Keys typed so far that wait for more, in Vim's `showcmd` notation:
 /// the engine's (`2d`, `"a`, `g`) or the workbench prefixes (`^W`, `^\`).
 pub(crate) fn pending(app: &App) -> String {
+    if let Some(prefix) = app.vim_terminal_prefix {
+        return match prefix {
+            TerminalPrefix::Window { .. } => "^W",
+            TerminalPrefix::Backslash => "^\\",
+        }
+        .into();
+    }
     if app.vim_window_prefix {
         return "^W".into();
-    }
-    if app.vim_terminal_prefix {
-        return "^\\".into();
     }
     if let Some(c) = app.vim_explorer_pending {
         return c.to_string();
@@ -201,6 +206,19 @@ const TERMINAL: Hint = Hint {
         ("h j k l", "move to that window"),
         ("w p", "next / last window"),
         ("other", "send ^\\ and the key"),
+    ],
+};
+
+const TERMINAL_WINDOW: Hint = Hint {
+    title: "window",
+    items: &[
+        ("h j k l", "move left / down / up / right"),
+        ("w W", "next / previous window"),
+        ("p", "last window"),
+        ("t b", "top / bottom window"),
+        ("c q", "close window"),
+        (".", "send Ctrl-W to the terminal"),
+        ("^\\", "send Ctrl-Backslash to the terminal"),
     ],
 };
 
@@ -381,11 +399,14 @@ const EXPLORER_G: Hint = Hint {
 
 /// What may follow the keys typed so far, if they form a prefix.
 pub(crate) fn hint(app: &App) -> Option<&'static Hint> {
+    if let Some(prefix) = app.vim_terminal_prefix {
+        return Some(match prefix {
+            TerminalPrefix::Window { .. } => &TERMINAL_WINDOW,
+            TerminalPrefix::Backslash => &TERMINAL,
+        });
+    }
     if app.vim_window_prefix {
         return Some(&WINDOW);
-    }
-    if app.vim_terminal_prefix {
-        return Some(&TERMINAL);
     }
     if app.vim_explorer_pending == Some('g') {
         return Some(&EXPLORER_G);

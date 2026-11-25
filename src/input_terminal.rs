@@ -38,7 +38,7 @@ impl App {
         self.handle_terminal_key_at(self.active_terminal, key)
     }
 
-    fn handle_terminal_key_at(&mut self, index: usize, key: KeyEvent) -> Option<bool> {
+    pub(crate) fn handle_terminal_key_at(&mut self, index: usize, key: KeyEvent) -> Option<bool> {
         self.handle_terminal_key_at_with_copy(index, key, |text| {
             crate::clipboard::set_text(text).is_ok()
         })

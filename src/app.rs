@@ -253,7 +253,7 @@ pub(crate) struct App {
     /// Set while Vim forwards a key to the workbench's own handling.
     pub(crate) vim_bypass: bool,
     pub(crate) vim_quit: bool,
-    pub(crate) vim_terminal_prefix: bool,
+    pub(crate) vim_terminal_prefix: Option<crate::vim::app_host::TerminalPrefix>,
     pub(crate) vim_window_prefix: bool,
     pub(crate) vim_explorer_pending: Option<char>,
     /// The pending Vim prefix and when it started, for the hint popup.
@@ -1384,7 +1384,7 @@ impl App {
             vim: Default::default(),
             vim_bypass: false,
             vim_quit: false,
-            vim_terminal_prefix: false,
+            vim_terminal_prefix: None,
             vim_window_prefix: false,
             vim_explorer_pending: None,
             vim_hint_since: None,

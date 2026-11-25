@@ -932,6 +932,28 @@ fn a_terminal_tab_gets_keys_and_shortcuts_as_without_vim_mode() {
 }
 
 #[test]
+fn ctrl_w_moves_from_a_terminal_tab_to_another_editor_pane() {
+    let (mut app, input) = terminal_tab_app(true);
+    app.show_explorer = false;
+    let editor = app.active_group;
+    app.create_split_group_at(app.active_tab, crate::app::TabDropZone::Right);
+    let terminal = app.active_group;
+    assert_ne!(editor, terminal);
+    draw(&mut app);
+
+    keys(&mut app, "<C-w>h");
+    assert_eq!(app.active_group, editor);
+    assert!(app.focused_terminal_index().is_none());
+    keys(&mut app, "<C-w>l");
+    assert_eq!(app.active_group, terminal);
+    assert!(app.focused_terminal_index().is_some());
+    keys(&mut app, "<C-w>w");
+    assert_eq!(app.active_group, editor);
+    assert!(app.focused_terminal_index().is_none());
+    assert!(input.lock().unwrap().is_empty());
+}
+
+#[test]
 fn leaving_the_only_tab_a_terminal_moves_to_the_explorer() {
     let (mut app, _input) = terminal_tab_app(true);
     let terminal = app.active_tab;

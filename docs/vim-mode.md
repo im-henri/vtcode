@@ -110,9 +110,9 @@ have to remember them.
 `gt` and `gT` go to the next and previous tab, and `3gt` to the third. `<C-p>`
 finds a file by name; `:e path` opens one.
 
-**The bottom panel.** `:copen` opens Problems, `:terminal` opens a terminal,
-and `<C-w>j` from the editor moves into whatever the panel shows. In a
-terminal, keys go to the shell; `<C-\><C-n>` returns to the editor.
+**The bottom panel.** `:copen` opens Problems, and `<C-w>j` from the editor
+moves into the bottom panel. `:terminal` opens a terminal in the right dock.
+Use `<C-w>h` to move left from the terminal or `<C-w>w` to cycle to the next pane.
 
 **Lost?** Look at the badge: it names the area that has the keyboard. Press
 `<Esc>` (or `q` in a list) to get back to the editor, then start again from
@@ -270,7 +270,7 @@ To search the whole project, see [Lesson 10](#lesson-10-the-rest-of-the-workbenc
 
 The cycle includes editor splits, the sidebar, the bottom panel, the terminal
 dock and docked Agent Chat when they are visible. Use `<C-w>h/j/k/l` to move
-by direction. From a terminal, use `<C-\>w` to continue the cycle.
+by direction, including from terminals.
 
 Press Tab or Shift+Tab to cycle through path completions. For example,
 `:vsp .<Tab>` offers `./` and `../`, and `:vsp ./<Tab>` completes entries
@@ -318,9 +318,10 @@ sections. The commit message box is a normal text field.
 it. `j`/`k` move, `l` jumps to the problem. `:cnext` / `:cprev` (or `]d` /
 `[d`) step through diagnostics without opening the panel. `:cclose` hides it.
 
-**Terminal.** `:terminal` opens one. Keys go to the shell, `<C-w>` included
-(shells use it). Press `<C-\><C-n>` to return to the editor, or `<C-\>`
-then `h/j/k/l` to move to a neighbouring window directly.
+**Terminal.** With **Vim: Use Ctrl Keys** on, `<C-w><C-w>` cycles to the next
+pane from a terminal, and `<C-w>h/j/k/l` moves by direction. Use `<C-w>.` to
+send a literal Ctrl+W to the shell, for example to delete the previous word.
+`<C-\><C-n>` returns to the editor.
 
 **Agent Chat.** Reach the docked chat with `<C-w>l`. Leave it with
 `<C-\><C-n>` or `<C-w>h`; `<C-w>c` hides it.

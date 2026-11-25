@@ -10,11 +10,17 @@ use super::parse::Window;
 use super::paths;
 use super::text::{Pos, Text};
 use super::{Act, Host, Mode, OpenTarget, VimState, directory, exec};
-use crate::app::{ActivePane, App, Tab, TabDropZone, TabKind};
+use crate::app::{ActivePane, App, Tab, TabDropZone, TabKind, TerminalDock};
 use crate::editor::Editor;
 
 pub(crate) struct AppHost<'a> {
     pub(crate) app: &'a mut App,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum TerminalPrefix {
+    Backslash,
+    Window { terminal_id: u64 },
 }
 
 /// The active tab is a text editor Vim may drive. A diff tab is the
@@ -255,36 +261,65 @@ pub(crate) fn handle_key(app: &mut App, event: KeyEvent) -> Option<bool> {
     }
     let key = Key::from_event(event)?;
     clear_yank_flash(app);
-    if app.vim_terminal_prefix {
-        app.vim_terminal_prefix = false;
-        if key.is_ctrl('n') || key == Key::ESC {
-            focus_editor(app);
-            return Some(false);
+    let terminal = app
+        .focused_terminal_index()
+        .filter(|_| app.focused_text_input_id().is_none() && !popup_open(app));
+    match app.vim_terminal_prefix.take() {
+        Some(TerminalPrefix::Window { terminal_id }) => {
+            if let Some(index) =
+                terminal.filter(|&index| app.terminals[index].find.id == terminal_id)
+            {
+                let literal = if key.char() == Some('.') {
+                    Some(Key::ctrl('w'))
+                } else if key.is_ctrl('\\') {
+                    Some(Key::ctrl('\\'))
+                } else {
+                    None
+                };
+                if let Some(literal) = literal {
+                    return app.handle_terminal_key_at(index, literal.to_event());
+                }
+                run_window_key(app, key);
+                return Some(false);
+            }
         }
-        if let Some(w) = window_key(key) {
-            let _ = window(app, w, 1);
-            return Some(false);
+        Some(TerminalPrefix::Backslash) => {
+            if key.is_ctrl('n') || key == Key::ESC {
+                focus_editor(app);
+                return Some(false);
+            }
+            if let Some(w) = window_key(key) {
+                let _ = window(app, w, 1);
+                return Some(false);
+            }
+            // Forward Ctrl-\ and the key when they form no window command.
+            app.vim_bypass = true;
+            let quit = crate::input_keyboard::handle_keyboard_event_inner(
+                app,
+                KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL),
+            );
+            let quit2 = crate::input_keyboard::handle_keyboard_event_inner(app, event);
+            app.vim_bypass = false;
+            return Some(quit || quit2);
         }
-        // Not a prefix command: send Ctrl-\ and the key to the terminal.
-        app.vim_bypass = true;
-        let quit = crate::input_keyboard::handle_keyboard_event_inner(
-            app,
-            KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL),
-        );
-        let quit2 = crate::input_keyboard::handle_keyboard_event_inner(app, event);
-        app.vim_bypass = false;
-        return Some(quit || quit2);
+        None => {}
     }
-    if app.focused_terminal_index().is_some() && app.focused_text_input_id().is_none() {
+    if let Some(index) = terminal {
+        if key.is_ctrl('w') && app.vim.opts.ctrl_keys {
+            app.vim_terminal_prefix = Some(TerminalPrefix::Window {
+                terminal_id: app.terminals[index].find.id,
+            });
+            return Some(false);
+        }
         if key.is_ctrl('\\') {
-            app.vim_terminal_prefix = true;
+            app.vim_terminal_prefix = Some(TerminalPrefix::Backslash);
             return Some(false);
         }
         return None;
     }
     if app.chat.visible && app.active_pane == ActivePane::Chat && !popup_open(app) {
         if key.is_ctrl('\\') {
-            app.vim_terminal_prefix = true;
+            app.vim_terminal_prefix = Some(TerminalPrefix::Backslash);
             return Some(false);
         }
         if key.is_ctrl('w') && app.vim.opts.ctrl_keys {
@@ -336,7 +371,7 @@ pub(crate) fn early_key(app: &mut App, event: KeyEvent) -> Option<bool> {
         return None;
     }
     let key = Key::from_event(event)?;
-    if app.vim.cmdline.is_some() || app.vim_window_prefix || app.vim_terminal_prefix {
+    if app.vim.cmdline.is_some() || app.vim_window_prefix || app.vim_terminal_prefix.is_some() {
         return handle_key(app, event);
     }
     use crate::commit_details::Focus;
@@ -428,6 +463,9 @@ fn after_key(vim: &mut VimState, host: &mut AppHost<'_>) {
 
 /// After a mouse event in the editor.
 pub(crate) fn after_mouse(app: &mut App) {
+    if matches!(app.vim_terminal_prefix, Some(TerminalPrefix::Window { .. })) {
+        app.vim_terminal_prefix = None;
+    }
     if !app.vim.enabled || !vim_tab(app) || app.active_pane != ActivePane::Editor {
         return;
     }
@@ -531,6 +569,24 @@ fn window_key(key: Key) -> Option<Window> {
     super::parse::window_cmd(c)
 }
 
+fn run_window_key(app: &mut App, key: Key) {
+    match window_key(key) {
+        Some(w) => {
+            if let Err(error) = window(app, w, 1) {
+                app.vim.set_error(error);
+            }
+        }
+        None if key == Key::ESC => {}
+        None => {
+            app.vim.bell = Some(std::time::Instant::now());
+            app.vim.set_message(format!(
+                "^W{}: not a window command (^W then h j k l, s, v, c, o...)",
+                super::keys::showcmd(&[key]).trim_start_matches("^W")
+            ));
+        }
+    }
+}
+
 fn translate(app: &mut App, code: KeyCode) -> Option<bool> {
     app.vim_bypass = true;
     let quit = crate::input_keyboard::handle_keyboard_event_inner(
@@ -617,23 +673,8 @@ fn scroll_popup_key(app: &App, event: KeyEvent) -> Option<KeyCode> {
 /// Vim-style keys for sidebars, lists and popups.
 fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
     // Ctrl-W prefix works from every non-text pane.
-    if app.vim_window_prefix {
-        app.vim_window_prefix = false;
-        match window_key(Key { ctrl: false, ..key }) {
-            Some(w) => {
-                if let Err(e) = window(app, w, 1) {
-                    app.vim.set_error(e);
-                }
-            }
-            None if key == Key::ESC => {}
-            None => {
-                app.vim.bell = Some(std::time::Instant::now());
-                app.vim.set_message(format!(
-                    "^W{}: not a window command (^W then h j k l, s, v, c, o...)",
-                    super::keys::showcmd(&[key]).trim_start_matches("^W")
-                ));
-            }
-        }
+    if std::mem::take(&mut app.vim_window_prefix) {
+        run_window_key(app, key);
         return Some(false);
     }
     // Settings: its search box has focus, but Ctrl-W still moves between
@@ -1167,7 +1208,7 @@ fn chat_dock_focused(app: &App) -> bool {
 }
 
 fn current_target(app: &App) -> Target {
-    if app.terminal_panel_focused {
+    if app.docked_terminal_has_focus() {
         return Target::TerminalSidebar;
     }
     if chat_dock_focused(app) {
@@ -1224,8 +1265,11 @@ fn focus_target(app: &mut App, t: Target) {
             }
         }
         Target::TerminalSidebar => {
-            app.active_pane = ActivePane::Editor;
-            app.terminal_panel_focused = true;
+            if let Some(index) = app.active_terminal_in_dock(TerminalDock::Right) {
+                app.active_terminal = index;
+                app.active_pane = ActivePane::Editor;
+                app.terminal_panel_focused = true;
+            }
         }
         Target::Chat => {
             app.chat.layout.active = None;
@@ -1367,6 +1411,11 @@ pub(crate) fn window(app: &mut App, w: Window, count: usize) -> Result<(), Strin
         }
         Window::New => {
             new_ex_buffer(app, None, Some(TabDropZone::Bottom));
+            Ok(())
+        }
+        Window::Close if app.docked_terminal_has_focus() => {
+            app.toggle_terminal_sidebar();
+            focus_editor(app);
             Ok(())
         }
         Window::Close if chat_dock_focused(app) => {
@@ -2332,6 +2381,7 @@ pub(crate) fn set_enabled(app: &mut App, on: bool) {
     if app.vim.enabled == on {
         return;
     }
+    app.vim_terminal_prefix = None;
     if !on {
         with_vim(app, |vim, host| vim.reset_to_normal(host));
         for tab in app
