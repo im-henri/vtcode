@@ -1878,7 +1878,12 @@ pub(crate) fn resize_group(app: &mut App, width: bool, delta: isize, absolute: O
         None => cur + delta,
     };
     let min = 2isize;
-    let target = target.clamp(min, total as isize - min * (n as isize - 1));
+    let max = total as isize - min * (n as isize - 1);
+    if max < min {
+        // Sizes not known yet (nothing drawn) or no room to change.
+        return;
+    }
+    let target = target.clamp(min, max);
     let new_k = target as f32 / total as f32;
     let others: f32 = ratios
         .iter()

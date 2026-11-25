@@ -454,6 +454,12 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
             _ => {}
         }
     }
+    // Enter in the command-line window runs the line, also from Insert mode.
+    if key == Key::ENTER && host.ed_ref().is_some_and(|ed| ed.vim_buf.cmdwin.is_some()) {
+        finish(vim, host, false);
+        super::cmdline::window_enter(vim, host);
+        return;
+    }
     if key.is_escape() || (key.is_ctrl('c') && vim.opts.ctrl_keys) {
         if host.completion_visible() {
             host.native_key(Key::ESC);

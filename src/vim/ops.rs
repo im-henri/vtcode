@@ -1500,7 +1500,7 @@ pub(crate) fn simple(
             };
             super::cmdline::open(vim, host, ':', None, init);
         }
-        Simple::CmdWindow => super::cmdline::open(vim, host, ':', None, String::new()),
+        Simple::CmdWindow(kind) => super::cmdline::open_window(vim, host, kind, String::new()),
         Simple::Window(w) => {
             if let Err(e) = host.act(Act::Window(w, count)) {
                 vim.set_error(e);

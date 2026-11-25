@@ -94,6 +94,8 @@ pub(crate) struct BufState {
     pub(crate) ml_empty: bool,
     /// When each undo step was first seen, for `:earlier 10m`.
     pub(crate) undo_times: std::collections::HashMap<u64, Instant>,
+    /// This buffer is the command-line window for `:`, `/` or `?`.
+    pub(crate) cmdwin: Option<char>,
 }
 
 /// Keep [`BufState::trailing_empty`] in step with an edit: a buffer whose
@@ -1035,6 +1037,13 @@ impl VimState {
             pending.push(key);
             let mode = self.mode;
             cmdline::open_expr(self, host, cmdline::ExprTarget::Register(pending, mode));
+            return;
+        }
+        if key == Key::ENTER
+            && self.pending.is_empty()
+            && !self.is_visual()
+            && cmdline::window_enter(self, host)
+        {
             return;
         }
         self.pending.push(key);

@@ -304,7 +304,8 @@ pub(crate) enum Simple {
     RepeatSub,
     RepeatSubAll,
     CmdLine,
-    CmdWindow,
+    /// `q:` `q/` `q?`: the command-line window for that history.
+    CmdWindow(char),
     Window(Window),
     Redraw,
     Cancel,
@@ -831,7 +832,7 @@ fn simple(p: &mut P<'_>, ctx: Ctx) -> R<Simple> {
                 return R::Need;
             };
             match k2.char() {
-                Some(':' | '/' | '?') => CmdWindow,
+                Some(c @ (':' | '/' | '?')) => CmdWindow(c),
                 Some(r) if r.is_ascii_alphanumeric() || r == '"' => Record(r),
                 _ => return R::Bad,
             }

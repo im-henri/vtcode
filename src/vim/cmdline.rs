@@ -113,6 +113,80 @@ fn close(vim: &mut VimState, host: &mut dyn Host) -> Option<CmdLine> {
     Some(c)
 }
 
+/// `q:`, `q/`, `q?` and `<C-f>` on the command line: the history in a
+/// small window at the bottom, editable with every Vim command. Enter runs
+/// the line under the cursor; `:q` closes it.
+pub(crate) fn open_window(vim: &mut VimState, host: &mut dyn Host, kind: char, current: String) {
+    if vim.is_visual() {
+        exec::exit_visual(vim, host);
+    }
+    let mut lines = match kind {
+        ':' => vim.history_cmd.clone(),
+        _ => vim.history_search.clone(),
+    };
+    lines.push(current);
+    let opened = host.act(super::Act::Open {
+        target: super::OpenTarget::Empty,
+        split: Some(crate::app::TabDropZone::Bottom),
+    });
+    if let Err(e) = opened {
+        vim.set_error(e);
+        return;
+    }
+    let _ = host.act(super::Act::Resize {
+        width: false,
+        delta: 0,
+        absolute: Some(8),
+    });
+    let Some(ed) = host.ed() else {
+        return;
+    };
+    let text = lines.join("\n");
+    let mut tx = exec::Tx::default();
+    let len = ed.rope.len_chars();
+    tx.edit(ed, 0, len, &text);
+    tx.finish(ed);
+    ed.vim_buf.cmdwin = Some(kind);
+    ed.vim_buf.trailing_empty = false;
+    ed.suggested_file_name = Some(format!("[Command Line {kind}]"));
+    ed.modified = false;
+    let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
+    let last = t.last_line();
+    set_cursor(ed, Pos::new(last, t.len(last).saturating_sub(1)));
+    update_curswant(vim, ed);
+    vim.set_message(format!(
+        "Command-line window: Enter runs the line, :q closes ({} entries)",
+        lines.len().saturating_sub(1)
+    ));
+}
+
+/// Enter in the command-line window: close it and run the current line.
+pub(crate) fn window_enter(vim: &mut VimState, host: &mut dyn Host) -> bool {
+    let Some((kind, line)) = host.ed_ref().and_then(|ed| {
+        let kind = ed.vim_buf.cmdwin?;
+        let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
+        Some((kind, t.line_string(ed.cursor_line.min(t.last_line()))))
+    }) else {
+        return false;
+    };
+    if let Some(ed) = host.ed() {
+        ed.modified = false;
+    }
+    if let Err(e) = host.act(super::Act::Quit { force: true }) {
+        vim.set_error(e);
+        return true;
+    }
+    vim.message = None;
+    if line.trim().is_empty() {
+        return true;
+    }
+    let mut keys = vec![Key::ch(kind)];
+    keys.extend(line.chars().map(Key::ch));
+    keys.push(Key::ENTER);
+    vim.feed_keys(host, &keys, false, false);
+    true
+}
+
 /// Open the `=` prompt for the expression register.
 pub(crate) fn open_expr(vim: &mut VimState, host: &mut dyn Host, target: ExprTarget) {
     let outer_visual = vim.cmdline_visual.take();
@@ -379,6 +453,15 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
         }
         (K::Char('v') | K::Char('q'), true, false) => {
             c.awaiting_literal = true;
+            return;
+        }
+        (K::Char('f'), true, false)
+            if matches!(c.kind, ':' | '/' | '?') && c.expr_target.is_none() =>
+        {
+            let kind = c.kind;
+            let typed = c.string();
+            cancel(vim, host);
+            open_window(vim, host, kind, typed);
             return;
         }
         (K::Char('g') | K::Char('t'), true, false) if matches!(c.kind, '/' | '?') => {

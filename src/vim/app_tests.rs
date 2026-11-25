@@ -1335,3 +1335,22 @@ fn windows_move_to_an_edge_and_exchange() {
     keys(&mut app, "<C-w>K");
     assert!(stacked(&app));
 }
+
+#[test]
+fn the_command_line_window_edits_and_runs_history() {
+    let mut app = vim_app("abc\n");
+    keys(&mut app, ":s/b/X/<CR>u");
+    assert_eq!(text(&app), "abc\n");
+    keys(&mut app, "q:");
+    assert!(app.split_active(), "q: opens a window");
+    assert_eq!(text(&app), "s/b/X/\n");
+    // Edit the old command with Vim keys, then Enter runs it.
+    keys(&mut app, "k$hrY<CR>");
+    assert!(!app.split_active(), "Enter closes the window");
+    assert_eq!(text(&app), "aYc\n");
+    // <C-f> on the command line takes what was typed along.
+    keys(&mut app, ":s/Y/<C-f>");
+    assert_eq!(text(&app).lines().last(), Some("s/Y/"));
+    keys(&mut app, "AZ/<Esc><CR>");
+    assert_eq!(text(&app), "aZc\n");
+}

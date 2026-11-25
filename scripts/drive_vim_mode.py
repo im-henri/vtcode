@@ -1268,7 +1268,95 @@ def scenario_grep(e, d):
     ]
 
 
+def scenario_make_quickfix(e, d):
+    e.keys(":set makeprg=type\\ errors.log" + CR)
+    e.keys(":make" + CR)
+    first = wait_for(e, lambda: "(1 of 2)" in e.status() and "boom" in e.status())
+    e.keys("A!" + ESC + ":w" + CR)
+    on_line = wait_for(e, lambda: read(d, "a.txt") == "alpha\ngamma!\n")
+    e.keys(":cn" + CR)
+    second = wait_for(e, lambda: "(2 of 2)" in e.status() and "bang" in e.status())
+    return [
+        (":make reads file:line:col: errors into the quickfix list", first),
+        ("and jumps to the first error's line", on_line),
+        (":cn goes to the next error", second),
+    ]
+
+
+def scenario_filters_and_shell(e, d):
+    e.keys(":%!sort" + CR)
+    sorted_ = wait_for(e, lambda: screen_has(e, "1  a") or (screen_has(e, " a") and e.lines() is not None), 4)
+    e.keys("G:r !echo hi" + CR)
+    e.settle(1.0)
+    e.keys(":w" + CR)
+    ok = wait_for(e, lambda: read(d, "a.txt").replace("\r", "").strip().split("\n") == ["a", "b", "c", "hi"])
+    return [(":%!sort filters the buffer and :r !echo reads output", sorted_ and ok)]
+
+
+def scenario_confirm_substitute(e, d):
+    e.keys(":%s/a/A/gc" + CR)
+    asked = wait_for(e, lambda: "replace with A" in e.status())
+    e.keys("y")
+    e.keys("n")
+    e.keys("y")
+    e.keys("q")
+    e.settle(0.3)
+    e.keys(":w" + CR)
+    ok = wait_for(e, lambda: read(d, "a.txt") == "AaA\na\n")
+    return [
+        (":s///c asks at each match", asked),
+        ("y n y q answer it", ok),
+    ]
+
+
+def scenario_text_editing_basics(e, d):
+    # gq to textwidth, :sort, xp, "_d, ., Ctrl-A, %, gv, :g//d, visual >.
+    e.keys(":set tw=20" + CR + "gqq")
+    e.keys(":w" + CR)
+    wrapped = wait_for(e, lambda: read(d, "a.txt").startswith("one two three four\nfive six\n"))
+    e.keys(":4,6sort" + CR)
+    e.keys(":w" + CR)
+    sort_ok = wait_for(e, lambda: read(d, "a.txt").splitlines()[3:6] == ["apple", "kiwi", "pear"])
+    e.keys("gg0xp:w" + CR)
+    swapped = wait_for(e, lambda: read(d, "a.txt").startswith("noe two"))
+    e.keys("jdd" + "\"_dd" + "P:w" + CR)
+    blackhole = wait_for(e, lambda: read(d, "a.txt").splitlines()[1] == "five six" and "seven" not in read(d, "a.txt"))
+    e.keys(":g/kiwi/d" + CR + ":w" + CR)
+    globaled = wait_for(e, lambda: "kiwi" not in read(d, "a.txt"))
+    e.keys("G" + "10" + ctrl("a") + ":w" + CR)
+    incremented = wait_for(e, lambda: read(d, "a.txt").splitlines()[-1] == "n = 17")
+    e.keys("ggVj>gv>:w" + CR)
+    shifted = wait_for(e, lambda: read(d, "a.txt").startswith("\t\tnoe two") or read(d, "a.txt").startswith("        noe two"))
+    return [
+        ("gqq wraps at textwidth", wrapped),
+        (":4,6sort sorts a range", sort_ok),
+        ("xp swaps two characters", swapped),
+        ('"_dd deletes without touching the register; P puts the earlier dd', blackhole),
+        (":g/kiwi/d deletes matching lines", globaled),
+        ("10<C-a> adds to the number under or after the cursor", incremented),
+        ("V>gv> indents twice through gv", shifted),
+    ]
+
+
+def scenario_cmdline_window(e, d):
+    e.keys(":s/a/X/" + CR + "u")
+    e.keys("q:")
+    opened = wait_for(e, lambda: screen_has(e, "Command-line window") or screen_has(e, "s/a/X/"))
+    e.keys("k$hrY" + CR)
+    e.keys(":w" + CR)
+    ran = wait_for(e, lambda: read(d, "a.txt") == "Ylpha\ngamma\n")
+    return [
+        ("q: opens the history in a window", opened),
+        ("editing a line there and Enter runs it", ran),
+    ]
+
+
 SCENARIOS = [
+    ("cmdline window", scenario_cmdline_window, {"a.txt": "alpha\ngamma\n"}),
+    (":make quickfix", scenario_make_quickfix, {"a.txt": "alpha\ngamma\n", "errors.log": "a.txt:2:3: error: boom\nb.txt:1:1: warning: bang\n", "b.txt": "x\n"}),
+    ("filters and shell", scenario_filters_and_shell, {"a.txt": "c\nb\na\n"}),
+    ("confirm substitute", scenario_confirm_substitute, {"a.txt": "aaa\na\n"}),
+    ("text editing basics", scenario_text_editing_basics, {"a.txt": "one two three four five six\nfive six\npear\napple\nkiwi\nn = 7\n"}),
     ("window layout moves", scenario_window_layout_moves, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n"}),
     ("netrw keys", scenario_netrw_keys, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n"}),
     ("insert literal and block", scenario_insert_literal_and_block, {"a.txt": "alpha\ngamma\n"}),
