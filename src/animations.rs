@@ -1363,6 +1363,9 @@ impl AnimationState {
         let old = &view.snapshot;
         let old_cursor = old.cursor;
         let editing = old.content_version != snapshot.content_version;
+        // Undo and redo jump the caret to the restored change like navigation,
+        // so they keep the smear even when typing motion is suppressed.
+        let typing = editing && old.undo_revision == snapshot.undo_revision;
         let projected_origin = if cursor_motion {
             if old.cursor == snapshot.cursor {
                 cursor_point
@@ -1390,12 +1393,12 @@ impl AnimationState {
                     return false;
                 }
                 // A stationary edit can end an existing smear while the fire fades.
-                *editing_motion |= editing && !settings.cursor_smear_when_typing;
+                *editing_motion |= typing && !settings.cursor_smear_when_typing;
             }
             event.active(settings, now)
         });
         if old.cursor != snapshot.cursor
-            && let Some(effect) = cursor_effects(settings, editing).next()
+            && let Some(effect) = cursor_effects(settings, typing).next()
         {
             let previous = (!remapped && !changed_view)
                 .then(|| {
@@ -1416,15 +1419,18 @@ impl AnimationState {
             let origin = origin.or_else(|| estimated_point(anchors, old_cursor));
             let target = cursor_point.or_else(|| estimated_point(anchors, snapshot.cursor));
             if let Some((origin, target)) = origin.zip(target) {
-                let motion = SmearMotion::retarget(origin, target, previous, editing);
+                let motion = SmearMotion::retarget(origin, target, previous, typing);
                 if settings.enabled(Effect::CursorFire) && !changed_view {
                     view.fire
-                        .retarget_cursor(origin, target, now, editing, settings);
+                        .retarget_cursor(origin, target, now, typing, settings);
                 }
                 view.events
                     .retain(|event| !matches!(event.trigger, Trigger::Cursor { .. }));
                 view.events.push(AnimationEvent {
-                    trigger: Trigger::Cursor { motion, editing },
+                    trigger: Trigger::Cursor {
+                        motion,
+                        editing: typing,
+                    },
                     started: now,
                 });
             }

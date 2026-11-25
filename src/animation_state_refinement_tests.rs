@@ -402,3 +402,25 @@ fn state_refinement_rapid_scope_changes_bound_outgoing_history_and_finish_cleanl
     assert_eq!(state.next_frame_wait(&settings, finished), None);
     assert_eq!(state.views[&initial.id].scope, Some(((59, 0), (60, 0))));
 }
+
+#[test]
+fn state_refinement_undo_and_redo_smear_while_typing_smear_is_off() {
+    let mut settings = AnimationSettings::default();
+    settings.set(Effect::CursorSmear, true);
+    settings.cursor_smear_when_typing = false;
+    let now = Instant::now();
+    for (undo, expected) in [(false, false), (true, true)] {
+        let mut state = AnimationState::default();
+        let before = document("alpha\nbeta\ngamma\n", (2, 5), 1);
+        observe(&mut state, &before, &settings, now);
+        let mut after = document("alpha\nbeta\ngam\n", (0, 2), 2);
+        after.undo_revision = u64::from(undo);
+        let events = observe(&mut state, &after, &settings, now);
+        let smear = events.iter().any(|event| {
+            event
+                .cursor_sample(&settings, Effect::CursorSmear, now)
+                .is_some()
+        });
+        assert_eq!(smear, expected, "undo={undo}");
+    }
+}
