@@ -75,7 +75,9 @@ fn split_bar(line: &str) -> Vec<String> {
         "g", "gl", "glo", "glob", "globa", "global", "v", "vg", "vgl", "vglobal", "norm", "norma",
         "normal", "map", "nmap", "vmap", "xmap", "imap", "omap", "cmap", "noremap", "nnoremap",
         "vnoremap", "xnoremap", "inoremap", "onoremap", "cnoremap", "nno", "vno", "xno", "ino",
-        "ono", "cno", "no", "nm", "vm", "xm", "im", "om", "cm",
+        "ono", "cno", "no", "nm", "vm", "xm", "im", "om", "cm", "au", "aut", "auto", "autoc",
+        "autocm", "autocmd", "com", "comm", "comma", "comman", "command", "bufdo", "bufd", "windo",
+        "wind", "tabdo", "tabd", "argdo", "argd", "cdo", "cfdo", "cfd",
     ]
     .contains(&name.as_str())
         || trimmed.contains('!') && name.is_empty()
@@ -589,6 +591,35 @@ const COMMANDS: &[(&str, usize)] = &[
     ("last", 3),
     ("argdo", 5),
     ("wnext", 2),
+    ("scriptencoding", 7),
+    ("setfiletype", 4),
+    ("behave", 2),
+    ("helptags", 5),
+    ("doautocmd", 2),
+    ("doautoall", 7),
+    ("compiler", 4),
+    ("redir", 3),
+    ("sign", 3),
+    ("menu", 2),
+    ("amenu", 2),
+    ("nmenu", 3),
+    ("vmenu", 3),
+    ("imenu", 3),
+    ("unmenu", 3),
+    ("packloadall", 5),
+    ("endif", 2),
+    ("endfor", 5),
+    ("endwhile", 4),
+    ("endtry", 4),
+    ("endfunction", 4),
+    ("else", 2),
+    ("elseif", 5),
+    ("finish", 4),
+    ("throw", 2),
+    ("catch", 3),
+    ("finally", 4),
+    ("break", 4),
+    ("continue", 3),
 ];
 
 fn resolve(name: &str) -> Option<&'static str> {
@@ -1488,7 +1519,11 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
             _ => run(vim, host, "cprevious"),
         },
         "messages" | "checktime" | "redraw" | "syntax" | "filetype" | "autocmd" | "augroup"
-        | "highlight" | "runtime" | "packadd" | "Plug" | "language" | "lua" => Ok(()),
+        | "highlight" | "runtime" | "packadd" | "Plug" | "language" | "lua" | "scriptencoding"
+        | "setfiletype" | "behave" | "helptags" | "doautocmd" | "doautoall" | "compiler"
+        | "redir" | "sign" | "menu" | "amenu" | "nmenu" | "vmenu" | "imenu" | "unmenu"
+        | "packloadall" | "endif" | "endfor" | "endwhile" | "endtry" | "endfunction" | "else"
+        | "elseif" | "finish" | "throw" | "catch" | "finally" | "break" | "continue" => Ok(()),
         "colorscheme" => {
             if arg_trim.is_empty() {
                 return Ok(());
@@ -1561,7 +1596,7 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
         }
         "left" | "right" | "center" => align(vim, host, &range, full, arg_trim),
         "retab" => retab(vim, host, &range, bang, arg_trim),
-        "windo" | "bufdo" | "tabdo" => run(vim, host, arg_trim),
+        "windo" | "bufdo" | "tabdo" => do_each(vim, host, full, arg_trim),
         "append" => Err("E319: :append is not supported; use o".into()),
         "command" => user_command(vim, bang, arg_trim),
         "@" | "*" => {
@@ -1740,9 +1775,13 @@ fn run_without_buffer(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<
         "command" => user_command(vim, bang, arg),
         "function" | "delfunction" | "return" => Ok(()),
         "messages" | "checktime" | "redraw" | "syntax" | "filetype" | "autocmd" | "augroup"
-        | "highlight" | "runtime" | "packadd" | "Plug" | "language" | "lua" | "nohlsearch"
-        | "badd" | "argadd" | "unabbreviate" | "iunabbrev" | "cunabbrev" | "abclear"
-        | "iabclear" | "cabclear" => {
+        | "highlight" | "runtime" | "packadd" | "Plug" | "language" | "lua" | "scriptencoding"
+        | "setfiletype" | "behave" | "helptags" | "doautocmd" | "doautoall" | "compiler"
+        | "redir" | "sign" | "menu" | "amenu" | "nmenu" | "vmenu" | "imenu" | "unmenu"
+        | "packloadall" | "endif" | "endfor" | "endwhile" | "endtry" | "endfunction" | "else"
+        | "elseif" | "finish" | "throw" | "catch" | "finally" | "break" | "continue"
+        | "nohlsearch" | "badd" | "argadd" | "unabbreviate" | "iunabbrev" | "cunabbrev"
+        | "abclear" | "iabclear" | "cabclear" => {
             if full == "nohlsearch" {
                 vim.hl_hidden = true;
             }
@@ -3677,18 +3716,18 @@ fn qf_do(vim: &mut VimState, host: &mut dyn Host, per_file: bool, cmd: &str) -> 
 }
 
 /// Which program runs `:grep`: 'grepprg' when set, else ripgrep or git grep
-/// when available, else the platform default.
-fn grep_program(vim: &VimState, host: &dyn Host) -> String {
+/// when available. `None`: search the files here (as `:vimgrep`).
+fn grep_program(vim: &VimState, host: &dyn Host) -> Option<String> {
     if let Some(p) = vim.other_opts.get("grepprg") {
-        return p.clone();
+        return Some(p.clone());
     }
     if super::eval::which("rg") {
-        return "rg --vimgrep --smart-case".into();
+        return Some("rg --vimgrep --smart-case".into());
     }
     if host.cwd().is_some_and(|d| d.join(".git").exists()) && super::eval::which("git") {
-        return "git grep -n --column".into();
+        return Some("git grep -n --column".into());
     }
-    default_other("grepprg").into()
+    None
 }
 
 fn quickfix_shell(
@@ -3708,7 +3747,31 @@ fn quickfix_shell(
         if arg.trim().is_empty() {
             return Err("E471: Argument required".into());
         }
-        grep_program(vim, host)
+        match grep_program(vim, host) {
+            Some(p) => p,
+            None => {
+                // No grep tool: `:grep pat [files]` searches like `:vimgrep`.
+                let mut words = arg.split_whitespace();
+                let pat = words.next().unwrap_or("").trim_matches(['"', '\'']);
+                let files: Vec<&str> = words.collect();
+                let files = if files.is_empty() {
+                    "**".to_string()
+                } else {
+                    files.join(" ")
+                };
+                let delim = ['/', '#', '@', '!', '+']
+                    .into_iter()
+                    .find(|d| !pat.contains(*d))
+                    .unwrap_or('/');
+                return vimgrep(
+                    vim,
+                    host,
+                    add,
+                    bang,
+                    &format!("{delim}{pat}{delim} {files}"),
+                );
+            }
+        }
     };
     let cmd = if prg.contains("$*") {
         prg.replace("$*", arg)
@@ -4268,6 +4331,34 @@ fn expand_specials(host: &dyn Host, text: &str) -> String {
         i += 1;
     }
     out
+}
+
+/// `:bufdo`, `:tabdo` and `:windo`: run a command in every buffer, tab or
+/// window, ending in the last one as Vim does. An error stops the loop.
+fn do_each(vim: &mut VimState, host: &mut dyn Host, full: &str, cmd: &str) -> R<()> {
+    if cmd.trim().is_empty() {
+        return Err("E471: Argument required".into());
+    }
+    if full == "windo" {
+        for i in 0..host.window_count() {
+            if !host.focus_window(i) {
+                break;
+            }
+            run(vim, host, cmd)?;
+        }
+        return Ok(());
+    }
+    // Buffers and tabs are both the open tabs here.
+    let buffers: Vec<usize> = host.buffers().into_iter().map(|(n, _, _)| n).collect();
+    for n in buffers {
+        if full == "tabdo" {
+            host.act(Act::TabNext(Some(n)))?;
+        } else {
+            host.act(Act::Buffer(n.to_string()))?;
+        }
+        run(vim, host, cmd)?;
+    }
+    Ok(())
 }
 
 /// The first `|` part opens a script block (`if`, `for`, `while`, `try`).

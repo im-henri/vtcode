@@ -429,6 +429,14 @@ pub(crate) trait Host {
     fn commands(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Editor windows on screen, in order, for `:windo`.
+    fn window_count(&self) -> usize {
+        1
+    }
+    /// Give window `i` (0-based, as `window_count` orders them) the keyboard.
+    fn focus_window(&mut self, _i: usize) -> bool {
+        true
+    }
 }
 
 /// 'autoindent': the indent of `line` as tabs/spaces per 'expandtab'.

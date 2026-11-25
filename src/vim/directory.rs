@@ -24,6 +24,10 @@ pub(crate) struct Directory {
     list_area: Rect,
     request: Option<u64>,
     error: Option<String>,
+    /// `/` or `?` being typed: the query, its direction and where it began.
+    search: Option<(String, bool, usize)>,
+    /// The last search, for `n` and `N`.
+    last_search: Option<(String, bool)>,
 }
 
 pub(crate) struct Loaded {
@@ -78,6 +82,8 @@ pub(crate) fn open(app: &mut App, path: PathBuf, split: Option<TabDropZone>) {
         list_area: Rect::default(),
         request: Some(request),
         error: None,
+        search: None,
+        last_search: current(app).and_then(|d| d.last_search.clone()),
     });
     if split.is_none() && current(app).is_some() {
         let tab = &mut app.tabs[app.active_tab];
@@ -179,6 +185,112 @@ fn activate(app: &mut App) {
 pub(crate) fn refresh(app: &mut App) {
     if let Some(dir) = current(app) {
         open(app, dir.path.clone(), None);
+    }
+}
+
+/// The next entry from `from` (not itself) whose name contains `query`
+/// (smartcase), wrapping around.
+fn find_entry(
+    dir: &Directory,
+    query: &str,
+    forward: bool,
+    from: usize,
+    include: bool,
+) -> Option<usize> {
+    let n = dir.entries.len();
+    if n == 0 || query.is_empty() {
+        return None;
+    }
+    let smart = query.chars().any(char::is_uppercase);
+    let q = if smart {
+        query.to_string()
+    } else {
+        query.to_lowercase()
+    };
+    let hit = |i: usize| {
+        let name = &dir.entries[i].name;
+        name != ".."
+            && if smart {
+                name.contains(&q)
+            } else {
+                name.to_lowercase().contains(&q)
+            }
+    };
+    (0..n)
+        .map(|k| {
+            let k = if include { k } else { k + 1 };
+            if forward {
+                (from + k) % n
+            } else {
+                (from + n * 2 - k % n) % n
+            }
+        })
+        .find(|&i| hit(i))
+}
+
+pub(crate) fn searching(app: &App) -> bool {
+    current(app).is_some_and(|d| d.search.is_some())
+}
+
+/// `/` (or `?`): start typing a name to jump to.
+pub(crate) fn start_search(app: &mut App, forward: bool) {
+    if let Some(dir) = current_mut(app) {
+        dir.search = Some((String::new(), forward, dir.selected));
+    }
+}
+
+/// A key while typing the search: the selection follows the match.
+pub(crate) fn search_key(app: &mut App, key: super::Key) {
+    use super::keys::K;
+    let Some(dir) = current_mut(app) else {
+        return;
+    };
+    let Some((mut q, forward, origin)) = dir.search.take() else {
+        return;
+    };
+    if key.is_escape() || key.is_ctrl('c') {
+        dir.select(origin);
+        return;
+    }
+    if key.k == K::Enter && !key.ctrl {
+        if !q.is_empty() {
+            dir.last_search = Some((q, forward));
+        }
+        return;
+    }
+    match key.k {
+        K::Backspace => {
+            if q.pop().is_none() {
+                dir.select(origin);
+                return;
+            }
+        }
+        K::Char('u') if key.ctrl => q.clear(),
+        K::Char(c) if !key.ctrl && !key.alt => q.push(c),
+        _ => {}
+    }
+    match find_entry(dir, &q, forward, origin, false) {
+        Some(i) => dir.select(i),
+        None => dir.select(origin),
+    }
+    dir.search = Some((q, forward, origin));
+}
+
+/// `n` (`reverse` false) and `N`: the next match of the last search.
+pub(crate) fn search_next(app: &mut App, reverse: bool) -> Result<(), String> {
+    let Some(dir) = current_mut(app) else {
+        return Ok(());
+    };
+    let Some((q, forward)) = dir.last_search.clone() else {
+        return Err("E35: No previous regular expression".into());
+    };
+    let dir_forward = forward != reverse;
+    match find_entry(dir, &q, dir_forward, dir.selected, false) {
+        Some(i) => {
+            dir.select(i);
+            Ok(())
+        }
+        None => Err(format!("E486: Pattern not found: {q}")),
     }
 }
 
@@ -440,7 +552,15 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             row,
         );
     }
-    if hint_rows > 0 {
+    if let Some((q, forward, _)) = &dir.search {
+        let y = area.bottom() - 1;
+        let prompt = format!("{}{q}", if *forward { '/' } else { '?' });
+        f.render_widget(
+            Paragraph::new(Span::styled(prompt, Style::default().fg(colors.fg_text)))
+                .style(Style::default().bg(bg)),
+            Rect::new(area.x, y, area.width, 1),
+        );
+    } else if hint_rows > 0 {
         let y = area.bottom() - 1;
         let key = Style::default().fg(colors.fg_text);
         let text = Style::default().fg(dim);
@@ -449,6 +569,10 @@ pub(crate) fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             Span::styled(" move  ", text),
             Span::styled("Enter", key),
             Span::styled(" open  ", text),
+            Span::styled("/", key),
+            Span::styled(" find  ", text),
+            Span::styled("%", key),
+            Span::styled(" new file  ", text),
             Span::styled("-", key),
             Span::styled(" parent  ", text),
             Span::styled("q", key),

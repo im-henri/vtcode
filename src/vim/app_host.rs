@@ -234,6 +234,27 @@ impl Host for AppHost<'_> {
     fn commands(&self) -> Vec<String> {
         palette_ids_of(self.app)
     }
+
+    fn window_count(&self) -> usize {
+        self.app.split_tree.as_ref().map_or(1, |t| t.leaves().len())
+    }
+
+    fn focus_window(&mut self, i: usize) -> bool {
+        let app = &mut *self.app;
+        let Some(g) = app
+            .split_tree
+            .as_ref()
+            .map_or(Some(app.active_group), |t| t.leaves().get(i).copied())
+        else {
+            return false;
+        };
+        if g != app.active_group {
+            app.switch_group(g);
+        }
+        app.active_pane = ActivePane::Editor;
+        app.terminal_panel_focused = false;
+        true
+    }
 }
 
 /// Run the engine with the workbench as host.
@@ -839,6 +860,10 @@ fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
             return Some(false);
         }
         if directory::current(app).is_some() {
+            if directory::searching(app) {
+                directory::search_key(app, key);
+                return Some(false);
+            }
             if key.is_ctrl('l') {
                 directory::refresh(app);
                 return Some(false);
@@ -849,6 +874,36 @@ fn other_pane_key(app: &mut App, key: Key, event: KeyEvent) -> Option<bool> {
                     return Some(false);
                 }
                 Some('-') => return translate(app, KeyCode::Left),
+                Some(c @ ('/' | '?')) => {
+                    directory::start_search(app, c == '/');
+                    return Some(false);
+                }
+                Some('%') => {
+                    // netrw's %: a new file here; type its name.
+                    let dir = directory::current(app)
+                        .map(|d| d.path.clone())
+                        .unwrap_or_default();
+                    let base = paths::cwd(app);
+                    let shown = dir.strip_prefix(&base).map_or_else(
+                        |_| dir.display().to_string(),
+                        |rel| rel.display().to_string(),
+                    );
+                    let init = if shown.is_empty() {
+                        "e ".to_string()
+                    } else {
+                        format!("e {}/", shown.replace('\\', "/").replace(' ', "\\ "))
+                    };
+                    with_vim(app, |vim, host| {
+                        super::cmdline::open(vim, host, ':', None, init)
+                    });
+                    return Some(false);
+                }
+                Some(c @ ('n' | 'N')) => {
+                    if let Err(e) = directory::search_next(app, c == 'N') {
+                        app.vim.set_error(e);
+                    }
+                    return Some(false);
+                }
                 _ => return scroll_view_key(app, key, true),
             }
         }
@@ -1449,7 +1504,9 @@ pub(crate) fn window(app: &mut App, w: Window, count: usize) -> Result<(), Strin
             if modified && !shared {
                 return Err("E37: No write since last change (add ! to override)".into());
             }
+            let group = app.active_group;
             app.force_close_tab(app.active_tab);
+            close_leftover_directories(app, group);
             Ok(())
         }
         Window::Only => {
@@ -1475,15 +1532,26 @@ pub(crate) fn window(app: &mut App, w: Window, count: usize) -> Result<(), Strin
             app.execute_palette_command("vim_equalize");
             Ok(())
         }
-        Window::Rotate
-        | Window::Exchange
-        | Window::MoveLeft
-        | Window::MoveRight
-        | Window::MoveUp
-        | Window::MoveDown
-        | Window::ToTab => {
-            Err("E443: Moving windows is not supported; drag the tab instead".into())
+        Window::Rotate | Window::Exchange => {
+            rearrange(app, |tree, g| {
+                swap_sibling(tree, g, w == Window::Rotate);
+            });
+            Ok(())
         }
+        Window::MoveLeft | Window::MoveRight | Window::MoveUp | Window::MoveDown => {
+            use crate::app::SplitDirection;
+            let (direction, first) = match w {
+                Window::MoveLeft => (SplitDirection::Horizontal, true),
+                Window::MoveRight => (SplitDirection::Horizontal, false),
+                Window::MoveUp => (SplitDirection::Vertical, true),
+                _ => (SplitDirection::Vertical, false),
+            };
+            rearrange(app, |tree, g| move_to_edge(tree, g, direction, first));
+            Ok(())
+        }
+        Window::ToTab => Err(
+            "E443: A window cannot become a tab page here; :tabe % opens the file in a tab".into(),
+        ),
     }
 }
 
@@ -1841,6 +1909,87 @@ pub(crate) fn resize_group(app: &mut App, width: bool, delta: isize, absolute: O
     app.split_tree = Some(root);
 }
 
+/// After `:q` or `<C-w>c` closed a file in a split, a window left showing
+/// only the directory listing it was opened from closes too: in Vim the
+/// listing was replaced by the file, so closing the file closes the window.
+fn close_leftover_directories(app: &mut App, group: usize) {
+    if app.active_group != group || !app.split_active() || app.tabs.is_empty() {
+        return;
+    }
+    if !app.tabs.iter().all(|t| t.kind == TabKind::Directory) {
+        return;
+    }
+    for _ in 0..app.tabs.len() {
+        if app.active_group != group || app.tabs.is_empty() {
+            break;
+        }
+        app.force_close_tab(app.active_tab);
+    }
+}
+
+/// Change the split layout around the active group, keeping its focus.
+fn rearrange(app: &mut App, f: impl FnOnce(&mut crate::app::SplitNode, usize)) {
+    let g = app.active_group;
+    let Some(mut tree) = app.split_tree.clone() else {
+        return;
+    };
+    f(&mut tree, g);
+    tree.simplify();
+    app.split_tree = Some(tree);
+}
+
+/// `<C-w>x`: swap with the next window in the same row or column (the
+/// previous one for the last); `<C-w>r`: rotate them all one place.
+fn swap_sibling(node: &mut crate::app::SplitNode, g: usize, rotate: bool) -> bool {
+    use crate::app::SplitNode;
+    let SplitNode::Split { children, .. } = node else {
+        return false;
+    };
+    if let Some(i) = children
+        .iter()
+        .position(|c| matches!(c, SplitNode::Leaf(x) if *x == g))
+    {
+        let n = children.len();
+        if n < 2 {
+            return true;
+        }
+        if rotate {
+            children.rotate_right(1);
+        } else {
+            let j = if i + 1 < n { i + 1 } else { i - 1 };
+            children.swap(i, j);
+        }
+        return true;
+    }
+    children.iter_mut().any(|c| swap_sibling(c, g, rotate))
+}
+
+/// `<C-w>H` `J` `K` `L`: the window takes the whole left, bottom, top or
+/// right edge.
+fn move_to_edge(
+    tree: &mut crate::app::SplitNode,
+    g: usize,
+    direction: crate::app::SplitDirection,
+    first: bool,
+) {
+    use crate::app::SplitNode;
+    if !tree.remove_leaf(g) {
+        return;
+    }
+    tree.simplify();
+    let rest = std::mem::replace(tree, SplitNode::Leaf(g));
+    let children = if first {
+        vec![SplitNode::Leaf(g), rest]
+    } else {
+        vec![rest, SplitNode::Leaf(g)]
+    };
+    *tree = SplitNode::Split {
+        direction,
+        children,
+        ratios: vec![0.5, 0.5],
+    };
+}
+
 /// `<C-w>=`: make every split equal.
 pub(crate) fn equalize_groups(app: &mut App) {
     fn eq(node: &mut crate::app::SplitNode) {
@@ -1886,6 +2035,26 @@ pub(crate) fn act_on(app: &mut App, act: Act) -> Result<(), String> {
                 None if current.is_none() => intended,
                 None => None,
             };
+            // A new file ends with a line break, as Vim writes it
+            // ('fixendofline'); the buffer looks the same.
+            let creates = match (&target, &current) {
+                (Some(t), _) => !t.exists(),
+                (None, None) => true,
+                (None, Some(_)) => false,
+            };
+            if creates && let Some(ed) = app.editor_mut() {
+                let len = ed.rope.len_chars();
+                if len > 0 && !super::ends_with_eol(&ed.rope) {
+                    let eol = super::exec::doc_eol(ed).to_string();
+                    let mut tx = super::exec::Tx::default();
+                    let (line, col) = (ed.cursor_line, ed.cursor_col);
+                    tx.edit(ed, len, len, &eol);
+                    tx.finish(ed);
+                    ed.vim_buf.trailing_empty = false;
+                    ed.cursor_line = line;
+                    ed.cursor_col = col;
+                }
+            }
             match target {
                 Some(target) => {
                     if current
@@ -1956,11 +2125,13 @@ pub(crate) fn act_on(app: &mut App, act: Act) -> Result<(), String> {
                 }
                 return quit_app(app, if force { 'd' } else { 'y' });
             }
+            let group = app.active_group;
             if force {
                 app.force_close_tab(app.active_tab);
             } else {
                 app.close_tab(app.active_tab);
             }
+            close_leftover_directories(app, group);
             Ok(())
         }
         Act::QuitAll { force } => {
@@ -2143,9 +2314,14 @@ pub(crate) fn act_on(app: &mut App, act: Act) -> Result<(), String> {
                 return Err("E92: Buffer not found".into());
             }
             if let Some(ed) = app.editor_mut() {
-                let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
-                let p = t.clamp_normal(pos);
-                ed.set_cursor(p.line, p.col);
+                if ed.bg_loading {
+                    // The text is still loading: place the cursor once it is in.
+                    ed.pending_cursor_position = Some((pos.line, pos.col));
+                } else {
+                    let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
+                    let p = t.clamp_normal(pos);
+                    ed.set_cursor(p.line, p.col);
+                }
             }
             Ok(())
         }

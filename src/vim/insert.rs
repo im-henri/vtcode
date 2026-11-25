@@ -429,9 +429,10 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
     if vim.abbrev_block > 0 {
         vim.abbrev_block -= 1;
     }
-    if vim.ins_complete.is_some() && !host.completion_visible() {
+    if vim.ins_complete.is_some() {
         if key.is_ctrl('n') || key.is_ctrl('p') {
             super::complete::cycle(vim, host, key.is_ctrl('n'));
+            dismiss_popups(host);
             return;
         }
         if key.is_ctrl('e') {
@@ -550,21 +551,17 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
                 true
             }
             K::Char('n') | K::Char('p') => {
-                if host.completion_visible() {
-                    host.native_key(Key::plain(if key.k == K::Char('n') {
-                        K::Down
-                    } else {
-                        K::Up
-                    }));
-                } else {
-                    // Vim's keyword completion from the buffer.
-                    super::complete::start(
-                        vim,
-                        host,
-                        super::complete::Kind::Keyword,
-                        key.k == K::Char('n'),
-                    );
-                }
+                // Vim's keyword completion from the buffer, also while the
+                // editor's suggestion popup is open (Tab and the arrows
+                // still choose from that; <C-x><C-o> asks the language server).
+                dismiss_popups(host);
+                super::complete::start(
+                    vim,
+                    host,
+                    super::complete::Kind::Keyword,
+                    key.k == K::Char('n'),
+                );
+                dismiss_popups(host);
                 true
             }
             K::Char('x') => {
@@ -623,6 +620,12 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
         }
     }
     native(vim, host, key);
+}
+
+fn dismiss_popups(host: &mut dyn Host) {
+    if host.completion_visible() {
+        let _ = host.act(super::Act::Command("vim_dismiss_popups".into()));
+    }
 }
 
 /// Keys after which Vim checks for an abbreviation: a non-keyword

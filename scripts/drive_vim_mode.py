@@ -929,7 +929,369 @@ def scenario_terminal_tab(e, d):
     ]
 
 
+# ---------------------------------------------------------------------------
+# Everyday file, window, buffer and tab work a long-time Vim user does
+# without thinking.
+
+def read(d, name):
+    try:
+        return (d / name).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def scenario_vsplit_file_edit_quit(e, d):
+    e.keys(":vsp b.txt" + CR)
+    shown = wait_for(e, lambda: screen_has(e, "second") and screen_has(e, "alpha"))
+    e.keys("A!" + ESC + ":w" + CR)
+    saved = wait_for(e, lambda: read(d, "b.txt") == "second!\n")
+    e.keys(":q" + CR)
+    gone = wait_for(e, lambda: not screen_has(e, "second"))
+    return [
+        (":vsp b.txt shows both files side by side", shown),
+        ("editing and :w in the new window save b.txt", saved),
+        (":q closes that window and keeps a.txt", gone and screen_has(e, "alpha") and e.alive()),
+        ("editing a.txt continues", resumes_editing(e, d, "1")),
+    ]
+
+
+def scenario_split_directory(e, d):
+    e.keys(":sp ." + CR)
+    listed = wait_for(e, lambda: screen_has(e, "b.txt") and screen_has(e, "sub/"))
+    # Find the file with / like in netrw, then open it with Enter.
+    e.keys("/b.tx")
+    e.settle(0.3)
+    prompt = screen_has(e, "/b.tx")
+    e.keys(CR)
+    e.keys(CR)
+    opened = wait_for(e, lambda: screen_has(e, "second"))
+    e.keys("A?" + ESC + ":w" + CR)
+    saved = wait_for(e, lambda: read(d, "b.txt") == "second?\n")
+    e.keys(ctrl("w") + "c")
+    e.settle(0.5)
+    return [
+        (":sp . lists the folder in a new window", listed),
+        ("/ shows what is typed", prompt),
+        ("/b.tx then Enter opens b.txt", opened),
+        ("the file edits and saves", saved),
+        ("Ctrl-W c closes it; a.txt edits again", resumes_editing(e, d, "2")),
+    ]
+
+
+def scenario_buffers(e, d):
+    results = []
+    e.keys(":e b.txt" + CR)
+    results.append((":e b.txt opens it", wait_for(e, lambda: screen_has(e, "second"))))
+    e.keys(ctrl("^"))
+    results.append(("Ctrl-^ goes back to a.txt", wait_for(e, lambda: screen_has(e, "alpha"))))
+    e.keys(":e #" + CR)
+    results.append((":e # goes to b.txt again", wait_for(e, lambda: screen_has(e, "second"))))
+    e.keys(":ls" + CR)
+    listed = wait_for(e, lambda: screen_has(e, '"a.txt"') or (screen_has(e, "a.txt") and screen_has(e, "b.txt")))
+    results.append((":ls lists both buffers", listed))
+    e.keys(CR)
+    e.keys(":b a" + CR)
+    results.append((":b a (partial name) switches", wait_for(e, lambda: screen_has(e, "alpha") and not screen_has(e, "second"))))
+    e.keys(":bn" + CR)
+    results.append((":bn goes to the next buffer", wait_for(e, lambda: screen_has(e, "second"))))
+    e.keys(":bp" + CR)
+    results.append((":bp goes back", wait_for(e, lambda: screen_has(e, "alpha"))))
+    e.keys(":bn" + CR + ":bd" + CR)
+    results.append((":bd closes the buffer", wait_for(e, lambda: not screen_has(e, "second") and screen_has(e, "alpha"))))
+    results.append(("editing continues", resumes_editing(e, d, "3")))
+    return results
+
+
+def scenario_tabs(e, d):
+    results = []
+    e.keys(":tabe b.txt" + CR)
+    results.append((":tabe b.txt opens a tab", wait_for(e, lambda: screen_has(e, "second"))))
+    e.keys("gt")
+    results.append(("gt goes to the next tab", wait_for(e, lambda: screen_has(e, "alpha"))))
+    e.keys("gT")
+    results.append(("gT goes back", wait_for(e, lambda: screen_has(e, "second"))))
+    e.keys("1gt")
+    results.append(("1gt goes to the first tab", wait_for(e, lambda: screen_has(e, "alpha"))))
+    e.keys("2gt:tabc" + CR)
+    results.append((":tabc closes the tab", wait_for(e, lambda: screen_has(e, "alpha") and not screen_has(e, "second"))))
+    results.append(("editing continues", resumes_editing(e, d, "4")))
+    return results
+
+
+def scenario_revert_and_quit_forms(e, d):
+    results = []
+    e.keys("dd:e!" + CR)
+    results.append((":e! throws away the change", wait_for(e, lambda: screen_has(e, "alpha"))))
+    e.keys("x:x" + CR)
+    results.append((":x writes and quits", wait_for(e, lambda: not e.alive(), 8) and read(d, "a.txt") == "lpha\ngamma\n"))
+    return results
+
+
+def scenario_zz_and_force_quit(e, d):
+    e.keys("xZZ")
+    zz = wait_for(e, lambda: not e.alive(), 8)
+    return [("ZZ writes and quits", zz and read(d, "a.txt") == "lpha\ngamma\n")]
+
+
+def scenario_force_quit(e, d):
+    e.keys("x:q!" + CR)
+    gone = wait_for(e, lambda: not e.alive(), 8)
+    return [(":q! quits without writing", gone and read(d, "a.txt") == "alpha\ngamma\n")]
+
+
+def scenario_window_commands(e, d):
+    results = []
+    e.keys(ctrl("w") + "v")
+    two = wait_for(e, lambda: sum(line.count("alpha") for line in e.lines()) >= 2)
+    results.append(("Ctrl-W v splits the window", two))
+    e.keys(ctrl("w") + "s")
+    three = wait_for(e, lambda: sum(line.count("alpha") for line in e.lines()) >= 3)
+    results.append(("Ctrl-W s splits again", three))
+    e.keys(ctrl("w") + "w")
+    e.keys(ctrl("w") + "w")
+    e.keys(ctrl("w") + "=")
+    e.keys(ctrl("w") + "o")
+    one = wait_for(e, lambda: sum(line.count("alpha") for line in e.lines()) == 1)
+    results.append(("Ctrl-W w moves, Ctrl-W o keeps only one", one))
+    results.append(("editing continues", resumes_editing(e, d, "5")))
+    return results
+
+
+def scenario_gf_and_jumps(e, d):
+    results = []
+    e.keys("Gw")
+    e.keys("gf")
+    results.append(("gf opens the file named under the cursor", wait_for(e, lambda: screen_has(e, "second"))))
+    e.keys(ctrl("o"))
+    results.append(("Ctrl-O jumps back to a.txt", wait_for(e, lambda: screen_has(e, "see b.txt"))))
+    e.keys("\t")
+    results.append(("Ctrl-I (Tab) jumps forward again", wait_for(e, lambda: screen_has(e, "second"))))
+    return results
+
+
+def scenario_file_marks(e, d):
+    e.keys("jmA:e b.txt" + CR)
+    wait_for(e, lambda: screen_has(e, "second"))
+    e.keys("'A")
+    back = wait_for(e, lambda: screen_has(e, "alpha"))
+    e.keys("A@" + ESC + ":w" + CR)
+    on_line = wait_for(e, lambda: read(d, "a.txt") == "alpha\ngamma@\n")
+    return [
+        ("'A returns to a.txt from another file", back),
+        ("on the line the mark was set", on_line),
+    ]
+
+
+def scenario_cmdline_completion(e, d):
+    e.keys(":e b")
+    e.keys("\t")
+    e.settle(0.3)
+    completed = ":e b.txt" in e.status()
+    e.keys(CR)
+    opened = wait_for(e, lambda: screen_has(e, "second"))
+    e.keys(":tabn")
+    e.keys("\t")
+    e.settle(0.3)
+    command = "tabnew" in e.status() or "tabnext" in e.status()
+    e.keys(ESC)
+    e.keys(":e su\t")
+    e.settle(0.3)
+    folder = "sub" in e.status()
+    e.keys(ESC)
+    return [
+        (":e b<Tab> completes b.txt", completed),
+        ("Enter opens it", opened),
+        (":tabn<Tab> completes a command", command),
+        (":e su<Tab> completes a folder", folder),
+    ]
+
+
+def scenario_read_and_write_all(e, d):
+    e.keys(":r b.txt" + CR)
+    read_in = wait_for(e, lambda: screen_has(e, "second"))
+    e.keys(":vsp b.txt" + CR)
+    wait_for(e, lambda: sum(line.count("second") for line in e.lines()) >= 2)
+    e.settle(0.5)
+    e.keys("A+" + ESC + ctrl("w") + "h" + "ggA+" + ESC + ":wa" + CR)
+    both = wait_for(e, lambda: read(d, "b.txt") == "second+\n" and read(d, "a.txt") == "alpha+\nsecond\ngamma\n")
+    e.keys("x" + ctrl("w") + "l" + "x:wqa" + CR)
+    quit = wait_for(e, lambda: not e.alive(), 8)
+    return [
+        (":r b.txt reads the file below the cursor", read_in),
+        (":wa writes both windows' files", both),
+        (":wqa writes everything and quits", quit and read(d, "b.txt") == "second\n"),
+    ]
+
+
+def scenario_filename_expansion_and_find(e, d):
+    e.keys(":e %:h/sub/inner.txt" + CR)
+    expanded = wait_for(e, lambda: screen_has(e, "inside"))
+    e.keys(":e #" + CR)
+    wait_for(e, lambda: screen_has(e, "alpha"))
+    e.keys(":find inner.txt" + CR)
+    found = wait_for(e, lambda: screen_has(e, "inside"))
+    return [
+        (":e %:h/sub/inner.txt opens it", expanded),
+        (":find inner.txt finds it under the folder", found),
+    ]
+
+
+def scenario_vimgrep_quickfix(e, d):
+    e.keys(":vimgrep /gamma/ **/*.txt" + CR)
+    first = wait_for(e, lambda: "(1 of 2)" in e.status())
+    e.keys(":cn" + CR)
+    second = wait_for(e, lambda: "(2 of 2)" in e.status() and screen_has(e, "two gamma"))
+    e.keys("A!" + ESC + ":w" + CR)
+    saved = wait_for(e, lambda: read(d, "b.txt") == "one\ntwo gamma!\n")
+    e.keys(":cp" + CR)
+    back = wait_for(e, lambda: "(1 of 2)" in e.status())
+    return [
+        (":vimgrep jumps to the first match", first),
+        (":cn goes to the next file's match", second),
+        ("editing there saves", saved),
+        (":cp goes back", back),
+    ]
+
+
+def scenario_numbers_and_search(e, d):
+    e.keys(":set nu rnu" + CR)
+    e.settle(0.4)
+    # Hybrid numbers: the cursor line shows 1, the next line its distance 1.
+    rows = [line for line in e.lines() if "alpha beta" in line or "gamma" in line]
+    relative = len(rows) == 2 and " 1  alpha beta" in rows[0] and " 1  gamma" in rows[1]
+    e.keys("j:set nornu" + CR)
+    e.settle(0.4)
+    absolute = any(" 2  gamma" in line for line in e.lines())
+    e.keys("gg*")
+    e.settle(0.3)
+    e.keys(":%s//X/g" + CR + ":noh" + CR + ":w" + CR)
+    replaced = wait_for(e, lambda: read(d, "a.txt") == "X beta X\ngamma\n")
+    return [
+        (":set nu rnu shows hybrid line numbers", relative),
+        (":set nornu shows absolute numbers", absolute),
+        ("* then :%s//X/g reuses the search", replaced),
+    ]
+
+
+def scenario_window_layout_moves(e, d):
+    e.keys(":sp b.txt" + CR)
+    wait_for(e, lambda: screen_has(e, "second"))
+    stacked = not any("alpha" in line and "second" in line for line in e.lines())
+    e.keys(ctrl("w") + "L")
+    e.settle(0.6)
+    side = any("alpha" in line and "second" in line for line in e.lines())
+    e.keys("A!" + ESC + ":w" + CR)
+    kept_focus = wait_for(e, lambda: read(d, "b.txt") == "second!\n")
+    e.keys(ctrl("w") + "K")
+    e.settle(0.6)
+    back = not any("alpha" in line and "second" in line for line in e.lines())
+    return [
+        (":sp stacks the windows", stacked),
+        ("Ctrl-W L moves the window to the right edge", side),
+        ("focus stays in the moved window", kept_focus),
+        ("Ctrl-W K stacks them again", back),
+    ]
+
+
+def scenario_netrw_keys(e, d):
+    e.keys(":e ." + CR)
+    wait_for(e, lambda: screen_has(e, "b.txt"))
+    e.keys("%")
+    e.settle(0.4)
+    prompt = e.status().startswith(":e")
+    e.keys("new.txt" + CR)
+    e.settle(0.8)
+    e.keys("ihi" + ESC + ":w" + CR)
+    made = wait_for(e, lambda: read(d, "new.txt") == "hi\n")
+    e.keys(":Vex" + CR)
+    vex = wait_for(e, lambda: screen_has(e, "parent folder") and screen_has(e, "hi"))
+    return [
+        ("% in a listing asks for a new file name", prompt),
+        ("the new file opens and saves", made),
+        (":Vex opens the folder in a split", vex),
+    ]
+
+
+def scenario_insert_literal_and_block(e, d):
+    e.keys("A" + ctrl("v") + "u00e9" + ESC)
+    e.keys("gg0" + ctrl("v") + "jI# " + ESC + ":w" + CR)
+    ok = wait_for(e, lambda: read(d, "a.txt") == "# alphaé\n# gamma\n")
+    return [("<C-v>u00e9 in Insert mode and <C-v>jI block insert", ok)]
+
+
+def scenario_macro_and_dot(e, d):
+    e.keys("qaA;" + ESC + "jq@a")
+    e.keys("gg>>j.:w" + CR)
+    ok = wait_for(e, lambda: read(d, "a.txt") == "    a;\n    b;\nc\n")
+    return [("qa...q @a, then >> and . on the next line", ok)]
+
+
+def scenario_completion_with_suggestions(e, d):
+    e.keys("ofo" + ctrl("n") + ESC + ":w" + CR)
+    ok = wait_for(e, lambda: read(d, "a.txt") == "foobar\nfoobar\n", 5)
+    return [("<C-n> completes from the buffer with suggestions on", ok)]
+
+
+def scenario_vnew_and_write(e, d):
+    e.keys(":vnew" + CR)
+    e.settle(0.6)
+    e.keys("ihello" + ESC + ":w c.txt" + CR)
+    wrote = wait_for(e, lambda: read(d, "c.txt") == "hello\n")
+    e.keys(":q" + CR)
+    e.settle(0.5)
+    return [
+        (":vnew, typing and :w c.txt write a new file", wrote),
+        (":q closes it and a.txt edits again", resumes_editing(e, d, "9")),
+    ]
+
+
+def scenario_bufdo_update(e, d):
+    e.keys(":e b.txt" + CR)
+    wait_for(e, lambda: screen_has(e, "second"))
+    e.keys(":bufdo %s/a/A/ge | update" + CR)
+    ok = wait_for(e, lambda: read(d, "a.txt") == "AlphA\ngAmmA\n" and read(d, "b.txt") == "second\n")
+    return [(":bufdo %s/a/A/ge | update changes and saves every buffer", ok)]
+
+
+def scenario_grep(e, d):
+    e.keys(":grep gamma" + CR)
+    first = wait_for(e, lambda: "of 2)" in e.status())
+    e.keys(":cn" + CR)
+    second = wait_for(e, lambda: "(2 of 2)" in e.status())
+    e.keys(":clist" + CR)
+    listed = wait_for(e, lambda: screen_has(e, "b.txt:2"))
+    e.keys(CR)
+    return [
+        (":grep finds the matches with no grep tool installed", first),
+        (":cn moves to the next", second),
+        (":clist lists them", listed),
+    ]
+
+
 SCENARIOS = [
+    ("window layout moves", scenario_window_layout_moves, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n"}),
+    ("netrw keys", scenario_netrw_keys, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n"}),
+    ("insert literal and block", scenario_insert_literal_and_block, {"a.txt": "alpha\ngamma\n"}),
+    ("macro and dot", scenario_macro_and_dot, {"a.txt": "a\nb\nc\n"}),
+    ("completion with suggestions", scenario_completion_with_suggestions, {"a.txt": "foobar\n", "@settings": {"quickSuggestions": True}}),
+    (":vnew", scenario_vnew_and_write, {"a.txt": "alpha\ngamma\n"}),
+    ("bufdo update", scenario_bufdo_update, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n"}),
+    (":grep", scenario_grep, {"a.txt": "alpha\ngamma\n", "b.txt": "one\ngamma two\n"}),
+    ("vsplit a file", scenario_vsplit_file_edit_quit, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n"}),
+    ("split a directory", scenario_split_directory, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n", "sub/inner.txt": "inside\n"}),
+    ("buffers", scenario_buffers, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n"}),
+    ("tabs", scenario_tabs, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n"}),
+    (":e! and :x", scenario_revert_and_quit_forms, {"a.txt": "alpha\ngamma\n"}),
+    ("ZZ", scenario_zz_and_force_quit, {"a.txt": "alpha\ngamma\n"}),
+    (":q!", scenario_force_quit, {"a.txt": "alpha\ngamma\n"}),
+    ("window commands", scenario_window_commands, {"a.txt": "alpha\ngamma\n"}),
+    ("gf and jumps", scenario_gf_and_jumps, {"a.txt": "alpha\nsee b.txt\n", "b.txt": "second\n"}),
+    ("file marks", scenario_file_marks, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n"}),
+    ("cmdline completion", scenario_cmdline_completion, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n", "sub/inner.txt": "inside\n"}),
+    (":r and :wa", scenario_read_and_write_all, {"a.txt": "alpha\ngamma\n", "b.txt": "second\n"}),
+    ("%:h and :find", scenario_filename_expansion_and_find, {"a.txt": "alpha\ngamma\n", "sub/inner.txt": "inside\n"}),
+    ("vimgrep quickfix", scenario_vimgrep_quickfix, {"a.txt": "alpha\ngamma\n", "b.txt": "one\ntwo gamma\n"}),
+    ("numbers and search", scenario_numbers_and_search, {"a.txt": "alpha beta alpha\ngamma\n"}),
     ("edit and :w", scenario_edit_and_write, {"a.txt": "alpha beta\ngamma\n"}),
     ("mode indicators", scenario_modes_in_status, {"a.txt": "alpha\ngamma\n"}),
     ("insert caret", scenario_insert_caret_is_bar, {"a.txt": "alpha\ngamma\n"}),
@@ -976,12 +1338,14 @@ def run(exe, name, fn, files, show):
         home.mkdir()
         local = home / pathlib.Path(exe).name
         shutil.copy2(exe, local)
-        (home / "settings.json").write_text(json.dumps({"vimMode": True, "quickSuggestions": False, "showMinimap": False}), encoding="utf-8")
+        settings = {"vimMode": True, "quickSuggestions": False, "showMinimap": False}
+        settings.update(files.get("@settings", {}))
+        (home / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
         (home / "vimrc").write_text(VIMRC, encoding="utf-8")
         work = tmp / "work"
         work.mkdir()
         for fname, body in files.items():
-            if fname == "@nofile":
+            if fname in ("@nofile", "@settings"):
                 continue
             if fname == "@extension":
                 fixture = pathlib.Path(__file__).resolve().parent.parent / "tests" / "fixtures" / body

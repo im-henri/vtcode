@@ -537,6 +537,8 @@ pub(crate) fn source(vim: &mut VimState, host: &mut dyn Host, text: &str) -> Vec
     run(vim, host, &lines, &mut errors, false);
     errors
         .into_iter()
+        // A colorscheme from a Vim plugin is not an error worth reporting.
+        .filter(|(_, e)| !e.starts_with("E185"))
         .map(|(n, e)| format!("line {n:>3}: {e}"))
         .collect()
 }

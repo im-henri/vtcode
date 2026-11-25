@@ -1940,6 +1940,31 @@ pub(crate) fn call(cx: &mut Ctx<'_, '_>, name: &str, args: Vec<Val>) -> R<Val> {
             }
             Val::Num(0)
         }
+        "winsaveview" => {
+            let mut d = BTreeMap::new();
+            if let Some(ed) = cx.editor() {
+                d.insert("lnum".into(), Val::Num(ed.cursor_line as i64 + 1));
+                d.insert("col".into(), Val::Num(ed.cursor_col as i64));
+                d.insert("topline".into(), Val::Num(ed.scroll_offset as i64 + 1));
+            }
+            Val::Dict(d)
+        }
+        "winrestview" => {
+            if let Val::Dict(d) = a0()
+                && let Some(ed) = cx.host.as_deref_mut().and_then(|h| h.ed())
+            {
+                let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
+                let line = d.get("lnum").map_or(1, Val::to_num).max(1) as usize - 1;
+                let col = d.get("col").map_or(0, Val::to_num).max(0) as usize;
+                let p = t.clamp_normal(Pos::new(line.min(t.last_line()), col));
+                ed.cursor_line = p.line;
+                ed.cursor_col = p.col;
+                if let Some(top) = d.get("topline") {
+                    ed.scroll_offset = (top.to_num().max(1) as usize - 1).min(t.last_line());
+                }
+            }
+            Val::Num(0)
+        }
         "winheight" => Val::Num(cx.editor().map_or(0, |e| e.viewport_height as i64)),
         "winwidth" => Val::Num(cx.editor().map_or(0, |e| e.viewport_width as i64)),
         "winline" => Val::Num(cx.editor().map_or(0, |e| {
@@ -1960,6 +1985,10 @@ pub(crate) fn call(cx: &mut Ctx<'_, '_>, name: &str, args: Vec<Val>) -> R<Val> {
                 && let Some(r) = super::script::call(cx.vim, host, name, args, None)
             {
                 return r;
+            }
+            // Plugin autoload functions (`plug#begin()`): no plugins run here.
+            if name.contains('#') {
+                return Ok(Val::Num(0));
             }
             return Err(format!("E117: Unknown function: {name}"));
         }

@@ -647,6 +647,35 @@ pub(crate) fn eval_motion(
         Motion::Mark { c, line } => {
             let p = match get_mark(vim, host, c) {
                 Ok(p) => p,
+                // A file mark in another file: go there.
+                Err(e) if e.starts_with('\u{0}') => {
+                    let Some(j) = vim.global_marks.get(&c).cloned() else {
+                        return None;
+                    };
+                    if let Some(ed) = host.ed() {
+                        push_jump(vim, ed);
+                    }
+                    if let Err(e) = host.act(Act::JumpTo {
+                        nav_id: j.nav_id,
+                        path: j.path.clone(),
+                        pos: j.pos,
+                    }) {
+                        vim.set_error(e);
+                        return None;
+                    }
+                    if let Some(ed) = host.ed() {
+                        let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
+                        let p = t.clamp_normal(j.pos);
+                        let p = if line {
+                            Pos::new(p.line, t.first_nonblank(p.line))
+                        } else {
+                            p
+                        };
+                        set_cursor(ed, p);
+                        update_curswant(vim, ed);
+                    }
+                    return None;
+                }
                 Err(e) => {
                     vim.set_error(e);
                     return None;

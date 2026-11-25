@@ -848,9 +848,13 @@ fn a_directory_split_browses_and_opens_files_in_its_own_pane() {
     });
     assert_eq!(text(&app), "opened here");
     assert_ne!(app.active_group, 0);
-    keys(&mut app, ":q<CR>-");
-    assert_eq!(super::directory::current(&app).unwrap().path, root_path);
-    keys(&mut app, "<C-w>c");
+    // As with netrw, the listing is the alternate file of what it opened.
+    keys(&mut app, "<C-^>");
+    assert_eq!(super::directory::current(&app).unwrap().path, folder);
+    keys(&mut app, "<CR>");
+    assert_eq!(text(&app), "opened here");
+    // The file replaced the listing in that window: :q closes the window.
+    keys(&mut app, ":q<CR>");
     assert!(!app.split_active());
     assert_eq!(text(&app), "original");
 }
@@ -1257,4 +1261,77 @@ fn insert_completion_mappings_and_abbreviations_work_in_the_workbench() {
     );
     assert_eq!(app.vim.mode, Mode::Normal);
     assert_eq!(text(&app), "foobar\nfoobar the \n");
+}
+
+#[test]
+fn a_veteran_vimrc_loads_without_complaints() {
+    let mut app = vim_app("hello   \nworld\n");
+    let rc = include_str!("testdata/veteran_vimrc.vim");
+    let errors = super::app_host::with_vim(&mut app, |vim, host| super::ex::source(vim, host, rc));
+    assert!(errors.is_empty(), "vimrc errors:\n{}", errors.join("\n"));
+    // Its mappings, abbreviations and commands work.
+    keys(&mut app, ":Trim<CR>");
+    assert_eq!(text(&app), "hello\nworld\n");
+    keys(&mut app, ",n");
+    keys(&mut app, "A teh jk");
+    assert_eq!(app.vim.mode, Mode::Normal);
+    assert_eq!(text(&app), "hello the \nworld\n");
+}
+
+#[test]
+fn bufdo_and_windo_run_in_every_buffer_and_window() {
+    let mut app = vim_app("a1\n");
+    let root = tempfile::tempdir().unwrap();
+    let b = root.path().join("b.txt");
+    std::fs::write(&b, "a2\n").unwrap();
+    keys(&mut app, &format!(":e {}<CR>", b.display()));
+    app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+        app.editor()
+            .is_some_and(|ed| ed.file_path.as_deref() == Some(b.as_path()) && !ed.bg_loading)
+    });
+    keys(&mut app, ":bufdo s/a/X/e | s/$/!/<CR>");
+    let all: Vec<String> = app.tabs.iter().map(|t| t.editor.rope.to_string()).collect();
+    assert_eq!(all, ["X1!\n", "X2!\n"], "{:?}", app.vim.message);
+    keys(&mut app, ":vsplit<CR>:windo s/!/?/<CR>");
+    assert_eq!(text(&app), "X2?\n");
+}
+
+#[test]
+fn windows_move_to_an_edge_and_exchange() {
+    use crate::app::{SplitDirection, SplitNode};
+    let mut app = vim_app("one\n");
+    keys(&mut app, ":split<CR>");
+    let stacked = |app: &App| {
+        matches!(
+            app.split_tree.as_ref(),
+            Some(SplitNode::Split {
+                direction: SplitDirection::Vertical,
+                ..
+            })
+        )
+    };
+    assert!(stacked(&app));
+    let active = app.active_group;
+    keys(&mut app, "<C-w>L");
+    match app.split_tree.as_ref().unwrap() {
+        SplitNode::Split {
+            direction,
+            children,
+            ..
+        } => {
+            assert_eq!(*direction, SplitDirection::Horizontal);
+            assert!(matches!(children.last(), Some(SplitNode::Leaf(g)) if *g == active));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(app.active_group, active);
+    keys(&mut app, "<C-w>x");
+    match app.split_tree.as_ref().unwrap() {
+        SplitNode::Split { children, .. } => {
+            assert!(matches!(children.first(), Some(SplitNode::Leaf(g)) if *g == active));
+        }
+        other => panic!("{other:?}"),
+    }
+    keys(&mut app, "<C-w>K");
+    assert!(stacked(&app));
 }
