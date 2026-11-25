@@ -1351,7 +1351,55 @@ def scenario_cmdline_window(e, d):
     ]
 
 
+def scenario_undo_branches(e, d):
+    e.keys("ciwtwo" + ESC + "uciwthree" + ESC)
+    e.keys("g-:w" + CR)
+    branch = wait_for(e, lambda: read(d, "a.txt") == "two\n")
+    e.keys("g+:w" + CR)
+    back = wait_for(e, lambda: read(d, "a.txt") == "three\n")
+    e.keys(":earlier 2" + CR + ":w" + CR)
+    first = wait_for(e, lambda: read(d, "a.txt") == "one\n")
+    return [
+        ("g- reaches the change undone before a new one", branch),
+        ("g+ comes back", back),
+        (":earlier 2 goes two states back in time", first),
+    ]
+
+
+def scenario_quickfix_window(e, d):
+    e.keys(":vimgrep /needle/ *.txt" + CR)
+    wait_for(e, lambda: "(1 of 2)" in e.status())
+    e.keys(":copen" + CR)
+    listed = wait_for(e, lambda: screen_has(e, "b.txt|1 col 1| needle two"))
+    e.keys("j" + CR)
+    opened = wait_for(e, lambda: "(2 of 2)" in e.status())
+    still = screen_has(e, "a.txt|2 col 1| needle one")
+    e.keys("A!" + ESC + ":w" + CR)
+    edited = wait_for(e, lambda: read(d, "b.txt") == "needle two!\n")
+    e.keys(":cclose" + CR)
+    closed = wait_for(e, lambda: not screen_has(e, "col 1| needle"))
+    return [
+        (":copen shows the list in a window", listed),
+        ("j, Enter open the entry under the cursor", opened),
+        ("the list stays open", still),
+        ("editing happens in the window above", edited),
+        (":cclose closes the list", closed),
+    ]
+
+
+def scenario_completion_other_buffer(e, d):
+    e.keys(":e b.txt" + CR)
+    wait_for(e, lambda: screen_has(e, "elsewhere_word"))
+    e.keys(":b a" + CR)
+    e.keys("oelse" + ctrl("n") + ESC + ":w" + CR)
+    ok = wait_for(e, lambda: read(d, "a.txt") == "alpha\nelsewhere_word\ngamma\n")
+    return [("<C-n> completes a word from another open buffer", ok)]
+
+
 SCENARIOS = [
+    ("undo branches", scenario_undo_branches, {"a.txt": "one\n"}),
+    ("quickfix window", scenario_quickfix_window, {"a.txt": "x\nneedle one\n", "b.txt": "needle two\n"}),
+    ("completion other buffer", scenario_completion_other_buffer, {"a.txt": "alpha\ngamma\n", "b.txt": "elsewhere_word\n"}),
     ("cmdline window", scenario_cmdline_window, {"a.txt": "alpha\ngamma\n"}),
     (":make quickfix", scenario_make_quickfix, {"a.txt": "alpha\ngamma\n", "errors.log": "a.txt:2:3: error: boom\nb.txt:1:1: warning: bang\n", "b.txt": "x\n"}),
     ("filters and shell", scenario_filters_and_shell, {"a.txt": "c\nb\na\n"}),

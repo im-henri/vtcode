@@ -1294,6 +1294,23 @@ pub(crate) fn simple(
             record_change(vim, cmd, None, None);
             put(vim, host, cmd.reg, before, cursor_after, indent, count);
         }
+        Simple::UndoTime(newer) => {
+            if read_only(vim, host) {
+                return;
+            }
+            let Some(ed) = host.ed() else {
+                return;
+            };
+            if !super::undo_tree::travel(ed, newer, count) {
+                vim.set_message(if newer {
+                    "Already at newest change"
+                } else {
+                    "Already at oldest change"
+                });
+            }
+            clamp_normal(ed);
+            update_curswant(vim, ed);
+        }
         Simple::Undo => {
             let Some(ed) = host.ed() else {
                 return;

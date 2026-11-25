@@ -1354,3 +1354,50 @@ fn the_command_line_window_edits_and_runs_history() {
     keys(&mut app, "AZ/<Esc><CR>");
     assert_eq!(text(&app), "aZc\n");
 }
+
+#[test]
+fn the_quickfix_window_lists_and_opens_entries() {
+    let mut app = vim_app("");
+    let root = tempfile::tempdir().unwrap();
+    let root_path = crate::portable::filesystem_spelling(&root.path().canonicalize().unwrap());
+    std::fs::write(root_path.join("a.txt"), "x\nneedle one\n").unwrap();
+    std::fs::write(root_path.join("b.txt"), "needle two\n").unwrap();
+    app.explorer.root = root_path.clone();
+    let wait = |app: &mut App, name: &str| {
+        let want = root_path.join(name);
+        app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+            app.editor()
+                .is_some_and(|ed| ed.file_path.as_deref() == Some(want.as_path()) && !ed.bg_loading)
+        });
+    };
+    keys(&mut app, ":vimgrep /needle/ *.txt<CR>");
+    wait(&mut app, "a.txt");
+    keys(&mut app, ":copen<CR>");
+    assert!(app.split_active());
+    assert_eq!(
+        text(&app),
+        "a.txt|2 col 1| needle one\nb.txt|1 col 1| needle two"
+    );
+    keys(&mut app, "j<CR>");
+    wait(&mut app, "b.txt");
+    assert_eq!(text(&app), "needle two\n");
+    assert!(app.split_active(), "the list stays open");
+    keys(&mut app, ":cclose<CR>");
+    assert!(!app.split_active());
+    assert_eq!(text(&app), "needle two\n");
+}
+
+#[test]
+fn keyword_completion_also_uses_other_open_buffers() {
+    let mut app = vim_app("first\n");
+    let root = tempfile::tempdir().unwrap();
+    let other = root.path().join("other.txt");
+    std::fs::write(&other, "elsewhere_word\n").unwrap();
+    keys(&mut app, &format!(":e {}<CR>", other.display()));
+    app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+        app.editor()
+            .is_some_and(|ed| ed.file_path.as_deref() == Some(other.as_path()) && !ed.bg_loading)
+    });
+    keys(&mut app, ":b 1<CR>oelse<C-n><Esc>");
+    assert_eq!(text(&app), "first\nelsewhere_word\n");
+}

@@ -905,8 +905,9 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
             vim.set_lines(lines);
             Ok(())
         }
-        "copen" | "cwindow" | "clist" if !vim.qf.is_empty() => {
-            qf_list(vim, full == "clist" && bang);
+        "copen" | "cwindow" if !vim.qf.is_empty() => qf_window_open(vim, host),
+        "clist" if !vim.qf.is_empty() => {
+            qf_list(vim, bang);
             Ok(())
         }
         "cnext" | "cprevious" | "cNext" if !vim.qf.is_empty() => {
@@ -923,6 +924,9 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
         }
         "cclose" if !vim.qf.is_empty() => {
             vim.message = None;
+            if qf_window_close(vim, host)? {
+                return Ok(());
+            }
             host.act(Act::Quickfix(super::Quickfix::Close))
         }
         "copen" | "cwindow" | "clist" => host.act(Act::Quickfix(super::Quickfix::Open)),
@@ -3480,7 +3484,7 @@ fn run_user_command(
     Some(run(vim, host, &line))
 }
 
-fn earlier_later(vim: &mut VimState, host: &mut dyn Host, earlier: bool, arg: &str) -> R<()> {
+fn earlier_later(_vim: &mut VimState, host: &mut dyn Host, earlier: bool, arg: &str) -> R<()> {
     let arg = arg.trim();
     let digits: String = arg.chars().take_while(char::is_ascii_digit).collect();
     let n: u64 = if digits.is_empty() {
@@ -3496,11 +3500,12 @@ fn earlier_later(vim: &mut VimState, host: &mut dyn Host, earlier: bool, arg: &s
     };
     match unit {
         "" => {
-            let keys: Vec<Key> = std::iter::once(n.to_string())
-                .flat_map(|s| s.chars().map(Key::ch).collect::<Vec<_>>())
-                .chain(std::iter::once(undo_key))
-                .collect();
-            vim.feed_keys(host, &keys, false, false);
+            // A count moves through text states in time, as g- and g+.
+            let _ = undo_key;
+            if let Some(ed) = host.ed() {
+                super::undo_tree::travel(ed, !earlier, n as usize);
+                exec::clamp_normal(ed);
+            }
             Ok(())
         }
         "f" => {
@@ -3695,6 +3700,141 @@ fn qf_list(vim: &mut VimState, _all: bool) {
         })
         .collect();
     vim.set_lines(lines);
+}
+
+/// The quickfix window's lines, as Vim shows them.
+fn qf_lines(vim: &VimState, host: &dyn Host) -> Vec<String> {
+    let cwd = host.cwd().unwrap_or_default();
+    vim.qf
+        .iter()
+        .map(|q| {
+            let name = q
+                .path
+                .strip_prefix(&cwd)
+                .unwrap_or(&q.path)
+                .display()
+                .to_string()
+                .replace('\\', "/");
+            format!("{name}|{} col {}| {}", q.line + 1, q.col + 1, q.text.trim())
+        })
+        .collect()
+}
+
+/// `:copen`: the list in a window at the bottom (reused when open). Move
+/// with any Vim motion or search; Enter opens the entry under the cursor in
+/// the window above; `:cclose` closes it.
+fn qf_window_open(vim: &mut VimState, host: &mut dyn Host) -> R<()> {
+    let lines = qf_lines(vim, host);
+    let reuse = vim.qf_window.is_some_and(|id| {
+        host.act(Act::JumpTo {
+            nav_id: id,
+            path: None,
+            pos: Pos::default(),
+        })
+        .is_ok()
+            && host.ed_ref().is_some_and(|ed| ed.vim_buf.qf_window)
+    });
+    if !reuse {
+        host.act(Act::Open {
+            target: OpenTarget::Empty,
+            split: Some(TabDropZone::Bottom),
+        })?;
+        let _ = host.act(Act::Resize {
+            width: false,
+            delta: 0,
+            absolute: Some(10),
+        });
+    }
+    let idx = vim.qf_idx;
+    let Some(ed) = host.ed() else {
+        return Ok(());
+    };
+    ed.read_only = false;
+    let mut tx = exec::Tx::default();
+    let len = ed.rope.len_chars();
+    tx.edit(ed, 0, len, &lines.join("\n"));
+    tx.finish(ed);
+    ed.vim_buf.trailing_empty = false;
+    ed.vim_buf.qf_window = true;
+    ed.read_only = true;
+    ed.modified = false;
+    ed.suggested_file_name = Some("[Quickfix List]".into());
+    let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
+    set_cursor(ed, Pos::new(idx.min(t.last_line()), 0));
+    update_curswant(vim, ed);
+    vim.qf_window = Some(ed.navigation_id);
+    vim.set_message(format!(
+        "Quickfix List: {} entries, Enter opens one",
+        vim.qf.len()
+    ));
+    Ok(())
+}
+
+/// `:cclose`: close the quickfix window if it is open.
+fn qf_window_close(vim: &mut VimState, host: &mut dyn Host) -> R<bool> {
+    let Some(id) = vim.qf_window.take() else {
+        return Ok(false);
+    };
+    let here = host.ed_ref().map(|ed| ed.navigation_id);
+    let found = host
+        .act(Act::JumpTo {
+            nav_id: id,
+            path: None,
+            pos: Pos::default(),
+        })
+        .is_ok()
+        && host.ed_ref().is_some_and(|ed| ed.vim_buf.qf_window);
+    if !found {
+        return Ok(false);
+    }
+    if let Some(ed) = host.ed() {
+        ed.modified = false;
+    }
+    host.act(Act::Quit { force: true })?;
+    if let Some(here) = here.filter(|h| *h != id) {
+        let _ = host.act(Act::JumpTo {
+            nav_id: here,
+            path: None,
+            pos: host
+                .ed_ref()
+                .map_or(Pos::default(), |ed| Pos::new(ed.cursor_line, ed.cursor_col)),
+        });
+    }
+    Ok(true)
+}
+
+/// Enter in the quickfix window: open that entry in the window above.
+pub(crate) fn qf_window_enter(vim: &mut VimState, host: &mut dyn Host) -> bool {
+    let Some(line) = host
+        .ed_ref()
+        .filter(|ed| ed.vim_buf.qf_window)
+        .map(|ed| ed.cursor_line)
+    else {
+        return false;
+    };
+    if line >= vim.qf.len() {
+        return true;
+    }
+    let in_list = |host: &dyn Host| host.ed_ref().is_none_or(|ed| ed.vim_buf.qf_window);
+    if host
+        .act(Act::Window(super::parse::Window::Last, 1))
+        .is_err()
+        || in_list(host)
+    {
+        let _ = host.act(Act::Window(super::parse::Window::Up, 1));
+    }
+    // Without a previous window or one above: the first that is not the list.
+    if in_list(host) {
+        for i in 0..host.window_count() {
+            if host.focus_window(i) && !in_list(host) {
+                break;
+            }
+        }
+    }
+    if let Err(e) = qf_jump(vim, host, QfMove::Nth(line + 1)) {
+        vim.set_error(e);
+    }
+    true
 }
 
 fn qf_do(vim: &mut VimState, host: &mut dyn Host, per_file: bool, cmd: &str) -> R<()> {

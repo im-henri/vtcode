@@ -120,6 +120,53 @@ fn keyword_items(vim: &VimState, ed: &Editor, prefix: &str, start: Pos) -> Vec<S
         .collect()
 }
 
+/// Words from the other open buffers, after the current one's (Vim's
+/// 'complete' default scans windows and buffers too).
+fn other_items(
+    vim: &VimState,
+    texts: &[ropey::Rope],
+    prefix: &str,
+    seen: &[String],
+) -> Vec<String> {
+    let kw = &vim.opts.iskeyword;
+    let ic = vim.opts.ignorecase;
+    let lower = prefix.to_lowercase();
+    let mut have: std::collections::HashSet<String> = seen.iter().cloned().collect();
+    let mut out = Vec::new();
+    for rope in texts {
+        for line in rope.lines() {
+            let chars: Vec<char> = line.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                if !kw.is_word(chars[i]) {
+                    i += 1;
+                    continue;
+                }
+                let s = i;
+                while i < chars.len() && kw.is_word(chars[i]) {
+                    i += 1;
+                }
+                if i - s <= prefix.chars().count() {
+                    continue;
+                }
+                let w: String = chars[s..i].iter().collect();
+                let ok = if ic {
+                    w.to_lowercase().starts_with(&lower)
+                } else {
+                    w.starts_with(prefix)
+                };
+                if ok && have.insert(w.clone()) {
+                    out.push(w);
+                }
+            }
+            if out.len() > 20_000 {
+                return out;
+            }
+        }
+    }
+    out
+}
+
 fn line_items(ed: &Editor, prefix: &str, line: usize) -> Vec<String> {
     let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
     let mut seen = std::collections::HashSet::new();
@@ -199,7 +246,12 @@ pub(crate) fn start(vim: &mut VimState, host: &mut dyn Host, kind: Kind, forward
     }
     let original: String = chars[s..p.col.min(chars.len())].iter().collect();
     let items = match kind {
-        Kind::Keyword => keyword_items(vim, ed, &original, Pos::new(p.line, s)),
+        Kind::Keyword => {
+            let mut items = keyword_items(vim, ed, &original, Pos::new(p.line, s));
+            let others = host.other_texts();
+            items.extend(other_items(vim, &others, &original, &items));
+            items
+        }
         Kind::Line => line_items(ed, &original, p.line),
         Kind::File => file_items(host, &original),
     };

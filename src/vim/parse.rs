@@ -282,6 +282,8 @@ pub(crate) enum Simple {
     Increment(bool),
     /// Visual `g<C-a>`/`g<C-x>`: each line by one more than the last.
     IncrementSeq(bool),
+    /// `g-` / `g+`: the previous or next text state in time.
+    UndoTime(bool),
     Scroll(Scroll),
     Fold(FoldCmd),
     NextTab,
@@ -944,8 +946,8 @@ fn simple(p: &mut P<'_>, ctx: Ctx) -> R<Simple> {
                 Some(',') => ChangeNewer,
                 Some('&') => RepeatSubAll,
                 // Linear undo history: older/newer text state is undo/redo.
-                Some('-') => Undo,
-                Some('+') => Redo,
+                Some('-') => UndoTime(false),
+                Some('+') => UndoTime(true),
                 Some('.') => CodeAction,
                 _ => return R::Bad,
             }

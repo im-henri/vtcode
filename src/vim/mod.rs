@@ -35,6 +35,7 @@ mod tests;
 pub(crate) mod text;
 pub(crate) mod textobj;
 pub(crate) mod ui;
+pub(crate) mod undo_tree;
 
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
@@ -96,6 +97,10 @@ pub(crate) struct BufState {
     pub(crate) undo_times: std::collections::HashMap<u64, Instant>,
     /// This buffer is the command-line window for `:`, `/` or `?`.
     pub(crate) cmdwin: Option<char>,
+    /// Text states in time order, for `g-` and `g+`.
+    pub(crate) history: undo_tree::History,
+    /// This buffer is the quickfix window.
+    pub(crate) qf_window: bool,
 }
 
 /// Keep [`BufState::trailing_empty`] in step with an edit: a buffer whose
@@ -431,6 +436,10 @@ pub(crate) trait Host {
     fn commands(&self) -> Vec<String> {
         Vec::new()
     }
+    /// The text of the other open buffers, for `<C-n>` completion.
+    fn other_texts(&self) -> Vec<ropey::Rope> {
+        Vec::new()
+    }
     /// Editor windows on screen, in order, for `:windo`.
     fn window_count(&self) -> usize {
         1
@@ -579,6 +588,8 @@ pub(crate) struct VimState {
     /// The quickfix list (`:grep`, `:vimgrep`, `:make`) and its position.
     pub(crate) qf: Vec<ex::QfItem>,
     pub(crate) qf_idx: usize,
+    /// The quickfix window's view, when open.
+    pub(crate) qf_window: Option<u64>,
     /// Options kept only for queries (`grepprg`, `makeprg`, `path`...).
     pub(crate) other_opts: BTreeMap<String, String>,
     /// Insert-mode `<C-n>`/`<C-p>` completion in progress.
@@ -647,6 +658,7 @@ impl Default for VimState {
             user_commands: BTreeMap::new(),
             qf: Vec::new(),
             qf_idx: 0,
+            qf_window: None,
             other_opts: BTreeMap::new(),
             ins_complete: None,
             abbrev_block: 0,
@@ -900,8 +912,13 @@ impl VimState {
                 self.replaying += 1;
             }
             self.process(host, t.key);
+            let typing = self.is_insert();
             if let Some(ed) = host.ed() {
                 stamp_undo(ed);
+                // A text state is a whole change: not each typed key.
+                if !typing {
+                    undo_tree::record(ed);
+                }
             }
             if t.from_macro {
                 self.replaying -= 1;
@@ -1042,7 +1059,7 @@ impl VimState {
         if key == Key::ENTER
             && self.pending.is_empty()
             && !self.is_visual()
-            && cmdline::window_enter(self, host)
+            && (cmdline::window_enter(self, host) || ex::qf_window_enter(self, host))
         {
             return;
         }

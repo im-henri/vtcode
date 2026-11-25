@@ -235,6 +235,22 @@ impl Host for AppHost<'_> {
         palette_ids_of(self.app)
     }
 
+    fn other_texts(&self) -> Vec<ropey::Rope> {
+        let me = self.app.editor().map(|e| e.navigation_id);
+        let mut seen = std::collections::HashSet::new();
+        self.app
+            .tabs
+            .iter()
+            .chain(self.app.groups.iter().flat_map(|g| g.tabs.iter()))
+            .map(|t| &t.editor)
+            .filter(|e| Some(e.navigation_id) != me && !e.bg_loading)
+            .filter(|e| e.rope.len_chars() < 2_000_000)
+            .filter(|e| seen.insert(e.save_identity))
+            .take(30)
+            .map(|e| e.rope.clone())
+            .collect()
+    }
+
     fn window_count(&self) -> usize {
         self.app.split_tree.as_ref().map_or(1, |t| t.leaves().len())
     }
