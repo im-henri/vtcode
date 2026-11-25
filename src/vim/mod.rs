@@ -13,6 +13,7 @@ mod app_tests;
 mod app_views_tests;
 pub(crate) mod cmdline;
 pub(crate) mod directory;
+pub(crate) mod eval;
 pub(crate) mod ex;
 pub(crate) mod exec;
 pub(crate) mod feedback;
@@ -26,6 +27,7 @@ mod parity_tests;
 pub(crate) mod parse;
 mod paths;
 pub(crate) mod register;
+pub(crate) mod script;
 pub(crate) mod search;
 #[cfg(test)]
 mod tests;
@@ -89,6 +91,8 @@ pub(crate) struct BufState {
     pub(crate) trailing_empty: bool,
     /// All lines were deleted (Vim's ML_EMPTY): `dd` has nothing to delete.
     pub(crate) ml_empty: bool,
+    /// When each undo step was first seen, for `:earlier 10m`.
+    pub(crate) undo_times: std::collections::HashMap<u64, Instant>,
 }
 
 /// Keep [`BufState::trailing_empty`] in step with an edit: a buffer whose
@@ -323,6 +327,13 @@ pub(crate) enum Act {
         value: String,
     },
     Cd(Option<String>),
+    /// `:resize`, `<C-w>+`, `<C-w><`...: change the current window's
+    /// height (or width) by `delta` rows, or set it to `absolute`.
+    Resize {
+        width: bool,
+        delta: isize,
+        absolute: Option<usize>,
+    },
     /// Highlight a yanked range briefly.
     YankFlash {
         start: Pos,
@@ -530,6 +541,28 @@ pub(crate) struct VimState {
     pub(crate) last_offset: cmdline::Offset,
     /// The 'scroll' value set by a count to `<C-d>`/`<C-u>`.
     pub(crate) scroll_lines: usize,
+    /// Vim script variables (`:let g:x = ...`).
+    pub(crate) vars: BTreeMap<String, eval::Val>,
+    /// `v:errmsg`.
+    pub(crate) last_error: String,
+    /// `v:shell_error`.
+    pub(crate) shell_error: i64,
+    /// The last expression typed at the `=` prompt, and its history.
+    pub(crate) last_expr: String,
+    pub(crate) history_expr: Vec<String>,
+    /// User functions (`:function`).
+    pub(crate) funcs: BTreeMap<String, script::UserFn>,
+    /// Function call frames: `a:` arguments and `l:` locals.
+    pub(crate) frames: Vec<BTreeMap<String, eval::Val>>,
+    /// `:abbreviate` entries.
+    pub(crate) abbrevs: Vec<ex::Abbrev>,
+    /// `:command` definitions.
+    pub(crate) user_commands: BTreeMap<String, ex::UserCommand>,
+    /// The quickfix list (`:grep`, `:vimgrep`, `:make`) and its position.
+    pub(crate) qf: Vec<ex::QfItem>,
+    pub(crate) qf_idx: usize,
+    /// Options kept only for queries (`grepprg`, `makeprg`, `path`...).
+    pub(crate) other_opts: BTreeMap<String, String>,
 }
 
 impl Default for VimState {
@@ -581,6 +614,18 @@ impl Default for VimState {
             incsearch: None,
             last_offset: cmdline::Offset::None,
             scroll_lines: 0,
+            vars: BTreeMap::new(),
+            last_error: String::new(),
+            shell_error: 0,
+            last_expr: String::new(),
+            history_expr: Vec::new(),
+            funcs: BTreeMap::new(),
+            frames: Vec::new(),
+            abbrevs: Vec::new(),
+            user_commands: BTreeMap::new(),
+            qf: Vec::new(),
+            qf_idx: 0,
+            other_opts: BTreeMap::new(),
         }
     }
 }
@@ -612,6 +657,7 @@ impl VimState {
             self.set_message(info.to_string());
             return;
         }
+        self.last_error = text.clone();
         self.message = Some(Message {
             text,
             error: true,
@@ -908,6 +954,19 @@ impl VimState {
             self.pending.clear();
             host.native_key(key);
             exec::after_native(self, host);
+            return;
+        }
+        // `"=`: read an expression; the command after it uses the value.
+        if key == Key::ch('=')
+            && self.pending.last() == Some(&Key::ch('"'))
+            && self.pending[..self.pending.len() - 1]
+                .iter()
+                .all(|k| k.char().is_some_and(|c| c.is_ascii_digit()))
+        {
+            let mut pending = std::mem::take(&mut self.pending);
+            pending.push(key);
+            let mode = self.mode;
+            cmdline::open_expr(self, host, cmdline::ExprTarget::Register(pending, mode));
             return;
         }
         self.pending.push(key);

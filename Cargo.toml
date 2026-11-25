@@ -14,7 +14,7 @@ irosashi = "=0.3.0"
 # Validate installed patterns with the tokenizer's own Oniguruma engine.
 ferroni = "=1.10.0"
 ropey = { version = "1", default-features = false, features = ["simd", "cr_lines"] }
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 walkdir = "2"
 unicode-width = "0.2"
 unicode-segmentation = "1"

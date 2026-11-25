@@ -33,6 +33,19 @@ pub(crate) struct CmdLine {
     /// The match previewed by 'incsearch': (start, end) char offsets.
     pub(crate) preview: Option<(usize, usize)>,
     pub(crate) resume_insert: Option<super::insert::Resume>,
+    /// Where an `=` (expression register) line sends its value.
+    pub(crate) expr_target: Option<ExprTarget>,
+}
+
+/// The expression register's destination.
+#[derive(Clone, Debug)]
+pub(crate) enum ExprTarget {
+    /// `<C-r>=` in Insert (or Replace) mode.
+    Insert(Mode),
+    /// `<C-r>=` on another command line, which is restored.
+    Cmdline(Box<CmdLine>, Option<Mode>),
+    /// `"=` in Normal or Visual mode: the keys typed before it resume.
+    Register(Vec<Key>, Mode),
 }
 
 impl CmdLine {
@@ -76,6 +89,7 @@ pub(crate) fn open(
         pending_completion: None,
         preview: None,
         resume_insert: vim.insert_oneshot.take(),
+        expr_target: None,
     });
     vim.cmdline_visual = if vim.is_visual() {
         Some(vim.mode)
@@ -99,7 +113,68 @@ fn close(vim: &mut VimState, host: &mut dyn Host) -> Option<CmdLine> {
     Some(c)
 }
 
+/// Open the `=` prompt for the expression register.
+pub(crate) fn open_expr(vim: &mut VimState, host: &mut dyn Host, target: ExprTarget) {
+    let outer_visual = vim.cmdline_visual.take();
+    let target = match target {
+        ExprTarget::Cmdline(_, _) => match vim.cmdline.take() {
+            Some(outer) => ExprTarget::Cmdline(Box::new(outer), outer_visual),
+            None => return,
+        },
+        t => t,
+    };
+    // `open` keys off the mode for Visual; the expression line never extends
+    // a selection.
+    let mode = vim.mode;
+    vim.mode = Mode::Normal;
+    open(vim, host, '=', None, String::new());
+    let _ = mode;
+    if let Some(c) = vim.cmdline.as_mut() {
+        c.expr_target = Some(target);
+    }
+}
+
+/// Leave the `=` prompt: back to the mode or command line it came from.
+fn finish_expr(vim: &mut VimState, host: &mut dyn Host, target: ExprTarget, value: Option<String>) {
+    match target {
+        ExprTarget::Insert(mode) => {
+            vim.mode = mode;
+            if let Some(v) = value {
+                super::insert::insert_text(host, &v);
+            }
+        }
+        ExprTarget::Cmdline(mut outer, visual) => {
+            if let Some(v) = value {
+                for ch in v.trim_end_matches('\n').replace('\n', "\r").chars() {
+                    outer.text.insert(outer.cursor, ch);
+                    outer.cursor += 1;
+                }
+            }
+            vim.cmdline = Some(*outer);
+            vim.cmdline_visual = visual;
+            vim.mode = Mode::Cmdline;
+        }
+        ExprTarget::Register(pending, mode) => {
+            vim.mode = mode;
+            if let Some(v) = value {
+                vim.regs.expr = v;
+                vim.pending = pending;
+            }
+            if vim.is_visual()
+                && let Some(ed) = host.ed()
+            {
+                exec::sync_visual(vim, ed);
+            }
+        }
+    }
+}
+
 pub(crate) fn cancel(vim: &mut VimState, host: &mut dyn Host) {
+    if let Some(target) = vim.cmdline.as_mut().and_then(|c| c.expr_target.take()) {
+        vim.cmdline = None;
+        finish_expr(vim, host, target, None);
+        return;
+    }
     let Some(c) = close(vim, host) else {
         return;
     };
@@ -200,6 +275,11 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
                 .map(|ed| Text::of(&ed.rope, ed.vim_buf.trailing_empty).line_string(ed.cursor_line))
         } else if key.is_ctrl('r') || key.is_ctrl('o') || key.is_ctrl('p') {
             c.awaiting_register = true;
+            return;
+        } else if key.char() == Some('=') && c.expr_target.is_none() {
+            // `open_expr` takes the current line itself as the one to return to.
+            let outer = Box::new(c.clone());
+            open_expr(vim, host, ExprTarget::Cmdline(outer, None));
             return;
         } else if let Some(r) = key.char() {
             super::ops::read_reg(vim, host, Some(r))
@@ -520,10 +600,10 @@ fn history(vim: &mut VimState, older: bool, prefix: bool) {
     let Some(c) = vim.cmdline.as_mut() else {
         return;
     };
-    let list = if c.kind == ':' {
-        &vim.history_cmd
-    } else {
-        &vim.history_search
+    let list = match c.kind {
+        ':' => &vim.history_cmd,
+        '=' => &vim.history_expr,
+        _ => &vim.history_search,
     };
     if list.is_empty() {
         return;
@@ -623,6 +703,29 @@ fn cycle_completion(c: &mut CmdLine, forward: bool) {
 }
 
 fn execute(vim: &mut VimState, host: &mut dyn Host) {
+    if let Some(target) = vim.cmdline.as_mut().and_then(|c| c.expr_target.take()) {
+        let c = vim.cmdline.take().unwrap();
+        let mut src = c.string();
+        if src.trim().is_empty() {
+            src = vim.last_expr.clone();
+        } else {
+            push_history(&mut vim.history_expr, &src);
+            vim.last_expr = src.clone();
+        }
+        // Evaluate where the target can see the right state.
+        let value = {
+            let mut cx = super::eval::Ctx::new(vim, host);
+            super::eval::eval(&src, &mut cx)
+        };
+        match value {
+            Ok(v) => finish_expr(vim, host, target, Some(v.to_text())),
+            Err(e) => {
+                finish_expr(vim, host, target, None);
+                vim.set_error(e);
+            }
+        }
+        return;
+    }
     let Some(c) = close(vim, host) else {
         return;
     };

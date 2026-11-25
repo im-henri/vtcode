@@ -274,7 +274,12 @@ pub(crate) fn key(vim: &mut VimState, host: &mut dyn Host, key: Key) {
                 }
                 if let Some(r) = key.char() {
                     if r == '=' {
-                        vim.set_error("E15: expression register is not supported");
+                        let mode = vim.mode;
+                        super::cmdline::open_expr(
+                            vim,
+                            host,
+                            super::cmdline::ExprTarget::Insert(mode),
+                        );
                         return;
                     }
                     match super::ops::read_reg(vim, host, Some(r)) {

@@ -241,6 +241,11 @@ pub(crate) enum Window {
     MoveDown,
     ToTab,
     Last,
+    /// `<C-w>+` `<C-w>-` `<C-w>>` `<C-w><`.
+    Taller,
+    Shorter,
+    Wider,
+    Narrower,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -275,6 +280,8 @@ pub(crate) enum Simple {
     WriteQuit,
     QuitNoWrite,
     Increment(bool),
+    /// Visual `g<C-a>`/`g<C-x>`: each line by one more than the last.
+    IncrementSeq(bool),
     Scroll(Scroll),
     Fold(FoldCmd),
     NextTab,
@@ -901,10 +908,10 @@ fn simple(p: &mut P<'_>, ctx: Ctx) -> R<Simple> {
                 return R::Ok(WordCount);
             }
             if k2.is_ctrl('a') && visual {
-                return R::Ok(Increment(true));
+                return R::Ok(IncrementSeq(true));
             }
             if k2.is_ctrl('x') && visual {
-                return R::Ok(Increment(false));
+                return R::Ok(IncrementSeq(false));
             }
             match k2.char() {
                 Some('i') => Insert(InsertKind::LastInsert),
@@ -1007,6 +1014,10 @@ pub(crate) fn window_cmd(c: char) -> Option<Window> {
         'K' => W::MoveUp,
         'J' => W::MoveDown,
         'T' => W::ToTab,
+        '+' => W::Taller,
+        '-' => W::Shorter,
+        '>' => W::Wider,
+        '<' => W::Narrower,
         _ => return None,
     })
 }
@@ -1083,8 +1094,10 @@ pub(crate) fn parse(keys: &[Key], ctx: Ctx) -> Parsed {
             if k.char() == Some('g') {
                 let save = p.i;
                 p.i += 1;
+                if p.peek().is_none() {
+                    return Parsed::Need;
+                }
                 match p.peek().and_then(|k| k.char()) {
-                    None => return Parsed::Need,
                     Some('~') => return done(Action::VisualOp(Op::Tilde)),
                     Some('u') => return done(Action::VisualOp(Op::Lower)),
                     Some('U') => return done(Action::VisualOp(Op::Upper)),
@@ -1098,8 +1111,10 @@ pub(crate) fn parse(keys: &[Key], ctx: Ctx) -> Parsed {
             if k.char() == Some('z') {
                 let save = p.i;
                 p.i += 1;
+                if p.peek().is_none() {
+                    return Parsed::Need;
+                }
                 match p.peek().and_then(|k| k.char()) {
-                    None => return Parsed::Need,
                     Some('f') => return done(Action::VisualOp(Op::Fold)),
                     _ => p.i = save,
                 }

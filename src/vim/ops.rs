@@ -1374,7 +1374,7 @@ pub(crate) fn simple(
         Simple::QuitNoWrite => {
             let _ = super::ex::run(vim, host, "q!");
         }
-        Simple::Increment(up) => {
+        Simple::Increment(up) | Simple::IncrementSeq(up) => {
             if read_only(vim, host) {
                 return;
             }
@@ -1941,12 +1941,12 @@ fn visual_simple(
             }
             visual_put(vim, host, cmd, before, count);
         }
-        Simple::Increment(up) => {
+        Simple::Increment(up) | Simple::IncrementSeq(up) => {
             if read_only(vim, host) {
                 exit_visual(vim, host);
                 return true;
             }
-            let progressive = cmd_is_g(cmd);
+            let progressive = matches!(cmd.action, Action::Simple(Simple::IncrementSeq(_)));
             let Some(ed) = host.ed() else {
                 return true;
             };
@@ -2029,17 +2029,6 @@ fn visual_simple(
         _ => return false,
     }
     true
-}
-
-fn cmd_is_g(cmd: &Cmd) -> bool {
-    // g<C-a> parses to the same Simple; the parser marks it with a count of
-    // None and reg... we track it through the original keys elsewhere.
-    let _ = cmd;
-    PROGRESSIVE.with(|p| p.get())
-}
-
-thread_local! {
-    pub(crate) static PROGRESSIVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 fn replace_chars(vim: &mut VimState, host: &mut dyn Host, cmd: &Cmd, c: char, count: usize) {

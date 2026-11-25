@@ -1456,6 +1456,17 @@ pub(crate) fn window(app: &mut App, w: Window, count: usize) -> Result<(), Strin
             app.execute_palette_command("close_split");
             Ok(())
         }
+        Window::Taller | Window::Shorter | Window::Wider | Window::Narrower => {
+            let n = count.max(1) as isize;
+            let (width, delta) = match w {
+                Window::Taller => (false, n),
+                Window::Shorter => (false, -n),
+                Window::Wider => (true, n),
+                _ => (true, -n),
+            };
+            resize_group(app, width, delta, None);
+            Ok(())
+        }
         Window::MaxHeight | Window::MaxWidth => {
             app.execute_palette_command("toggle_maximized");
             Ok(())
@@ -1685,9 +1696,182 @@ fn find_view(app: &App, nav_id: u64) -> Option<(usize, usize)> {
     })
 }
 
+/// The cells a group's editor area spans along a split direction.
+fn group_extent(app: &App, g: usize, width: bool) -> Option<usize> {
+    let area = if g == app.active_group {
+        app.editor_area
+    } else {
+        app.groups.get(g).and_then(|gr| gr.editor_area)
+    }?;
+    Some(if width {
+        area.width as usize
+    } else {
+        area.height as usize
+    })
+}
+
+fn node_extent(app: &App, node: &crate::app::SplitNode, width: bool) -> usize {
+    use crate::app::{SplitDirection, SplitNode};
+    match node {
+        SplitNode::Leaf(g) => group_extent(app, *g, width).unwrap_or(0),
+        SplitNode::Split {
+            direction,
+            children,
+            ..
+        } => {
+            let along = (*direction == SplitDirection::Horizontal) == width;
+            let sizes = children.iter().map(|c| node_extent(app, c, width));
+            if along {
+                sizes.sum()
+            } else {
+                sizes.max().unwrap_or(0)
+            }
+        }
+    }
+}
+
+/// Path of child indexes from the root to the leaf of group `g`.
+fn leaf_path(node: &crate::app::SplitNode, g: usize, path: &mut Vec<usize>) -> bool {
+    use crate::app::SplitNode;
+    match node {
+        SplitNode::Leaf(x) => *x == g,
+        SplitNode::Split { children, .. } => {
+            for (i, c) in children.iter().enumerate() {
+                path.push(i);
+                if leaf_path(c, g, path) {
+                    return true;
+                }
+                path.pop();
+            }
+            false
+        }
+    }
+}
+
+/// `:resize`, `<C-w>+`...: grow or shrink the current group by `delta`
+/// rows (or columns), or set it to `absolute` (`usize::MAX` = as large as
+/// possible), taking the space from its neighbours.
+pub(crate) fn resize_group(app: &mut App, width: bool, delta: isize, absolute: Option<usize>) {
+    use crate::app::{SplitDirection, SplitNode};
+    let Some(tree) = app.split_tree.clone() else {
+        return;
+    };
+    let want = if width {
+        SplitDirection::Horizontal
+    } else {
+        SplitDirection::Vertical
+    };
+    let mut path = Vec::new();
+    if !leaf_path(&tree, app.active_group, &mut path) {
+        return;
+    }
+    // The deepest split along the wanted direction above the group.
+    let mut node = &tree;
+    let mut best: Option<usize> = None;
+    for (depth, &i) in path.iter().enumerate() {
+        let SplitNode::Split {
+            direction,
+            children,
+            ..
+        } = node
+        else {
+            break;
+        };
+        if *direction == want {
+            best = Some(depth);
+        }
+        node = &children[i];
+    }
+    let Some(depth) = best else {
+        return;
+    };
+    let mut parent = &tree;
+    for &i in &path[..depth] {
+        if let SplitNode::Split { children, .. } = parent {
+            parent = &children[i];
+        }
+    }
+    let SplitNode::Split {
+        children, ratios, ..
+    } = parent
+    else {
+        return;
+    };
+    let n = children.len();
+    if n < 2 || ratios.len() != n {
+        return;
+    }
+    let total = node_extent(app, parent, width).max(n);
+    let k = path[depth];
+    let cur = (ratios[k] * total as f32).round() as isize;
+    let target = match absolute {
+        Some(usize::MAX) => total as isize,
+        Some(a) => a as isize,
+        None => cur + delta,
+    };
+    let min = 2isize;
+    let target = target.clamp(min, total as isize - min * (n as isize - 1));
+    let new_k = target as f32 / total as f32;
+    let others: f32 = ratios
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != k)
+        .map(|(_, r)| *r)
+        .sum();
+    let mut new_ratios = ratios.clone();
+    for (i, r) in new_ratios.iter_mut().enumerate() {
+        if i == k {
+            *r = new_k;
+        } else if others > 0.0 {
+            *r = *r / others * (1.0 - new_k);
+        }
+    }
+    // Write the ratios back along the same path.
+    let mut root = tree.clone();
+    let mut slot = &mut root;
+    for &i in &path[..depth] {
+        let SplitNode::Split { children, .. } = slot else {
+            return;
+        };
+        slot = &mut children[i];
+    }
+    if let SplitNode::Split { ratios, .. } = slot {
+        *ratios = new_ratios;
+    }
+    app.split_tree = Some(root);
+}
+
+/// `<C-w>=`: make every split equal.
+pub(crate) fn equalize_groups(app: &mut App) {
+    fn eq(node: &mut crate::app::SplitNode) {
+        if let crate::app::SplitNode::Split {
+            children, ratios, ..
+        } = node
+        {
+            let n = children.len().max(1);
+            *ratios = vec![1.0 / n as f32; n];
+            for c in children {
+                eq(c);
+            }
+        }
+    }
+    if let Some(tree) = app.split_tree.as_mut() {
+        eq(tree);
+    }
+    app.split_ratio = 0.5;
+}
+
 pub(crate) fn act_on(app: &mut App, act: Act) -> Result<(), String> {
     match act {
         Act::Command(id) => command(app, &id),
+        Act::Resize {
+            width,
+            delta,
+            absolute,
+        } => {
+            resize_group(app, width, delta, absolute);
+            Ok(())
+        }
         Act::Write { path, force } => {
             let Some(ed) = app.editor() else {
                 return Err("E32: No file name".into());
@@ -2297,7 +2481,10 @@ fn command(app: &mut App, id: &str) -> Result<(), String> {
                 }
             }
         }
-        "vim_equalize" => Ok(()),
+        "vim_equalize" => {
+            equalize_groups(app);
+            Ok(())
+        }
         _ => {
             let ids = palette_ids_of(app);
             if !ids.iter().any(|c| c == id) && !id.starts_with("vim_") {

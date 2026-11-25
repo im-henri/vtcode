@@ -376,3 +376,30 @@ fn text_objects_with_operators() {
     check("foo bar baz", (0, 5), "daw", "foo baz", (0, 4));
     check("a\n\nb\nc\n\nd", (2, 0), "dap", "a\n\nd", (2, 0));
 }
+
+#[test]
+fn expressions_scripts_and_new_commands() {
+    check("x", (0, 0), "A<C-r>=2*21<CR><Esc>", "x42", (0, 2));
+    check("x", (0, 0), "\"=6*7<CR>p", "x42", (0, 2));
+    check("0\n0\n0", (0, 0), "VGg<C-a>", "1\n2\n3", (0, 0));
+    check("a\nb", (0, 0), ":inoremap jk <lt>Esc><CR>Ajkx", "\nb", (0, 0));
+    check("hi", (0, 0), ":call setline(1, 'yo')<CR>", "yo", (0, 0));
+    check("a", (0, 0), ":let g:n = 3<CR>:exe \"norm \" . g:n . \"ix\"<CR>", "xxxa", (0, 2));
+    check("a", (0, 0), ":if 1 | s/a/b/ | else | s/a/c/ | endif<CR>", "b", (0, 0));
+    check("ab", (0, 0), r":command! Up s/.*/\U&/<CR>:Up<CR>", "AB", (0, 0));
+    let o = run("q", (0, 0), ":echo printf('%03d', 7) . toupper('x')<CR>");
+    assert_eq!(o.vim.message.unwrap().text, "007X");
+}
+
+#[test]
+fn vimrc_functions_and_blocks() {
+    let mut host = TestHost::new("abc  \ndef \n");
+    let mut vim = parity_vim();
+    let rc = "function! Strip() abort\n  let l:save = getpos('.')\n  %s/\\s\\+$//e\n  call setpos('.', l:save)\nendfunction\nif has('nvim')\n  let g:x = 1\nelse\n  let g:x = 2\nendif\nfor i in [1, 2]\n  let g:x += i\nendfor\n";
+    let errors = super::ex::source(&mut vim, &mut host, rc);
+    assert!(errors.is_empty(), "{errors:?}");
+    run_keys(&mut vim, &mut host, ":call Strip()<CR>");
+    assert_eq!(vim_lines(&host.ed)[..2], ["abc".to_string(), "def".to_string()]);
+    run_keys(&mut vim, &mut host, ":echo g:x<CR>");
+    assert_eq!(vim.message.unwrap().text, "5");
+}

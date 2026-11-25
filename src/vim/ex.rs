@@ -36,7 +36,24 @@ pub(crate) struct Confirm {
 /// One Ex command line (possibly several commands separated by `|`).
 pub(crate) fn run(vim: &mut VimState, host: &mut dyn Host, line: &str) -> R<()> {
     vim.last_ex = Some(line.to_string());
-    for part in split_bar(line) {
+    let parts = split_bar(line);
+    if parts.len() > 1 && starts_block(&parts[0]) {
+        // `:if x | ... | endif` and friends on one line.
+        let lines: Vec<super::script::Line> = parts
+            .iter()
+            .map(|p| super::script::Line {
+                n: 1,
+                text: p.trim().to_string(),
+            })
+            .collect();
+        let mut errors = Vec::new();
+        super::script::run(vim, host, &lines, &mut errors, true);
+        return match errors.into_iter().next() {
+            Some((_, e)) => Err(e),
+            None => Ok(()),
+        };
+    }
+    for part in parts {
         run_one(vim, host, &part)?;
         if vim.ex_abort {
             vim.ex_abort = false;
@@ -481,7 +498,6 @@ const COMMANDS: &[(&str, usize)] = &[
     ("cprevious", 2),
     ("smagic", 2),
     ("snomagic", 3),
-    ("wnext", 2),
     ("windo", 5),
     ("bufdo", 5),
     ("tabdo", 4),
@@ -499,6 +515,80 @@ const COMMANDS: &[(&str, usize)] = &[
     ("abbreviate", 2),
     ("iabbrev", 2),
     ("cabbrev", 2),
+    ("noreabbrev", 7),
+    ("inoreabbrev", 6),
+    ("cnoreabbrev", 6),
+    ("unabbreviate", 3),
+    ("iunabbrev", 5),
+    ("cunabbrev", 4),
+    ("abclear", 3),
+    ("iabclear", 4),
+    ("cabclear", 4),
+    ("echon", 5),
+    ("function", 2),
+    ("delfunction", 4),
+    ("return", 4),
+    ("if", 2),
+    ("for", 3),
+    ("while", 2),
+    ("try", 3),
+    ("earlier", 2),
+    ("later", 3),
+    ("grep", 2),
+    ("grepadd", 5),
+    ("vimgrep", 3),
+    ("vimgrepadd", 8),
+    ("lgrep", 2),
+    ("lvimgrep", 2),
+    ("make", 3),
+    ("lmake", 4),
+    ("cc", 2),
+    ("cfirst", 3),
+    ("crewind", 2),
+    ("clast", 3),
+    ("cnfile", 3),
+    ("cpfile", 3),
+    ("cexpr", 3),
+    ("cgetexpr", 5),
+    ("lnext", 2),
+    ("lprevious", 2),
+    ("lNext", 2),
+    ("lfirst", 3),
+    ("llast", 3),
+    ("lopen", 3),
+    ("lclose", 3),
+    ("llist", 3),
+    ("ll", 2),
+    ("cdo", 3),
+    ("cfdo", 3),
+    ("find", 3),
+    ("sfind", 2),
+    ("tabfind", 4),
+    ("resize", 3),
+    ("vertical", 4),
+    ("horizontal", 3),
+    ("aboveleft", 3),
+    ("belowright", 3),
+    ("topleft", 2),
+    ("botright", 2),
+    ("keepjumps", 5),
+    ("keepmarks", 3),
+    ("keeppatterns", 5),
+    ("lockmarks", 3),
+    ("noautocmd", 3),
+    ("sbuffer", 2),
+    ("sbnext", 3),
+    ("sbprevious", 3),
+    ("badd", 3),
+    ("args", 2),
+    ("argadd", 4),
+    ("next", 1),
+    ("previous", 4),
+    ("Next", 1),
+    ("first", 3),
+    ("last", 3),
+    ("argdo", 5),
+    ("wnext", 2),
 ];
 
 fn resolve(name: &str) -> Option<&'static str> {
@@ -582,6 +672,15 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
         i += 1;
     }
     let arg: String = s[i..].iter().collect::<String>();
+    let arg = match resolve(&name) {
+        Some(full) if expands_files(full) => expand_specials(host, &arg),
+        Some("vimgrep" | "vimgrepadd" | "lvimgrep") => {
+            // Only the file names after the pattern.
+            let (pat, files) = split_vimgrep(&arg);
+            format!("{pat}{}", expand_specials(host, &files))
+        }
+        _ => arg,
+    };
     let arg_trim = arg.trim();
     let path = || {
         let file = super::paths::argument(&arg);
@@ -610,6 +709,11 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
         set_cursor(ed, Pos::new(line, t.first_nonblank(line)));
         update_curswant(vim, ed);
         return Ok(());
+    }
+    if name.starts_with(|c: char| c.is_ascii_uppercase())
+        && let Some(r) = run_user_command(vim, host, &range, &name, bang, &arg)
+    {
+        return r;
     }
     let full = match name.as_str() {
         "!" | "&" | "&&" | "~" | "<" | ">" | "=" | "#" | "@" | "*" => name.as_str(),
@@ -769,6 +873,26 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
                 .collect();
             vim.set_lines(lines);
             Ok(())
+        }
+        "copen" | "cwindow" | "clist" if !vim.qf.is_empty() => {
+            qf_list(vim, full == "clist" && bang);
+            Ok(())
+        }
+        "cnext" | "cprevious" | "cNext" if !vim.qf.is_empty() => {
+            let n = arg_trim.parse().unwrap_or(1);
+            qf_jump(
+                vim,
+                host,
+                if full == "cnext" {
+                    QfMove::Next(n)
+                } else {
+                    QfMove::Prev(n)
+                },
+            )
+        }
+        "cclose" if !vim.qf.is_empty() => {
+            vim.message = None;
+            host.act(Act::Quickfix(super::Quickfix::Close))
         }
         "copen" | "cwindow" | "clist" => host.act(Act::Quickfix(super::Quickfix::Open)),
         "cclose" => host.act(Act::Quickfix(super::Quickfix::Close)),
@@ -1176,18 +1300,195 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
             }
             Ok(())
         }
-        "echo" | "echomsg" | "echoerr" => {
-            let m = arg_trim.trim_matches(|c| c == '"' || c == '\'').to_string();
-            if full == "echoerr" {
-                vim.set_error(m);
-            } else {
-                vim.set_message(m);
+        "echo" | "echon" | "echomsg" | "echoerr" => echo(vim, host, full, arg_trim),
+        "unlet" => {
+            for name in arg_trim.split_whitespace() {
+                if !super::eval::unset_var(vim, name) && !bang {
+                    return Err(format!("E108: No such variable: \"{name}\""));
+                }
             }
             Ok(())
         }
+        "call" => call_cmd(vim, host, &range, arg_trim),
+        "function" => {
+            if arg_trim.is_empty() {
+                let lines: Vec<String> = vim
+                    .funcs
+                    .iter()
+                    .map(|(n, f)| format!("function {n}({})", f.params.join(", ")))
+                    .collect();
+                vim.set_lines(lines);
+                return Ok(());
+            }
+            Err("E126: Missing :endfunction".into())
+        }
+        "delfunction" => {
+            let n = super::script::normalize_name(arg_trim.trim_end_matches("()"));
+            if vim.funcs.remove(&n).is_none() && !bang {
+                return Err(format!("E130: Unknown function: {arg_trim}"));
+            }
+            Ok(())
+        }
+        "if" | "for" | "while" | "try" => Err(format!(
+            "E171: Missing :end{full} (use '|' to put the block on one line)"
+        )),
+        "return" => Ok(()),
+        "abbreviate" | "iabbrev" | "cabbrev" | "noreabbrev" | "inoreabbrev" | "cnoreabbrev" => {
+            abbrev_cmd(vim, full, arg_trim)
+        }
+        "unabbreviate" | "iunabbrev" | "cunabbrev" => {
+            let insert = full != "cunabbrev";
+            let cmdline = full != "iunabbrev";
+            let before = vim.abbrevs.len();
+            vim.abbrevs.retain(|a| {
+                !(a.lhs == arg_trim && ((insert && a.insert) || (cmdline && a.cmdline)))
+            });
+            if vim.abbrevs.len() == before {
+                return Err(format!("E24: No such abbreviation: {arg_trim}"));
+            }
+            Ok(())
+        }
+        "abclear" | "iabclear" | "cabclear" => {
+            let insert = full != "cabclear";
+            let cmdline = full != "iabclear";
+            vim.abbrevs
+                .retain(|a| !((insert && a.insert) || (cmdline && a.cmdline)));
+            Ok(())
+        }
+        "earlier" | "later" => earlier_later(vim, host, full == "earlier", arg_trim),
+        "grep" | "grepadd" | "lgrep" | "make" | "lmake" => {
+            let add = full == "grepadd";
+            let is_make = full.ends_with("make");
+            quickfix_shell(vim, host, is_make, add, bang, arg_trim)
+        }
+        "vimgrep" | "vimgrepadd" | "lvimgrep" => {
+            vimgrep(vim, host, full == "vimgrepadd", bang, arg_trim)
+        }
+        "cexpr" | "cgetexpr" => {
+            let v = {
+                let mut cx = super::eval::Ctx::new(vim, host);
+                super::eval::eval(arg_trim, &mut cx)?
+            };
+            let items = parse_errors(&v.to_text(), host.cwd().unwrap_or_default());
+            set_quickfix(vim, items, false);
+            if full == "cexpr" {
+                qf_jump(vim, host, QfMove::Nth(1))?;
+            }
+            Ok(())
+        }
+        "cc" | "ll" => {
+            let n = arg_trim
+                .parse()
+                .ok()
+                .or(range.given.gt(&0).then_some(range.end + 1));
+            qf_jump(
+                vim,
+                host,
+                match n {
+                    Some(n) => QfMove::Nth(n),
+                    None => QfMove::Current,
+                },
+            )
+        }
+        "cfirst" | "crewind" | "lfirst" => {
+            qf_jump(vim, host, QfMove::Nth(arg_trim.parse().unwrap_or(1)))
+        }
+        "clast" | "llast" => qf_jump(
+            vim,
+            host,
+            match arg_trim.parse() {
+                Ok(n) => QfMove::Nth(n),
+                Err(_) => QfMove::Last,
+            },
+        ),
+        "cnfile" | "cpfile" => qf_jump(vim, host, QfMove::File(full == "cnfile")),
+        "cdo" | "cfdo" => qf_do(vim, host, full == "cfdo", arg_trim),
+        "find" | "sfind" | "tabfind" => {
+            let found = find_file(vim, host, arg_trim)?;
+            host.act(Act::Open {
+                target: OpenTarget::Path(found),
+                split: match full {
+                    "sfind" => Some(TabDropZone::Bottom),
+                    _ => None,
+                },
+            })
+        }
+        "resize" => resize(vim, host, arg_trim, false),
+        "vertical" | "horizontal" | "aboveleft" | "belowright" | "topleft" | "botright" => {
+            let rest = arg_trim;
+            let word: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphabetic())
+                .collect();
+            match (full, resolve(&word)) {
+                ("vertical", Some("resize")) => resize(vim, host, rest[word.len()..].trim(), true),
+                ("vertical", Some("split")) => {
+                    run(vim, host, &format!("vsplit{}", &rest[word.len()..]))
+                }
+                ("vertical", Some("new")) => {
+                    run(vim, host, &format!("vnew{}", &rest[word.len()..]))
+                }
+                ("vertical", Some("sbuffer")) => {
+                    host.act(Act::Window(super::parse::Window::VSplit, 1))?;
+                    run(vim, host, &format!("buffer{}", &rest[word.len()..]))
+                }
+                ("vertical", Some("help" | "terminal")) => run(vim, host, rest),
+                _ => run(vim, host, rest),
+            }
+        }
+        "keepjumps" | "keepmarks" | "keeppatterns" | "lockmarks" | "noautocmd" => {
+            let saved = (vim.last_search.clone(), vim.jumps.len());
+            let r = run(vim, host, arg_trim);
+            if full == "keeppatterns" {
+                vim.last_search = saved.0;
+            }
+            if full == "keepjumps" {
+                vim.jumps.truncate(saved.1);
+                vim.jump_idx = vim.jump_idx.min(vim.jumps.len());
+            }
+            r
+        }
+        "sbuffer" | "sbnext" | "sbprevious" => {
+            host.act(Act::Window(super::parse::Window::Split, 1))?;
+            match full {
+                "sbnext" => host.act(Act::BufferNext(1)),
+                "sbprevious" => host.act(Act::BufferPrev(1)),
+                _ if arg_trim.is_empty() => Ok(()),
+                _ => host.act(Act::Buffer(arg_trim.into())),
+            }
+        }
+        "badd" | "argadd" => Ok(()),
+        "args" => {
+            let lines: Vec<String> = host
+                .buffers()
+                .into_iter()
+                .map(|(_, name, _)| name)
+                .collect();
+            vim.set_message(lines.join(" "));
+            Ok(())
+        }
+        "next" | "wnext" => {
+            if full == "wnext" {
+                host.act(Act::Write {
+                    path: None,
+                    force: bang,
+                })?;
+            }
+            host.act(Act::BufferNext(arg_trim.parse().unwrap_or(1)))
+        }
+        "previous" | "Next" => host.act(Act::BufferPrev(arg_trim.parse().unwrap_or(1))),
+        "first" => host.act(Act::Buffer("1".into())),
+        "last" => host.act(Act::Buffer("$".into())),
+        "argdo" => run(vim, host, &format!("bufdo {arg_trim}")),
+        "lnext" | "lprevious" | "lNext" | "lopen" | "lclose" | "llist" => match full {
+            "lnext" => run(vim, host, "cnext"),
+            "lopen" => run(vim, host, "copen"),
+            "lclose" => run(vim, host, "cclose"),
+            "llist" => run(vim, host, "clist"),
+            _ => run(vim, host, "cprevious"),
+        },
         "messages" | "checktime" | "redraw" | "syntax" | "filetype" | "autocmd" | "augroup"
-        | "highlight" | "runtime" | "packadd" | "Plug" | "language" | "unlet" | "call" | "lua"
-        | "abbreviate" | "iabbrev" | "cabbrev" => Ok(()),
+        | "highlight" | "runtime" | "packadd" | "Plug" | "language" | "lua" => Ok(()),
         "colorscheme" => {
             if arg_trim.is_empty() {
                 return Ok(());
@@ -1228,12 +1529,18 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
             r
         }
         "execute" => {
-            // :execute "normal! ..." with simple string literals.
-            let mut out = String::new();
-            for part in split_strings(arg_trim) {
-                out.push_str(&part);
+            let mut parts = Vec::new();
+            let mut rest = arg_trim.to_string();
+            while !rest.trim().is_empty() {
+                let mut cx = super::eval::Ctx::new(vim, host);
+                let (v, r) = super::eval::eval_prefix(&rest, &mut cx)?;
+                parts.push(v.to_str());
+                if r.len() == rest.len() {
+                    break;
+                }
+                rest = r;
             }
-            run(vim, host, &out)
+            run(vim, host, &parts.join(" "))
         }
         "help" => {
             vim.set_message(format!(
@@ -1256,8 +1563,7 @@ fn run_one(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<()> {
         "retab" => retab(vim, host, &range, bang, arg_trim),
         "windo" | "bufdo" | "tabdo" => run(vim, host, arg_trim),
         "append" => Err("E319: :append is not supported; use o".into()),
-        "command" => Err("E319: user commands are not supported; use mappings".into()),
-        "wnext" => Err("E163: There is only one file to edit".into()),
+        "command" => user_command(vim, bang, arg_trim),
         "@" | "*" => {
             let r = arg_trim.chars().next().unwrap_or('@');
             if let Some(ed) = host.ed() {
@@ -1306,47 +1612,6 @@ fn full_needs_range(name: &str) -> bool {
 fn s_starts_zero(text: &str) -> bool {
     let t = text.trim_start_matches([' ', ':']);
     t.starts_with('0') && !t[1..].starts_with(|c: char| c.is_ascii_digit())
-}
-
-fn split_strings(s: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '"' || c == '\'' {
-            let mut lit = String::new();
-            while let Some(n) = chars.next() {
-                if n == c {
-                    break;
-                }
-                if n == '\\' && c == '"' {
-                    match chars.next() {
-                        Some('<') => {
-                            let mut name = String::from("<");
-                            for k in chars.by_ref() {
-                                name.push(k);
-                                if k == '>' {
-                                    break;
-                                }
-                            }
-                            lit.push_str(&name);
-                        }
-                        Some('e') => lit.push_str("<Esc>"),
-                        Some('r') => lit.push_str("<CR>"),
-                        Some('t') => lit.push('\t'),
-                        Some(o) => lit.push(o),
-                        None => {}
-                    }
-                } else {
-                    lit.push(n);
-                }
-            }
-            out.push(lit);
-        } else if c == '.' || c == ' ' {
-        } else {
-            out.push(c.to_string());
-        }
-    }
-    out
 }
 
 /// Commands that work on a tab that has no text buffer: they act on tabs,
@@ -1410,6 +1675,16 @@ fn run_without_buffer(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<
         .collect();
     let bang = text[name.len()..].starts_with('!');
     let arg = text[name.len() + usize::from(bang)..].trim();
+    if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+        let range = Range {
+            start: 0,
+            end: 0,
+            given: 0,
+        };
+        if let Some(r) = run_user_command(vim, host, &range, &name, bang, arg) {
+            return r;
+        }
+    }
     let full = resolve(&name).ok_or_else(|| format!("E492: Not an editor command: {text}"))?;
     if let Some((modes, noremap)) = map::modes_for(full) {
         return map_cmd(vim, &modes, noremap, bang, arg);
@@ -1418,7 +1693,127 @@ fn run_without_buffer(vim: &mut VimState, host: &mut dyn Host, text: &str) -> R<
         "quit" | "qall" | "quitall" => host.act(Act::QuitAll { force: bang }),
         "set" | "setlocal" | "setglobal" => set(vim, host, arg),
         "let" => let_cmd(vim, host, arg),
+        "echo" | "echon" | "echomsg" | "echoerr" => echo(vim, host, full, arg),
+        "unlet" => {
+            for name in arg.split_whitespace() {
+                super::eval::unset_var(vim, name);
+            }
+            Ok(())
+        }
+        "call" => call_cmd(
+            vim,
+            host,
+            &Range {
+                start: 0,
+                end: 0,
+                given: 0,
+            },
+            arg,
+        ),
+        "execute" | "silent" | "keepjumps" | "keeppatterns" | "noautocmd" | "vertical"
+        | "aboveleft" | "belowright" | "topleft" | "botright" => {
+            let rest = if full == "execute" {
+                let mut cx = super::eval::Ctx::new(vim, host);
+                let mut parts = Vec::new();
+                let mut rest = arg.to_string();
+                while !rest.trim().is_empty() {
+                    let (v, r) = super::eval::eval_prefix(&rest, &mut cx)?;
+                    parts.push(v.to_str());
+                    if r.len() == rest.len() {
+                        break;
+                    }
+                    rest = r;
+                }
+                parts.join(" ")
+            } else {
+                arg.trim_start_matches('!').trim().to_string()
+            };
+            let r = run(vim, host, &rest);
+            if full == "silent" && bang {
+                return Ok(());
+            }
+            r
+        }
+        "abbreviate" | "iabbrev" | "cabbrev" | "noreabbrev" | "inoreabbrev" | "cnoreabbrev" => {
+            abbrev_cmd(vim, full, arg)
+        }
+        "command" => user_command(vim, bang, arg),
+        "function" | "delfunction" | "return" => Ok(()),
+        "messages" | "checktime" | "redraw" | "syntax" | "filetype" | "autocmd" | "augroup"
+        | "highlight" | "runtime" | "packadd" | "Plug" | "language" | "lua" | "nohlsearch"
+        | "badd" | "argadd" | "unabbreviate" | "iunabbrev" | "cunabbrev" | "abclear"
+        | "iabclear" | "cabclear" => {
+            if full == "nohlsearch" {
+                vim.hl_hidden = true;
+            }
+            Ok(())
+        }
+        "colorscheme" => {
+            if arg.is_empty() {
+                return Ok(());
+            }
+            host.act(Act::SetOption {
+                name: "colorscheme".into(),
+                value: arg.into(),
+            })
+        }
+        "source" => {
+            let path = expand_path(host, arg);
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| format!("E484: Can't open file {arg}: {e}"))?;
+            let errors = source(vim, host, &text);
+            if !errors.is_empty() {
+                vim.set_lines(errors);
+            }
+            Ok(())
+        }
+        "cd" | "lcd" | "tcd" => host.act(Act::Cd((!arg.is_empty()).then(|| arg.to_string()))),
+        "pwd" => {
+            vim.set_message(host.cwd_label());
+            Ok(())
+        }
+        "grep" | "grepadd" | "lgrep" | "make" | "lmake" => quickfix_shell(
+            vim,
+            host,
+            full.ends_with("make"),
+            full == "grepadd",
+            bang,
+            arg,
+        ),
+        "vimgrep" | "vimgrepadd" | "lvimgrep" => {
+            vimgrep(vim, host, full == "vimgrepadd", bang, arg)
+        }
+        "cc" | "cfirst" | "crewind" | "clast" if !vim.qf.is_empty() => qf_jump(
+            vim,
+            host,
+            match full {
+                "clast" => QfMove::Last,
+                "cc" => arg.parse().map_or(QfMove::Current, QfMove::Nth),
+                _ => QfMove::Nth(1),
+            },
+        ),
+        "find" | "sfind" | "tabfind" => {
+            let found = find_file(vim, host, arg)?;
+            host.act(Act::Open {
+                target: OpenTarget::Path(found),
+                split: None,
+            })
+        }
+        "help" | "version" | "map" => Ok(()),
         "vtcode" | "VT" => host.act(Act::Command(arg.into())),
+        "copen" | "cwindow" | "clist" if !vim.qf.is_empty() => {
+            qf_list(vim, false);
+            Ok(())
+        }
+        "cnext" | "cprevious" | "cNext" if !vim.qf.is_empty() => qf_jump(
+            vim,
+            host,
+            if full == "cnext" {
+                QfMove::Next(1)
+            } else {
+                QfMove::Prev(1)
+            },
+        ),
         "copen" | "cwindow" | "clist" => host.act(Act::Quickfix(super::Quickfix::Open)),
         "cclose" => host.act(Act::Quickfix(super::Quickfix::Close)),
         "cnext" => host.act(Act::Quickfix(super::Quickfix::Next)),
@@ -1499,7 +1894,7 @@ fn expand_path(host: &dyn Host, p: &str) -> std::path::PathBuf {
 }
 
 /// Run a shell command, optionally feeding stdin.
-fn shell(host: &dyn Host, cmd: &str, input: Option<&str>) -> R<String> {
+pub(crate) fn shell(host: &dyn Host, cmd: &str, input: Option<&str>) -> R<String> {
     if cmd.is_empty() {
         return Err("E471: Argument required".into());
     }
@@ -2232,7 +2627,13 @@ fn normal_lines(
     arg: &str,
     remap: bool,
 ) -> R<()> {
-    let keys = super::keys::parse(arg, &vim.leader.clone());
+    // Raw control characters come from `:execute "normal! A\<Esc>"`: take
+    // them literally, as Vim does.
+    let keys = if arg.chars().any(|c| (c as u32) < 0x20 || c == '\u{E000}') {
+        super::ops::text_to_keys(arg)
+    } else {
+        super::keys::parse(arg, &vim.leader.clone())
+    };
     let lines: Vec<usize> = if range.given > 0 {
         (range.start..=range.end).collect()
     } else {
@@ -2537,47 +2938,1346 @@ fn map_cmd(vim: &mut VimState, modes: &[MapMode], noremap: bool, bang: bool, arg
 }
 
 fn let_cmd(vim: &mut VimState, host: &mut dyn Host, arg: &str) -> R<()> {
-    let (name, value) = arg.split_once('=').ok_or("E15: Invalid expression")?;
-    let name = name.trim();
-    let raw = value.trim();
-    let value = if (raw.starts_with('"') && raw.ends_with('"')
-        || raw.starts_with('\'') && raw.ends_with('\''))
-        && raw.len() >= 2
-    {
-        let inner = &raw[1..raw.len() - 1];
-        if raw.starts_with('"') {
-            inner
-                .replace("\\\\", "\\")
-                .replace("\\<", "<")
-                .replace("\\\"", "\"")
+    let arg = arg.trim();
+    if arg.is_empty() {
+        let lines: Vec<String> = vim
+            .vars
+            .iter()
+            .filter(|(k, _)| !k.starts_with("v:"))
+            .map(|(k, v)| format!("{k:<20} {}", v.repr()))
+            .collect();
+        if lines.is_empty() {
+            vim.set_message("No variables");
         } else {
-            inner.to_string()
+            vim.set_lines(lines);
         }
-    } else {
-        raw.to_string()
+        return Ok(());
+    }
+    let Some((target, op, rhs)) = split_assign(arg) else {
+        // `:let name`: show it.
+        let mut cx = super::eval::Ctx::new(vim, host);
+        let v = super::eval::eval(arg, &mut cx)?;
+        vim.set_message(format!("{arg:<20} {}", v.repr()));
+        return Ok(());
     };
-    match name {
-        "mapleader" | "g:mapleader" | "maplocalleader" | "g:maplocalleader" => {
-            let keys = super::keys::parse(&value, &[]);
-            if name.contains("local") {
-                return Ok(());
+    let target = target.trim();
+    let value = {
+        let mut cx = super::eval::Ctx::new(vim, host);
+        super::eval::eval(rhs.trim(), &mut cx)?
+    };
+    // `:let [a, b] = [1, 2]`
+    if let Some(inner) = target.strip_prefix('[').and_then(|t| t.strip_suffix(']')) {
+        let names: Vec<&str> = inner
+            .split(',')
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .collect();
+        let super::eval::Val::List(items) = value else {
+            return Err("E714: List required".into());
+        };
+        if items.len() != names.len() && !names.iter().any(|n| n.starts_with(';')) {
+            return Err("E687: Less targets than List items".into());
+        }
+        for (n, v) in names.iter().zip(items) {
+            let_one(vim, host, n, op, v)?;
+        }
+        return Ok(());
+    }
+    let_one(vim, host, target, op, value)
+}
+
+/// Split `target op= value` at the assignment outside strings and brackets.
+fn split_assign(arg: &str) -> Option<(&str, &'static str, &str)> {
+    let b = arg.as_bytes();
+    let mut depth = 0i32;
+    let mut quote: Option<u8> = None;
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        if let Some(q) = quote {
+            if c == b'\\' && q == b'"' {
+                i += 2;
+                continue;
             }
+            if c == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'"' | b'\'' => quote = Some(c),
+            b'[' | b'(' | b'{' => depth += 1,
+            b']' | b')' | b'}' => depth -= 1,
+            b'=' if depth == 0 => {
+                if b.get(i + 1).is_some_and(|n| *n == b'=' || *n == b'~') {
+                    return None;
+                }
+                let (op, start) = if i >= 2 && &b[i - 2..i] == b".." {
+                    ("..=", i - 2)
+                } else {
+                    match i.checked_sub(1).map(|p| b[p]) {
+                        Some(b'+') => ("+=", i - 1),
+                        Some(b'-') => ("-=", i - 1),
+                        Some(b'*') => ("*=", i - 1),
+                        Some(b'/') => ("/=", i - 1),
+                        Some(b'%') => ("%=", i - 1),
+                        Some(b'.') => (".=", i - 1),
+                        Some(b'!' | b'<' | b'>') => return None,
+                        _ => ("=", i),
+                    }
+                };
+                return Some((&arg[..start], op, &arg[i + 1..]));
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn combine(old: super::eval::Val, op: &str, v: super::eval::Val) -> R<super::eval::Val> {
+    use super::eval::Val;
+    Ok(match op {
+        "=" => v,
+        ".=" | "..=" => Val::Str(old.to_str() + &v.to_str()),
+        "+=" => match (old, v) {
+            (Val::List(mut a), Val::List(b)) => {
+                a.extend(b);
+                Val::List(a)
+            }
+            (Val::Float(a), b) => Val::Float(a + b.to_num() as f64),
+            (a, Val::Float(b)) => Val::Float(a.to_num() as f64 + b),
+            (a, b) => Val::Num(a.to_num() + b.to_num()),
+        },
+        "-=" => Val::Num(old.to_num() - v.to_num()),
+        "*=" => Val::Num(old.to_num() * v.to_num()),
+        "/=" => {
+            let d = v.to_num();
+            Val::Num(if d == 0 { 0 } else { old.to_num() / d })
+        }
+        "%=" => {
+            let d = v.to_num();
+            Val::Num(if d == 0 { 0 } else { old.to_num() % d })
+        }
+        _ => v,
+    })
+}
+
+fn let_one(
+    vim: &mut VimState,
+    host: &mut dyn Host,
+    target: &str,
+    op: &str,
+    value: super::eval::Val,
+) -> R<()> {
+    use super::eval::Val;
+    let current = |vim: &mut VimState, host: &mut dyn Host| -> Val {
+        let mut cx = super::eval::Ctx::new(vim, host);
+        super::eval::eval(target, &mut cx).unwrap_or(Val::Str(String::new()))
+    };
+    let value = if op == "=" {
+        value
+    } else {
+        let old = current(vim, host);
+        combine(old, op, value)?
+    };
+    match target {
+        "mapleader" | "g:mapleader" => {
+            let keys = super::keys::parse(&value.to_str(), &[]);
             vim.leader = if keys.is_empty() {
                 vec![Key::ch('\\')]
             } else {
                 keys
             };
+            super::eval::set_var(vim, "mapleader", value);
             Ok(())
         }
-        n if n.starts_with('@') && n.len() == 2 => {
-            let r = n.chars().nth(1).unwrap();
+        "maplocalleader" | "g:maplocalleader" => {
+            super::eval::set_var(vim, "maplocalleader", value);
+            Ok(())
+        }
+        t if t.starts_with('@') && t.chars().count() == 2 => {
+            let r = t.chars().nth(1).unwrap();
+            let r = if r == '@' { '"' } else { r };
+            let text = value.to_text();
+            let (text, kind) = match &value {
+                Val::List(_) => (format!("{text}\n"), RegKind::Line),
+                _ if text.ends_with('\n') => (text, RegKind::Line),
+                _ => (text, RegKind::Char),
+            };
             let mut clip = HostClip(host);
-            vim.regs.set(r, Reg::new(value, RegKind::Char), &mut clip);
+            vim.regs.set(r, Reg::new(text, kind), &mut clip);
             Ok(())
         }
-        n if n.starts_with('&') => set(vim, host, &format!("{}={}", &n[1..], value)),
-        _ => Ok(()),
+        t if t.starts_with('&') => {
+            let name = t[1..]
+                .trim_start_matches("l:")
+                .trim_start_matches("g:")
+                .to_string();
+            let v = value.to_str();
+            let escaped = v.replace('\\', "\\\\").replace(' ', "\\ ");
+            match set(vim, host, &format!("{name}={escaped}")) {
+                Ok(()) => Ok(()),
+                Err(_) if matches!(value, Val::Num(_)) => {
+                    let flag = if value.truthy() {
+                        name.clone()
+                    } else {
+                        format!("no{name}")
+                    };
+                    set(vim, host, &flag)
+                }
+                Err(e) => Err(e),
+            }
+        }
+        // Environment variables are left alone: other threads read them.
+        t if t.starts_with('$') => Ok(()),
+        t if t.ends_with(']') && t.contains('[') => {
+            let open = t.find('[').unwrap();
+            let base = &t[..open];
+            let key_src = &t[open + 1..t.len() - 1];
+            let key = {
+                let mut cx = super::eval::Ctx::new(vim, host);
+                super::eval::eval(key_src, &mut cx)?
+            };
+            let mut container = {
+                let mut cx = super::eval::Ctx::new(vim, host);
+                super::eval::eval(base, &mut cx)?
+            };
+            match &mut container {
+                Val::List(l) => {
+                    let n = key.to_num();
+                    let i = if n < 0 { l.len() as i64 + n } else { n };
+                    let slot = l
+                        .get_mut(i as usize)
+                        .filter(|_| i >= 0)
+                        .ok_or_else(|| format!("E684: List index out of range: {n}"))?;
+                    *slot = value;
+                }
+                Val::Dict(d) => {
+                    d.insert(key.to_str(), value);
+                }
+                _ => return Err("E689: Can only index a List or Dictionary".into()),
+            }
+            super::eval::set_var(vim, base, container);
+            Ok(())
+        }
+        t if t
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == ':' || c == '#' || c == '.') =>
+        {
+            if let Some((base, key)) = t.split_once('.')
+                && !base.is_empty()
+                && !key.is_empty()
+                && !base.ends_with(':')
+            {
+                let mut cx = super::eval::Ctx::new(vim, host);
+                if let Ok(Val::Dict(mut d)) = super::eval::eval(base, &mut cx) {
+                    d.insert(key.to_string(), value);
+                    super::eval::set_var(vim, base, Val::Dict(d));
+                    return Ok(());
+                }
+            }
+            super::eval::set_var(vim, t, value);
+            Ok(())
+        }
+        t => Err(format!("E461: Illegal variable name: {t}")),
     }
+}
+
+fn echo(vim: &mut VimState, host: &mut dyn Host, full: &str, arg: &str) -> R<()> {
+    let mut parts = Vec::new();
+    let mut rest = arg.to_string();
+    while !rest.trim().is_empty() {
+        let mut cx = super::eval::Ctx::new(vim, host);
+        let (v, r) = super::eval::eval_prefix(&rest, &mut cx)?;
+        parts.push(v.to_str());
+        if r.len() == rest.len() {
+            break;
+        }
+        rest = r;
+    }
+    let text = parts.join(if full == "echon" { "" } else { " " });
+    if full == "echoerr" {
+        vim.set_error(text);
+        return Ok(());
+    }
+    if text.contains('\n') {
+        vim.set_lines(text.lines().map(str::to_string).collect());
+    } else {
+        vim.set_message(text);
+    }
+    Ok(())
+}
+
+fn call_cmd(vim: &mut VimState, host: &mut dyn Host, range: &Range, arg: &str) -> R<()> {
+    let arg = arg.trim();
+    if arg.is_empty() {
+        return Err("E471: Argument required".into());
+    }
+    if range.given > 0
+        && let Some(open) = arg.find('(')
+    {
+        let name = arg[..open].trim();
+        if vim.funcs.contains_key(&super::script::normalize_name(name)) {
+            let inner = arg[open + 1..].trim_end().trim_end_matches(')');
+            let args = {
+                let mut cx = super::eval::Ctx::new(vim, host);
+                super::eval::eval(&format!("[{inner}]"), &mut cx)?
+            };
+            let super::eval::Val::List(args) = args else {
+                return Ok(());
+            };
+            return super::script::call(vim, host, name, args, Some((range.start, range.end)))
+                .unwrap_or(Ok(super::eval::Val::Num(0)))
+                .map(|_| ());
+        }
+    }
+    let mut cx = super::eval::Ctx::new(vim, host);
+    super::eval::eval(arg, &mut cx).map(|_| ())
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Abbrev {
+    pub(crate) lhs: String,
+    pub(crate) rhs: String,
+    pub(crate) insert: bool,
+    pub(crate) cmdline: bool,
+    pub(crate) noremap: bool,
+    /// `<expr>`: read once abbreviations expand while typing.
+    #[allow(dead_code)]
+    pub(crate) expr: bool,
+}
+
+fn abbrev_cmd(vim: &mut VimState, full: &str, arg: &str) -> R<()> {
+    let insert = !full.starts_with('c');
+    let cmdline = !full.starts_with('i');
+    let noremap = full.contains("nore");
+    let mut rest = arg.trim_start();
+    let mut expr = false;
+    loop {
+        let lower = rest.get(..9).unwrap_or(rest).to_ascii_lowercase();
+        let Some(s) = ["<expr>", "<buffer>", "<silent>", "<script>", "<special>"]
+            .into_iter()
+            .find(|s| lower.starts_with(s))
+        else {
+            break;
+        };
+        expr |= s == "<expr>";
+        rest = rest[s.len()..].trim_start();
+    }
+    let (lhs, rhs) = match rest.find([' ', '\t']) {
+        Some(i) => (&rest[..i], rest[i..].trim()),
+        None => (rest, ""),
+    };
+    if rhs.is_empty() {
+        let lines: Vec<String> = vim
+            .abbrevs
+            .iter()
+            .filter(|a| lhs.is_empty() || a.lhs.starts_with(lhs))
+            .filter(|a| (insert && a.insert) || (cmdline && a.cmdline))
+            .map(|a| {
+                let m = match (a.insert, a.cmdline) {
+                    (true, true) => '!',
+                    (true, false) => 'i',
+                    _ => 'c',
+                };
+                format!(
+                    "{m}  {:<10} {}{}",
+                    a.lhs,
+                    if a.noremap { "* " } else { "  " },
+                    a.rhs
+                )
+            })
+            .collect();
+        if lines.is_empty() {
+            vim.set_message("No abbreviation found");
+        } else {
+            vim.set_lines(lines);
+        }
+        return Ok(());
+    }
+    vim.abbrevs
+        .retain(|a| !(a.lhs == lhs && a.insert == insert && a.cmdline == cmdline));
+    vim.abbrevs.push(Abbrev {
+        lhs: lhs.to_string(),
+        rhs: rhs.to_string(),
+        insert,
+        cmdline,
+        noremap,
+        expr,
+    });
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct UserCommand {
+    pub(crate) rhs: String,
+    pub(crate) nargs: String,
+    pub(crate) range: bool,
+}
+
+/// `:command[!] [-nargs=..] [-range] [-bang] ... Name {rhs}`
+fn user_command(vim: &mut VimState, _bang: bool, arg: &str) -> R<()> {
+    let mut rest = arg.trim();
+    let mut nargs = "0".to_string();
+    let mut range = false;
+    while let Some(r) = rest.strip_prefix('-') {
+        let end = r.find([' ', '\t']).unwrap_or(r.len());
+        let attr = &r[..end];
+        if let Some(n) = attr.strip_prefix("nargs=") {
+            nargs = n.to_string();
+        } else if attr.starts_with("range") || attr.starts_with("count") {
+            range = true;
+        }
+        rest = r[end..].trim_start();
+    }
+    let (name, rhs) = match rest.find([' ', '\t']) {
+        Some(i) => (&rest[..i], rest[i..].trim()),
+        None => (rest, ""),
+    };
+    if name.is_empty() {
+        let lines: Vec<String> = vim
+            .user_commands
+            .iter()
+            .map(|(n, c)| format!("    {n:<12} {:<5} {}", c.nargs, c.rhs))
+            .collect();
+        if lines.is_empty() {
+            vim.set_message("No user-defined commands found");
+        } else {
+            vim.set_lines(lines);
+        }
+        return Ok(());
+    }
+    if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+        return Err("E183: User defined commands must start with an uppercase letter".into());
+    }
+    if rhs.is_empty() {
+        return Err("E471: Argument required".into());
+    }
+    vim.user_commands.insert(
+        name.to_string(),
+        UserCommand {
+            rhs: rhs.to_string(),
+            nargs,
+            range,
+        },
+    );
+    Ok(())
+}
+
+/// Run a user command; `None` when `name` is not one.
+fn run_user_command(
+    vim: &mut VimState,
+    host: &mut dyn Host,
+    range: &Range,
+    name: &str,
+    bang: bool,
+    arg: &str,
+) -> Option<R<()>> {
+    let cmd = vim.user_commands.get(name).cloned().or_else(|| {
+        let mut it = vim
+            .user_commands
+            .iter()
+            .filter(|(n, _)| n.starts_with(name));
+        let first = it.next()?;
+        it.next().is_none().then(|| first.1.clone())
+    })?;
+    let arg = arg.trim();
+    if cmd.nargs == "0" && !arg.is_empty() {
+        return Some(Err("E488: Trailing characters".into()));
+    }
+    if cmd.nargs == "1" && arg.is_empty() {
+        return Some(Err("E471: Argument required".into()));
+    }
+    let q = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+    let f_args: Vec<String> = arg.split_whitespace().map(q).collect();
+    let mut out = String::new();
+    let mut i = 0;
+    let rhs = cmd.rhs.as_str();
+    while i < rhs.len() {
+        let rest = &rhs[i..];
+        let lower = rest.to_ascii_lowercase();
+        let rep: Option<(usize, String)> = [
+            ("<args>", arg.to_string()),
+            ("<q-args>", q(arg)),
+            ("<f-args>", f_args.join(", ")),
+            ("<bang>", if bang { "!".into() } else { String::new() }),
+            ("<line1>", (range.start + 1).to_string()),
+            ("<line2>", (range.end + 1).to_string()),
+            (
+                "<count>",
+                if range.given > 0 {
+                    (range.end + 1).to_string()
+                } else {
+                    "0".into()
+                },
+            ),
+            ("<range>", range.given.to_string()),
+            ("<lt>", "<".into()),
+            ("<reg>", String::new()),
+            ("<mods>", String::new()),
+        ]
+        .into_iter()
+        .find(|(k, _)| lower.starts_with(k))
+        .map(|(k, v)| (k.len(), v));
+        match rep {
+            Some((n, v)) => {
+                out.push_str(&v);
+                i += n;
+            }
+            None => {
+                let c = rest.chars().next().unwrap();
+                out.push(c);
+                i += c.len_utf8();
+            }
+        }
+    }
+    let line = if cmd.range && range.given > 0 {
+        format!("{},{}{out}", range.start + 1, range.end + 1)
+    } else {
+        out
+    };
+    Some(run(vim, host, &line))
+}
+
+fn earlier_later(vim: &mut VimState, host: &mut dyn Host, earlier: bool, arg: &str) -> R<()> {
+    let arg = arg.trim();
+    let digits: String = arg.chars().take_while(char::is_ascii_digit).collect();
+    let n: u64 = if digits.is_empty() {
+        1
+    } else {
+        digits.parse().unwrap_or(1)
+    };
+    let unit = arg[digits.len()..].trim();
+    let undo_key = if earlier {
+        Key::ch('u')
+    } else {
+        Key::ctrl('r')
+    };
+    match unit {
+        "" => {
+            let keys: Vec<Key> = std::iter::once(n.to_string())
+                .flat_map(|s| s.chars().map(Key::ch).collect::<Vec<_>>())
+                .chain(std::iter::once(undo_key))
+                .collect();
+            vim.feed_keys(host, &keys, false, false);
+            Ok(())
+        }
+        "f" => {
+            for k in 0..n {
+                let Some(ed) = host.ed() else {
+                    return Ok(());
+                };
+                let at_saved = |ed: &crate::editor::Editor| {
+                    ed.saved_rope.as_ref().is_some_and(|r| *r == ed.rope)
+                };
+                let mut steps = 0;
+                // The first file write back is the saved text itself.
+                if at_saved(ed) || k > 0 {
+                    if !step_history(ed, earlier) {
+                        break;
+                    }
+                    steps += 1;
+                }
+                while !at_saved(ed) && step_history(ed, earlier) {
+                    steps += 1;
+                }
+                let _ = steps;
+            }
+            if let Some(ed) = host.ed() {
+                exec::clamp_normal(ed);
+            }
+            Ok(())
+        }
+        "s" | "m" | "h" | "d" => {
+            let secs = n * match unit {
+                "s" => 1,
+                "m" => 60,
+                "h" => 3600,
+                _ => 86400,
+            };
+            let span = std::time::Duration::from_secs(secs);
+            let Some(ed) = host.ed() else {
+                return Ok(());
+            };
+            let time_of =
+                |ed: &crate::editor::Editor, id: u64| ed.vim_buf.undo_times.get(&id).copied();
+            if earlier {
+                let target = std::time::Instant::now().checked_sub(span);
+                loop {
+                    let Some(id) = ed.undo_stack.back().map(|s| s.change_id) else {
+                        break;
+                    };
+                    let newer = match (time_of(ed, id), target) {
+                        (Some(t), Some(target)) => t > target,
+                        (Some(_), None) => true,
+                        (None, _) => false,
+                    };
+                    if !newer || !step_history(ed, true) {
+                        break;
+                    }
+                }
+            } else {
+                let now_state = ed
+                    .undo_stack
+                    .back()
+                    .and_then(|s| time_of(ed, s.change_id))
+                    .unwrap_or_else(std::time::Instant::now);
+                let target = now_state + span;
+                loop {
+                    let Some(id) = ed.redo_stack.back().map(|s| s.change_id) else {
+                        break;
+                    };
+                    let within = time_of(ed, id).is_none_or(|t| t <= target);
+                    if !within || !step_history(ed, false) {
+                        break;
+                    }
+                }
+            }
+            exec::clamp_normal(ed);
+            Ok(())
+        }
+        _ => Err(format!("E475: Invalid argument: {arg}")),
+    }
+}
+
+fn step_history(ed: &mut crate::editor::Editor, back: bool) -> bool {
+    if back {
+        if !ed.can_undo() {
+            return false;
+        }
+        ed.undo();
+    } else {
+        if !ed.can_redo() {
+            return false;
+        }
+        ed.redo();
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
+// Quickfix
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QfItem {
+    pub(crate) path: std::path::PathBuf,
+    /// 0-based.
+    pub(crate) line: usize,
+    pub(crate) col: usize,
+    pub(crate) text: String,
+}
+
+#[derive(Clone, Copy)]
+enum QfMove {
+    Next(usize),
+    Prev(usize),
+    /// 1-based.
+    Nth(usize),
+    Last,
+    Current,
+    File(bool),
+}
+
+fn set_quickfix(vim: &mut VimState, items: Vec<QfItem>, add: bool) {
+    if add {
+        vim.qf.extend(items);
+    } else {
+        vim.qf = items;
+        vim.qf_idx = 0;
+    }
+}
+
+fn qf_jump(vim: &mut VimState, host: &mut dyn Host, mv: QfMove) -> R<()> {
+    if vim.qf.is_empty() {
+        return Err("E42: No Errors".into());
+    }
+    let len = vim.qf.len();
+    let idx = match mv {
+        QfMove::Next(n) => {
+            if vim.qf_idx + 1 >= len {
+                return Err("E553: No more items".into());
+            }
+            (vim.qf_idx + n).min(len - 1)
+        }
+        QfMove::Prev(n) => {
+            if vim.qf_idx == 0 {
+                return Err("E553: No more items".into());
+            }
+            vim.qf_idx.saturating_sub(n)
+        }
+        QfMove::Nth(n) => n.clamp(1, len) - 1,
+        QfMove::Last => len - 1,
+        QfMove::Current => vim.qf_idx.min(len - 1),
+        QfMove::File(next) => {
+            let cur = vim.qf[vim.qf_idx].path.clone();
+            let found = if next {
+                (vim.qf_idx + 1..len).find(|&i| vim.qf[i].path != cur)
+            } else {
+                // The last entry of the previous file.
+                (0..vim.qf_idx).rev().find(|&i| vim.qf[i].path != cur)
+            };
+            found.ok_or("E553: No more items")?
+        }
+    };
+    vim.qf_idx = idx;
+    let item = vim.qf[idx].clone();
+    if let Some(ed) = host.ed() {
+        push_jump(vim, ed);
+    }
+    host.act(Act::JumpTo {
+        nav_id: 0,
+        path: Some(item.path.clone()),
+        pos: Pos::new(item.line, item.col),
+    })?;
+    if let Some(ed) = host.ed() {
+        update_curswant(vim, ed);
+    }
+    vim.set_message(format!("({} of {len}): {}", idx + 1, item.text.trim()));
+    Ok(())
+}
+
+fn qf_list(vim: &mut VimState, _all: bool) {
+    let lines: Vec<String> = vim
+        .qf
+        .iter()
+        .enumerate()
+        .map(|(i, q)| {
+            format!(
+                "{}{:>3} {}:{} col {}: {}",
+                if i == vim.qf_idx { ">" } else { " " },
+                i + 1,
+                q.path.display().to_string().replace('\\', "/"),
+                q.line + 1,
+                q.col + 1,
+                q.text.trim()
+            )
+        })
+        .collect();
+    vim.set_lines(lines);
+}
+
+fn qf_do(vim: &mut VimState, host: &mut dyn Host, per_file: bool, cmd: &str) -> R<()> {
+    if vim.qf.is_empty() {
+        return Err("E42: No Errors".into());
+    }
+    let mut targets = Vec::new();
+    for (i, q) in vim.qf.iter().enumerate() {
+        if per_file && i > 0 && vim.qf[i - 1].path == q.path {
+            continue;
+        }
+        targets.push(i);
+    }
+    for i in targets {
+        qf_jump(vim, host, QfMove::Nth(i + 1))?;
+        run(vim, host, cmd)?;
+    }
+    Ok(())
+}
+
+/// Which program runs `:grep`: 'grepprg' when set, else ripgrep or git grep
+/// when available, else the platform default.
+fn grep_program(vim: &VimState, host: &dyn Host) -> String {
+    if let Some(p) = vim.other_opts.get("grepprg") {
+        return p.clone();
+    }
+    if super::eval::which("rg") {
+        return "rg --vimgrep --smart-case".into();
+    }
+    if host.cwd().is_some_and(|d| d.join(".git").exists()) && super::eval::which("git") {
+        return "git grep -n --column".into();
+    }
+    default_other("grepprg").into()
+}
+
+fn quickfix_shell(
+    vim: &mut VimState,
+    host: &mut dyn Host,
+    make: bool,
+    add: bool,
+    bang: bool,
+    arg: &str,
+) -> R<()> {
+    let prg = if make {
+        vim.other_opts
+            .get("makeprg")
+            .cloned()
+            .unwrap_or_else(|| default_other("makeprg").into())
+    } else {
+        if arg.trim().is_empty() {
+            return Err("E471: Argument required".into());
+        }
+        grep_program(vim, host)
+    };
+    let cmd = if prg.contains("$*") {
+        prg.replace("$*", arg)
+    } else {
+        format!("{prg} {arg}")
+    };
+    let out = match shell(host, cmd.trim(), None) {
+        Ok(o) => o,
+        Err(e) => return Err(e),
+    };
+    let cwd = host.cwd().unwrap_or_default();
+    let items = parse_errors(&out, cwd);
+    let n = items.len();
+    set_quickfix(vim, items, add);
+    if n == 0 {
+        if make {
+            show_output(vim, &out);
+            return Ok(());
+        }
+        return Err(format!("E480: No match: {}", arg.trim()));
+    }
+    if !bang {
+        qf_jump(
+            vim,
+            host,
+            QfMove::Nth(if add { vim.qf.len() - n + 1 } else { 1 }),
+        )?;
+    } else {
+        vim.set_message(format!("{n} item{}", if n == 1 { "" } else { "s" }));
+    }
+    Ok(())
+}
+
+/// Read `file:line:col: text`, `file:line: text`, `file(line,col): text`
+/// and rustc's ` --> file:line:col` lines into quickfix entries.
+pub(crate) fn parse_errors(out: &str, cwd: std::path::PathBuf) -> Vec<QfItem> {
+    use std::sync::LazyLock;
+    static COLON: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^(.+?):(\d+)(?::(\d+))?:?\s?(.*)$").unwrap());
+    static PAREN: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^(.+?)\((\d+)(?:,(\d+))?\)\s*:\s*(.*)$").unwrap());
+    static ARROW: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"^\s*--> (.+?):(\d+):(\d+)\s*$").unwrap());
+    let resolve = |f: &str| -> Option<std::path::PathBuf> {
+        let f = f.trim();
+        if f.is_empty() || f.len() > 400 {
+            return None;
+        }
+        let p = std::path::Path::new(f);
+        let full = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            cwd.join(p)
+        };
+        full.is_file().then_some(full)
+    };
+    let mut items = Vec::new();
+    let mut last_message = String::new();
+    for line in out.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(c) = ARROW.captures(line) {
+            if let Some(path) = resolve(&c[1]) {
+                items.push(QfItem {
+                    path,
+                    line: c[2].parse::<usize>().unwrap_or(1).saturating_sub(1),
+                    col: c[3].parse::<usize>().unwrap_or(1).saturating_sub(1),
+                    text: std::mem::take(&mut last_message),
+                });
+            }
+            continue;
+        }
+        let caps = PAREN.captures(line).or_else(|| COLON.captures(line));
+        if let Some(c) = caps
+            && let Some(path) = resolve(&c[1])
+        {
+            let text = c.get(4).map_or("", |m| m.as_str()).to_string();
+            items.push(QfItem {
+                path,
+                line: c[2].parse::<usize>().unwrap_or(1).saturating_sub(1),
+                col: c
+                    .get(3)
+                    .and_then(|m| m.as_str().parse::<usize>().ok())
+                    .unwrap_or(1)
+                    .saturating_sub(1),
+                text,
+            });
+            continue;
+        }
+        let t = line.trim_start();
+        if t.starts_with("error") || t.starts_with("warning") {
+            last_message = t.to_string();
+        }
+    }
+    items
+}
+
+/// `:vimgrep /pat/[gj] file...`: split after the pattern and its flags.
+fn split_vimgrep(arg: &str) -> (String, String) {
+    let t = arg.trim_start();
+    let lead = &arg[..arg.len() - t.len()];
+    let Some(d) = t.chars().next() else {
+        return (arg.to_string(), String::new());
+    };
+    if d.is_alphanumeric() || d == '_' || d == '"' || d == '|' {
+        // `:vimgrep word files`: the pattern is the first word.
+        let end = t.find([' ', '\t']).unwrap_or(t.len());
+        return (format!("{lead}{}", &t[..end]), t[end..].to_string());
+    }
+    let mut it = t.char_indices().skip(1);
+    let mut close = None;
+    while let Some((i, c)) = it.next() {
+        if c == '\\' {
+            it.next();
+            continue;
+        }
+        if c == d {
+            close = Some(i);
+            break;
+        }
+    }
+    let Some(close) = close else {
+        return (arg.to_string(), String::new());
+    };
+    let mut end = close + d.len_utf8();
+    while t[end..].starts_with(['g', 'j', 'f']) {
+        end += 1;
+    }
+    (format!("{lead}{}", &t[..end]), t[end..].to_string())
+}
+
+fn vimgrep(vim: &mut VimState, host: &mut dyn Host, add: bool, bang: bool, arg: &str) -> R<()> {
+    let (pat_part, files) = split_vimgrep(arg);
+    let p = pat_part.trim();
+    let (pattern, flags) = match p.chars().next() {
+        Some(d) if !(d.is_alphanumeric() || d == '_') => {
+            let body = &p[d.len_utf8()..];
+            let close = body.rfind(d).unwrap_or(body.len());
+            (
+                body[..close].to_string(),
+                body[(close + d.len_utf8()).min(body.len())..].to_string(),
+            )
+        }
+        _ => (p.to_string(), String::new()),
+    };
+    let pattern = if pattern.is_empty() {
+        vim.last_search
+            .as_ref()
+            .map(|(p, _)| p.clone())
+            .ok_or("E35: No previous regular expression")?
+    } else {
+        pattern
+    };
+    let files = files.trim();
+    if files.is_empty() {
+        return Err("E683: File name missing or invalid pattern".into());
+    }
+    let re = search::compile(
+        &pattern,
+        &search::Options {
+            ignorecase: vim.opts.ignorecase,
+            smartcase: vim.opts.smartcase,
+            magic: vim.opts.magic,
+            last_sub: None,
+        },
+    )?;
+    let cwd = host.cwd().unwrap_or_default();
+    let paths = glob_files(&cwd, files);
+    let all = flags.contains('g');
+    let mut items = Vec::new();
+    for path in paths {
+        let Ok(meta) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if meta.len() > 8 * 1024 * 1024 {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for (n, line) in text.lines().enumerate() {
+            for (s, _) in re.find_iter(line) {
+                items.push(QfItem {
+                    path: path.clone(),
+                    line: n,
+                    col: line[..s].chars().count(),
+                    text: line.to_string(),
+                });
+                if !all {
+                    break;
+                }
+            }
+        }
+        if items.len() > 100_000 {
+            break;
+        }
+    }
+    if items.is_empty() {
+        return Err(format!("E480: No match: {pattern}"));
+    }
+    let n = items.len();
+    set_quickfix(vim, items, add);
+    vim.last_search = Some((pattern.clone(), true));
+    vim.regs.last_search = pattern;
+    if flags.contains('j') || bang {
+        vim.set_message(format!("{n} match{}", if n == 1 { "" } else { "es" }));
+        return Ok(());
+    }
+    qf_jump(
+        vim,
+        host,
+        QfMove::Nth(if add { vim.qf.len() - n + 1 } else { 1 }),
+    )
+}
+
+/// Directories never searched by `:vimgrep **` and `:find`.
+fn skip_dir(name: &str) -> bool {
+    name.starts_with('.')
+        || matches!(
+            name,
+            "target" | "node_modules" | "__pycache__" | "dist" | "build"
+        )
+}
+
+/// Walk `root` (bounded) for files.
+fn walk(root: &std::path::Path, mut visit: impl FnMut(&std::path::Path, &str) -> bool) {
+    let mut stack = vec![root.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries.into_iter().rev() {
+            seen += 1;
+            if seen > 300_000 {
+                return;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            let Ok(ft) = e.file_type() else {
+                continue;
+            };
+            let path = e.path();
+            if ft.is_dir() {
+                if !skip_dir(&name) {
+                    stack.push(path);
+                }
+            } else {
+                let rel = path
+                    .strip_prefix(root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if !visit(&path, &rel) {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn glob_regex(glob: &str) -> Option<regex::Regex> {
+    let g = glob.replace('\\', "/");
+    let mut re = String::from("(?i)^");
+    if !cfg!(windows) {
+        re = "^".into();
+    }
+    let chars: Vec<char> = g.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '*' && chars.get(i + 1) == Some(&'*') {
+            if chars.get(i + 2) == Some(&'/') {
+                re.push_str("(?:.*/)?");
+                i += 3;
+            } else {
+                re.push_str(".*");
+                i += 2;
+            }
+            continue;
+        }
+        match c {
+            '*' => re.push_str("[^/]*"),
+            '?' => re.push_str("[^/]"),
+            '{' => re.push_str("(?:"),
+            '}' => re.push(')'),
+            ',' => re.push('|'),
+            c => re.push_str(&regex::escape(&c.to_string())),
+        }
+        i += 1;
+    }
+    re.push('$');
+    regex::Regex::new(&re).ok()
+}
+
+/// File arguments with `*`, `**` and `?` expanded under `cwd`.
+fn glob_files(cwd: &std::path::Path, files: &str) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for f in files.split_whitespace() {
+        let f = f.replace("\\ ", " ");
+        if !f.contains(['*', '?', '{']) {
+            let p = std::path::Path::new(&f);
+            let full = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                cwd.join(p)
+            };
+            if full.is_file() {
+                out.push(full);
+            } else if full.is_dir() {
+                walk(&full, |path, _| {
+                    out.push(path.to_path_buf());
+                    true
+                });
+            }
+            continue;
+        }
+        // A literal directory prefix narrows the walk.
+        let norm = f.replace('\\', "/");
+        let (root, pat) = match norm.find(['*', '?', '{']) {
+            Some(i) => match norm[..i].rfind('/') {
+                Some(slash) => (cwd.join(&norm[..slash]), norm[slash + 1..].to_string()),
+                None => (cwd.to_path_buf(), norm.clone()),
+            },
+            None => (cwd.to_path_buf(), norm.clone()),
+        };
+        let Some(re) = glob_regex(&pat) else {
+            continue;
+        };
+        walk(&root, |path, rel| {
+            if re.is_match(rel) {
+                out.push(path.to_path_buf());
+            }
+            true
+        });
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// `:find name`: a file under the working directory (as with `path=**`).
+fn find_file(vim: &VimState, host: &dyn Host, name: &str) -> R<String> {
+    let name = super::paths::argument(name).replace("\\ ", " ");
+    if name.is_empty() {
+        return Err("E471: Argument required".into());
+    }
+    let cwd = host.cwd().unwrap_or_default();
+    let suffixes: Vec<String> = std::iter::once(String::new())
+        .chain(
+            vim.other_opts
+                .get("suffixesadd")
+                .map(|s| s.split(',').map(str::to_string).collect::<Vec<_>>())
+                .unwrap_or_default(),
+        )
+        .collect();
+    // Relative to the working directory or the current file first.
+    let here = host
+        .ed_ref()
+        .and_then(|ed| ed.file_path.as_ref())
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+    for base in std::iter::once(cwd.clone()).chain(here) {
+        for s in &suffixes {
+            let p = base.join(format!("{name}{s}"));
+            if p.is_file() {
+                return Ok(p.display().to_string());
+            }
+        }
+    }
+    let norm = name.replace('\\', "/");
+    let re = if norm.contains(['*', '?']) {
+        glob_regex(&format!("**/{norm}"))
+    } else {
+        None
+    };
+    let mut best: Option<(usize, std::path::PathBuf)> = None;
+    walk(&cwd, |path, rel| {
+        let hit = match &re {
+            Some(re) => re.is_match(rel),
+            None => suffixes.iter().any(|s| {
+                let want = format!("{norm}{s}");
+                rel == want || rel.ends_with(&format!("/{want}"))
+            }),
+        };
+        if hit && best.as_ref().is_none_or(|(d, _)| rel.len() < *d) {
+            best = Some((rel.len(), path.to_path_buf()));
+        }
+        true
+    });
+    best.map(|(_, p)| p.display().to_string())
+        .ok_or_else(|| format!("E345: Can't find file \"{name}\" in path"))
+}
+
+fn resize(vim: &mut VimState, host: &mut dyn Host, arg: &str, width: bool) -> R<()> {
+    let _ = vim;
+    let arg = arg.trim();
+    let (delta, absolute) = if let Some(n) = arg.strip_prefix('+') {
+        (n.parse::<isize>().unwrap_or(1), None)
+    } else if let Some(n) = arg.strip_prefix('-') {
+        (-n.parse::<isize>().unwrap_or(1), None)
+    } else if arg.is_empty() {
+        (0, Some(usize::MAX))
+    } else {
+        (
+            0,
+            Some(
+                arg.parse::<usize>()
+                    .map_err(|_| format!("E475: Invalid argument: {arg}"))?,
+            ),
+        )
+    };
+    host.act(Act::Resize {
+        width,
+        delta,
+        absolute,
+    })
+}
+
+/// Ex commands whose arguments are file names: `%`, `#`, `<cword>`...
+/// expand in them (Vim's cmdline-special).
+fn expands_files(full: &str) -> bool {
+    matches!(
+        full,
+        "edit"
+            | "write"
+            | "update"
+            | "wq"
+            | "xit"
+            | "exit"
+            | "saveas"
+            | "split"
+            | "vsplit"
+            | "new"
+            | "vnew"
+            | "tabedit"
+            | "tabnew"
+            | "read"
+            | "source"
+            | "cd"
+            | "lcd"
+            | "tcd"
+            | "!"
+            | "terminal"
+            | "find"
+            | "sfind"
+            | "tabfind"
+            | "grep"
+            | "grepadd"
+            | "lgrep"
+            | "make"
+            | "lmake"
+            | "badd"
+            | "argadd"
+            | "Explore"
+            | "Sexplore"
+            | "Vexplore"
+            | "Lexplore"
+    )
+}
+
+/// Expand unescaped `%`, `#`, `<cword>`, `<cWORD>`, `<cfile>` (with
+/// `:p :h :t :r :e :~ :.` modifiers); `\%` stays a literal `%`.
+fn expand_specials(host: &dyn Host, text: &str) -> String {
+    let file = || -> Option<String> {
+        let ed = host.ed_ref()?;
+        let path = ed.file_path.as_ref()?;
+        let cwd = host.cwd().unwrap_or_default();
+        Some(
+            path.strip_prefix(&cwd)
+                .unwrap_or(path)
+                .display()
+                .to_string(),
+        )
+    };
+    let word = |big: bool| -> String {
+        let Some(ed) = host.ed_ref() else {
+            return String::new();
+        };
+        let t = Text::of(&ed.rope, ed.vim_buf.trailing_empty);
+        let chars = t.line_chars(ed.cursor_line);
+        let is = |c: char| {
+            if big {
+                !c.is_whitespace()
+            } else {
+                c.is_alphanumeric() || c == '_'
+            }
+        };
+        let mut st = ed.cursor_col.min(chars.len());
+        while st < chars.len() && !is(chars[st]) {
+            st += 1;
+        }
+        let mut b = st;
+        while b > 0 && is(chars[b - 1]) {
+            b -= 1;
+        }
+        let mut e = st;
+        while e < chars.len() && is(chars[e]) {
+            e += 1;
+        }
+        chars[b..e].iter().collect()
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    let take_mods = |i: &mut usize| -> String {
+        let mut mods = String::new();
+        while *i + 1 < chars.len() && chars[*i] == ':' && "p~.htre".contains(chars[*i + 1]) {
+            mods.push(':');
+            mods.push(chars[*i + 1]);
+            *i += 2;
+        }
+        mods
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' && matches!(chars.get(i + 1), Some('%' | '#' | '<')) {
+            out.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        if c == '%' {
+            i += 1;
+            let mods = take_mods(&mut i);
+            match file() {
+                Some(f) => out.push_str(&super::paths::modify(&f, &mods)),
+                None => {
+                    out.push('%');
+                    out.push_str(&mods);
+                }
+            }
+            continue;
+        }
+        if c == '<' {
+            let rest: String = chars[i..].iter().take(8).collect();
+            let special = ["<cword>", "<cWORD>", "<cfile>"]
+                .into_iter()
+                .find(|s| rest.starts_with(s));
+            if let Some(s) = special {
+                i += s.len();
+                let mods = take_mods(&mut i);
+                let w = match s {
+                    "<cword>" => word(false),
+                    "<cWORD>" => word(true),
+                    _ => word(true)
+                        .trim_matches(|c: char| "\"'()[]{}<>,;".contains(c))
+                        .to_string(),
+                };
+                out.push_str(&if mods.is_empty() {
+                    w
+                } else {
+                    super::paths::modify(&w, &mods)
+                });
+                continue;
+            }
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// The first `|` part opens a script block (`if`, `for`, `while`, `try`).
+fn starts_block(part: &str) -> bool {
+    let t = part.trim_start_matches([' ', ':']);
+    let w: String = t.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    matches!(
+        w.as_str(),
+        "if" | "for" | "while" | "wh" | "whi" | "whil" | "try"
+    )
 }
 
 /// Option names and aliases.
@@ -2670,7 +4370,125 @@ const OPTIONS: &[(&str, &str)] = &[
     ("ttyfast", "tf"),
     ("highlightyank", "hly"),
     ("vimctrlkeys", "vck"),
+    ("grepprg", "gp"),
+    ("grepformat", "gfm"),
+    ("makeprg", "mp"),
+    ("errorformat", "efm"),
+    ("path", "pa"),
+    ("wildignore", "wig"),
+    ("suffixesadd", "sua"),
+    ("showtabline", "stal"),
+    ("title", "title"),
+    ("shortmess", "shm"),
+    ("completeopt", "cot"),
+    ("undodir", "udir"),
+    ("backupdir", "bdir"),
+    ("directory", "dir"),
+    ("writebackup", "wb"),
+    ("spelllang", "spl"),
+    ("fileformats", "ffs"),
+    ("listchars", "lcs"),
+    ("fillchars", "fcs"),
+    ("cursorlineopt", "culopt"),
+    ("numberwidth", "nuw"),
+    ("ttimeout", "ttimeout"),
+    ("smarttab", "sta"),
+    ("infercase", "inf"),
+    ("pumheight", "ph"),
+    ("confirm", "cf"),
+    ("modeline", "ml"),
+    ("modelines", "mls"),
+    ("secure", "secure"),
+    ("exrc", "ex"),
+    ("scrolljump", "sj"),
+    ("display", "dy"),
+    ("guifont", "gfn"),
+    ("guioptions", "go"),
+    ("foldlevel", "fdl"),
+    ("foldlevelstart", "fdls"),
+    ("foldcolumn", "fdc"),
+    ("foldnestmax", "fdn"),
+    ("wildoptions", "wop"),
+    ("shell", "sh"),
+    ("shellcmdflag", "shcf"),
+    ("statusline", "stl"),
+    ("tabline", "tal"),
+    ("rulerformat", "ruf"),
+    ("keywordprg", "kp"),
+    ("formatprg", "fp"),
+    ("equalprg", "ep"),
+    ("tags", "tag"),
+    ("cpoptions", "cpo"),
+    ("whichwrap", "ww"),
+    ("winminheight", "wmh"),
+    ("winminwidth", "wmw"),
+    ("winheight", "wh"),
+    ("winwidth", "wiw"),
+    ("equalalways", "ea"),
+    ("synmaxcol", "smc"),
+    ("redrawtime", "rdt"),
+    ("regexpengine", "re"),
+    ("maxmempattern", "mmp"),
+    ("termencoding", "tenc"),
+    ("ttymouse", "ttym"),
+    ("esckeys", "ek"),
+    ("hlsearch", "hls"),
+    ("showbreak", "sbr"),
+    ("emoji", "emo"),
+    ("ambiwidth", "ambw"),
+    ("autochdir", "acd"),
+    ("cmdwinheight", "cwh"),
+    ("previewheight", "pvh"),
+    ("helpheight", "hh"),
+    ("sessionoptions", "ssop"),
+    ("viewoptions", "vop"),
+    ("viminfo", "vi"),
+    ("viminfofile", "vif"),
+    ("shada", "sd"),
+    ("inccommand", "icm"),
+    ("textwidth", "tw"),
+    ("wrapmargin", "wm"),
+    ("comments", "com"),
+    ("commentstring", "cms"),
+    ("indentexpr", "inde"),
+    ("indentkeys", "indk"),
+    ("cinoptions", "cino"),
+    ("cinkeys", "cink"),
+    ("copyindent", "ci"),
+    ("preserveindent", "pi"),
+    ("omnifunc", "ofu"),
+    ("completefunc", "cfu"),
+    ("dictionary", "dict"),
+    ("thesaurus", "tsr"),
+    ("complete", "cpt"),
+    ("spellfile", "spf"),
+    ("fixendofline", "fixeol"),
+    ("endofline", "eol"),
+    ("binary", "bin"),
+    ("bomb", "bomb"),
+    ("lisp", "lisp"),
+    ("termwinsize", "tws"),
+    ("ttyscroll", "tsl"),
+    ("guicursor", "gcr"),
+    ("mousemodel", "mousem"),
+    ("mousehide", "mh"),
+    ("keymodel", "km"),
+    ("selectmode", "slm"),
+    ("clipboard", "cb"),
+    ("splitkeep", "spk"),
+    ("jumpoptions", "jop"),
+    ("switchbuf", "swb"),
+    ("tagcase", "tc"),
+    ("timeout", "to"),
 ];
+
+pub(crate) fn command_known(n: &str) -> bool {
+    resolve(n).is_some()
+}
+
+pub(crate) fn option_known(n: &str) -> bool {
+    option_name(n).is_some()
+}
 
 fn option_name(n: &str) -> Option<&'static str> {
     OPTIONS
@@ -2992,8 +4810,86 @@ fn set_one(vim: &mut VimState, host: &mut dyn Host, item: &str) -> R<()> {
                 value: v,
             })
         }
-        // Accepted for vimrc compatibility; nothing to configure.
-        _ => Ok(()),
+        // Accepted for vimrc compatibility; the value is kept for `:set x?`.
+        _ => {
+            let cur = vim.other_opts.get(name).cloned();
+            if query
+                || (value.is_none()
+                    && !negate
+                    && !invert
+                    && !reset
+                    && cur.as_deref().is_some_and(|v| v != "0" && v != "1"))
+            {
+                vim.set_message(match cur {
+                    Some(v) if v == "0" => format!("no{name}"),
+                    Some(v) if v == "1" => format!("  {name}"),
+                    Some(v) => format!("  {name}={v}"),
+                    None => format!("  {name}={}", default_other(name)),
+                });
+                return Ok(());
+            }
+            let new = match (value, op) {
+                (Some(v), "+=") => {
+                    let c = cur.unwrap_or_else(|| default_other(name).to_string());
+                    if c.is_empty() { v } else { format!("{c},{v}") }
+                }
+                (Some(v), "-=") => {
+                    let c = cur.unwrap_or_default();
+                    c.split(',')
+                        .filter(|p| *p != v)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                }
+                (Some(v), "^=") => {
+                    let c = cur.unwrap_or_default();
+                    if c.is_empty() { v } else { format!("{v},{c}") }
+                }
+                (Some(v), _) => v,
+                (None, _) if reset => default_other(name).to_string(),
+                (None, _) if invert => {
+                    if cur.as_deref() == Some("1") {
+                        "0".into()
+                    } else {
+                        "1".into()
+                    }
+                }
+                (None, _) => {
+                    if negate {
+                        "0".into()
+                    } else {
+                        "1".into()
+                    }
+                }
+            };
+            vim.other_opts.insert(name.to_string(), new);
+            Ok(())
+        }
+    }
+}
+
+/// Defaults of options kept only for queries (and `:grep`/`:make`/`:find`).
+fn default_other(name: &str) -> &'static str {
+    match name {
+        "grepprg" => {
+            if cfg!(windows) {
+                "findstr /n /s"
+            } else {
+                "grep -n $* /dev/null"
+            }
+        }
+        "grepformat" => "%f:%l:%m,%f:%l%m,%f  %l%m",
+        "makeprg" => "make",
+        "path" => ".,,",
+        "shell" => {
+            if cfg!(windows) {
+                "cmd.exe"
+            } else {
+                "sh"
+            }
+        }
+        "keywordprg" => ":help",
+        "commentstring" => "/* %s */",
+        _ => "",
     }
 }
 
@@ -3037,52 +4933,7 @@ fn parse_isk(v: &str) -> Vec<char> {
 
 /// Source vimrc text. Returns error lines.
 pub(crate) fn source(vim: &mut VimState, host: &mut dyn Host, text: &str) -> Vec<String> {
-    let mut errors = Vec::new();
-    let mut lines = text.lines().enumerate().peekable();
-    let mut skip_depth = 0usize;
-    while let Some((n, line)) = lines.next() {
-        let mut line = line.trim().to_string();
-        // Line continuation.
-        while let Some((_, next)) = lines.peek() {
-            let next = next.trim_start();
-            if let Some(rest) = next.strip_prefix('\\') {
-                line.push_str(rest);
-                lines.next();
-            } else {
-                break;
-            }
-        }
-        if line.is_empty() || line.starts_with('"') {
-            continue;
-        }
-        let word: String = line
-            .chars()
-            .take_while(|c| c.is_ascii_alphabetic())
-            .collect();
-        // Skip if/function/augroup blocks we cannot evaluate.
-        if matches!(
-            word.as_str(),
-            "if" | "function" | "fun" | "func" | "for" | "while" | "try"
-        ) {
-            skip_depth += 1;
-            continue;
-        }
-        if skip_depth > 0 {
-            if matches!(
-                word.as_str(),
-                "endif" | "endfunction" | "endfun" | "endfunc" | "endfor" | "endwhile" | "endtry"
-            ) {
-                skip_depth -= 1;
-            }
-            continue;
-        }
-        if matches!(word.as_str(), "else" | "elseif" | "endif") {
-            continue;
-        }
-        if let Err(e) = run(vim, host, &line) {
-            errors.push(format!("line {:>3}: {e}", n + 1));
-        }
-    }
+    let errors = super::script::source(vim, host, text);
     vim.message = None;
     errors
 }

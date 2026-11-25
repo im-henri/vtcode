@@ -247,3 +247,94 @@ pub(crate) fn complete(
     }
     items
 }
+
+/// Vim's filename modifiers (`:p :~ :. :h :t :r :e`), as in `%:p:h`.
+pub(crate) fn modify(path: &str, mods: &str) -> String {
+    let mut out = path.to_string();
+    let mut rest = mods;
+    let sep = |c: char| c == '/' || c == '\\';
+    while let Some(r) = rest.strip_prefix(':') {
+        let Some(m) = r.chars().next() else {
+            break;
+        };
+        rest = &r[m.len_utf8()..];
+        match m {
+            'p' => {
+                let p = Path::new(&out);
+                if !p.is_absolute() {
+                    if let Ok(cwd) = std::env::current_dir() {
+                        out = cwd.join(p).display().to_string();
+                    }
+                }
+                if Path::new(&out).is_dir() && !out.ends_with(sep) {
+                    out.push(std::path::MAIN_SEPARATOR);
+                }
+            }
+            '~' => {
+                if let Some(h) = home() {
+                    let h = h.display().to_string();
+                    if let Some(r) = out.strip_prefix(&h) {
+                        out = format!("~{r}");
+                    }
+                }
+            }
+            '.' => {
+                if let Ok(cwd) = std::env::current_dir() {
+                    let c = cwd.display().to_string();
+                    if let Some(r) = out.strip_prefix(&c) {
+                        let r = r.trim_start_matches(sep);
+                        out = if r.is_empty() {
+                            ".".into()
+                        } else {
+                            r.to_string()
+                        };
+                    }
+                }
+            }
+            'h' => {
+                let trimmed = out.trim_end_matches(sep);
+                out = match trimmed.rfind(sep) {
+                    Some(0) => trimmed[..1].to_string(),
+                    Some(i) => trimmed[..i].to_string(),
+                    None => ".".into(),
+                };
+            }
+            't' => {
+                let trimmed = out.trim_end_matches(sep);
+                out = trimmed
+                    .rfind(sep)
+                    .map_or(trimmed, |i| &trimmed[i + 1..])
+                    .to_string();
+            }
+            'r' | 'e' => {
+                let name_start = out.rfind(sep).map_or(0, |i| i + 1);
+                let dot = out[name_start..].rfind('.').filter(|&d| d > 0);
+                out = match (m, dot) {
+                    ('r', Some(d)) => out[..name_start + d].to_string(),
+                    ('r', None) => out,
+                    ('e', Some(d)) => out[name_start + d + 1..].to_string(),
+                    _ => String::new(),
+                };
+            }
+            _ => break,
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod modify_tests {
+    use super::modify;
+
+    #[test]
+    fn filename_modifiers() {
+        assert_eq!(modify("src/vim/eval.rs", ":t"), "eval.rs");
+        assert_eq!(modify("src/vim/eval.rs", ":h"), "src/vim");
+        assert_eq!(modify("src/vim/eval.rs", ":r"), "src/vim/eval");
+        assert_eq!(modify("src/vim/eval.rs", ":e"), "rs");
+        assert_eq!(modify("src/vim/eval.rs", ":t:r"), "eval");
+        assert_eq!(modify("src/vim/eval.tar.gz", ":r:r"), "src/vim/eval");
+        assert_eq!(modify("eval.rs", ":h"), ".");
+        assert_eq!(modify(".vimrc", ":e"), "");
+    }
+}
