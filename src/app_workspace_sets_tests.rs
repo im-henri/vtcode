@@ -366,7 +366,11 @@ fn remote_sets_load_missing_workspaces_and_close_extras_on_the_shared_transport(
     let a = Project::new();
     let b = Project::new();
     let c = Project::new();
-    let first = crate::remote::workspace::Workspace::new(headless_connection(a.path()));
+    let local = Project::new();
+    let first = crate::remote::workspace::Workspace::with_connection_identity(
+        headless_connection(a.path()),
+        b"primary",
+    );
     let second = first
         .open_workspace(
             &first.view_key(&crate::remote::git::from_native(b.path(), a.path()).unwrap()),
@@ -382,11 +386,34 @@ fn remote_sets_load_missing_workspaces_and_close_extras_on_the_shared_transport(
     app.explorer.root = first.view_root.clone();
     app.remote_workspace = Some(first.clone());
     let kept = app.editor().unwrap().save_identity;
+    app.park_new_workspace(local.app(wake.clone()));
+    let other = crate::remote::workspace::Workspace::with_connection_identity(
+        headless_connection(c.path()),
+        b"other",
+    );
+    let mut other_app = c.app(wake.clone());
+    other_app.explorer.root = other.view_root.clone();
+    other_app.remote_workspace = Some(other.clone());
+    app.park_new_workspace(other_app);
     let mut next = b.app(wake);
     next.explorer.root = second.view_root.clone();
     next.remote_workspace = Some(second);
     app.insert_workspace(next);
+    let extra = app.workspaces.active;
     let disk = a.path().join("sets.json");
+    app.workspaces.sets.path = disk.clone();
+    let local_id = app.find_open_workspace(local.path()).unwrap();
+    app.save_workspace_set("Current folders".into(), None);
+    assert!(app.switch_workspace(local_id));
+    until(|| {
+        tick(&mut app);
+        !app.workspace_sets_busy()
+    });
+    let local_set = save(&mut app, "Current folders");
+    assert!(app.switch_workspace(extra));
+    let (saved, modified) = app.current_workspace_set().unwrap();
+    assert!(!modified);
+    assert_eq!(saved.roots.len(), 2);
     workspace_sets::mutate(
         &disk,
         Mutation::Save {
@@ -406,19 +433,33 @@ fn remote_sets_load_missing_workspaces_and_close_extras_on_the_shared_transport(
     )
     .unwrap();
     catalog(&mut app, &disk);
-    let id = app.saved_workspace_sets()[0].id;
+    let id = app
+        .saved_workspace_sets()
+        .iter()
+        .find(|set| set.name == "Remote pair")
+        .unwrap()
+        .id;
     start(&mut app, id);
     until(|| {
         tick(&mut app);
         app.workspace_set_confirmation().is_some()
     });
+    let (_, _, close) = app.workspace_set_confirmation().unwrap();
+    assert_eq!(
+        close.iter().map(|entry| entry.id).collect::<Vec<_>>(),
+        [extra]
+    );
     app.confirm_workspace_set();
     until(|| {
         tick(&mut app);
         !app.workspace_set_switching()
     });
     assert_eq!(app.explorer.root, third.view_root);
-    assert_eq!(app.workspace_entries().len(), 2);
+    assert_eq!(app.workspace_entries().len(), 4);
+    assert!(app.switch_workspace(local_id));
+    assert_eq!(app.current_workspace_set().unwrap().0.id, local_set);
+    assert!(app.switch_workspace(app.find_open_workspace(&third.view_root).unwrap()));
+    assert!(app.find_open_workspace(&other.view_root).is_some());
     assert!(first.client.connected());
     assert!(
         app.remote_workspace
@@ -427,10 +468,9 @@ fn remote_sets_load_missing_workspaces_and_close_extras_on_the_shared_transport(
             .client
             .same_transport(&first.client)
     );
-    assert_eq!(
-        app.workspaces.parked[0].app.editor().unwrap().save_identity,
-        kept
-    );
+    assert!(app.ordered_workspaces().iter().any(|(_, app)| {
+        app.explorer.root == first.view_root && app.editor().unwrap().save_identity == kept
+    }));
     app.remote_workspace
         .as_ref()
         .unwrap()
@@ -440,6 +480,7 @@ fn remote_sets_load_missing_workspaces_and_close_extras_on_the_shared_transport(
         })
         .unwrap();
     first.disconnect();
+    other.disconnect();
 }
 
 #[test]
@@ -668,4 +709,35 @@ fn reopening_last_remote_folders_replaces_the_default_folder_without_asking() {
     assert!(active.client.same_transport(&first.client) && active.client.connected());
     assert_eq!(active.client.hello().root_uri, uri(c.path()));
     first.disconnect();
+}
+
+#[test]
+fn cancelling_remote_startup_leaves_the_remembered_folders_on_disk() {
+    use crate::last_workspaces;
+
+    let home = Project::new();
+    let saved = Project::new();
+    let remote = crate::remote::workspace::Workspace::new(headless_connection(home.path()));
+    let mut app = home.app(Default::default());
+    app.explorer.root = remote.view_root.clone();
+    app.remote_workspace = Some(remote.clone());
+    app.settings_persistence_enabled = true;
+    app.workspaces.last.path = home.path().join("last.json");
+    let entry = last_workspaces::Entry {
+        scope: app.workspace_sets_scope(),
+        roots: vec![Location::Remote {
+            uri: url::Url::from_directory_path(saved.path()).unwrap().into(),
+        }],
+        active: 0,
+    };
+    last_workspaces::record(&app.workspaces.last.path, std::slice::from_ref(&entry)).unwrap();
+    app.restore_last_workspaces(entry.clone());
+    app.cancel_workspace_set_switch();
+    app.poll_last_workspaces();
+    app.flush_last_workspaces();
+    assert_eq!(
+        last_workspaces::load(&app.workspaces.last.path, &entry.scope),
+        Some(entry),
+    );
+    remote.disconnect();
 }

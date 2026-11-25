@@ -52,3 +52,14 @@ fn malformed_or_mismatched_records_reopen_nothing() {
     record(&path, &[wrong.clone()]).unwrap();
     assert_eq!(load(&path, &wrong.scope), None);
 }
+
+#[test]
+fn recording_folders_preserves_a_newer_file_format() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("last.json");
+    let future = r#"{"version":2,"entries":[]}"#;
+    std::fs::write(&path, future).unwrap();
+    let error = record(&path, &[local(temp.path(), 0, 1)]).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), future);
+}

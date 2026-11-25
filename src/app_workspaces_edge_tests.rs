@@ -24,7 +24,8 @@ fn ready_open(app: &mut App, root: &Path) {
             },
             remote: None,
             equivalent_roots: Vec::new(),
-        }))
+        }
+        .into()))
         .unwrap();
     app.workspaces.opening = Some(Opening {
         receiver,
@@ -591,7 +592,8 @@ fn completed_open_on_a_dead_remote_transport_is_rejected() {
             startup,
             remote: Some(second),
             equivalent_roots: vec![],
-        }))
+        }
+        .into()))
         .unwrap();
     app.workspaces.opening = Some(Opening {
         receiver,

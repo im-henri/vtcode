@@ -92,8 +92,82 @@ struct Prepared {
     equivalent_roots: Vec<PathBuf>,
 }
 
+impl Prepared {
+    fn remote(remote: crate::remote::workspace::Workspace) -> Self {
+        Self {
+            startup: crate::startup::Prepared::load_remote(remote.view_root.clone()),
+            remote: Some(remote),
+            equivalent_roots: vec![],
+        }
+    }
+}
+
+struct PreparedFolders {
+    folders: Vec<Prepared>,
+    active: usize,
+}
+
+impl From<Prepared> for PreparedFolders {
+    fn from(folder: Prepared) -> Self {
+        Self {
+            folders: vec![folder],
+            active: 0,
+        }
+    }
+}
+
+impl PreparedFolders {
+    fn remote_target(
+        remote: crate::remote::workspace::Workspace,
+        record: &Path,
+    ) -> io::Result<Self> {
+        use crate::{last_workspaces, workspace_sets::Location};
+        let Some(last) = last_workspaces::remote_scope(&remote)
+            .and_then(|scope| last_workspaces::load(record, &scope))
+        else {
+            return Ok(Prepared::remote(remote).into());
+        };
+        let mut folders: Vec<crate::remote::workspace::Workspace> = vec![];
+        let mut active = 0;
+        for (index, location) in last.roots.iter().enumerate() {
+            let Location::Remote { uri } = location else {
+                continue;
+            };
+            let folder = if *uri == remote.client.hello().root_uri {
+                remote.clone()
+            } else {
+                match remote.open_workspace(&remote.target_key(uri)?) {
+                    Ok(folder) => folder,
+                    Err(error) if last_workspaces::folder_missing(&error) => {
+                        log_warn!("skipped a folder of the last session: {error}");
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            let position = folders
+                .iter()
+                .position(|opened| opened.view_root == folder.view_root)
+                .unwrap_or(folders.len());
+            if position == folders.len() {
+                folders.push(folder);
+            }
+            if index == last.active {
+                active = position;
+            }
+        }
+        if folders.is_empty() {
+            return Ok(Prepared::remote(remote).into());
+        }
+        Ok(Self {
+            folders: folders.into_iter().map(Prepared::remote).collect(),
+            active,
+        })
+    }
+}
+
 struct Opening {
-    receiver: mpsc::Receiver<Result<Prepared, String>>,
+    receiver: mpsc::Receiver<Result<PreparedFolders, String>>,
     foreground: bool,
     close_after: Option<u64>,
 }
@@ -493,41 +567,9 @@ impl App {
                 self.workspaces.opening = None;
                 match result {
                     Ok(prepared) => {
-                        if prepared
-                            .remote
-                            .as_ref()
-                            .is_some_and(|remote| !remote.client.connected())
+                        if self.open_prepared_folders(prepared, foreground)
+                            && close_after == Some(self.workspaces.active)
                         {
-                            self.notify_error("The remote connection was lost while opening the folder. The current folder was kept open; reconnect before trying again.");
-                            self.background.wake_handle().notify();
-                            return true;
-                        }
-                        let root = &prepared.startup.target.root;
-                        let existing = self.find_open_workspace(root).or_else(|| {
-                            prepared
-                                .equivalent_roots
-                                .iter()
-                                .find_map(|root| self.find_open_workspace(root))
-                        });
-                        if let Some(id) = existing {
-                            if foreground {
-                                changed |= self.switch_workspace(id);
-                            }
-                        } else {
-                            let mut next = prepared.startup.into_app_with_remote(
-                                self.background.wake_handle(),
-                                prepared.remote,
-                            );
-                            next.workspace_visible = foreground;
-                            next.start_workspace_services();
-                            if foreground {
-                                self.insert_workspace(next);
-                            } else {
-                                self.park_new_workspace(next);
-                            }
-                            changed = true;
-                        }
-                        if close_after == Some(self.workspaces.active) {
                             self.begin_workspace_exit('k', true);
                         }
                     }
@@ -538,6 +580,57 @@ impl App {
             }
         }
         changed
+    }
+
+    fn open_prepared_folders(&mut self, prepared: PreparedFolders, foreground: bool) -> bool {
+        if prepared.folders.iter().any(|folder| {
+            folder
+                .remote
+                .as_ref()
+                .is_some_and(|remote| !remote.client.connected())
+        }) {
+            self.notify_error("The remote connection was lost while opening the folder. The current folder was kept open; reconnect before trying again.");
+            return false;
+        }
+        for (index, folder) in prepared.folders.into_iter().enumerate() {
+            let selected = index == prepared.active;
+            let show = selected && foreground;
+            let scope = folder
+                .remote
+                .as_ref()
+                .map(|remote| crate::workspace_sets::Scope::Remote(remote.workspace_sets_scope()));
+            let existing = self
+                .find_open_workspace(&folder.startup.target.root)
+                .or_else(|| {
+                    folder
+                        .equivalent_roots
+                        .iter()
+                        .find_map(|root| self.find_open_workspace(root))
+                });
+            let id = if let Some(id) = existing {
+                if show {
+                    self.switch_workspace(id);
+                }
+                id
+            } else {
+                let mut next = folder
+                    .startup
+                    .into_app_with_remote(self.background.wake_handle(), folder.remote);
+                next.workspace_visible = show;
+                next.start_workspace_services();
+                if show {
+                    self.insert_workspace(next);
+                    self.workspaces.active
+                } else {
+                    self.park_new_workspace(next);
+                    self.workspaces.next_id
+                }
+            };
+            if selected && let Some(scope) = scope {
+                self.workspaces.last.preferred.entry(scope).or_insert(id);
+            }
+        }
+        true
     }
 
     fn find_open_workspace(&self, root: &Path) -> Option<u64> {
@@ -591,12 +684,7 @@ impl App {
         self.background.spawn("open-live-workspace", move || {
             let result = (|| -> io::Result<Prepared> {
                 if let Some(remote) = remote {
-                    let remote = remote.open_workspace(&path)?;
-                    Ok(Prepared {
-                        startup: crate::startup::Prepared::load_remote(remote.view_root.clone()),
-                        remote: Some(remote),
-                        equivalent_roots: Vec::new(),
-                    })
+                    Ok(Prepared::remote(remote.open_workspace(&path)?))
                 } else {
                     let folder = crate::startup::LocalFolder::resolve(&path)?;
                     let equivalent_roots = open_roots
@@ -613,6 +701,7 @@ impl App {
                     })
                 }
             })()
+            .map(PreparedFolders::from)
             .map_err(|error| error.to_string());
             let _ = sender.send(result);
             wake.notify();
@@ -628,6 +717,7 @@ impl App {
         if let Some(id) = self.find_open_workspace(&remote.view_root) {
             return foreground && self.switch_workspace(id);
         }
+        let record = self.workspaces.last.path.clone();
         let (sender, receiver) = mpsc::channel();
         let wake = self.background.wake_handle();
         self.workspaces.opening = Some(Opening {
@@ -636,12 +726,9 @@ impl App {
             close_after: None,
         });
         self.background.spawn("open-remote-target", move || {
-            let prepared = Prepared {
-                startup: crate::startup::Prepared::load_remote(remote.view_root.clone()),
-                remote: Some(remote),
-                equivalent_roots: Vec::new(),
-            };
-            let _ = sender.send(Ok(prepared));
+            let result =
+                PreparedFolders::remote_target(remote, &record).map_err(|error| error.to_string());
+            let _ = sender.send(result);
             wake.notify();
         });
         true
@@ -661,10 +748,12 @@ impl App {
         });
         self.background.spawn("prepare-local-window", move || {
             let result = crate::startup::Prepared::load(None)
-                .map(|startup| Prepared {
-                    startup,
-                    remote: None,
-                    equivalent_roots: Vec::new(),
+                .map(|startup| {
+                    PreparedFolders::from(Prepared {
+                        startup,
+                        remote: None,
+                        equivalent_roots: Vec::new(),
+                    })
                 })
                 .map_err(|error| error.to_string());
             let _ = sender.send(result);
@@ -1158,9 +1247,17 @@ impl App {
                 );
                 self.background
                     .spawn("closed-workspace-lsp-shutdown", move || drop(lsp));
+                let closed_scope = parked
+                    .app
+                    .has_open_folder()
+                    .then(|| parked.app.workspace_sets_scope());
                 drop(parked);
-                if self.open_folder_count() == 0 {
-                    self.workspaces.sets.active = None;
+                if let Some(scope) = closed_scope
+                    && !self.ordered_workspaces().into_iter().any(|(_, app)| {
+                        app.has_open_folder() && app.workspace_sets_scope() == scope
+                    })
+                {
+                    self.workspaces.sets.active.remove(&scope);
                 }
             } else {
                 self.shutdown_anim_active = true;

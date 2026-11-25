@@ -37,7 +37,7 @@ fn named_workspace_status_tracks_membership_but_not_folder_focus() {
     let mut app = a.app(wake.clone());
     app.park_new_workspace(b.app(wake.clone()));
     app.workspaces.sets.loaded = true;
-    app.workspaces.sets.active = Some(7);
+    app.workspaces.sets.active.insert(Scope::Local, 7);
     app.workspaces.sets.catalog.sets.push(SavedSet {
         id: 7,
         name: "Development".into(),
@@ -109,7 +109,7 @@ fn closing_an_inactive_folder_stops_only_its_session_and_returns_to_the_current_
 fn closing_the_last_folder_keeps_vtcode_open_in_an_empty_window() {
     let a = Project::new();
     let mut app = a.app(Default::default());
-    app.workspaces.sets.active = Some(42);
+    app.workspaces.sets.active.insert(Scope::Local, 42);
     app.editor_mut().unwrap().insert_char('!');
     let text = app.editor().unwrap().rope.to_string();
     app.workspaces.request = Some(Request::CloseFolder(app.workspaces.active));
@@ -119,7 +119,7 @@ fn closing_the_last_folder_keeps_vtcode_open_in_an_empty_window() {
     });
     assert!(!app.shutdown_anim_active);
     assert_eq!(app.open_folder_count(), 0);
-    assert!(app.workspaces.sets.active.is_none());
+    assert!(app.workspaces.sets.active.is_empty());
     let mut session = crate::session::load_session(a.path()).unwrap();
     crate::session::hydrate_saved_tab(a.path(), &mut session.tabs[0]);
     assert_eq!(
@@ -162,7 +162,10 @@ fn saving_and_updating_a_workspace_marks_the_named_collection_active() {
     });
     let (saved, modified) = app.current_workspace_set().unwrap();
     assert!(!modified);
-    assert_eq!(app.workspaces.sets.active, Some(saved.id));
+    assert_eq!(
+        app.workspaces.sets.active.get(&Scope::Local),
+        Some(&saved.id)
+    );
     app.park_new_workspace(b.app(Default::default()));
     assert!(app.current_workspace_set().unwrap().1);
     app.save_workspace_set(saved.name, Some(saved.id));

@@ -400,6 +400,106 @@ fn remote_target_sign_in_can_finish_in_a_parked_workspace_without_stealing_focus
 }
 
 #[test]
+fn pathless_remote_target_reopens_cli_folders_and_preserves_local_buffers() {
+    use crate::{last_workspaces, workspace_sets::Location};
+    use std::{ffi::OsString, path::Path};
+
+    let temp = tempfile::tempdir().unwrap();
+    let [local, home, first, second] =
+        ["local", "home", "first", "second"].map(|name| temp.path().join(name));
+    for root in [&local, &home, &first, &second] {
+        std::fs::create_dir(root).unwrap();
+    }
+    let mut target = peer_target(&home, false);
+    target.host = "fixture-default".into();
+    let launch = crate::remote::launch::Launch::parse(
+        [
+            "--remote",
+            &target.host,
+            "--ssh-command",
+            &target.ssh_command,
+            "--remote-command",
+            &target.remote_command,
+        ]
+        .into_iter()
+        .map(OsString::from),
+    )
+    .unwrap()
+    .unwrap();
+    let direct = launch
+        .start(Size::new(80, 24), Default::default())
+        .unwrap()
+        .workspace_for_test()
+        .unwrap();
+    let root = |path: &Path| {
+        direct
+            .open_workspace(
+                &direct.view_key(&crate::remote::git::from_native(path, &home).unwrap()),
+            )
+            .unwrap()
+    };
+    let (first, second) = (root(&first), root(&second));
+    let location = |root: &crate::remote::workspace::Workspace| Location::Remote {
+        uri: root.client.hello().root_uri.clone(),
+    };
+    let scope = last_workspaces::remote_scope(&direct).unwrap();
+    let record = temp.path().join("last.json");
+    let expected = last_workspaces::Entry {
+        scope: scope.clone(),
+        roots: vec![location(&first), location(&second)],
+        active: 1,
+    };
+    let mut remembered = expected.clone();
+    remembered.roots.insert(
+        1,
+        Location::Remote {
+            uri: url::Url::from_directory_path(temp.path().join("missing"))
+                .unwrap()
+                .into(),
+        },
+    );
+    remembered.active = 2;
+    last_workspaces::record(&record, &[remembered]).unwrap();
+    let settings_path = crate::settings::project_settings_path(&second.view_root);
+    crate::settings::save_to_file(
+        &settings_path,
+        &crate::settings::Settings {
+            tab_size: Some(21),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    direct.disconnect();
+
+    let mut app = App::new_startup(local, Default::default());
+    app.tabs = vec![Tab::new_file(Editor::test_with_text("local buffer"))];
+    let local_editor = app.tabs[0].editor.save_identity;
+    app.workspaces.last.path = record;
+    app.connect_remote_target(target.clone());
+    spin(&mut app, |app| app.explorer.root == second.view_root);
+    assert_eq!(app.workspace_entries().len(), 3);
+    assert_eq!(app.settings_workspace_path, settings_path);
+    assert_eq!(app.default_tab_size, 8);
+
+    app.settings_persistence_enabled = true;
+    app.poll_last_workspaces();
+    assert!(app.switch_workspace(0));
+    assert_eq!(app.tabs[0].editor.save_identity, local_editor);
+    app.settings_persistence_enabled = true;
+    app.flush_last_workspaces();
+    assert_eq!(
+        last_workspaces::load(&app.workspaces.last.path, &scope),
+        Some(expected),
+        "switching to the local folder keeps the remote selection and order",
+    );
+    app.connect_remote_target(target);
+    app.poll_workspace_requests();
+    assert_eq!(app.explorer.root, second.view_root);
+    app.remote_workspace.as_ref().unwrap().disconnect();
+    std::fs::remove_file(settings_path).unwrap();
+}
+
+#[test]
 fn remote_target_connect_authenticate_switch_and_reuse_preserve_the_local_workbench() {
     let (temp, mut app) = fixture();
     let root = temp.path().join("remote workspace λ");
@@ -638,7 +738,12 @@ fn headless_target_peer() {
         };
         assert_eq!(password, b"fixture-secret");
     }
-    crate::remote::service::run(Some(root)).unwrap();
+    if host == "fixture-default" {
+        std::env::set_current_dir(root).unwrap();
+        crate::remote::service::run(None).unwrap();
+    } else {
+        crate::remote::service::run(Some(root)).unwrap();
+    }
 }
 
 #[test]

@@ -11,6 +11,7 @@ use std::{
 const VERSION: u32 = 1;
 const MAX_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ENTRIES: usize = 64;
+pub(crate) const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[cfg(test)]
 #[path = "last_workspaces_tests.rs"]
@@ -35,6 +36,21 @@ pub(crate) fn path() -> PathBuf {
     crate::portable::data_dir().join("last-workspaces.json")
 }
 
+pub(crate) fn remote_scope(remote: &crate::remote::workspace::Workspace) -> Option<Scope> {
+    remote
+        .client
+        .hello()
+        .default_root
+        .then(|| Scope::Remote(remote.workspace_sets_scope()))
+}
+
+pub(crate) fn folder_missing(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+    )
+}
+
 fn read(path: &Path) -> io::Result<Vec<Entry>> {
     let (file, metadata) = match crate::fs_ops::open_document_source(path, false) {
         Ok(source) => source,
@@ -42,13 +58,18 @@ fn read(path: &Path) -> io::Result<Vec<Entry>> {
         Err(error) => return Err(error),
     };
     if metadata.len() > MAX_BYTES {
-        return Err(io::Error::other("Last workspace record is too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Last workspace record is too large",
+        ));
     }
     let mut data = Vec::new();
     file.take(MAX_BYTES + 1).read_to_end(&mut data)?;
-    let file: File = serde_json::from_slice(&data).map_err(io::Error::other)?;
+    let file: File = serde_json::from_slice(&data)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     if file.version != VERSION {
-        return Err(io::Error::other(
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
             "Last workspace record has another version",
         ));
     }
@@ -82,7 +103,7 @@ pub(crate) fn record(path: &Path, updates: &[Entry]) -> io::Result<()> {
         .ok_or_else(|| io::Error::other("Invalid last workspace record path"))?;
     std::fs::create_dir_all(parent)?;
     let lock = crate::fs_ops::open_lock_file(&path.with_extension("lock"))?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
     let _lock =
         vtcode::file_source::FileLock::try_acquire_before(lock, deadline).map_err(|error| {
             match error {
@@ -92,8 +113,12 @@ pub(crate) fn record(path: &Path, updates: &[Entry]) -> io::Result<()> {
                 std::fs::TryLockError::Error(error) => error,
             }
         })?;
-    // An unreadable record only holds folders to reopen; start over.
-    let mut entries = read(path).unwrap_or_default();
+    let mut entries = match read(path) {
+        Ok(entries) => entries,
+        // A corrupt record held only the folders to reopen.
+        Err(error) if error.kind() == io::ErrorKind::InvalidData => vec![],
+        Err(error) => return Err(error),
+    };
     entries.retain(|entry| !updates.iter().any(|update| update.scope == entry.scope));
     entries.splice(0..0, updates.iter().cloned());
     entries.truncate(MAX_ENTRIES);

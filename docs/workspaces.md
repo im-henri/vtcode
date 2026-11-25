@@ -12,12 +12,11 @@ settings or session, scans its Git repository, or starts its file watcher. Use
 `vtcode .` to open the current directory explicitly, or choose **Open folder…**
 in the empty window.
 
-The same applies over SSH: `vtcode --remote HOST` (or a saved remote target)
-whose remote command is a bare `vtcode --headless` reopens the folders last
-open on that connection. It closes the default remote folder unless that folder
-was one of them or has unsaved work. Naming a folder in `--remote-command`
-opens just that folder. The record is `.vtcode/last-workspaces.json` beside
-vtcode.
+Connecting over SSH without a folder reopens the folders last open on that
+connection, with the same folder selected. This works from the Remote sidebar,
+`vtcode --remote HOST`, and `vtcode --remote-target NAME`. The Remote sidebar
+keeps any existing folders open. An explicit remote folder opens that folder
+directly. The record is `.vtcode/last-workspaces.json` beside vtcode.
 Loose files and tools can remain open while folders are added; their window state
 is stored separately from folder sessions.
 
@@ -61,13 +60,15 @@ uses SSH protocol 28. Use Quit to exit VTCode when only one folder is open.
 ## Saved workspaces
 
 **Saved workspaces:** a workspace is a named collection of one or more folders.
-Choose **Save workspace…** in the directory picker to save the open folders.
+Choose **Save workspace…** in the directory picker to save the open folders on
+the selected connection. Local folders form their own group.
 Use the **Saved workspaces** tab to inspect a workspace, with each folder on its
-own line, then choose **Open workspace**. Opening switches to exactly those folders
-and restores the starting folder. Matching open folders keep their files, undo, terminals, and chat.
-Before other folders close, a confirmation lists them; unsaved edits are
-preserved for next time and their terminals and agents stop. Missing folders
-leave the current folders open. Each folder restores its latest saved session.
+own line, then choose **Open workspace**. Opening restores those folders and
+their starting folder on that connection. Other connections stay open. Matching
+open folders keep their files, undo, terminals, and chat. A confirmation lists
+folders that will close. Their unsaved edits are preserved for next time and
+their terminals and agents stop. Missing folders leave the current folders
+open. Each folder restores its latest saved session.
 Use **Update from open folders…**, **Rename workspace…**, and **Delete workspace…**
 to manage saved workspaces. They persist in the portable `.vtcode/workspace-sets.json`;
 remote workspaces belong to the current SSH

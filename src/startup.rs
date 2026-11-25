@@ -142,27 +142,12 @@ pub(crate) fn connection_colors(
 
 impl Prepared {
     pub(crate) fn load_remote(root: PathBuf) -> Self {
-        let mut global = crate::settings::load_from_file(&crate::settings::global_settings_path());
-        global.validate();
-        let _ = crate::highlight::Highlighter::startup_theme_set();
-        let workspace =
-            crate::settings::load_from_file(&crate::settings::project_settings_path(&root));
-        let completion_preferences = crate::app_vtcomplete_settings::Preferences::load(&root);
-        let (session, incomplete_session_recovery) =
-            crate::session::load_session_with_recovery_status(&root);
-        Self {
-            target: Target {
-                root,
-                file: None,
-                line: None,
-                column: None,
-            },
-            global,
-            workspace,
-            completion_preferences,
-            session,
-            incomplete_session_recovery,
-        }
+        Self::load_target(Target {
+            root,
+            file: None,
+            line: None,
+            column: None,
+        })
     }
     pub(crate) fn load(raw: Option<OsString>) -> io::Result<Self> {
         let mut target = Target::resolve(raw);

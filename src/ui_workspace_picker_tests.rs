@@ -36,7 +36,7 @@ fn fixture() -> (tempfile::TempDir, App) {
         .map(|path| Location::local(path, &crate::portable::base_dir()))
         .collect::<Vec<_>>();
     app.workspaces.sets.loaded = true;
-    app.workspaces.sets.active = Some(10);
+    app.workspaces.sets.active.insert(Scope::Local, 10);
     app.workspaces.sets.catalog = Catalog::default();
     app.workspaces.sets.catalog.sets = ["Engineering", "Operations", "Release λ"]
         .into_iter()
@@ -825,7 +825,7 @@ fn workspace_manager_is_centered_and_keeps_actions_separate_from_folders() {
 #[test]
 fn workspace_manager_clarifies_active_modified_and_unsaved_collections() {
     let (_root, mut app) = fixture();
-    app.workspaces.sets.active = Some(12);
+    app.workspaces.sets.active.insert(Scope::Local, 12);
     crate::ui_workspace_sets::open(&mut app);
     let shown = text(&draw(&mut app, 120, 32));
     assert!(shown.contains("Release λ"));

@@ -17,8 +17,8 @@ pub(crate) struct State {
     pub loaded: bool,
     pub error: Option<String>,
     pub path: PathBuf,
-    pub active: Option<u64>,
-    pending_active: Option<String>,
+    pub active: rustc_hash::FxHashMap<Scope, u64>,
+    pending_active: Option<(Scope, String)>,
     pub(super) preserving: bool,
     read: Option<CatalogReply>,
     write: Option<CatalogReply>,
@@ -31,7 +31,7 @@ impl Default for State {
             loaded: false,
             error: None,
             path: crate::portable::data_dir().join("workspace-sets.json"),
-            active: None,
+            active: Default::default(),
             pending_active: None,
             preserving: false,
             read: None,
@@ -49,7 +49,8 @@ pub(super) enum Plan {
 pub(super) struct Staged {
     name: String,
     set_id: Option<u64>,
-    folder: bool,
+    /// Folder replacement applies across the window. A saved set applies to its own scope.
+    scope: Option<Scope>,
     /// Reopening the last session: skip missing folders, and close the launch
     /// folder without asking unless it has work to keep.
     automatic: bool,
@@ -68,7 +69,7 @@ struct StagedRoot {
 pub(super) struct Transition {
     name: String,
     set_id: Option<u64>,
-    folder: bool,
+    scope: Option<Scope>,
     automatic: bool,
     target: Vec<u64>,
     active: u64,
@@ -106,15 +107,27 @@ impl App {
         sets
     }
 
+    fn workspace_set_workbenches<'a>(
+        &'a self,
+        scope: Option<&'a Scope>,
+    ) -> impl Iterator<Item = (u64, &'a App)> {
+        self.ordered_workspaces()
+            .into_iter()
+            .filter(move |(_, app)| {
+                scope.is_none_or(|scope| {
+                    app.has_open_folder() && app.workspace_sets_scope() == *scope
+                })
+            })
+    }
+
     /// Compare saved folder order without filesystem work during rendering.
     /// Changing the focused folder does not make the workspace unsaved.
     pub(crate) fn current_workspace_set(&self) -> Option<(SavedSet, bool)> {
-        let active = self.workspaces.sets.active?;
+        let scope = self.workspace_sets_scope();
+        let active = *self.workspaces.sets.active.get(&scope)?;
         let base = crate::portable::base_dir();
         let roots: Vec<_> = self
-            .ordered_workspaces()
-            .into_iter()
-            .filter(|(_, app)| app.has_open_folder())
+            .workspace_set_workbenches(Some(&scope))
             .map(|(_, app)| {
                 app.remote_workspace.as_ref().map_or_else(
                     || Location::local(&app.explorer.root, &base),
@@ -187,6 +200,7 @@ impl App {
     }
     pub(crate) fn save_workspace_set(&mut self, name: String, replace: Option<u64>) {
         let active_name = name.trim().to_owned();
+        let scope = self.workspace_sets_scope();
         let result = (|| -> Result<Mutation, String> {
             workspace_sets::valid_name(&name).map_err(|error| error.to_string())?;
             if self.workspace_opening()
@@ -196,12 +210,7 @@ impl App {
                 return Err("Finish opening or closing folders before saving a workspace".into());
             }
             let base = crate::portable::base_dir();
-            let scope = self.workspace_sets_scope();
-            let roots: Vec<_> = self
-                .ordered_workspaces()
-                .into_iter()
-                .filter(|(_, app)| app.has_open_folder())
-                .collect();
+            let roots: Vec<_> = self.workspace_set_workbenches(Some(&scope)).collect();
             if roots.is_empty() {
                 return Err("Open a folder before saving a workspace".into());
             }
@@ -212,21 +221,17 @@ impl App {
             let roots = roots
                 .into_iter()
                 .map(|(_, app)| {
-                    if app.workspace_sets_scope() != scope {
-                        return Err("A workspace cannot mix different connections".into());
-                    }
-                    Ok(if let Some(remote) = &app.remote_workspace {
-                        Location::Remote {
+                    app.remote_workspace.as_ref().map_or_else(
+                        || Location::local(&app.explorer.root, &base),
+                        |remote| Location::Remote {
                             uri: remote.client.hello().root_uri.clone(),
-                        }
-                    } else {
-                        Location::local(&app.explorer.root, &base)
-                    })
+                        },
+                    )
                 })
-                .collect::<Result<Vec<_>, String>>()?;
+                .collect();
             Ok(Mutation::Save {
                 name,
-                scope,
+                scope: scope.clone(),
                 roots,
                 active,
                 replace,
@@ -237,7 +242,7 @@ impl App {
                 let idle = !self.workspace_sets_busy();
                 self.write_workspace_sets(mutation);
                 if idle && self.workspaces.sets.write.is_some() {
-                    self.workspaces.sets.pending_active = Some(active_name);
+                    self.workspaces.sets.pending_active = Some((scope, active_name));
                 }
             }
             Err(error) => self.workspaces.sets.error = Some(error),
@@ -272,14 +277,14 @@ impl App {
         let close = self
             .workspace_entries()
             .into_iter()
-            .filter(|entry| (staged.folder || !entry.path.is_empty()) && !keep.contains(&entry.id))
+            .filter(|entry| staged.expected.contains(&entry.id) && !keep.contains(&entry.id))
             .collect();
         Some((staged.name.clone(), staged.roots.len(), close))
     }
     pub(crate) fn workspace_folder_replacement(&self) -> bool {
         match &self.workspaces.sets.plan {
-            Some(Plan::Ready(staged)) => staged.folder,
-            Some(Plan::Closing(transition)) => transition.folder,
+            Some(Plan::Ready(staged)) => staged.scope.is_none(),
+            Some(Plan::Closing(transition)) => transition.scope.is_none(),
             _ => false,
         }
     }
@@ -326,20 +331,12 @@ impl App {
                     return Err("Opening the folder was cancelled".into());
                 }
                 let (root, canonical, prepared) = if let Some(remote) = remote {
-                    let remote = remote
-                        .open_workspace(&path)
-                        .map_err(|error| error.to_string())?;
-                    let root = remote.view_root.clone();
-                    let startup = crate::startup::Prepared::load_remote(root.clone());
-                    (
-                        root,
-                        None,
-                        Prepared {
-                            startup,
-                            remote: Some(remote),
-                            equivalent_roots: vec![],
-                        },
-                    )
+                    let prepared = Prepared::remote(
+                        remote
+                            .open_workspace(&path)
+                            .map_err(|error| error.to_string())?,
+                    );
+                    (prepared.startup.target.root.clone(), None, prepared)
                 } else {
                     let folder = crate::startup::LocalFolder::resolve(&path)
                         .map_err(|error| error.to_string())?;
@@ -370,7 +367,7 @@ impl App {
                 Ok(Staged {
                     name,
                     set_id: None,
-                    folder: true,
+                    scope: None,
                     automatic: false,
                     active: 0,
                     confirmed: false,
@@ -469,34 +466,20 @@ impl App {
         set_id: Option<u64>,
         automatic: bool,
     ) {
-        let opened: Vec<_> = std::iter::once((self.workspaces.active, self.explorer.root.clone()))
-            .chain(
-                self.workspaces
-                    .parked
-                    .iter()
-                    .map(|parked| (parked.id, parked.app.explorer.root.clone())),
-            )
-            .filter(|(_, root)| !root.as_os_str().is_empty())
+        let opened: Vec<_> = self
+            .workspace_set_workbenches(Some(&set.scope))
+            .map(|(id, app)| {
+                (
+                    id,
+                    app.explorer.root.clone(),
+                    app.remote_workspace
+                        .as_ref()
+                        .map(|remote| remote.client.hello().root_uri.clone()),
+                )
+            })
             .collect();
         let remote = self.remote_workspace.clone();
         let base = crate::portable::base_dir();
-        let remote_roots: Vec<_> = std::iter::once((self.workspaces.active, &*self))
-            .chain(
-                self.workspaces
-                    .parked
-                    .iter()
-                    .map(|parked| (parked.id, &*parked.app)),
-            )
-            .filter_map(|(id, app)| {
-                app.remote_workspace.as_ref().map(|remote| {
-                    (
-                        id,
-                        remote.client.hello().root_uri.clone(),
-                        app.explorer.root.clone(),
-                    )
-                })
-            })
-            .collect();
         let (sender, receiver) = mpsc::channel();
         let cancel = crate::background::CancellationToken::new();
         self.workspaces.sets.plan = Some(Plan::Loading(StageReply {
@@ -513,24 +496,26 @@ impl App {
                     if cancel.is_cancelled() {
                         return Err("Opening the workspace was cancelled".into());
                     }
-                    let staged = (|| -> Result<StagedRoot, String> {
+                    let staged = (|| -> io::Result<StagedRoot> {
                         let known = match location {
-                            Location::Remote { uri } => {
-                                remote_roots.iter().find(|(_, opened, _)| opened == uri)
-                            }
+                            Location::Remote { uri } => opened
+                                .iter()
+                                .find(|(_, _, opened)| opened.as_ref() == Some(uri)),
                             _ => None,
                         };
-                        let root = if let Some((_, _, root)) = known {
+                        let root = if let Some((_, root, _)) = known {
                             root.clone()
                         } else {
                             match (location, &remote) {
-                                (Location::Local { .. }, None) => location
-                                    .local_path(&base)
-                                    .map_err(|error| error.to_string())?,
+                                (Location::Local { .. }, None) => location.local_path(&base)?,
                                 (Location::Remote { uri }, Some(remote)) => {
-                                    remote.target_key(uri).map_err(|error| error.to_string())?
+                                    remote.target_key(uri)?
                                 }
-                                _ => return Err("Workspace uses a different connection".into()),
+                                _ => {
+                                    return Err(io::Error::other(
+                                        "Workspace uses a different connection",
+                                    ));
+                                }
                             }
                         };
                         let local = remote
@@ -542,38 +527,34 @@ impl App {
                             .map(|folder| folder.canonical.clone());
                         let mut existing = opened
                             .iter()
-                            .find(|(_, path)| {
+                            .find(|(_, path, _)| {
                                 same_workspace(path, &root)
                                     || canonical.as_ref().is_some_and(|canonical| {
                                         std::fs::canonicalize(path)
                                             .is_ok_and(|path| path == *canonical)
                                     })
                             })
-                            .map(|(id, _)| *id);
+                            .map(|(id, _, _)| *id);
                         let (root, prepared) = if existing.is_some() {
                             (root, None)
                         } else if let Some(remote) = &remote {
-                            let workspace = remote
-                                .open_workspace(&root)
-                                .map_err(|error| error.to_string())?;
+                            let workspace = remote.open_workspace(&root)?;
                             existing = opened
                                 .iter()
-                                .find(|(_, path)| same_workspace(path, &workspace.view_root))
-                                .map(|(id, _)| *id);
-                            let prepared = existing.is_none().then(|| Prepared {
-                                startup: crate::startup::Prepared::load_remote(
-                                    workspace.view_root.clone(),
-                                ),
-                                remote: Some(workspace.clone()),
-                                equivalent_roots: vec![],
-                            });
-                            (workspace.view_root.clone(), prepared)
+                                .find(|(_, path, _)| same_workspace(path, &workspace.view_root))
+                                .map(|(id, _, _)| *id);
+                            let root = workspace.view_root.clone();
+                            let prepared = existing.is_none().then(|| Prepared::remote(workspace));
+                            (root, prepared)
                         } else {
                             let folder =
                                 local.expect("local folder resolution").map_err(|error| {
-                                    format!("Cannot open {}: {error}", root.display())
+                                    io::Error::new(
+                                        error.kind(),
+                                        format!("Cannot open {}: {error}", root.display()),
+                                    )
                                 })?;
-                            let startup = folder.prepare().map_err(|error| error.to_string())?;
+                            let startup = folder.prepare()?;
                             (
                                 root,
                                 Some(Prepared {
@@ -592,11 +573,13 @@ impl App {
                     })();
                     let staged = match staged {
                         Ok(staged) => staged,
-                        Err(error) if automatic => {
-                            skipped.push(error);
+                        Err(error)
+                            if automatic && crate::last_workspaces::folder_missing(&error) =>
+                        {
+                            skipped.push(error.to_string());
                             continue;
                         }
-                        Err(error) => return Err(error),
+                        Err(error) => return Err(error.to_string()),
                     };
                     let (root, canonical) = (&staged.root, &staged.canonical);
                     if let Some(duplicate) = roots.iter().position(|previous| {
@@ -624,11 +607,11 @@ impl App {
                 Ok(Staged {
                     name: set.name,
                     set_id,
-                    folder: false,
+                    scope: Some(set.scope),
                     automatic,
                     roots,
                     active,
-                    expected: opened.into_iter().map(|(id, _)| id).collect(),
+                    expected: opened.into_iter().map(|(id, _, _)| id).collect(),
                     confirmed: false,
                     validated: false,
                 })
@@ -657,12 +640,15 @@ impl App {
                     self.workspaces.sets.loaded = true;
                     self.workspaces.sets.error = None;
                     if is_write {
-                        if let Some(name) = self.workspaces.sets.pending_active.take() {
-                            self.workspaces.sets.active = self
-                                .saved_workspace_sets()
+                        let state = &mut self.workspaces.sets;
+                        if let Some((scope, name)) = state.pending_active.take()
+                            && let Some(set) = state
+                                .catalog
+                                .sets
                                 .iter()
-                                .find(|set| set.name == name)
-                                .map(|set| set.id);
+                                .find(|set| set.scope == scope && set.name == name)
+                        {
+                            state.active.insert(scope, set.id);
                         }
                         if self.workspaces.popup.open
                             && matches!(
@@ -712,10 +698,8 @@ impl App {
         match plan {
             Plan::Ready(mut staged) => {
                 let mut current: Vec<_> = self
-                    .workspace_entries()
-                    .iter()
-                    .filter(|entry| staged.folder || !entry.path.is_empty())
-                    .map(|entry| entry.id)
+                    .workspace_set_workbenches(staged.scope.as_ref())
+                    .map(|(id, _)| id)
                     .collect();
                 current.sort_unstable();
                 let mut expected = staged.expected.clone();
@@ -736,7 +720,7 @@ impl App {
                     .filter(|id| !keep.contains(id))
                     .collect();
                 let needs_confirmation = close.iter().any(|id| {
-                    !(staged.folder || staged.automatic)
+                    !(staged.scope.is_none() || staged.automatic)
                         || if *id == self.workspaces.active {
                             self.folder_replacement_needs_confirmation()
                         } else {
@@ -790,7 +774,7 @@ impl App {
                 self.workspaces.sets.plan = Some(Plan::Closing(Transition {
                     name: staged.name,
                     set_id: staged.set_id,
-                    folder: staged.folder,
+                    scope: staged.scope,
                     automatic: staged.automatic,
                     target,
                     active,
@@ -811,22 +795,23 @@ impl App {
                         );
                     }
                 } else {
-                    if self.workspace_entries().iter().any(|entry| {
-                        !entry.path.is_empty() && !transition.target.contains(&entry.id)
-                    }) {
+                    if self
+                        .workspace_set_workbenches(transition.scope.as_ref())
+                        .any(|(id, _)| !transition.target.contains(&id))
+                    {
                         self.notify_warn(
                             "Opening the workspace stopped because the open folders changed",
                         );
                         return true;
                     }
                     self.switch_workspace(transition.active);
-                    if !transition.folder {
+                    if let Some(scope) = &transition.scope {
                         let mut folders = transition.target.iter().copied();
                         let order = self
                             .ordered_workspaces()
                             .into_iter()
                             .map(|(id, app)| {
-                                if app.has_open_folder() {
+                                if app.has_open_folder() && app.workspace_sets_scope() == *scope {
                                     folders.next().unwrap_or(id)
                                 } else {
                                     id
@@ -835,8 +820,17 @@ impl App {
                             .collect();
                         self.set_workspace_order(order);
                     }
-                    self.workspaces.sets.active = transition.set_id;
+                    match (transition.scope.as_ref(), transition.set_id) {
+                        (Some(scope), Some(id)) => {
+                            self.workspaces.sets.active.insert(scope.clone(), id);
+                        }
+                        (Some(scope), None) => {
+                            self.workspaces.sets.active.remove(scope);
+                        }
+                        (None, _) => self.workspaces.sets.active.clear(),
+                    }
                     if transition.automatic {
+                        self.workspaces.last.restored();
                         let count = transition.target.len();
                         self.notify(format!(
                             "Reopened {count} folder{} from the last session",
@@ -846,7 +840,7 @@ impl App {
                     }
                     self.notify(format!(
                         "Opened {}: {}",
-                        if transition.folder {
+                        if transition.scope.is_none() {
                             "folder"
                         } else {
                             "workspace"

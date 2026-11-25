@@ -16,7 +16,7 @@ pub(crate) const MAX_ROOTS: usize = 128;
 #[path = "workspace_sets_tests.rs"]
 mod tests;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "connection", rename_all = "camelCase")]
 pub(crate) enum Scope {
     Local,

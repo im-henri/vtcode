@@ -621,7 +621,7 @@ impl App {
                         ConnectionStatus::SigningIn
                     };
                     return Some((
-                        if attempt.error.is_some() { 4 } else { 2 },
+                        (if attempt.error.is_some() { 4 } else { 2 }, false),
                         Connection { id, status },
                     ));
                 }
@@ -658,7 +658,9 @@ impl App {
                     ConnectionStatus::Disconnected => 3,
                     ConnectionStatus::SigningIn | ConnectionStatus::Failed => unreachable!(),
                 };
-                Some((rank, Connection { id, status }))
+                let scope = crate::workspace_sets::Scope::Remote(remote.workspace_sets_scope());
+                let preferred = self.workspaces.last.preferred.get(&scope) == Some(&id);
+                Some(((rank, !preferred), Connection { id, status }))
             })
             .min_by_key(|(rank, _)| *rank)
             .map(|(_, connection)| connection)

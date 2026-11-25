@@ -64,8 +64,11 @@ vtcode --remote-target development
 vtcode --remote-target "My server"
 ```
 
-The flag uses the saved target as configured. Use `--remote HOST` for an ad hoc
-connection with `--remote-command` or `--ssh-command` overrides.
+The flag uses the same SSH command, folder settings, and saved workspaces as
+connecting to that target from the Remote sidebar. Use `--remote HOST` for an
+ad hoc connection with `--remote-command` or `--ssh-command` overrides. Saved
+state for ad hoc connections is keyed by the SSH invocation, including the
+remote command.
 Use `F1` for the command palette if its other shortcut is intercepted.
 
 ## Clipboard

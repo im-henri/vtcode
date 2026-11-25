@@ -115,7 +115,10 @@ impl Service {
     pub(crate) fn new(root: &Path) -> io::Result<Self> {
         let root = fs::canonicalize(root)?;
         if !root.is_dir() {
-            return Err(io::Error::other("Remote workspace must be a directory"));
+            return Err(io::Error::new(
+                io::ErrorKind::NotADirectory,
+                "Remote workspace must be a directory",
+            ));
         }
         Ok(Self::from_root(root))
     }

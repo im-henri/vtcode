@@ -532,11 +532,7 @@ fn run_main() -> io::Result<()> {
     // Without a path, reopen the folders this scope had open last time. A
     // remote service says whether it was started without a directory.
     let restore_scope = match &remote_workspace {
-        Some(remote) => remote
-            .client
-            .hello()
-            .default_root
-            .then(|| workspace_sets::Scope::Remote(remote.workspace_sets_scope())),
+        Some(remote) => last_workspaces::remote_scope(remote),
         None => raw_arg
             .as_ref()
             .is_none_or(|arg| arg.is_empty())
