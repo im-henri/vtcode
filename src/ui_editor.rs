@@ -43,6 +43,9 @@ const MAX_RICH_RENDER_LINE_CHARS: usize = crate::highlight::MAX_SYNTAX_LINE_CHAR
 #[cfg(test)]
 #[path = "ui_editor_render_performance_tests.rs"]
 mod render_performance_tests;
+#[cfg(test)]
+#[path = "ui_sticky_scroll_tests.rs"]
+mod sticky_scroll_tests;
 
 #[cfg(test)]
 #[path = "cross_tab_word_highlight_tests.rs"]
@@ -1626,6 +1629,149 @@ pub(crate) fn editor_columns(area: Rect, gutter: u16, minimap: u16) -> std::rc::
 /// `Paragraph::new(text).style(style)` for one row. Printable ASCII, the
 /// usual sticky-scroll text, maps one byte to one cell, so write the cells
 /// directly instead of building a `Text` and segmenting graphemes.
+/// Choose sticky headers the way VS Code's sticky scroll does
+/// (StickyScrollController.findScrollWidgetState), for whole terminal rows.
+/// `rows` holds the source line shown on each of the first rows of the
+/// viewport and whether that row is the line's first (wrapped) segment; it
+/// has one entry more than headers may take. Scopes are visited outermost
+/// first; the header for slot `k` is a scope whose opener is already above
+/// row `k` and whose last body line is still at or below it. A scope whose
+/// body has scrolled up to the header is pushed off, so headers never stick
+/// past the end of their block. Returns indices into `scopes`.
+pub(crate) fn select_sticky_scopes(
+    scopes: &[crate::background::StickyScopeLine],
+    rows: &[(usize, bool)],
+    max_headers: usize,
+) -> Vec<usize> {
+    let Some(&(top, top_first)) = rows.first() else {
+        return Vec::new();
+    };
+    if top == 0 && top_first {
+        return Vec::new();
+    }
+    let bottom = rows.last().map_or(top, |&(line, _)| line);
+    // Every scope containing the top line is an ancestor of the last opener
+    // at or above it; the others that matter start within the header rows.
+    let after_top = scopes.partition_point(|scope| scope.line <= top);
+    let mut containing = Vec::new();
+    let mut index = after_top.checked_sub(1);
+    while let Some(current) = index {
+        let scope = scopes[current];
+        if scope.end >= top {
+            containing.push(current);
+        }
+        index = scope.parent;
+    }
+    containing.reverse();
+    let later = after_top..scopes.partition_point(|scope| scope.line <= bottom);
+    let mut headers = Vec::new();
+    for index in containing.into_iter().chain(later) {
+        let slot = headers.len();
+        if slot >= max_headers {
+            break;
+        }
+        let Some(&(line, first)) = rows.get(slot) else {
+            break;
+        };
+        let scope = scopes[index];
+        let opener_above = scope.line < line || (scope.line == line && !first);
+        if opener_above && scope.end >= line {
+            headers.push(index);
+        }
+    }
+    headers
+}
+
+/// At most a third of the pane, so a short split never shows only headers.
+fn sticky_header_limit(max: usize, height: usize) -> usize {
+    max.min(height.saturating_sub(1) / 3)
+}
+
+/// The App fields sticky headers read and cache, borrowed apart from the
+/// rest of the frame state.
+struct StickyState<'a> {
+    enabled: bool,
+    max: usize,
+    scopes: &'a [crate::background::StickyScopeLine],
+    lines: &'a mut Vec<(usize, String)>,
+    key: &'a mut u64,
+}
+
+/// Recompute the cached headers when the rows at the top of the viewport,
+/// the limit or the scope analysis changed; otherwise keep the last ones.
+fn update_sticky_headers(
+    sticky: StickyState<'_>,
+    editor: &mut crate::editor::Editor,
+    height: usize,
+    word_wrap: bool,
+) {
+    let limit = sticky_header_limit(sticky.max, height);
+    if !sticky.enabled || limit == 0 {
+        sticky.lines.clear();
+        *sticky.key = u64::MAX;
+        return;
+    }
+    let rows: Vec<(usize, bool)> = if word_wrap {
+        let width = editor.effective_wrap_width();
+        editor
+            .wrapped_rows(editor.wrap_scroll_offset, limit + 1, width)
+            .iter()
+            .map(|row| (row.line_idx, row.is_first))
+            .collect()
+    } else {
+        let first = editor.visible_scroll_offset();
+        let count = editor.visible_line_count();
+        (first..count.min(first + limit + 1))
+            .map(|row| (editor.line_for_visible_row(row), true))
+            .collect()
+    };
+    let key = {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = rustc_hash::FxHasher::default();
+        rows.hash(&mut hasher);
+        limit.hash(&mut hasher);
+        hasher.finish()
+    };
+    // Keep the last complete same-document header through edits. The
+    // analysis result explicitly invalidates this cache when updated scope
+    // coordinates arrive; keying on content_version made an edit rebuild
+    // from stale absolute coordinates and blink the header away.
+    if key == *sticky.key {
+        return;
+    }
+    *sticky.key = key;
+    sticky.lines.clear();
+    let line_count = editor.rope.len_lines();
+    for index in select_sticky_scopes(sticky.scopes, &rows, limit) {
+        let line = sticky.scopes[index].line;
+        if line >= line_count {
+            break;
+        }
+        let shown = sticky_header_line(&editor.rope, line);
+        let text = editor.rope.line(shown).to_string();
+        sticky
+            .lines
+            .push((shown, text.trim_end_matches(['\n', '\r']).to_string()));
+    }
+}
+
+/// An Allman-style opener (`{` alone on its line) says nothing; show the
+/// declaration above it instead, as long as that is just above.
+fn sticky_header_line(rope: &ropey::Rope, line: usize) -> usize {
+    let lone_bracket = |line: usize| {
+        let text = rope.line(line);
+        let mut chars = text.chars().filter(|ch| !ch.is_whitespace());
+        matches!(chars.next(), Some('{' | '(' | '[')) && chars.next().is_none()
+    };
+    if line > 0 && lone_bracket(line) {
+        let previous = line - 1;
+        if rope.line(previous).chars().any(|ch| !ch.is_whitespace()) {
+            return previous;
+        }
+    }
+    line
+}
+
 fn render_text_row(f: &mut Frame, text: String, style: Style, area: Rect) {
     if !text.bytes().all(|byte| (b' '..=b'~').contains(&byte)) {
         f.render_widget(Paragraph::new(text).style(style), area);
@@ -4390,47 +4536,39 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
         );
     }
 
-    // Sticky scroll: overlay scope-opening lines at top of editor
-    if app.sticky_scroll && scroll > 0 {
+    // Sticky scroll: overlay the headers of the scopes the viewport is in.
+    // Scopes are analysed for the focused editor only. Another split pane
+    // may use them when it shows the same file, but draws from its own
+    // scratch cache so hover, clicks and the next focused frame keep theirs.
+    let inactive_sticky = app.rendering_inactive_editor.then(|| {
         let editor = &app.tabs[app.active_tab].editor;
-        let max_sticky = app.sticky_scroll_max;
-
-        // Keep the last complete same-document header through edits. The
-        // analysis result explicitly invalidates this cache when updated scope
-        // coordinates arrive; including content_version here made an edit
-        // rebuild from stale absolute coordinates and blink the header away.
-        let sticky_key = (scroll as u64)
-            .wrapping_mul(31)
-            .wrapping_add(max_sticky as u64);
-
-        if sticky_key != app.cached_sticky_key {
-            app.cached_sticky_lines.clear();
-
-            // Scope parents are computed by the editor-analysis worker. Follow
-            // only that short chain instead of rescanning every line above the
-            // viewport during rendering.
-            let mut scope_index = app
-                .cached_sticky_scopes
-                .partition_point(|scope| scope.line < scroll)
-                .checked_sub(1);
-            while let Some(index) = scope_index {
-                let Some(scope) = app.cached_sticky_scopes.get(index) else {
-                    break;
-                };
-                if scope.line < editor.rope.len_lines() {
-                    let text = editor.rope.line(scope.line).to_string();
-                    app.cached_sticky_lines
-                        .push((scope.line, text.trim_end_matches(['\n', '\r']).to_string()));
-                }
-                if app.cached_sticky_lines.len() >= max_sticky {
-                    break;
-                }
-                scope_index = scope.parent;
-            }
-            app.cached_sticky_lines.reverse();
-            app.cached_sticky_key = sticky_key;
-        }
-
+        let same_document = app
+            .cached_editor_analysis_target
+            .as_ref()
+            .is_some_and(|target| {
+                target.file_path.is_some()
+                    && target.file_path == editor.file_path
+                    && target.len_bytes == editor.rope.len_bytes()
+            });
+        (
+            std::mem::take(&mut app.cached_sticky_lines),
+            std::mem::replace(&mut app.cached_sticky_key, u64::MAX),
+            same_document,
+        )
+    });
+    update_sticky_headers(
+        StickyState {
+            enabled: app.sticky_scroll && inactive_sticky.as_ref().is_none_or(|&(_, _, same)| same),
+            max: app.sticky_scroll_max,
+            scopes: &app.cached_sticky_scopes,
+            lines: &mut app.cached_sticky_lines,
+            key: &mut app.cached_sticky_key,
+        },
+        &mut app.tabs[app.active_tab].editor,
+        code_area.height as usize,
+        effective_word_wrap,
+    );
+    if !app.cached_sticky_lines.is_empty() {
         let sticky_lines = &app.cached_sticky_lines;
 
         // Render sticky lines overlaying the top of the code area
@@ -4637,17 +4775,17 @@ pub(crate) fn draw_editor_content(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Sticky headers own their rows. Cosmetic overlays are clipped below them
     // and run before either editor tooltip or the outer dialog layer is drawn.
-    let sticky_rows = if app.sticky_scroll && scroll > 0 {
-        app.cached_sticky_lines.len().min(code_area.height as usize) as u16
-    } else {
-        0
-    };
+    let sticky_rows = app.cached_sticky_lines.len().min(code_area.height as usize) as u16;
     {
         let editor = &mut app.tabs[app.active_tab].editor;
         editor.sticky_overlay = (sticky_rows > 0).then_some((
             (editor.scroll_offset, editor.wrap_scroll_offset),
             sticky_rows as usize,
         ));
+    }
+    if let Some((lines, key, _)) = inactive_sticky {
+        app.cached_sticky_lines = lines;
+        app.cached_sticky_key = key;
     }
     crate::ui_editor_folds::draw(
         f,
@@ -5374,6 +5512,7 @@ mod tests {
                     .map(|line| crate::background::StickyScopeLine {
                         line,
                         parent: line.checked_sub(1),
+                        end: usize::MAX,
                     })
                     .collect();
 
@@ -5429,6 +5568,7 @@ mod tests {
         app.cached_sticky_scopes = vec![crate::background::StickyScopeLine {
             line: 0,
             parent: None,
+            end: usize::MAX,
         }]
         .into();
 

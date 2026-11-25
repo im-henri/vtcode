@@ -190,6 +190,20 @@ pub(crate) fn handle_editor_area_left_click(
         return;
     }
 
+    // VS Code: clicking a sticky header goes to the line it names.
+    if modifiers.is_empty()
+        && let Some(line) = sticky_header_at(app, col, row)
+    {
+        app.active_pane = ActivePane::Editor;
+        app.push_nav_history();
+        if let Some(editor) = app.editor_mut() {
+            editor.push_cursor_position();
+        }
+        app.jump_to_editor_position(line, 0, None);
+        app.finish_navigation();
+        return;
+    }
+
     // Click on editor code area?
     if let Some(code_area) = app.code_area {
         if col >= code_area.x
@@ -635,4 +649,21 @@ pub(crate) fn handle_right_button_down(app: &mut App, col: u16, row: u16) {
             }
         }
     }
+}
+
+/// The source line of the sticky header drawn at this cell, if any. Headers
+/// cover the code area and the gutter beside it.
+pub(crate) fn sticky_header_at(app: &App, col: u16, row: u16) -> Option<usize> {
+    let code = app.code_area?;
+    let left = app
+        .gutter_area
+        .map_or(code.x, |gutter| gutter.x.min(code.x));
+    if col < left || col >= code.right() || row < code.y {
+        return None;
+    }
+    let slot = (row - code.y) as usize;
+    if slot >= code.height as usize {
+        return None;
+    }
+    app.cached_sticky_lines.get(slot).map(|&(line, _)| line)
 }

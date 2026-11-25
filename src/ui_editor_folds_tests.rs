@@ -301,6 +301,7 @@ fn sticky_headers_occlude_fold_buttons_instead_of_leaving_invisible_click_target
     app.cached_sticky_scopes = vec![crate::background::StickyScopeLine {
         line: 0,
         parent: None,
+        end: usize::MAX,
     }]
     .into();
     draw(&mut app, 100);

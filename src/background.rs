@@ -182,13 +182,49 @@ impl CursorMatchTarget {
     }
 }
 
-/// One scope opener used by sticky scroll. `parent` points to the nearest
-/// earlier opener with lower indentation, so rendering follows only the scope
-/// chain instead of rescanning from the viewport to the start of the file.
+/// One scope used by sticky scroll: an opener line (ending in `{`, `(`, `[`
+/// or `:`) and its indented body. `parent` points to the enclosing scope, so
+/// rendering follows only the scope chain instead of rescanning from the
+/// viewport to the start of the file. `end` is the last non-blank body line,
+/// as in VS Code's indentation folding ranges: the line before the first
+/// line indented no deeper than the opener (usually the closing bracket).
+/// Openers without an indented body are not scopes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StickyScopeLine {
     pub line: usize,
     pub parent: Option<usize>,
+    pub end: usize,
+}
+
+/// Scopes with no body line are leaves (any enclosing scope contains a body
+/// line). Drop them and renumber parents.
+pub(crate) fn drop_empty_scopes(scopes: Vec<StickyScopeLine>) -> Vec<StickyScopeLine> {
+    let mut renumbered = vec![usize::MAX; scopes.len()];
+    let mut kept = Vec::with_capacity(scopes.len());
+    for (index, scope) in scopes.into_iter().enumerate() {
+        if scope.end > scope.line {
+            renumbered[index] = kept.len();
+            kept.push(StickyScopeLine {
+                parent: scope.parent.map(|parent| renumbered[parent]),
+                ..scope
+            });
+        }
+    }
+    kept
+}
+
+/// Indentation in columns, tabs advancing to the next multiple of four, so
+/// files that mix tabs and spaces still nest by what they look like.
+pub(crate) fn scope_indent(bytes: impl IntoIterator<Item = u8>) -> usize {
+    let mut indent = 0;
+    for byte in bytes {
+        match byte {
+            b' ' => indent += 1,
+            b'\t' => indent = indent / 4 * 4 + 4,
+            _ => break,
+        }
+    }
+    indent
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

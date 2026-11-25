@@ -198,10 +198,10 @@ fn repeated_insertions_do_not_accumulate_tiny_blocks() {
 
 #[test]
 fn cache_budget_does_not_limit_exact_results() {
-    let rope = Rope::from_str(&"scope:\n".repeat(280_000));
+    let rope = Rope::from_str(&"scope:\n  body\n".repeat(140_000));
     let mut cache = Cache::default();
     let metrics = analyze(&mut cache, &rope);
-    assert_eq!(metrics.4.len(), 280_000);
+    assert_eq!(metrics.4.len(), 140_000);
     assert!(cache.snapshots.is_empty());
 }
 
@@ -313,5 +313,80 @@ fn benchmark_routine_content_switches() {
             "routine content switches: lines={lines}, switches=18, median_ns={}",
             samples[3].as_nanos()
         );
+    }
+}
+
+fn scope_triples(rope: &Rope) -> Vec<(usize, Option<usize>, usize)> {
+    let mut cache = Cache::default();
+    analyze(&mut cache, rope)
+        .4
+        .iter()
+        .map(|scope| (scope.line, scope.parent, scope.end))
+        .collect()
+}
+
+#[test]
+fn scopes_end_at_their_last_body_line_and_bodiless_openers_are_dropped() {
+    let rust = Rope::from_str(concat!(
+        "fn outer() {\n", // 0
+        "    if a {\n",   // 1
+        "        x;\n",   // 2
+        "    }\n",        // 3
+        "    y;\n",       // 4
+        "\n",             // 5
+        "}\n",            // 6
+        "fn empty() {\n", // 7: no indented body
+        "}\n",            // 8
+        "// Example:\n",  // 9: a comment, not a scope
+        "struct S {\n",   // 10
+        "\tfield: u8,\n", // 11: tabs nest like spaces
+        "}\n",            // 12
+        "let tail = (\n", // 13: open at end of file
+        "    1,\n",       // 14
+        "\n",             // 15
+    ));
+    assert_eq!(
+        scope_triples(&rust),
+        [
+            (0, None, 4),
+            (1, Some(0), 2),
+            (10, None, 11),
+            (13, None, 14)
+        ]
+    );
+    let python = Rope::from_str("def a():\n    if b:\n        c\n\n    d\ne\n");
+    assert_eq!(scope_triples(&python), [(0, None, 4), (1, Some(0), 2)]);
+}
+
+#[test]
+fn scope_ends_cross_blocks_and_survive_edits_anywhere() {
+    // One function spanning several blocks, with nested scopes closing on
+    // block boundaries, edited at and around those boundaries.
+    let mut text = String::from("fn long() {\n");
+    for index in 0..600 {
+        if index % 50 == 0 {
+            text.push_str("    for item in items {\n");
+        }
+        text.push_str("        work();\n");
+        if index % 50 == 49 {
+            text.push_str("    }\n");
+        }
+    }
+    text.push_str("}\nfn after() {\n    done();\n}\n");
+    let mut rope = Rope::from_str(&text);
+    let mut cache = Cache::default();
+    let scopes = analyze(&mut cache, &rope).4;
+    assert_eq!(scopes[0].line, 0);
+    assert_eq!(scopes[0].end, rope.len_lines() - 6);
+    for (line, insert) in [
+        (127, "    if x {\n        y();\n    }\n"),
+        (128, "}\n"),
+        (300, "\t\tnested();\n"),
+        (2, "    let open = [\n"),
+        (rope.len_lines() - 3, "\n\n"),
+    ] {
+        let at = rope.line_to_char(line.min(rope.len_lines() - 1));
+        rope.insert(at, insert);
+        analyze(&mut cache, &rope);
     }
 }

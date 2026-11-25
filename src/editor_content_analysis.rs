@@ -17,9 +17,78 @@ struct Summary {
     warnings: usize,
     width: usize,
     words: usize,
-    // Relative line and indentation, not a precomputed parent: an earlier
-    // edit can change scope ancestry even when this block's text is unchanged.
-    scopes: Vec<(usize, usize)>,
+    // Relative positions only, never absolute ancestry: an earlier edit can
+    // change it even when this block's text is unchanged. Scopes closed inside
+    // the block carry their end; the rest are closed by later blocks.
+    scopes: Vec<LocalScope>,
+    // Non-blank lines indented less than every earlier line of the block, with
+    // the block's previous non-blank line. Only these can close scopes opened
+    // in earlier blocks, so merging stays proportional to blocks and scopes.
+    minima: Vec<(usize, usize, Option<usize>)>,
+    last_nonblank: Option<usize>,
+}
+
+struct LocalScope {
+    offset: usize,
+    indent: usize,
+    /// Index of the enclosing scope in this block, if it opened here too.
+    parent: Option<usize>,
+    /// Last non-blank body line, when the scope closes inside this block.
+    end: Option<usize>,
+}
+
+/// Per-block scope bookkeeping while its lines are summarized.
+#[derive(Default)]
+struct ScopeScan {
+    open: Vec<usize>,
+    min_indent: Option<usize>,
+}
+
+impl ScopeScan {
+    fn line(&mut self, summary: &mut Summary, offset: usize, indent: usize, opener: bool) {
+        while let Some(&index) = self.open.last() {
+            if summary.scopes[index].indent < indent {
+                break;
+            }
+            summary.scopes[index].end = summary.last_nonblank;
+            self.open.pop();
+        }
+        if self.min_indent.is_none_or(|min| indent < min) {
+            summary.minima.push((offset, indent, summary.last_nonblank));
+            self.min_indent = Some(indent);
+        }
+        if opener {
+            summary.scopes.push(LocalScope {
+                offset,
+                indent,
+                parent: self.open.last().copied(),
+                end: None,
+            });
+            self.open.push(summary.scopes.len() - 1);
+        }
+        summary.last_nonblank = Some(offset);
+    }
+
+    /// Openers closed by their very next line have no body. They cannot
+    /// enclose anything, so drop them instead of storing them per block.
+    fn finish(self, summary: &mut Summary) {
+        let mut renumbered = vec![usize::MAX; summary.scopes.len()];
+        let mut kept = 0;
+        for index in 0..summary.scopes.len() {
+            let scope = &summary.scopes[index];
+            if scope.end.is_some_and(|end| end <= scope.offset) {
+                continue;
+            }
+            renumbered[index] = kept;
+            let parent = scope.parent.map(|parent| renumbered[parent]);
+            summary.scopes.swap(kept, index);
+            summary.scopes[kept].parent = parent;
+            kept += 1;
+        }
+        summary.scopes.truncate(kept);
+        summary.scopes.shrink_to_fit();
+        summary.minima.shrink_to_fit();
+    }
 }
 
 struct Snapshot {
@@ -91,18 +160,20 @@ impl Cache {
             }
             let count = BLOCK_LINES.min(end - start);
             let mut summary = Summary::default();
+            let mut scan = ScopeScan::default();
             for (offset, line) in lines.by_ref().take(count).enumerate() {
                 // A block bounds deadline polling for ordinary short lines;
                 // long lines also check it between Rope chunks below.
                 if cancelled() {
                     return None;
                 }
-                summarize_line(line, offset, &mut summary, &stopped)?;
+                summarize_line(line, offset, &mut summary, &mut scan, &stopped)?;
                 #[cfg(test)]
                 {
                     self.scanned_lines += 1;
                 }
             }
+            scan.finish(&mut summary);
             blocks.push(Block {
                 start,
                 lines: count,
@@ -126,8 +197,10 @@ impl Cache {
         let mut warnings = 0;
         let mut width = 0;
         let mut words = 0;
-        let mut scopes = Vec::new();
-        let mut parents: Vec<(usize, usize)> = Vec::new();
+        // `end` stays usize::MAX while a scope is open across blocks.
+        let mut scopes: Vec<StickyScopeLine> = Vec::new();
+        let mut open: Vec<(usize, usize)> = Vec::new();
+        let mut last_nonblank: Option<usize> = None;
         let mut retained = blocks.capacity() * std::mem::size_of::<Block<Summary>>();
         for block in &blocks {
             if stopped() {
@@ -139,21 +212,53 @@ impl Cache {
             width = width.max(summary.width);
             words += summary.words;
             retained += std::mem::size_of::<Summary>()
-                + summary.scopes.capacity() * std::mem::size_of::<(usize, usize)>();
-            for &(line, indent) in &summary.scopes {
-                while parents
-                    .last()
-                    .is_some_and(|&(parent_indent, _)| parent_indent >= indent)
-                {
-                    parents.pop();
+                + summary.scopes.capacity() * std::mem::size_of::<LocalScope>()
+                + summary.minima.capacity() * std::mem::size_of::<(usize, usize, Option<usize>)>();
+            let base = scopes.len();
+            let mut minima = summary.minima.iter().peekable();
+            let mut close = |open: &mut Vec<(usize, usize)>,
+                             scopes: &mut Vec<StickyScopeLine>,
+                             last_nonblank: Option<usize>,
+                             upto: usize| {
+                while let Some(&&(offset, indent, previous)) = minima.peek() {
+                    if offset > upto {
+                        break;
+                    }
+                    minima.next();
+                    let end = previous.map(|line| block.start + line).or(last_nonblank);
+                    while open
+                        .last()
+                        .is_some_and(|&(open_indent, _)| open_indent >= indent)
+                    {
+                        let (_, index) = open.pop().unwrap();
+                        scopes[index].end = end.unwrap_or(scopes[index].line);
+                    }
                 }
+            };
+            for scope in &summary.scopes {
+                close(&mut open, &mut scopes, last_nonblank, scope.offset);
+                let parent = match scope.parent {
+                    Some(local) => Some(base + local),
+                    None => open.last().map(|&(_, index)| index),
+                };
                 scopes.push(StickyScopeLine {
-                    line: block.start + line,
-                    parent: parents.last().map(|&(_, index)| index),
+                    line: block.start + scope.offset,
+                    parent,
+                    end: scope.end.map_or(usize::MAX, |end| block.start + end),
                 });
-                parents.push((indent, scopes.len() - 1));
+                if scope.end.is_none() {
+                    open.push((scope.indent, scopes.len() - 1));
+                }
+            }
+            close(&mut open, &mut scopes, last_nonblank, usize::MAX);
+            if let Some(line) = summary.last_nonblank {
+                last_nonblank = Some(block.start + line);
             }
         }
+        for (_, index) in open {
+            scopes[index].end = last_nonblank.unwrap_or(scopes[index].line);
+        }
+        let scopes = crate::background::drop_empty_scopes(scopes);
         if stopped() {
             return None;
         }
@@ -205,6 +310,7 @@ fn summarize_line(
     line: RopeSlice<'_>,
     offset: usize,
     summary: &mut Summary,
+    scan: &mut ScopeScan,
     stopped: &impl Fn() -> bool,
 ) -> Option<()> {
     // Most source lines are contiguous. Keep this path as cheap as the old
@@ -221,12 +327,10 @@ fn summarize_line(
             clean.chars().count()
         };
         summary.width = summary.width.max(width);
-        if matches!(clean.as_bytes().last(), Some(b'{' | b'(' | b'[' | b':')) {
-            let indent = clean
-                .bytes()
-                .take_while(|&byte| byte == b' ' || byte == b'\t')
-                .count();
-            summary.scopes.push((offset, indent));
+        if !clean.trim_start_matches([' ', '\t']).is_empty() {
+            let opener = matches!(clean.as_bytes().last(), Some(b'{' | b'(' | b'[' | b':'));
+            let indent = crate::background::scope_indent(clean.bytes());
+            scan.line(summary, offset, indent, opener);
         }
         return Some(());
     }
@@ -275,22 +379,20 @@ fn summarize_line(
         }
         finish(length, &marker, summary);
     }
-    if width > 0 && matches!(line.char(width - 1), '{' | '(' | '[' | ':') {
-        let mut indent = 0;
-        for chunk in line.chunks() {
-            if stopped() {
-                return None;
-            }
-            let count = chunk
-                .bytes()
-                .take_while(|&byte| byte == b' ' || byte == b'\t')
-                .count();
-            indent += count;
-            if count < chunk.len() {
-                break;
-            }
-        }
-        summary.scopes.push((offset, indent));
+    // Leading whitespace may span Rope chunks; it ends at the first other byte.
+    let mut leading = line
+        .chunks()
+        .flat_map(str::bytes)
+        .take(width.min(1 << 20))
+        .take_while(|&byte| byte == b' ' || byte == b'\t');
+    let indent = crate::background::scope_indent(leading.by_ref());
+    let blank = line.chars().take(width).all(|ch| ch == ' ' || ch == '\t');
+    if !blank {
+        let opener = width > 0 && matches!(line.char(width - 1), '{' | '(' | '[' | ':');
+        scan.line(summary, offset, indent, opener);
+    }
+    if stopped() {
+        return None;
     }
     Some(())
 }

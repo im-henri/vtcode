@@ -3770,10 +3770,12 @@ fn sticky_editor_app() -> App {
         crate::background::StickyScopeLine {
             line: 0,
             parent: None,
+            end: usize::MAX,
         },
         crate::background::StickyScopeLine {
             line: 1,
             parent: Some(0),
+            end: usize::MAX,
         },
     ]
     .into();

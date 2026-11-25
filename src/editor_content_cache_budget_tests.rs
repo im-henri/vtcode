@@ -67,7 +67,7 @@ fn unchanged_tabs_share_completed_metrics_and_edits_preserve_previous_results() 
     assert!(Arc::ptr_eq(&first.4, &repeated.4));
     assert_eq!(cache.cache_bytes, bytes);
     assert_eq!(cache.scanned_lines, 0);
-    source.insert(0, "new:\n");
+    source.insert(0, "new:\n  body\n");
     let changed = analyze_document(&mut cache, 1, &source);
     assert!(!Arc::ptr_eq(&first.4, &changed.4));
     assert_eq!(first.4[0].line, 0);
@@ -177,8 +177,8 @@ fn oversized_results_leave_other_cached_documents_available() {
     let mut cache = Cache::default();
     let small = Rope::from_str("root:\n  value\n");
     analyze_document(&mut cache, 1, &small);
-    let large = Rope::from_str(&"scope:\n".repeat(280_000));
-    assert_eq!(analyze_document(&mut cache, 2, &large).4.len(), 280_000);
+    let large = Rope::from_str(&"scope:\n  body\n".repeat(140_000));
+    assert_eq!(analyze_document(&mut cache, 2, &large).4.len(), 140_000);
     assert_eq!(cache.snapshots.len(), 1);
     analyze_document(&mut cache, 1, &small);
     assert_eq!(cache.scanned_lines, 0);
@@ -187,7 +187,7 @@ fn oversized_results_leave_other_cached_documents_available() {
 #[test]
 fn the_metadata_budget_is_shared_across_all_cached_documents() {
     let mut cache = Cache::default();
-    let source = Rope::from_str(&"scope:\n".repeat(65_536));
+    let source = Rope::from_str(&"scope:\n  body\n".repeat(32_768));
     for document in 1..=MAX_DOCUMENTS as u64 {
         analyze_document(&mut cache, document, &source);
     }

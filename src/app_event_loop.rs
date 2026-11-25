@@ -1408,8 +1408,9 @@ fn analyze_editor_content_until(
     let mut warnings = 0usize;
     let mut max_line_width = 0usize;
     let mut word_count = 0usize;
-    let mut sticky_scopes = Vec::new();
+    let mut sticky_scopes: Vec<crate::background::StickyScopeLine> = Vec::new();
     let mut scope_stack: Vec<(usize, usize)> = Vec::new();
+    let mut last_nonblank: Option<usize> = None;
 
     for (line_idx, line) in rope.lines().enumerate() {
         if cancelled() || (line_idx.is_multiple_of(128) && std::time::Instant::now() >= deadline) {
@@ -1432,31 +1433,33 @@ fn analyze_editor_content_until(
         };
         max_line_width = max_line_width.max(width);
 
-        if !without_eol.is_empty()
-            && (without_eol.ends_with('{')
-                || without_eol.ends_with('(')
-                || without_eol.ends_with('[')
-                || without_eol.ends_with(':'))
-        {
-            let indent = without_eol
-                .chars()
-                .take_while(|character| *character == ' ' || *character == '\t')
-                .count();
+        // Every non-blank line closes the scopes indented at least as deep.
+        if !without_eol.trim_start_matches([' ', '\t']).is_empty() {
+            let indent = crate::background::scope_indent(without_eol.bytes());
             while scope_stack
                 .last()
                 .is_some_and(|(parent_indent, _)| *parent_indent >= indent)
             {
-                scope_stack.pop();
+                let (_, index) = scope_stack.pop().unwrap();
+                sticky_scopes[index].end = last_nonblank.unwrap_or(line_idx);
             }
-            let parent = scope_stack.last().map(|(_, index)| *index);
-            let index = sticky_scopes.len();
-            sticky_scopes.push(crate::background::StickyScopeLine {
-                line: line_idx,
-                parent,
-            });
-            scope_stack.push((indent, index));
+            if without_eol.ends_with(['{', '(', '[', ':']) {
+                let parent = scope_stack.last().map(|(_, index)| *index);
+                let index = sticky_scopes.len();
+                sticky_scopes.push(crate::background::StickyScopeLine {
+                    line: line_idx,
+                    parent,
+                    end: line_idx,
+                });
+                scope_stack.push((indent, index));
+            }
+            last_nonblank = Some(line_idx);
         }
     }
+    for (_, index) in scope_stack {
+        sticky_scopes[index].end = last_nonblank.unwrap_or(sticky_scopes[index].line);
+    }
+    let sticky_scopes = crate::background::drop_empty_scopes(sticky_scopes);
 
     if cancelled() || std::time::Instant::now() >= deadline {
         None
@@ -1472,7 +1475,7 @@ fn analyze_editor_content_until(
 }
 
 #[cfg(test)]
-fn analyze_editor_content(
+pub(crate) fn analyze_editor_content(
     rope: &ropey::Rope,
 ) -> (
     usize,
@@ -3698,6 +3701,7 @@ mod tests {
         app.cached_sticky_scopes = vec![crate::background::StickyScopeLine {
             line: 2,
             parent: None,
+            end: usize::MAX,
         }]
         .into();
         app.cached_sticky_lines = vec![(2, "def outer():".to_string())];
@@ -3732,6 +3736,7 @@ mod tests {
         app.cached_sticky_scopes = vec![crate::background::StickyScopeLine {
             line: 2,
             parent: None,
+            end: usize::MAX,
         }]
         .into();
         app.cached_sticky_lines = vec![(2, "def outer():".to_string())];

@@ -585,10 +585,12 @@ fn find_scrolls_matches_out_from_under_the_sticky_scroll_header() {
         crate::background::StickyScopeLine {
             line: 0,
             parent: None,
+            end: usize::MAX,
         },
         crate::background::StickyScopeLine {
             line: 1,
             parent: Some(0),
+            end: usize::MAX,
         },
     ]
     .into();
