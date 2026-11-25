@@ -256,6 +256,11 @@ pub(crate) struct App {
     pub(crate) vim_terminal_prefix: Option<crate::vim::app_host::TerminalPrefix>,
     pub(crate) vim_window_prefix: bool,
     pub(crate) vim_explorer_pending: Option<char>,
+    /// Ex directory listings: the entry last under the cursor in each folder.
+    pub(crate) vim_directory_cursor: std::collections::HashMap<PathBuf, PathBuf>,
+    /// Files opened from a directory listing that replaced it, by view: the
+    /// listing is their alternate file, as with netrw.
+    pub(crate) vim_directory_alternate: std::collections::HashMap<u64, PathBuf>,
     /// The pending Vim prefix and when it started, for the hint popup.
     pub(crate) vim_hint_since: Option<(String, std::time::Instant)>,
     /// The hint popup for the current prefix has been drawn.
@@ -1387,6 +1392,8 @@ impl App {
             vim_terminal_prefix: None,
             vim_window_prefix: false,
             vim_explorer_pending: None,
+            vim_directory_cursor: Default::default(),
+            vim_directory_alternate: Default::default(),
             vim_hint_since: None,
             vim_hint_shown: false,
             vim_focus_flash: None,

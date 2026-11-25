@@ -2310,6 +2310,9 @@ pub(crate) fn act_on(app: &mut App, act: Act) -> Result<(), String> {
             Ok(())
         }
         Act::Alternate => {
+            if directory::alternate(app) {
+                return Ok(());
+            }
             let prev = app
                 .tab_mru_order
                 .iter()
@@ -2317,6 +2320,9 @@ pub(crate) fn act_on(app: &mut App, act: Act) -> Result<(), String> {
                 .find(|&i| i != app.active_tab && i < app.tabs.len());
             match prev {
                 Some(i) => {
+                    // Back in that file its alternate is this one, not a listing.
+                    let view = app.tabs[i].editor.navigation_id;
+                    app.vim_directory_alternate.remove(&view);
                     activate_tab(app, i);
                     Ok(())
                 }

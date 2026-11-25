@@ -848,15 +848,64 @@ fn a_directory_split_browses_and_opens_files_in_its_own_pane() {
     });
     assert_eq!(text(&app), "opened here");
     assert_ne!(app.active_group, 0);
+    // The file took the listing's place: no directory tab is left behind.
+    assert_eq!(app.tabs.len(), 1);
+    assert!(super::directory::current(&app).is_none());
     // As with netrw, the listing is the alternate file of what it opened.
     keys(&mut app, "<C-^>");
     assert_eq!(super::directory::current(&app).unwrap().path, folder);
+    app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+        !app.background.has_active_jobs() && !app.background.has_pending_results()
+    });
     keys(&mut app, "<CR>");
     assert_eq!(text(&app), "opened here");
+    assert_eq!(app.tabs.len(), 1);
     // The file replaced the listing in that window: :q closes the window.
     keys(&mut app, ":q<CR>");
     assert!(!app.split_active());
     assert_eq!(text(&app), "original");
+}
+
+#[test]
+fn a_directory_listing_reopens_where_its_cursor_was() {
+    let mut app = vim_app("original");
+    let root = tempfile::tempdir().unwrap();
+    let root_path = crate::portable::filesystem_spelling(&root.path().canonicalize().unwrap());
+    std::fs::create_dir(root_path.join("nested")).unwrap();
+    std::fs::write(root_path.join("nested").join("inner.txt"), "inner").unwrap();
+    std::fs::write(root_path.join("a.txt"), "a").unwrap();
+    std::fs::write(root_path.join("b.txt"), "b here").unwrap();
+    app.explorer.root = root_path.clone();
+    app.show_explorer = false;
+    let settle = |app: &mut App| {
+        app.wait_for_background(std::time::Duration::from_secs(10), |app| {
+            !app.background.has_active_jobs() && !app.background.has_pending_results()
+        });
+    };
+
+    keys(&mut app, ":vsp .<CR>");
+    settle(&mut app);
+    assert_eq!(super::directory::selected_name(&app), Some("nested"));
+    keys(&mut app, "jj");
+    assert_eq!(super::directory::selected_name(&app), Some("b.txt"));
+    keys(&mut app, "<CR>");
+    settle(&mut app);
+    assert_eq!(text(&app), "b here");
+    assert_eq!(app.tabs.len(), 1);
+    keys(&mut app, ":q<CR>");
+    assert!(!app.split_active());
+
+    // Opened again, the listing is where it was left.
+    keys(&mut app, ":vsp .<CR>");
+    settle(&mut app);
+    assert_eq!(super::directory::selected_name(&app), Some("b.txt"));
+    // Into a folder and back out: the cursor is on the folder left.
+    keys(&mut app, "kk<CR>");
+    settle(&mut app);
+    assert_eq!(super::directory::selected_name(&app), Some("inner.txt"));
+    keys(&mut app, "-");
+    settle(&mut app);
+    assert_eq!(super::directory::selected_name(&app), Some("nested"));
 }
 
 #[test]

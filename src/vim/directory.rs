@@ -28,6 +28,9 @@ pub(crate) struct Directory {
     search: Option<(String, bool, usize)>,
     /// The last search, for `n` and `N`.
     last_search: Option<(String, bool)>,
+    /// Entries to put the cursor on once loaded, best first: the folder this
+    /// listing was left for, then the entry last under the cursor here.
+    prefer: Vec<PathBuf>,
 }
 
 pub(crate) struct Loaded {
@@ -53,6 +56,12 @@ pub(crate) fn current(app: &App) -> Option<&Directory> {
     app.tabs.get(app.active_tab)?.directory.as_deref()
 }
 
+#[cfg(test)]
+pub(crate) fn selected_name(app: &App) -> Option<&str> {
+    let dir = current(app)?;
+    Some(dir.entries.get(dir.selected)?.name.as_str())
+}
+
 fn current_mut(app: &mut App) -> Option<&mut Directory> {
     app.tabs.get_mut(app.active_tab)?.directory.as_deref_mut()
 }
@@ -64,6 +73,13 @@ pub(crate) fn open(app: &mut App, path: PathBuf, split: Option<TabDropZone>) {
     app.record_navigation();
     app.auto_save_on_focus_change();
     let request = NEXT.fetch_add(1, Ordering::Relaxed);
+    remember(app);
+    let prefer = current(app)
+        .filter(|_| split.is_none())
+        .map(|d| d.path.clone())
+        .into_iter()
+        .chain(app.vim_directory_cursor.get(&path).cloned())
+        .collect();
     let label = paths::label(app, &path);
     let name = path.file_name().map_or_else(
         || label.clone(),
@@ -84,6 +100,7 @@ pub(crate) fn open(app: &mut App, path: PathBuf, split: Option<TabDropZone>) {
         error: None,
         search: None,
         last_search: current(app).and_then(|d| d.last_search.clone()),
+        prefer,
     });
     if split.is_none() && current(app).is_some() {
         let tab = &mut app.tabs[app.active_tab];
@@ -159,7 +176,13 @@ pub(crate) fn apply(app: &mut App, loaded: Loaded) -> bool {
             match &result {
                 Ok(entries) => {
                     directory.entries = entries.clone();
-                    directory.select(usize::from(entries.len() > 1 && entries[0].name == ".."));
+                    let preferred = std::mem::take(&mut directory.prefer)
+                        .iter()
+                        .find_map(|p| entries.iter().position(|e| &e.path == p && e.name != ".."));
+                    directory.select(
+                        preferred
+                            .unwrap_or(usize::from(entries.len() > 1 && entries[0].name == "..")),
+                    );
                 }
                 Err(error) => directory.error = Some(error.clone()),
             }
@@ -169,6 +192,17 @@ pub(crate) fn apply(app: &mut App, loaded: Loaded) -> bool {
     changed
 }
 
+/// Note the entry under the cursor, so the folder opens there next time.
+fn remember(app: &mut App) {
+    if let Some(dir) = current(app)
+        && dir.request.is_none()
+        && let Some(entry) = dir.entries.get(dir.selected)
+    {
+        let (folder, entry) = (dir.path.clone(), entry.path.clone());
+        app.vim_directory_cursor.insert(folder, entry);
+    }
+}
+
 fn activate(app: &mut App) {
     let Some(entry) = current(app).and_then(|dir| dir.entries.get(dir.selected)) else {
         return;
@@ -176,10 +210,38 @@ fn activate(app: &mut App) {
     let path = entry.path.clone();
     if entry.is_dir {
         open(app, path, None);
-    } else {
-        app.push_nav_history();
-        app.open_file_from_vim(&path, None, None);
+        return;
     }
+    remember(app);
+    let listing = app.tabs[app.active_tab].editor.navigation_id;
+    let folder = current(app).map(|d| d.path.clone()).unwrap_or_default();
+    app.push_nav_history();
+    app.open_file_from_vim(&path, None, None);
+    // As in Vim, the file replaces the listing in its window; the listing
+    // stays its alternate file.
+    let Some(opened) = app.tabs.get(app.active_tab) else {
+        return;
+    };
+    let opened = opened.editor.navigation_id;
+    if opened != listing && app.tab_location(listing).is_some() {
+        app.force_close_tab_view(listing);
+        app.vim_directory_alternate.insert(opened, folder);
+    }
+}
+
+/// `<C-^>` in a file that replaced a listing: the listing again.
+pub(crate) fn alternate(app: &mut App) -> bool {
+    let Some(tab) = app.tabs.get(app.active_tab) else {
+        return false;
+    };
+    let Some(folder) = app
+        .vim_directory_alternate
+        .remove(&tab.editor.navigation_id)
+    else {
+        return false;
+    };
+    open(app, folder, None);
+    true
 }
 
 pub(crate) fn refresh(app: &mut App) {
@@ -250,6 +312,7 @@ pub(crate) fn search_key(app: &mut App, key: super::Key) {
     };
     if key.is_escape() || key.is_ctrl('c') {
         dir.select(origin);
+        remember(app);
         return;
     }
     if key.k == K::Enter && !key.ctrl {
@@ -274,6 +337,7 @@ pub(crate) fn search_key(app: &mut App, key: super::Key) {
         None => dir.select(origin),
     }
     dir.search = Some((q, forward, origin));
+    remember(app);
 }
 
 /// `n` (`reverse` false) and `N`: the next match of the last search.
@@ -288,6 +352,7 @@ pub(crate) fn search_next(app: &mut App, reverse: bool) -> Result<(), String> {
     match find_entry(dir, &q, dir_forward, dir.selected, false) {
         Some(i) => {
             dir.select(i);
+            remember(app);
             Ok(())
         }
         None => Err(format!("E486: Pattern not found: {q}")),
@@ -322,6 +387,7 @@ pub(crate) fn key(app: &mut App, event: KeyEvent) -> bool {
             _ => return true,
         };
         dir.select(index);
+        remember(app);
     }
     // A directory view never passes text-editing keys to the editor.
     true
@@ -372,6 +438,7 @@ pub(crate) fn mouse(app: &mut App, event: MouseEvent) -> bool {
                 dir.selected.saturating_add(3)
             };
             dir.select(index);
+            remember(app);
         }
         _ => {}
     }
