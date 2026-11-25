@@ -89,6 +89,11 @@ impl Editor {
     /// overlapping selections and computes final cursor positions, avoiding
     /// mutable per-line offset maps and rescans after each previous mutation.
     fn apply_multi_cursor_edits(&mut self, mut edits: Vec<CursorEdit<'_>>) {
+        // Paste, Tab and word deletes leave this `Other`: steps of their own.
+        let kind = std::mem::replace(
+            &mut self.pending_multi_edit_kind,
+            crate::editor::EditKind::Other,
+        );
         crate::editor_document::edit!(self, {
             self.desired_col = None;
             if edits.is_empty() {
@@ -157,7 +162,7 @@ impl Editor {
             if !merged.is_empty() {
                 let first_line = self.rope.char_to_line(merged[0].start);
                 let last_line = self.rope.char_to_line(merged.last().unwrap().end);
-                self.save_undo();
+                self.begin_undo_step(kind);
                 self.mark_syntax_dirty_range(first_line, last_line);
                 let mut changed_lines = false;
                 let repeated = (merged.len() > 1
@@ -259,7 +264,7 @@ impl Editor {
                     .all(|cursor| self.rope.get_char(cursor.position) == Some(c))
             {
                 self.desired_col = None;
-                self.break_undo_group();
+                self.continue_typing_over_delimiter();
                 self.set_multi_cursor_positions(
                     cursors
                         .iter()
@@ -340,6 +345,7 @@ impl Editor {
                     }
                 })
                 .collect();
+            self.pending_multi_edit_kind = self.typing_edit_kind(c);
             self.apply_multi_cursor_edits(edits);
         })
     }
@@ -503,6 +509,7 @@ impl Editor {
                     }
                 })
                 .collect();
+            self.pending_multi_edit_kind = crate::editor::EditKind::DeletingLeft;
             self.apply_multi_cursor_edits(edits);
         })
     }
@@ -534,6 +541,7 @@ impl Editor {
                     }
                 })
                 .collect();
+            self.pending_multi_edit_kind = crate::editor::EditKind::DeletingRight;
             self.apply_multi_cursor_edits(edits);
         })
     }

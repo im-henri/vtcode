@@ -82,20 +82,13 @@ fn resolved_file_paste_preserves_replaced_selection_and_native_undo_groups() {
     );
     field.resolve(&[(1, true)]);
     assert_eq!(field.text, "keep λb tail");
+    // Like VS Code, a pause does not split a word into two undo steps.
     field.edit(
         KeyCode::Char('z'),
         KeyModifiers::CONTROL,
         None,
         None,
         start + Duration::from_secs(1),
-    );
-    assert_eq!(field.text, "keep λ tail");
-    field.edit(
-        KeyCode::Char('z'),
-        KeyModifiers::CONTROL,
-        None,
-        None,
-        start + Duration::from_secs(2),
     );
     assert_eq!(field.text, "keep selected tail");
     assert_eq!((field.cursor, field.anchor), (13, Some(5)));
@@ -106,7 +99,7 @@ fn resolved_file_paste_preserves_replaced_selection_and_native_undo_groups() {
         None,
         start + Duration::from_secs(3),
     );
-    assert_eq!(field.text, "keep λ tail");
+    assert_eq!(field.text, "keep λb tail");
 }
 
 #[test]

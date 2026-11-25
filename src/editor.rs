@@ -565,26 +565,73 @@ pub(crate) struct CaretState {
     pub selection_anchor: Option<(usize, usize)>,
 }
 
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) enum CharClass {
-    None,
-    Whitespace,
-    AlphaNumeric,
-    Punctuation,
-    Newline,
+/// What an edit was, for deciding where undo steps begin. Mirrors VS Code's
+/// `EditOperationType` (editor/common/cursorCommon.ts): there is no timer, an
+/// undo step ends only when the kind of edit changes or the caret moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EditKind {
+    /// Anything that is its own step: paste, cut, Tab, transforms. Also the
+    /// state after a caret move, so the next keystroke starts a new step.
+    Other,
+    /// Typing a character other than a space.
+    TypingOther,
+    /// The first space typed after something else.
+    TypingFirstSpace,
+    /// Further spaces after the first one.
+    TypingConsecutiveSpace,
+    /// Enter: always starts a step, and typing after it continues that step.
+    Enter,
+    DeletingLeft,
+    DeletingRight,
 }
 
-impl CharClass {
-    pub(crate) fn of(c: char) -> Self {
-        if c == '\n' || c == '\r' {
-            Self::Newline
-        } else if c.is_whitespace() {
-            Self::Whitespace
-        } else if c.is_alphanumeric() || c == '_' {
-            Self::AlphaNumeric
-        } else {
-            Self::Punctuation
+impl EditKind {
+    /// VS Code's `getTypingOperation`.
+    pub(crate) fn typing(c: char, previous: Self) -> Self {
+        match c {
+            '\n' | '\r' => Self::Enter,
+            '\t' => Self::Other,
+            ' ' if matches!(
+                previous,
+                Self::TypingFirstSpace | Self::TypingConsecutiveSpace
+            ) =>
+            {
+                Self::TypingConsecutiveSpace
+            }
+            ' ' => Self::TypingFirstSpace,
+            _ => Self::TypingOther,
         }
+    }
+
+    fn is_typing(self) -> bool {
+        matches!(
+            self,
+            Self::TypingOther | Self::TypingFirstSpace | Self::TypingConsecutiveSpace | Self::Enter
+        )
+    }
+
+    fn normalized(self) -> Self {
+        match self {
+            Self::TypingFirstSpace | Self::TypingConsecutiveSpace => Self::TypingFirstSpace,
+            Self::Enter => Self::TypingOther,
+            other => other,
+        }
+    }
+
+    /// VS Code's `shouldPushStackElementBetween`, plus its fixed stops around
+    /// Enter (before) and Tab or other commands (before and after).
+    pub(crate) fn starts_new_step(previous: Self, next: Self) -> bool {
+        if previous == Self::Other || matches!(next, Self::Other | Self::Enter) {
+            return true;
+        }
+        if previous.is_typing() && !next.is_typing() {
+            return true;
+        }
+        if previous == Self::TypingFirstSpace {
+            // `abc |d` is one step; `abc  |d` is not.
+            return false;
+        }
+        previous.normalized() != next.normalized()
     }
 }
 
@@ -643,8 +690,11 @@ pub(crate) struct Editor {
     pub(crate) animation_undo_revision: u64,
     // Track changes for grouping undo snapshots
     pub(crate) undo_group_active: bool,
-    pub(crate) last_undo_time: std::time::Instant,
-    pub(crate) last_undo_char_class: CharClass,
+    /// Kind of the last edit in the open undo step (`Other` when none is open).
+    pub(crate) last_edit_kind: EditKind,
+    /// Set by single-caret entry points before they hand off to the shared
+    /// multi-cursor edit path, so it groups undo steps the same way.
+    pub(crate) pending_multi_edit_kind: EditKind,
     pub(crate) next_undo_change_id: u64,
     pub(crate) active_undo_change_id: Option<u64>,
     // Original rope content (for detecting when undo returns to saved state, and for diff gutter)
@@ -847,8 +897,8 @@ impl Editor {
             redo_stack: Default::default(),
             animation_undo_revision: 0,
             undo_group_active: false,
-            last_undo_time: std::time::Instant::now(),
-            last_undo_char_class: CharClass::None,
+            last_edit_kind: EditKind::Other,
+            pending_multi_edit_kind: EditKind::Other,
             next_undo_change_id: 0,
             active_undo_change_id: None,
             saved_rope: None,

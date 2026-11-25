@@ -76,7 +76,9 @@ pub(crate) struct TextInputHistory {
     current: Option<Snapshot>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
-    last_edit: Option<(std::time::Instant, crate::editor::CharClass)>,
+    /// Kind of the last edit in the open undo step; grouping follows the
+    /// editor's VS Code rules ([`crate::editor::EditKind`]).
+    last_edit: Option<crate::editor::EditKind>,
     deferred: Option<Box<DeferredInput>>,
 }
 
@@ -203,24 +205,24 @@ impl TextInputHistory {
                 input.handle_key(code, modifiers).consumed
             };
             if before.0 != *input.text {
-                let class = match code {
-                    KeyCode::Char(c) if !primary && paste.is_none() => {
-                        Some(crate::editor::CharClass::of(c))
-                    }
+                use crate::editor::EditKind;
+                let previous = self.last_edit.unwrap_or(EditKind::Other);
+                let kind = match code {
+                    _ if primary || paste.is_some() => None,
+                    KeyCode::Char(c) => Some(EditKind::typing(c, previous)),
+                    KeyCode::Enter => Some(EditKind::Enter),
+                    KeyCode::Backspace => Some(EditKind::DeletingLeft),
+                    KeyCode::Delete => Some(EditKind::DeletingRight),
                     _ => None,
-                };
+                }
+                .filter(|&kind| kind != EditKind::Other);
                 let grouped = before.2.is_none()
-                    && class.is_some_and(|class| {
-                        self.last_edit.is_some_and(|(time, previous)| {
-                            when.saturating_duration_since(time).as_millis() < 500
-                                && previous == class
-                        })
-                    });
+                    && kind.is_some_and(|kind| !EditKind::starts_new_step(previous, kind));
                 if !grouped {
                     Self::remember(&mut self.undo, before.clone());
                 }
                 self.redo.clear();
-                self.last_edit = class.map(|class| (when, class));
+                self.last_edit = kind;
             } else {
                 self.break_group();
             }

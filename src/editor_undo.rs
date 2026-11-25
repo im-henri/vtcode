@@ -1,6 +1,6 @@
 use ropey::Rope;
 
-use crate::editor::{CaretState, CharClass, Editor, UndoSnapshot, UndoState};
+use crate::editor::{CaretState, EditKind, Editor, UndoSnapshot, UndoState};
 
 fn next_snapshot_id() -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -143,7 +143,7 @@ impl Editor {
     pub(crate) fn save_undo_for_range(&mut self, dirty_from: usize, dirty_through: usize) {
         self.verify_clean_snapshot();
         // Explicit edits (paste, cut, Enter, transforms) end the previous typing
-        // group. Only maybe_save_undo[_char] opts into continued grouping.
+        // group. Only begin_undo_step opts into continued grouping.
         self.break_undo_group();
         // Stop attributing marks to the previous snapshot before starting a
         // new edit group.
@@ -182,15 +182,53 @@ impl Editor {
         self.save_undo();
     }
 
-    pub(crate) fn maybe_save_undo(&mut self) {
-        // Always save an undo snapshot on first change of a new group
-        if !self.undo_group_active {
+    /// Start or continue an undo step for an edit of `kind`, following VS
+    /// Code: typing a word, the space after it, a run of Backspaces or of
+    /// Deletes each undo as one step however slowly they were typed. Moving
+    /// the caret (`break_undo_group`) always ends the step.
+    pub(crate) fn begin_undo_step(&mut self, kind: EditKind) {
+        let previous = if self.undo_group_active {
+            self.last_edit_kind
+        } else {
+            EditKind::Other
+        };
+        if EditKind::starts_new_step(previous, kind) {
             self.save_undo();
-            self.undo_group_active = true;
-            self.last_undo_time = std::time::Instant::now();
         } else {
             self.invalidate_grouped_edit();
         }
+        // Tab and other commands are steps of their own on both sides.
+        self.undo_group_active = kind != EditKind::Other;
+        self.last_edit_kind = kind;
+    }
+
+    /// Typing over an auto-closed delimiter changes no text. An open typing
+    /// step continues through it, as in VS Code; otherwise nothing is open and
+    /// Redo must survive, so there is nothing to record.
+    pub(crate) fn continue_typing_over_delimiter(&mut self) {
+        if self.undo_group_active
+            && self.last_edit_kind != EditKind::DeletingLeft
+            && self.last_edit_kind != EditKind::DeletingRight
+        {
+            self.last_edit_kind = EditKind::TypingOther;
+        } else {
+            self.break_undo_group();
+        }
+    }
+
+    /// What typing `c` is, given the open undo step.
+    pub(crate) fn typing_edit_kind(&self, c: char) -> EditKind {
+        let previous = if self.undo_group_active {
+            self.last_edit_kind
+        } else {
+            EditKind::Other
+        };
+        EditKind::typing(c, previous)
+    }
+
+    /// Undo grouping for one typed character.
+    pub(crate) fn begin_typing_undo_step(&mut self, c: char) {
+        self.begin_undo_step(self.typing_edit_kind(c));
     }
 
     /// Snapshot creation already performs this work. Continuing a typing group
@@ -201,36 +239,12 @@ impl Editor {
         self.cached_wrapped_total = None;
     }
 
-    /// Save undo snapshot based on character class grouping (word boundary detection).
-    /// This gives VS Code-like undo behavior: typing a word undoes as one step.
-    pub(crate) fn maybe_save_undo_char(&mut self, c: char) {
-        let class = CharClass::of(c);
-        let elapsed = self.last_undo_time.elapsed().as_millis();
-
-        // Start a new undo group when there is a pause, character class change,
-        // or newline. This is independent of document size.
-        let need_snapshot = !self.undo_group_active
-            || elapsed > 500
-            || class != self.last_undo_char_class
-            || class == CharClass::Newline;
-
-        if need_snapshot {
-            self.save_undo();
-            self.undo_group_active = true;
-        } else {
-            self.invalidate_grouped_edit();
-        }
-
-        self.last_undo_time = std::time::Instant::now();
-        self.last_undo_char_class = class;
-    }
-
     /// Call this to break the current undo group (e.g. on cursor movement, selection change)
     pub(crate) fn break_undo_group(&mut self) {
         self.active_undo_change_id = None;
         if self.undo_group_active {
             self.undo_group_active = false;
-            self.last_undo_char_class = CharClass::None;
+            self.last_edit_kind = EditKind::Other;
         }
     }
 
@@ -894,6 +908,93 @@ mod tests {
         ed.redo();
         assert_eq!(ed.selection_anchor, None);
         assert_eq!(caret(&ed), (0, 7));
+    }
+
+    /// Undo until nothing is left, collecting each intermediate text.
+    fn undo_steps(ed: &mut Editor) -> Vec<String> {
+        let mut steps = Vec::new();
+        while ed.can_undo() {
+            ed.undo();
+            steps.push(ed.rope.to_string());
+        }
+        steps
+    }
+
+    fn type_text(ed: &mut Editor, text: &str) {
+        for c in text.chars() {
+            if c == '\n' {
+                ed.insert_newline();
+            } else {
+                ed.insert_char(c);
+            }
+        }
+    }
+
+    #[test]
+    fn typing_undo_steps_follow_vs_code_word_and_space_rules() {
+        let mut ed = Editor::test_with_text("");
+        // Pauses no longer matter: VS Code has no timer, only edit kinds.
+        type_text(&mut ed, "let total = a.b+c;");
+        // Punctuation is typing too: ` a.b+c;` is one step.
+        assert_eq!(undo_steps(&mut ed), ["let total =", "let total", "let", ""]);
+    }
+
+    #[test]
+    fn consecutive_spaces_form_their_own_step() {
+        let mut ed = Editor::test_with_text("");
+        // `abc |d` is one step after the word; `abc  |d` splits the spaces off.
+        type_text(&mut ed, "ab  cd");
+        assert_eq!(undo_steps(&mut ed), ["ab  ", "ab", ""]);
+    }
+
+    #[test]
+    fn enter_starts_a_step_that_the_next_line_joins() {
+        let mut ed = Editor::test_with_text("");
+        type_text(&mut ed, "foo\nbar");
+        assert_eq!(undo_steps(&mut ed), ["foo", ""]);
+    }
+
+    #[test]
+    fn backspace_and_delete_runs_are_separate_from_typing() {
+        let mut ed = Editor::test_with_text("");
+        type_text(&mut ed, "hello");
+        ed.backspace();
+        ed.backspace();
+        type_text(&mut ed, "p!");
+        assert_eq!(ed.rope.to_string(), "help!");
+        ed.cursor_col = 0;
+        ed.break_undo_group();
+        ed.delete_char();
+        ed.delete_char();
+        assert_eq!(ed.rope.to_string(), "lp!");
+        assert_eq!(undo_steps(&mut ed), ["help!", "hel", "hello", ""]);
+    }
+
+    #[test]
+    fn typing_through_an_auto_closed_bracket_stays_one_step() {
+        let mut ed = Editor::test_with_text("");
+        type_text(&mut ed, "foo()");
+        assert_eq!(ed.rope.to_string(), "foo()");
+        assert_eq!(undo_steps(&mut ed), [""]);
+    }
+
+    #[test]
+    fn multi_cursor_typing_groups_like_single_cursor_typing() {
+        let mut ed = Editor::test_with_text("1\n2\n");
+        ed.cursor_line = 0;
+        ed.cursor_col = 1;
+        ed.extra_cursors = vec![(1, 1)];
+        ed.extra_cursor_anchors = vec![None];
+        for c in "ab cd".chars() {
+            ed.multi_cursor_insert_char(c);
+        }
+        assert_eq!(ed.rope.to_string(), "1ab cd\n2ab cd\n");
+        ed.multi_cursor_backspace();
+        ed.multi_cursor_backspace();
+        assert_eq!(
+            undo_steps(&mut ed),
+            ["1ab cd\n2ab cd\n", "1ab\n2ab\n", "1\n2\n"]
+        );
     }
 
     #[test]

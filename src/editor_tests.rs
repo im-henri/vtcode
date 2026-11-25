@@ -644,7 +644,7 @@ fn break_undo_group_basic() {
     ed.save_undo();
     assert!(!ed.undo_group_active); // save_undo doesn't set group_active
     ed.insert_char('x');
-    // After insert, maybe_save_undo_char may set undo_group_active
+    // After insert, begin_typing_undo_step may set undo_group_active
     ed.break_undo_group();
     assert!(!ed.undo_group_active);
 }

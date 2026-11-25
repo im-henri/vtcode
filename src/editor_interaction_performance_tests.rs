@@ -680,7 +680,7 @@ fn benchmark_newline_and_backspace_avoid_long_line_work() {
                     editor.backspace();
                 } else {
                     editor.desired_col = None;
-                    editor.maybe_save_undo();
+                    editor.begin_undo_step(crate::editor::EditKind::DeletingLeft);
                     let all_spaces = (0..editor.cursor_col).all(|col| editor.rope.char(col) == ' ');
                     assert!(!black_box(all_spaces));
                     editor.rope.remove(editor.cursor_col - 1..editor.cursor_col);

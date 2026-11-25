@@ -208,8 +208,9 @@ impl Editor {
                     self.modified = true;
                 } else {
                     // Moving over an existing delimiter must not clear Redo or
-                    // create an empty edit/version change.
-                    self.break_undo_group();
+                    // create an empty edit/version change. VS Code counts it as
+                    // typing, so `foo()` stays one undo step.
+                    self.continue_typing_over_delimiter();
                 }
                 self.cursor_col += 1;
                 self.clear_selection();
@@ -220,9 +221,10 @@ impl Editor {
             let (max_col, line_start, idx) = if replacing {
                 self.save_undo();
                 self.delete_selection_for_replacement();
-                self.undo_group_active = true;
-                self.last_undo_time = std::time::Instant::now();
-                self.last_undo_char_class = crate::editor::CharClass::of(c);
+                // Typing that replaced a selection continues as typing.
+                let kind = crate::editor::EditKind::typing(c, crate::editor::EditKind::Other);
+                self.undo_group_active = kind != crate::editor::EditKind::Other;
+                self.last_edit_kind = kind;
                 let line_start = self.rope.line_to_char(self.cursor_line);
                 (
                     self.line_len(self.cursor_line),
@@ -230,7 +232,7 @@ impl Editor {
                     line_start + self.cursor_col,
                 )
             } else {
-                self.maybe_save_undo_char(c);
+                self.begin_typing_undo_step(c);
                 self.clear_selection();
                 (max_col, line_start, idx)
             };
@@ -321,7 +323,8 @@ impl Editor {
     pub(crate) fn insert_newline(&mut self) {
         crate::editor_document::edit!(self, {
             self.desired_col = None;
-            self.save_undo();
+            // VS Code: Enter starts a step, and the line typed after it joins it.
+            self.begin_undo_step(crate::editor::EditKind::Enter);
             self.delete_selection_for_replacement();
             self.cursor_col = self.cursor_col.min(self.line_len(self.cursor_line));
             let idx = self.rope.line_to_char(self.cursor_line) + self.cursor_col;
@@ -445,7 +448,7 @@ impl Editor {
                 self.save_undo();
                 self.delete_selection_for_replacement();
             } else {
-                self.maybe_save_undo_char(' ');
+                self.begin_undo_step(crate::editor::EditKind::Other);
                 self.clear_selection();
             }
             let size = self.tab_size.max(1);
@@ -564,7 +567,7 @@ impl Editor {
                 self.ensure_visible();
                 return;
             }
-            self.maybe_save_undo();
+            self.begin_undo_step(crate::editor::EditKind::DeletingLeft);
             // Capture linked editing info before the edit.
             let linked_info = if self.cursor_col > 0 {
                 self.cursor_in_tag_name_range()
@@ -734,7 +737,7 @@ impl Editor {
                 self.ensure_visible();
                 return;
             }
-            self.maybe_save_undo();
+            self.begin_undo_step(crate::editor::EditKind::DeletingRight);
             if idx < self.rope.len_chars() {
                 let ch = self.rope.char(idx);
                 let is_newline = ch == '\n' || ch == '\r';

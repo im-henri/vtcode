@@ -69,12 +69,15 @@ fn soft_tabs_match_scalar_edits_with_overwrite_virtual_columns_wrapping_and_undo
 }
 
 #[test]
-fn soft_tabs_keep_whitespace_undo_groups_and_handle_zero_width_defensively() {
+fn soft_tabs_are_their_own_undo_step_and_handle_zero_width_defensively() {
     let mut editor = Editor::test_with_text("code");
     editor.insert_char(' ');
     editor.insert_tab();
     editor.insert_char(' ');
-    assert_eq!(editor.undo_stack.len(), 1);
+    // VS Code's Tab command pushes an undo stop before and after itself.
+    assert_eq!(editor.undo_stack.len(), 3);
+    editor.undo();
+    editor.undo();
     editor.undo();
     assert_eq!(editor.rope.to_string(), "code");
     editor.tab_size = 0;
